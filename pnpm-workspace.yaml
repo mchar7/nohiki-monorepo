@@ -1,0 +1,20 @@
+packages:
+  - typescript/apps/*
+  - typescript/libs/*
+  - typescript/services/*
+  - typescript/edge/*
+
+overrides:
+  "@opentelemetry/core": ">=2.8.0"
+  rollup: ">=4.59.0"
+
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  msw: false
+  protobufjs: true
+  sharp: true
+  workerd: true
+
+minimumReleaseAgeExclude:
+  - '@cloudflare/workers-types'

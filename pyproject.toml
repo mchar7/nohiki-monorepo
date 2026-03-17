@@ -1,0 +1,675 @@
+[project]
+name = "nohiki-monorepo"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Nohiki job matching platform monorepo"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    # Service deps needed for ty type resolution (tiny packages)
+    "argon2-cffi>=25.1.0",
+    "uvicorn>=0.41.0",
+    "jinja2>=3.1.6",
+    "sse-starlette>=2.0.0",
+    # Linting and type checking
+    "ruff>=0.15.0",
+    "ty>=0.0.24",
+    # Tree-sitter parsing (AST explorer)
+    "tree-sitter>=0.25.0",
+    "tree-sitter-python>=0.25.0",
+    # Testing framework
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
+    "coverage>=7.13.0",
+    "pytest-codspeed>=4.3.0",
+    "pytest-repeat>=0.9.0",
+    "pytest-unused-fixtures>=0.3.1",
+    "testcontainers>=4.14.0",
+    "respx>=0.22.0",
+    # Workspace packages (transitively provide their dependencies for testing)
+    "nohiki-test-utils==0.1.0",
+    "nohiki-domain-models==0.1.0",
+    "nohiki-finance==0.1.0",
+    "nohiki-common-exceptions==0.1.0",
+    "nohiki-core-settings==0.1.0",
+    "nohiki-observability[fastapi,httpx,sqlalchemy]==0.1.0",
+    "nohiki-redis-utils==0.1.0",
+    "nohiki-db-utils[async,migrations,testing]==0.1.0",
+    "nohiki-kafka-client==0.1.0",
+    "nohiki-fastapi-utils==0.1.0",
+    "nohiki-s3-client==0.1.0",
+    "nohiki-qdrant-client==0.1.0",
+    "nohiki-ml-manifest==0.1.0",
+    "nohiki-llm-client==0.1.0",
+    "nohiki-geo-utils[redis]==0.1.0",
+    # Type stubs
+    "types-protobuf>=6.32.1.20251210",
+    "types-grpcio>=1.82.1.20260711",
+    "types-jsonschema>=4.26.0",
+    "types-aiobotocore[s3]>=3.1.0",
+    "types-lxml>=2026.2.16",
+    # ML/Doc packages with inline types (for ty to resolve imports)
+    "docling-core>=2.87.0",
+    "html2text>=2025.4.15",
+    "semver>=3.0.4",
+    # Workspace-script deps needed for ty type resolution outside backend/
+    "tomlkit>=0.13.0",       # scripts/util/scaffold
+    "pdfplumber>=0.11.0",    # scripts/util/tailor
+    # Azure SDK stubs (optional dependency)
+    "azure-identity>=1.25.3",
+    # Code hygiene tools
+    "deptry>=0.24.0",
+    # CLI tools
+    "typer>=0.26.8",
+    "rich>=14.3.0",
+    # Offline ML training dependencies (for scripts/)
+    "lightgbm>=4.6.0",
+    "scikit-learn>=1.8.0",
+    "joblib>=1.5.3",
+    "python-jobspy>=1.1.82",
+    "uuid-utils>=0.14.0",
+]
+
+# If we move back to confluent-kafka, we'll need this:
+# "confluent_kafka
+# "types-confluent-kafka>=1.4.0",
+
+
+[tool.uv]
+default-groups = ["dev"]
+
+# Mutually exclusive ml-compute-service accelerator extras: CPU-only (the default,
+# resolved for plain `uv sync`) versus CUDA 13.0. Encoded in the single workspace lock.
+conflicts = [
+    [
+        { package = "ml-compute-service", extra = "cpu" },
+        { package = "ml-compute-service", extra = "cuda" },
+    ],
+]
+override-dependencies = [
+    "numpy==2.5.1",
+    # docling-core 2.87.0 caps Typer below 0.25 despite using its stable CLI API;
+    # root and standalone CLI smoke tests verify compatibility with 0.26.8.
+    "typer==0.26.8",
+    # PyTorch CPU index has old markupsafe 3.0.2 without cp314 wheels.
+    # Force 3.0.3+ from PyPI which has cp314 wheels.
+    "markupsafe>=3.0.3",
+    # PyLate 1.6.0 pins ujson 5.12.0; 5.13.0 fixes CVE-2026-54911.
+    "ujson>=5.13.0",
+    # PyLate's compatible API surface works on the patched Transformers release.
+    "transformers>=5.5.0,<6",
+    # Docling's compatible range includes the markdownify header-allocation fix.
+    "markdownify>=0.14.1",
+    # Torch uses setuptools at runtime; keep the transitive package on its fixed release.
+    "setuptools>=83.0.0",
+    # Qdrant permits portalocker 3.x; keep its file locking on the maintained major line.
+    "portalocker>=3.2.0,<4",
+    # TEMPORARY: regex 2024.x lacks cp314 wheels. Force 2026.x for Python 3.14 testing.
+    "regex>=2026.7.10",
+    # TEMPORARY: multiprocess 0.70.18 has `return` in `finally` block: SyntaxError on 3.14 (PEP 765).
+    "multiprocess>=0.70.19",
+    # ruamel-yaml-clib 0.2.14 (pinned by semgrep) lacks cp314 wheels.
+    # 0.2.15 ships cp314-compatible builds.
+    "ruamel-yaml-clib>=0.2.15",
+    # TEMPORARY: py-rust-stemmers 0.1.5 uses pyo3 0.18 which segfaults on Python 3.14
+    # (no cp314 ABI support). Force ElissonRodrigues fork which bumps pyo3 to 0.28.2
+    # with abi3-py38 (stable ABI). Remove once qdrant/py-rust-stemmers#9 merges and publishes.
+    "py-rust-stemmers @ https://github.com/ElissonRodrigues/py-rust-stemmers/archive/74ab785792552881f1286a51f631f56859f74fff.tar.gz",
+    # torch has no global override: its version floor and accelerator index are set by
+    # the ml-compute-service cpu/cuda extras so per-extra +cpu/+cu130 selection survives.
+]
+
+index-strategy = "unsafe-best-match"
+
+# Limit resolution to real deployment platforms (excludes emscripten/wasm)
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin'",
+    "sys_platform == 'win32'",
+]
+
+# PyTorch CPU index - hosts CPU-only wheels (+cpu local version). Kept non-explicit so
+# `unsafe-best-match` prefers +cpu torch for the default (no-extra) ml-compute-service
+# sync; the ml-compute-service `cpu` extra pins torch here explicitly.
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+
+[[tool.uv.index]]
+# PyTorch CUDA 13.0 index - explicit so it is used ONLY for the ml-compute-service
+# `cuda` extra (torch +cu130 plus NVIDIA runtime wheels), never for generic packages.
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.workspace]
+members = [
+    # User domain services
+    "backend/services/user-auth-service",
+    "backend/services/user-pref-service",
+    "backend/services/user-upload-service",
+    "backend/services/user-entitlement-service",
+    # Job domain services
+    "backend/services/job-ingest-discovery-service",
+    "backend/services/job-ingest-schedule-service",
+    "backend/services/job-query-composition-service",
+    "backend/services/job-ingest-enrichment-service",
+    "backend/services/job-storage-service",
+    "backend/services/job-correlation-evaluation-service",
+    # Doc domain services
+    "backend/services/doc-template-service",
+    "backend/services/doc-content-service",
+    "backend/services/doc-process-service",
+    # Infrastructure services
+    "backend/services/notification-service",
+    "backend/services/bff-service",
+    # ML services
+    "backend/services/ml-gateway-service",
+    "backend/services/ml-compute-service",
+    # Skill domain services
+    "backend/services/skill-graph-service",
+    # Jobs (one-shot trigger scripts)
+    "backend/jobs/sys-tick-job",
+    "backend/jobs/snapshot-refresh-job",
+    # Shared libraries
+    "backend/libs/nohiki-common-exceptions",
+    "backend/libs/nohiki-redis-utils",
+    "backend/libs/nohiki-db-utils",
+    "backend/libs/nohiki-fastapi-utils",
+    "backend/libs/nohiki-domain-models",
+    "backend/libs/nohiki-finance",
+    "backend/libs/nohiki-kafka-client",
+    "backend/libs/nohiki-observability",
+    "backend/libs/nohiki-s3-client",
+    "backend/libs/nohiki-test-utils",
+    "backend/libs/nohiki-ml-core",
+    "backend/libs/nohiki-ml-manifest",
+    "backend/libs/nohiki-qdrant-client",
+    "backend/libs/nohiki-core-settings",
+    "backend/libs/nohiki-llm-client",
+    "backend/libs/nohiki-geo-utils",
+    "backend/libs/nohiki-embedding-client",
+    # Integration tests (needs workspace deps resolution)
+    "tests",
+    # Infrastructure init tools
+    "infra/shared/qdrant-init",
+    # CLI tools (scripts that need workspace deps)
+    "scripts/ci",
+    "scripts/util/tailor",
+    "scripts/util/health_check",
+    "scripts/benchmark",
+    "scripts/util/scaffold",
+]
+
+[tool.uv.sources]
+# Force markupsafe from PyPI (PyTorch CPU index has old 3.0.2 without cp314 wheels)
+markupsafe = { index = "pypi" }
+
+# Shared libraries - these are dependencies referenced by services
+nohiki-common-exceptions    = { workspace = true }
+nohiki-redis-utils          = { workspace = true }
+nohiki-db-utils             = { workspace = true }
+nohiki-fastapi-utils        = { workspace = true }
+nohiki-domain-models        = { workspace = true }
+nohiki-finance              = { workspace = true }
+nohiki-kafka-client         = { workspace = true }
+nohiki-observability        = { workspace = true }
+nohiki-s3-client            = { workspace = true }
+nohiki-test-utils           = { workspace = true }
+nohiki-ml-core              = { workspace = true }
+nohiki-ml-manifest          = { workspace = true }
+nohiki-qdrant-client        = { workspace = true }
+nohiki-core-settings        = { workspace = true }
+nohiki-llm-client           = { workspace = true }
+nohiki-geo-utils            = { workspace = true }
+nohiki-embedding-client     = { workspace = true }
+
+# Services (only add when needed as dependencies by other packages)
+skill-graph-service                   = { workspace = true }
+job-ingest-enrichment-service         = { workspace = true }
+job-correlation-evaluation-service    = { workspace = true }
+
+# CLI tools (only add when needed as dependencies by other packages)
+ci-checks                             = { workspace = true }
+health-check                          = { workspace = true }
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+exclude = [
+    "alembic",
+    "backend/libs/nohiki-domain-models/src",
+    ".venv",
+    "__pycache__",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "INP001",  # Missing __init__.py (not needed for namespace packages)
+    "D203",    # One blank line before class docstring (conflicts with D211. begrudgingly not starting on second line to conform with Google Style Guide, even though I find second second line start much cleaner. whatever.)
+    "COM812",  # Missing trailing comma (conflicts with formatter)
+
+    # These rules cause widespread false positives with FastAPI. See: https://github.com/astral-sh/ruff/issues/14140
+    "TC001",   # Move application import into type-checking block
+    "TC002",   # Move third-party import into type-checking block
+    "TC003",   # Move stdlib import into type-checking block
+    "TC006",   # Disallow quoted type expressions in typing.cast(); conflicts with strict PEP 695 style
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**/*.py" = [
+    "S101",    # Use of assert
+    "S105",    # Hardcoded password
+    "S106",    # Hardcoded password in function arg
+    "S108",    # Hardcoded file path
+    "S603",    # subprocess calls for test orchestration
+    "S608",    # SQL injection - test SQL is not user input
+    "PLR2004", # Magic value comparison
+    "PLR0913", # Too many arguments - test functions with multiple mocks
+    "PLR0915", # Too many statements - integration tests with setup/teardown/assertions
+    "PLC0415", # Import outside top-level
+    "SLF001",  # Private member access
+    "TC001",   # Move application import into type-checking block - used at runtime in fixtures
+    "TC002",   # Move third-party import into type-checking block - used at runtime in fixtures
+    "TC003",   # Move stdlib import into type-checking block - used at runtime in fixtures
+    "PYI034",  # __aenter__ should return Self - test utilities not intended for subclassing
+    "BLE001",  # Blind exception - acceptable in tests for catching any error
+    "DTZ005",  # datetime.now() without tz - acceptable in test mocks
+    "RUF012",  # Mutable class attrs - acceptable in test mocks
+    "D100",    # Missing docstring in public module
+    "D101",    # Missing docstring in public class - test classes are self-documenting
+    "D102",    # Missing docstring in public method - test methods are self-documenting
+    "D103",    # Missing docstring in public function
+    "D107",    # Missing docstring in __init__ - test utilities are self-documenting
+    "ARG002",  # Unused method argument - acceptable in fixtures
+    "S607",    # Partial executable path - test orchestration
+    "F821",    # Undefined name - forward references to proto types
+    "TID252",  # Relative imports from parent - required for pytest test module discovery
+    "E402",    # Module level import not at top - conftest files must set env vars before imports
+]
+"backend/services/doc-template-service/src/doc_template_service/core/templates/_jinja_inspect.py" = [
+    "N802",    # Jinja2 AST visitor methods must match node class names (visit_Name, visit_Getattr, etc.)
+]
+"**/nohiki_db_utils/outbox*.py" = [
+    "S608",    # SQL injection - table names are trusted constants, not user input
+]
+"**/nohiki_db_utils/idempotency*.py" = [
+    "S608",    # SQL injection - table names are trusted constants, not user input
+]
+"**/nohiki_redis_utils/circuit_breaker.py" = [
+    "BLE001",  # Circuit breakers intentionally catch all exceptions to record failures
+]
+"**/nohiki_redis_utils/circuit_breaker_decorator.py" = [
+    "BLE001",  # Circuit breakers intentionally catch all exceptions to record failures
+]
+"scripts/benchmark/src/llm_benchmark/engine/document_qualification.py" = [
+    "BLE001",  # Qualification must persist arbitrary provider/renderer failures while re-raising fatal exceptions
+]
+"infra/k8s/scripts/verify-migration-heads.py" = [
+    "S608",  # Schema names are strict-regex inventory identifiers used by psql, not user input
+]
+"**/src/**/testing.py" = [
+    "PLC0415", # Deferred testcontainers imports in fixtures to avoid DeprecationWarning at collection time
+]
+"**/factories/_base.py" = [
+    "ANN401",  # DataclassFactory.build(**kwargs: Any) -> T uses Any at the polyfactory framework level; the override must match the parent signature
+]
+"backend/services/job-correlation-evaluation-service/src/**/constants.py" = [
+    "PLC0414", # Explicit re-exports from nohiki-ml-manifest use `X as X` syntax intentionally
+]
+"backend/libs/nohiki-ml-core/src/nohiki_ml_core/_deps.py" = [
+    "PLC0415", # Lazy imports for optional dependencies (sklearn, pylate) are intentional here
+]
+"backend/libs/nohiki-db-utils/src/nohiki_db_utils/alembic_helpers.py" = [
+    "S608",    # SQL is built from trusted internal schema/enum names, not user input
+]
+"backend/libs/nohiki-db-utils/src/nohiki_db_utils/outbox.py" = [
+    "S608",    # SQL is built from trusted hardcoded internal schema/table names, not user input
+]
+"scripts/*.py" = [
+    "S603",    # subprocess calls are intentional with hardcoded commands in CLI scripts
+    "S607",    # partial executable path - scripts call known system executables
+    "PLC0415", # lazy imports for optional dependencies (e.g., database drivers)
+    "PLR0913", # CLI commands legitimately have many parameters (typer options)
+    "FBT002",  # Typer uses boolean defaults with Annotated pattern by design
+]
+"scripts/**/*.py" = [
+    "S311",    # Pseudo-random OK for non-crypto use
+    "S603",    # subprocess calls are intentional with hardcoded commands in CLI scripts
+    "S607",    # partial executable path - scripts call known system executables
+    "S608",    # SQL injection false positive in debug scripts with hardcoded queries
+    "PLC0415", # lazy imports for circular import avoidance in CLI modules
+    "PLR0913", # CLI commands legitimately have many parameters (typer options)
+    "PLR0912", # Too many branches - acceptable in complex CLI/analysis scripts
+    "PLR0915", # Too many statements - acceptable in monolithic debug scripts
+    "PLR2004", # Magic values acceptable in scripts (thresholds, limits)
+    "C901",    # Complexity acceptable in one-off analysis scripts
+    "FBT002",  # Typer uses boolean defaults with Annotated pattern by design
+    "SLF001",  # Private member access for Kafka internals in debug scripts
+]
+"scripts/**/test_*.py" = [
+    "T201",    # Print statements are intentional output in debug/integration scripts
+]
+"infra/shared/scripts/*.py" = [
+    "S603",    # subprocess calls are intentional with hardcoded commands
+    "S607",    # partial executable path - scripts call known system executables
+    "PLR0913", # CLI commands legitimately have many parameters (typer options)
+    "FBT002",  # Typer uses boolean defaults with Annotated pattern by design
+]
+"backend/**/scripts/*.py" = [
+    "S603",    # subprocess calls are intentional with hardcoded commands
+    "S607",    # partial executable path - scripts call known system executables
+    "PLR0913", # CLI commands legitimately have many parameters (typer options)
+    "FBT002",  # Typer uses boolean defaults with Annotated pattern by design
+    "PLC0415", # lazy imports for optional dependencies (e.g., database drivers)
+]
+"tests/run_*.py" = [
+    "S603",    # subprocess calls are intentional for test orchestration
+    "S607",    # partial executable path - scripts call known system executables
+    "PLR0913", # CLI commands legitimately have many parameters (typer options)
+    "FBT002",  # Typer uses boolean defaults with Annotated pattern by design
+]
+"tests/e2e/run_*.py" = [
+    "S603",    # subprocess calls are intentional for test orchestration
+    "S607",    # partial executable path - scripts call known system executables
+    "PLR0913", # CLI commands legitimately have many parameters (typer options)
+    "FBT002",  # Typer uses boolean defaults with Annotated pattern by design
+]
+"tests/e2e/client.py" = [
+    "PLR0913", # E2E test client legitimately has many parameters for flexibility
+]
+
+[tool.ty.environment]
+python-version = "3.14"
+# Configure all source roots for workspace package discovery
+root = [
+    # Shared libraries (src layout)
+    "backend/libs/nohiki-common-exceptions/src",
+    "backend/libs/nohiki-core-settings/src",
+    "backend/libs/nohiki-db-utils/src",
+    "backend/libs/nohiki-fastapi-utils/src",
+    "backend/libs/nohiki-kafka-client/src",
+    "backend/libs/nohiki-ml-core/src",
+    "backend/libs/nohiki-ml-manifest/src",
+    "backend/libs/nohiki-observability/src",
+    "backend/libs/nohiki-qdrant-client/src",
+    "backend/libs/nohiki-redis-utils/src",
+    "backend/libs/nohiki-s3-client/src",
+    "backend/libs/nohiki-test-utils/src",
+    "backend/libs/nohiki-llm-client/src",
+    "backend/libs/nohiki-geo-utils/src",
+    "backend/libs/nohiki-embedding-client/src",
+    # CLI tools (src layout)
+    "scripts/util/tailor/src",
+    # Services (src layout)
+    "backend/services/bff-service/src",
+    "backend/services/doc-template-service/src",
+    "backend/services/doc-content-service/src",
+    "backend/services/doc-process-service/src",
+    "backend/services/job-correlation-evaluation-service/src",
+    "backend/services/job-ingest-discovery-service/src",
+    "backend/services/job-ingest-enrichment-service/src",
+    "backend/services/job-ingest-schedule-service/src",
+    "backend/services/job-query-composition-service/src",
+    "backend/services/job-storage-service/src",
+    "backend/services/ml-compute-service/src",
+    "backend/services/ml-gateway-service/src",
+    "backend/services/notification-service/src",
+    "backend/services/user-auth-service/src",
+    "backend/services/user-entitlement-service/src",
+    "backend/services/user-pref-service/src",
+    "backend/services/user-upload-service/src",
+    "backend/services/skill-graph-service/src",
+    # Jobs (src layout)
+    "backend/jobs/sys-tick-job/src",
+    "backend/jobs/snapshot-refresh-job/src",
+    # Infra tools (src layout)
+    "infra/shared/qdrant-init/src",
+    # Script/tool packages (src layout)
+    "scripts/ci/src",
+    "scripts/util/health_check/src",
+    "scripts/util/scaffold/src",
+    "scripts/benchmark/src",
+    # Flat-layout source roots (non-workspace scripts: ast_explorer,
+    # calibrate_skill_thresholds, job_embedding_finetuning, skill_semantic_analysis,
+    # standalone .py files in scripts/ and scripts/util/).
+    "scripts/util/ast_explorer",
+    "scripts/ml",
+    "scripts",
+]
+extra-paths = [
+    "backend/libs/nohiki-domain-models/src",
+    ".venv/lib/python3.14/site-packages",
+]
+
+[tool.ty.src]
+include = ["backend", "scripts", "infra/shared/qdrant-init"]
+exclude = [
+    ".venv/",
+    "__pycache__/",
+    "**/alembic/",
+    # Generated betterproto2 code - auto-generated, not user-maintained
+    "backend/libs/nohiki-domain-models/",
+]
+
+[tool.ty.terminal]
+error-on-warning = true
+
+# OVERRIDES: Narrowly scoped, only for genuinely unfixable third-party issues
+
+# Starlette add_middleware uses _MiddlewareFactory[P] with ParamSpec that ty
+# cannot resolve (astral-sh/ty#1635). Test files have many add_middleware calls;
+# source files use inline ignores instead (1 call site each).
+[[tool.ty.overrides]]
+include = [
+    "backend/libs/nohiki-fastapi-utils/tests/test_csrf.py",
+    "backend/libs/nohiki-observability/tests/test_correlation.py",
+]
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+missing-argument = "ignore"
+
+
+# nohiki-ml-core encoder modules and ml-compute-service import optional deps
+# (sentence-transformers, torch, huggingface-hub) that are only installed with
+# nohiki-ml-core[local]. These modules are non-functional without the extras.
+[[tool.ty.overrides]]
+include = [
+    "backend/libs/nohiki-ml-core/src/nohiki_ml_core/encoders/dense.py",
+    "backend/libs/nohiki-ml-core/src/nohiki_ml_core/gpu.py",
+    "backend/services/ml-compute-service/src/ml_compute_service/main.py",
+]
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+
+# job_embedding_finetuning training module imports peft and unsloth which
+# require CUDA and are only installable on GPU machines. Training code
+# guards against non-CUDA execution with an explicit RuntimeError check.
+[[tool.ty.overrides]]
+include = [
+    "scripts/ml/job_embedding_finetuning/job_embedding_finetuning/training/trainer.py",
+]
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
+# nohiki-redis-utils decorators use nested ParamSpec wrapper patterns (decorator
+# captures P, inner wrapper re-declares P.args/P.kwargs). ty 0.0.17 treats these
+# as separate ParamSpec scopes, producing false positives for return types and
+# argument forwarding. This is a known ty limitation with ParamSpec in closures.
+# Also applies to callers of these decorators (gotenberg circuit_breaker).
+[[tool.ty.overrides]]
+include = [
+    "backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/decorators.py",
+    "backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/circuit_breaker_decorator.py",
+    "backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/rate_limit_decorator.py",
+    "backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/multi_rate_limit_decorator.py",
+    "backend/libs/nohiki-redis-utils/tests/",
+    "backend/services/doc-template-service/src/doc_template_service/services/gotenberg.py",
+]
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+invalid-return-type = "ignore"
+invalid-type-arguments = "ignore"
+missing-argument = "ignore"
+
+# Test helper imports use pytest's pythonpath config which ty cannot replicate.
+# Tests use cross-package imports (conftest, test utils) resolved by pytest at
+# runtime but invisible to static analysis. Pydantic model __init__ kwargs are
+# not recognized by ty (unknown-argument).
+[[tool.ty.overrides]]
+include = ["backend/*/tests/", "backend/*/*/tests/"]
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+unknown-argument = "ignore"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--strict-markers -p no:cacheprovider --tb=short --import-mode=importlib"
+markers = [
+    "integration: mark integration tests",
+    "requires_docker: mark tests that require Docker/testcontainers",
+    "unit: mark unit tests (default)",
+    "e2e: mark end-to-end tests",
+    "slow: mark tests as slow running",
+    "benchmark: mark performance benchmarks (run with --codspeed)",
+    "llm_cost: mark tests that make real LLM API calls (incurs costs, skipped by default)",
+]
+cache_dir = ".cache/pytest"
+filterwarnings = [
+    "error",
+    # TODO(google-genai): remove once googleapis/python-genai#1939 is merged and released.
+    # google-genai v1.68.0 uses typing._UnionGenericAlias at import time, deprecated in 3.14.
+    "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning:google.genai",
+]
+
+[tool.coverage.run]
+data_file = ".cache/.coverage"
+source = ["backend"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/alembic/*",
+    "backend/libs/nohiki-domain-models/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
+[tool.coverage.html]
+directory = ".cache/htmlcov"
+
+# DEPTRY - Dependency hygiene checker
+[tool.deptry]
+extend_exclude = ["alembic", "tests", "scripts"]
+
+[tool.deptry.per_rule_ignores]
+# DEP001: Missing dependencies - ignore workspace internal packages + their re-exports
+DEP001 = [
+    # Workspace internal libs (import as nohiki_* but declared as nohiki-*)
+    "nohiki_common_exceptions", "nohiki_redis_utils",
+    "nohiki_db_utils", "nohiki_fastapi_utils", "nohiki_domain_models",
+    "nohiki_kafka_client", "nohiki_observability", "nohiki_s3_client",
+    "nohiki_test_utils", "nohiki_ml_core", "nohiki_ml_manifest",
+    "nohiki_qdrant_client", "nohiki_core_settings",
+    # betterproto2 generated domain models (namespace packages from nohiki-domain-models)
+    "nohiki_proto", "nohiki_proto_google", "nohiki",
+    # Re-exported by workspace libs (nohiki-fastapi-utils, nohiki-db-utils, etc.)
+    "fastapi", "starlette", "sqlalchemy", "pydantic", "pydantic_settings",
+    "redis", "httpx", "structlog",
+]
+# DEP002: Unused dependencies in root pyproject.toml (used by specific services via workspace)
+# huggingface-hub: ml-compute-service loads it via importlib.import_module() (deferred
+# import so HF_HOME/cache env vars are set first), so static analysis can't see the usage.
+DEP002 = ["confluent-kafka", "argon2-cffi", "pyjwt", "huggingface-hub"]
+# DEP003: Transitive dependencies - ignore workspace-provided transitive deps
+# NOTE: External transitive deps like 'cryptography' are NOT ignored - those are real issues to fix!
+DEP003 = [
+    # Workspace internal libs that may be transitive
+    "nohiki_common_exceptions", "nohiki_redis_utils",
+    "nohiki_db_utils", "nohiki_fastapi_utils", "nohiki_domain_models",
+    "nohiki_kafka_client", "nohiki_observability", "nohiki_s3_client",
+    "nohiki_test_utils", "nohiki_ml_core", "nohiki_ml_manifest",
+    "nohiki_qdrant_client", "nohiki_core_settings",
+    "nohiki_proto", "nohiki_proto_google", "nohiki",
+    # Re-exported by workspace libs - OK as transitive in workspace context
+    "pydantic", "pydantic_settings",
+]
+# DEP004: Dev dependencies imported in non-dev code - uvicorn is imported conditionally for local dev
+DEP004 = ["uvicorn"]
+
+[tool.deptry.package_module_name_map]
+nohiki-core-settings = "nohiki_core_settings"
+nohiki-fastapi-utils = "nohiki_fastapi_utils"
+nohiki-db-utils = "nohiki_db_utils"
+nohiki-kafka-client = "nohiki_kafka_client"
+nohiki-domain-models = "nohiki_domain_models"
+nohiki-observability = "nohiki_observability"
+nohiki-ml-manifest = "nohiki_ml_manifest"
+nohiki-redis-utils = "nohiki_redis_utils"
+pydantic-settings = "pydantic_settings"
+
+# SKYLOS - Dead code detection (ci-checks deadcode)
+# ci-checks deadcode false positives: names skylos' static resolver misses in
+# some environments despite live references (evidence per name in git history
+# of this line): instance-attribute and DI-injected calls, typer callbacks,
+# dataclass __post_init__ and self-call dispatch, async lifecycle protocol
+# members, classmethod invocations. Name-based and global (the only mechanism
+# skylos offers); prune when upstream resolution improves.
+[tool.skylos.whitelist]
+names = [
+    "K8sDeploymentRolloutCheck",
+    "KubernetesPlatformContractsCheck",
+    "aclose",
+    "generate",
+    "get_profile",
+    "handle",
+    "initiate_upload",
+    "list_profiles",
+    "predict",
+    "record_error",
+    "record_orphan_completion",
+    "record_request",
+    "reset_cache",
+    "version_callback",
+    "_execute_function",
+    "_generate_content",
+    "_handle_circuit_open",
+    "_handle_exception",
+    "_handle_failure",
+    "_handle_success",
+    "_log_pipeline_start",
+    "_profile_to_detail",
+    "_validate_shape_kafka_consistency",
+    "_validate_strings",
+    "_validate_topic_naming",
+    "_validate_topic_name",
+]
