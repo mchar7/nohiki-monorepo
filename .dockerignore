@@ -1,0 +1,81 @@
+## Global patterns
+# Ignore VCS
+.git
+.gitignore
+
+# Local configuration and credentials must never enter a remote build context
+.local/
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+
+# Python, JavaScript, and test/build caches or outputs
+**/__pycache__/
+**/*.py[cod]
+*.egg-info/
+**/.venv/
+**/.cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.pytest_cache/
+**/.coverage*
+**/node_modules/
+**/dist/
+**/.output/
+**/.next/
+**/.turbo/
+**/.vite/
+**/coverage/
+**/playwright-report/
+**/test-results/
+**/.artifacts/
+**/artifacts/
+**/reports/
+**/htmlcov/
+**/junit.xml
+**/pytest.xml
+**/*.tsbuildinfo
+
+# CI, tests, docs, and dev tools not needed in service images
+docs/
+scripts/
+# The health image also uses the root context; expose only its two package trees.
+!scripts/
+scripts/*
+!scripts/ci/
+scripts/ci/*
+!scripts/ci/pyproject.toml
+!scripts/ci/src/
+!scripts/ci/src/**
+!scripts/util/
+scripts/util/*
+!scripts/util/health_check/
+scripts/util/health_check/*
+!scripts/util/health_check/Dockerfile
+!scripts/util/health_check/pyproject.toml
+!scripts/util/health_check/src/
+!scripts/util/health_check/src/**
+tests/
+**/tests/
+# The API verification image uses the root context, but needs only its project,
+# shared fixture, and API suite. Keep every other test tree out of all contexts.
+!tests/
+tests/*
+!tests/pyproject.toml
+!tests/conftest.py
+!tests/api/
+!tests/api/**
+infra/*
+!infra/shared/
+infra/shared/*
+!infra/shared/qdrant-init/
+
+# Large lock and cache files (keep production workspace locks)
+*.lock
+!pnpm-lock.yaml
+!uv.lock
