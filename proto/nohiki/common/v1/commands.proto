@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package nohiki.common.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// SNAPSHOT REFRESH REQUESTED: Generic command to re-publish ECST snapshots
+// Topic: {domain}.cmd.snapshot-refresh-requested.v1 (per service)
+// Publisher: snapshot-refresh-job (one-shot)
+// Consumer: Any CDC-publishing service that implements the handler
+// ════════════════════════════════════════════════════════════════════
+message SnapshotRefreshRequested {
+  EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  // Specific entity IDs to refresh. Empty means all active entities.
+  repeated string entity_ids = 2 [(buf.validate.field).repeated.max_items = 500];
+
+  // Audit trail for why the refresh was requested.
+  string reason = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 5, max_len: 500}
+  ];
+}

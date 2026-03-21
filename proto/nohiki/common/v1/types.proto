@@ -1,0 +1,324 @@
+syntax = "proto3";
+
+package nohiki.common.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/enums.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// GEOCOORDINATES: WGS84 geographic coordinates
+// ════════════════════════════════════════════════════════════════════
+message GeoCoordinates {
+  double latitude = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).double = {gte: -90.0, lte: 90.0}
+  ];
+  double longitude = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).double = {gte: -180.0, lte: 180.0}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LOCATION: Location for job listings and user preferences
+// ════════════════════════════════════════════════════════════════════
+message Location {
+  option (buf.validate.message).cel = {
+    id: "location.coordinates_require_precision",
+    message: "precision must be specified when coordinates are present",
+    expression: "!has(this.coordinates) || this.precision != 0"
+  };
+  optional string city = 1 [(buf.validate.field).string.max_len = 100];
+  optional string state_province = 2 [(buf.validate.field).string.max_len = 100];
+  CountryCode country = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+  LocationType location_type = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+  optional GeoCoordinates coordinates = 5;
+
+  // How precise are the coordinates? MUST be set when coordinates are present
+  LocationPrecision precision = 6 [(buf.validate.field).enum.defined_only = true];
+
+  // Where did this location data originate? Enables confidence scoring
+  LocationSource source = 7 [(buf.validate.field).enum.defined_only = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// MONETARY AMOUNT: Atomic currency value
+// ════════════════════════════════════════════════════════════════════
+message MonetaryAmount {
+  int64 minor_units = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int64.gte = 0
+  ];
+  CurrencyCode currency = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// COMPENSATION BOUND: Single compensation bound with per-bound source tracking
+//
+// Enables independent source tracking for min vs max:
+//   - min_amount might be explicit (employer stated "$80k minimum")
+//   - max_amount might be inferred (LLM estimated upper bound)
+// ════════════════════════════════════════════════════════════════════
+message CompensationBound {
+  MonetaryAmount amount = 1 [(buf.validate.field).required = true];
+  CompensationSource source = 2 [(buf.validate.field).enum.defined_only = true];
+  optional int32 confidence_percent = 3 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+
+  option (buf.validate.message).cel = {
+    id: "compensation_bound.confidence_only_when_estimated",
+    message: "confidence_percent only valid for estimated compensation",
+    expression: "!has(this.confidence_percent) || this.source >= 2"
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// COMPENSATION: Compensation information with per-bound source tracking
+//
+// Each bound has independent source/confidence:
+//   - Employer states "$100k minimum" → min has EMPLOYER_PROVIDED source
+//   - LLM infers max of $150k → max has ESTIMATED_BY_NOHIKI + confidence
+//
+// Field semantics:
+//   - fixed: Single salary (not a range)
+//   - min/max: Salary range (mutually exclusive with fixed)
+// ════════════════════════════════════════════════════════════════════
+message Compensation {
+  optional CompensationBound fixed_amount = 1;
+  optional CompensationBound min_amount = 2;
+  optional CompensationBound max_amount = 3;
+  PaymentFrequency frequency = 4 [(buf.validate.field).enum.defined_only = true];
+
+  option (buf.validate.message).cel = {
+    id: "compensation.fixed_or_range",
+    message: "specify either fixed_amount OR min/max range, not both",
+    expression: "!(has(this.fixed_amount) && (has(this.min_amount) || has(this.max_amount)))"
+  };
+
+  option (buf.validate.message).cel = {
+    id: "compensation.range_valid",
+    message: "max_amount must be >= min_amount",
+    expression: "!has(this.min_amount) || !has(this.max_amount) || this.max_amount.amount.minor_units >= this.min_amount.amount.minor_units"
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILLS SET: Common skills array with validation
+// ════════════════════════════════════════════════════════════════════
+message SkillsSet {
+  repeated string required_skills = 1 [
+    (buf.validate.field).repeated = {max_items: 50, unique: true},
+    (buf.validate.field).repeated.items.string.max_len = 100
+  ];
+  repeated string preferred_skills = 2 [
+    (buf.validate.field).repeated = {max_items: 50, unique: true},
+    (buf.validate.field).repeated.items.string.max_len = 100
+  ];
+  repeated string disqualifying_skills = 3 [
+    (buf.validate.field).repeated = {max_items: 20, unique: true},
+    (buf.validate.field).repeated.items.string.max_len = 100
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// COMPANY INFO: Company information for job listings
+// ════════════════════════════════════════════════════════════════════
+message CompanyInfo {
+  string industry = 1 [(buf.validate.field).string.max_len = 100];
+  string company_size = 2 [(buf.validate.field).string.max_len = 50];
+  optional double rating = 3 [(buf.validate.field).double = {gte: 0, lte: 5}];
+  string description = 4 [(buf.validate.field).string.max_len = 1000];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// FEATURE IMPORTANCE PREFS: User-specified importance weights for L2R scoring
+//
+// These inform the ML model how much each factor matters to THIS specific user.
+// Values are 0-100 where 0=not important, 100=critically important.
+// Unset fields default to neutral (50) during scoring.
+//
+// Why this exists:
+// - Global L2R model learns weights from aggregate user behavior
+// - User preferences capture STATED importance (what user says matters)
+// - Model learns to weight stated vs revealed preferences optimally
+// - Enables personalization without per-user model training
+// ════════════════════════════════════════════════════════════════════
+message FeatureImportancePrefs {
+  // How important is skill/keyword matching? (default: 50)
+  optional int32 skill_match_importance = 1 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+
+  // How important is location match? (default: 50)
+  optional int32 location_importance = 2 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+
+  // How important is work arrangement (remote/hybrid/onsite)? (default: 50)
+  optional int32 work_arrangement_importance = 3 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+
+  // How important is experience/seniority alignment? (default: 50)
+  optional int32 experience_importance = 4 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+
+  // How important is salary/compensation? (default: 50)
+  optional int32 salary_importance = 5 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+
+  // How important is job recency (newer postings)? (default: 50)
+  optional int32 recency_importance = 6 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// EXPERIENCE PREFERENCE: User's experience level and seniority preferences
+// Groups experience_years with seniority_levels for cohesive domain modeling
+// ════════════════════════════════════════════════════════════════════
+message ExperiencePreference {
+  // User's years of experience (for experience alignment scoring)
+  optional int32 experience_years = 1 [(buf.validate.field).int32 = {gte: 0, lte: 50}];
+
+  // Preferred seniority levels (e.g., user wants SENIOR or STAFF roles)
+  repeated SeniorityLevel seniority_levels = 2 [
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SALARY PREFERENCE: User's compensation expectations
+// ════════════════════════════════════════════════════════════════════
+message SalaryPreference {
+  // Minimum acceptable salary (annualized)
+  optional MonetaryAmount min_salary = 1;
+
+  // Target/ideal salary (annualized)
+  optional MonetaryAmount target_salary = 2;
+
+  // Preferred payment frequency (for display, not filtering)
+  PaymentFrequency preferred_frequency = 3 [(buf.validate.field).enum.defined_only = true];
+
+  option (buf.validate.message).cel = {
+    id: "salary_pref.min_lt_target",
+    message: "target_salary must be >= min_salary",
+    expression: "!has(this.min_salary) || !has(this.target_salary) || this.target_salary.minor_units >= this.min_salary.minor_units"
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// COMMUTE PREFERENCES: User's commute constraints and preferences
+// Foundation for OpenRouteService isochrone-based matching
+// ════════════════════════════════════════════════════════════════════
+message CommutePreferences {
+  // Transit modes user is willing to use. Empty = all modes acceptable
+  repeated TransitMode acceptable_modes = 1 [
+    (buf.validate.field).repeated = {max_items: 7, unique: true},
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+
+  // Maximum acceptable one-way commute time in minutes (for isochrone queries)
+  optional int32 max_commute_minutes = 2 [
+    (buf.validate.field).int32 = {gte: 5, lte: 180}
+  ];
+
+  // Ideal/preferred max commute time in minutes (jobs within get full score)
+  optional int32 ideal_commute_minutes = 3 [
+    (buf.validate.field).int32 = {gte: 5, lte: 120}
+  ];
+
+  option (buf.validate.message).cel = {
+    id: "commute.ideal_lte_max",
+    message: "ideal_commute_minutes must be <= max_commute_minutes",
+    expression: "!has(this.ideal_commute_minutes) || !has(this.max_commute_minutes) || this.ideal_commute_minutes <= this.max_commute_minutes"
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// NOTIFICATION DESTINATION TYPES: Atomic, validated destination info
+// ════════════════════════════════════════════════════════════════════
+
+// Email destination with validated email address
+message EmailDestination {
+  string email_address = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.email = true
+  ];
+
+  // Optional display name for email recipient
+  optional string display_name = 2 [(buf.validate.field).string.max_len = 100];
+}
+
+// SMS destination with E.164 phone number
+message SmsDestination {
+  // Phone number in E.164 format (e.g., +14155552671)
+  string phone_number = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.pattern = "^\\+[1-9]\\d{6,14}$"
+  ];
+}
+
+// Web push notification destination (browser)
+message WebPushDestination {
+  // Browser push token from service worker
+  string device_token = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+
+  // Optional device/browser name for user reference
+  string device_name = 2 [(buf.validate.field).string.max_len = 100];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// NOTIFICATION METHOD: A configured notification channel with destination
+// ════════════════════════════════════════════════════════════════════
+message NotificationMethod {
+  option (buf.validate.message).cel = {
+    id: "notification_method.channel_matches_destination",
+    message: "channel must match the selected destination",
+    expression: "(this.channel == 1 && has(this.email)) || (this.channel == 2 && has(this.sms)) || (this.channel == 3 && has(this.web_push))"
+  };
+  // Whether this notification method is currently enabled
+  bool enabled = 1;
+
+  // The notification channel type
+  NotificationChannel channel = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  // Destination based on channel type (exactly one must be set)
+  oneof destination {
+    option (buf.validate.oneof).required = true;
+    EmailDestination email = 10;
+    SmsDestination sms = 11;
+    WebPushDestination web_push = 12;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SEARCH PREF NOTIFICATION CONFIG: Per-preference notification settings
+//
+// Embedded in SearchPrefSnapshot for ECST compliance.
+// Allows different notification configurations per job search category.
+// Example: DevOps search → instant email; Programming search → daily digest
+// ════════════════════════════════════════════════════════════════════
+message SearchPrefNotificationConfig {
+  // Notification threshold (0-100) - only notify if fit_score >= threshold
+  int32 threshold = 1 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+
+  // How often to send notifications for this preference
+  NotificationFrequency frequency = 2 [(buf.validate.field).enum.defined_only = true];
+
+  // Enabled notification methods with their destinations
+  // Multiple methods can be enabled (e.g., email AND push)
+  repeated NotificationMethod methods = 3;
+
+  // Quiet hours - don't send instant notifications during these times
+  // Times in HH:MM format (24-hour), interpreted in user's timezone
+  optional string quiet_hours_start = 10 [(buf.validate.field).string.pattern = "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"];
+  optional string quiet_hours_end = 11 [(buf.validate.field).string.pattern = "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"];
+
+  // IANA timezone for quiet hours (e.g., "America/New_York")
+  optional string timezone = 12 [(buf.validate.field).string.max_len = 50];
+}

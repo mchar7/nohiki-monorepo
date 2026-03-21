@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package nohiki.common.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/enums.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// ERROR DETAILS: Detailed error information for gRPC responses
+// ════════════════════════════════════════════════════════════════════
+message ErrorDetails {
+  ErrorCode code = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+  string message = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 1000}
+  ];
+  optional string target = 3 [(buf.validate.field).string.max_len = 255];
+  repeated FieldError field_errors = 4;
+  map<string, string> metadata = 5 [
+    (buf.validate.field).map.max_pairs = 20,
+    (buf.validate.field).map.keys.string.max_len = 64,
+    (buf.validate.field).map.values.string.max_len = 500
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// FIELD ERROR: Individual field validation error
+// ════════════════════════════════════════════════════════════════════
+message FieldError {
+  string field = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 255}
+  ];
+  string message = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+  optional string code = 3 [(buf.validate.field).string.max_len = 50];
+}

@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package nohiki.common.v1;
+
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+
+// Time range for filtering by date ranges
+message TimeRange {
+  option (buf.validate.message).cel = {
+    id: "time_range.ordered",
+    message: "start_time must not be after end_time",
+    expression: "this.start_time <= this.end_time"
+  };
+  google.protobuf.Timestamp start_time = 1 [(buf.validate.field).required = true];  // Inclusive
+  google.protobuf.Timestamp end_time = 2 [(buf.validate.field).required = true];    // Inclusive
+}
+
+// Common timestamp fields for entities
+message EntityTimestamps {
+  option (buf.validate.message).cel = {
+    id: "entity_timestamps.ordered",
+    message: "created_at must not be after updated_at",
+    expression: "this.created_at <= this.updated_at"
+  };
+  google.protobuf.Timestamp created_at = 1 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp updated_at = 2 [(buf.validate.field).required = true];
+}

@@ -1,0 +1,418 @@
+syntax = "proto3";
+
+package nohiki.common.v1;
+
+// ════════════════════════════════════════════════════════════════════
+// JOB BOARD SOURCE: Third-party sites we discover listings from
+// ════════════════════════════════════════════════════════════════════
+enum JobBoardSource {
+  JOB_BOARD_SOURCE_UNSPECIFIED = 0;
+  JOB_BOARD_SOURCE_INDEED = 1;
+  JOB_BOARD_SOURCE_LINKEDIN = 2;
+  JOB_BOARD_SOURCE_ZIPRECRUITER = 3;
+  JOB_BOARD_SOURCE_GOOGLE = 4;
+  JOB_BOARD_SOURCE_GLASSDOOR = 5;
+  JOB_BOARD_SOURCE_BAYT = 6;
+  JOB_BOARD_SOURCE_NAUKRI = 7;
+  JOB_BOARD_SOURCE_COMPANY_WEBSITE = 8;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// WORK ARRANGEMENT: How/where work is performed
+// ════════════════════════════════════════════════════════════════════
+enum WorkArrangement {
+  WORK_ARRANGEMENT_UNSPECIFIED = 0;
+  WORK_ARRANGEMENT_ON_SITE = 1;
+  WORK_ARRANGEMENT_HYBRID = 2;
+  WORK_ARRANGEMENT_REMOTE = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// EMPLOYMENT TERM: Duration/commitment type
+// ════════════════════════════════════════════════════════════════════
+enum EmploymentTerm {
+  EMPLOYMENT_TERM_UNSPECIFIED = 0;
+  EMPLOYMENT_TERM_FULL_TIME = 1;
+  EMPLOYMENT_TERM_PART_TIME = 2;
+  EMPLOYMENT_TERM_CONTRACT = 3;
+  EMPLOYMENT_TERM_INTERNSHIP = 4;
+  EMPLOYMENT_TERM_TEMPORARY = 5;
+  EMPLOYMENT_TERM_SEASONAL = 6;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SENIORITY LEVEL: Career stage/experience tier
+// ════════════════════════════════════════════════════════════════════
+enum SeniorityLevel {
+  SENIORITY_LEVEL_UNSPECIFIED = 0;
+  SENIORITY_LEVEL_INTERN = 1;
+  SENIORITY_LEVEL_ENTRY = 2;
+  SENIORITY_LEVEL_MID = 3;
+  SENIORITY_LEVEL_SENIOR = 4;
+  SENIORITY_LEVEL_STAFF = 5;
+  SENIORITY_LEVEL_MANAGER = 6;
+  SENIORITY_LEVEL_DIRECTOR = 7;
+  SENIORITY_LEVEL_VP = 8;
+  SENIORITY_LEVEL_EXECUTIVE = 9;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CORRELATION STATUS: User's interaction state with a job correlation
+// ════════════════════════════════════════════════════════════════════
+enum CorrelationStatus {
+  CORRELATION_STATUS_UNSPECIFIED = 0;
+  CORRELATION_STATUS_PENDING = 1;
+  CORRELATION_STATUS_EVALUATED = 2;
+  CORRELATION_STATUS_VIEWED = 3;
+  CORRELATION_STATUS_SAVED = 4;
+  CORRELATION_STATUS_APPLIED = 5;
+  CORRELATION_STATUS_DISMISSED = 6;
+  CORRELATION_STATUS_EXPIRED = 7;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// USER FEEDBACK: User's feedback on a job correlation quality
+// ════════════════════════════════════════════════════════════════════
+enum UserFeedback {
+  USER_FEEDBACK_UNSPECIFIED = 0;
+  USER_FEEDBACK_POSITIVE = 1;      // User liked the match
+  USER_FEEDBACK_NEGATIVE = 2;      // User disliked the match
+  USER_FEEDBACK_IRRELEVANT = 3;    // Job was not relevant to search
+  USER_FEEDBACK_WRONG_LOCATION = 4; // Location mismatch
+  USER_FEEDBACK_WRONG_LEVEL = 5;   // Seniority/experience mismatch
+  USER_FEEDBACK_WRONG_SALARY = 6;  // Compensation mismatch
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LISTING STATUS: Job listing lifecycle status
+// ════════════════════════════════════════════════════════════════════
+enum ListingStatus {
+  LISTING_STATUS_UNSPECIFIED = 0;
+  LISTING_STATUS_ACTIVE = 1;
+  LISTING_STATUS_STALE = 2;
+  LISTING_STATUS_EXPIRED = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DOCUMENT CATEGORY: Type of user-uploaded document
+// ════════════════════════════════════════════════════════════════════
+enum DocumentCategory {
+  DOCUMENT_CATEGORY_UNSPECIFIED = 0;
+  DOCUMENT_CATEGORY_RESUME = 1;
+  DOCUMENT_CATEGORY_COVER_LETTER = 2;
+  DOCUMENT_CATEGORY_PORTFOLIO = 3;
+  DOCUMENT_CATEGORY_OTHER = 99;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CONTENT TYPE: MIME content types Nohiki accepts
+// ════════════════════════════════════════════════════════════════════
+enum ContentType {
+  CONTENT_TYPE_UNSPECIFIED = 0;
+  CONTENT_TYPE_PDF = 1;
+  CONTENT_TYPE_DOCX = 2;
+  CONTENT_TYPE_DOC = 3;
+  CONTENT_TYPE_RTF = 4;
+  CONTENT_TYPE_TXT = 5;
+  CONTENT_TYPE_MARKDOWN = 6;
+  CONTENT_TYPE_HTML = 7;
+  CONTENT_TYPE_PNG = 10;
+  CONTENT_TYPE_JPEG = 11;
+  CONTENT_TYPE_WEBP = 12;
+  CONTENT_TYPE_JSON = 20;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// NOTIFICATION CHANNEL: How notifications are delivered
+// ════════════════════════════════════════════════════════════════════
+enum NotificationChannel {
+  NOTIFICATION_CHANNEL_UNSPECIFIED = 0;
+  NOTIFICATION_CHANNEL_EMAIL = 1;
+  NOTIFICATION_CHANNEL_SMS = 2;
+  NOTIFICATION_CHANNEL_PUSH_WEB = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// NOTIFICATION FREQUENCY: How often to batch/send notifications
+// ════════════════════════════════════════════════════════════════════
+enum NotificationFrequency {
+  NOTIFICATION_FREQUENCY_UNSPECIFIED = 0;
+  NOTIFICATION_FREQUENCY_INSTANT = 1;       // Send immediately when triggered
+  NOTIFICATION_FREQUENCY_HOURLY = 2;        // Batch into hourly digest
+  NOTIFICATION_FREQUENCY_DAILY = 3;         // Batch into daily digest
+  NOTIFICATION_FREQUENCY_WEEKLY = 4;        // Batch into weekly digest
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ACCESS SCOPE: Who can view a resource
+// ════════════════════════════════════════════════════════════════════
+enum AccessScope {
+  ACCESS_SCOPE_UNSPECIFIED = 0;
+  ACCESS_SCOPE_PUBLIC = 1;
+  ACCESS_SCOPE_PRIVATE = 2;
+  ACCESS_SCOPE_SYSTEM = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INITIATION METHOD: How an action was triggered
+// ════════════════════════════════════════════════════════════════════
+enum InitiationMethod {
+  INITIATION_METHOD_UNSPECIFIED = 0;
+  INITIATION_METHOD_USER_MANUAL = 1;
+  INITIATION_METHOD_SYSTEM_SCHEDULED = 2;
+  INITIATION_METHOD_SYSTEM_EVENT = 3;
+  INITIATION_METHOD_SYSTEM_RETRY = 4;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PROCESSING STATUS: General async operation status
+// ════════════════════════════════════════════════════════════════════
+enum ProcessingStatus {
+  PROCESSING_STATUS_UNSPECIFIED = 0;
+  PROCESSING_STATUS_PENDING = 1;
+  PROCESSING_STATUS_IN_PROGRESS = 2;
+  PROCESSING_STATUS_COMPLETED = 3;
+  PROCESSING_STATUS_FAILED = 4;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LOCATION TYPE: Physical vs Remote context
+// ════════════════════════════════════════════════════════════════════
+enum LocationType {
+  LOCATION_TYPE_UNSPECIFIED = 0;
+  LOCATION_TYPE_PHYSICAL = 1;
+  LOCATION_TYPE_REMOTE = 2;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LOCATION PRECISION: How precise are the coordinates?
+// CRITICAL: Must be SET by geocoder and READ by scorer
+// ════════════════════════════════════════════════════════════════════
+enum LocationPrecision {
+  LOCATION_PRECISION_UNSPECIFIED = 0;
+  LOCATION_PRECISION_EXACT_ADDRESS = 1;   // Street address level (~10m accuracy)
+  LOCATION_PRECISION_NEIGHBORHOOD = 2;    // Neighborhood/district (~500m accuracy)
+  LOCATION_PRECISION_CITY_CENTER = 3;     // City centroid (~5km accuracy)
+  LOCATION_PRECISION_REGION_CENTER = 4;   // State/province centroid (~50km accuracy)
+  LOCATION_PRECISION_COUNTRY_CENTER = 5;  // Country centroid (~500km accuracy)
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LOCATION SOURCE: Where did the location data come from?
+// Enables trust/confidence scoring and future Pelias integration
+// ════════════════════════════════════════════════════════════════════
+enum LocationSource {
+  LOCATION_SOURCE_UNSPECIFIED = 0;
+  LOCATION_SOURCE_USER_INPUT = 1;         // User explicitly provided coordinates
+  LOCATION_SOURCE_GEOCODED_NOMINATIM = 2; // Geocoded via Nominatim (OSM)
+  LOCATION_SOURCE_GEOCODED_GOOGLE = 3;    // Geocoded via Google Maps API
+  LOCATION_SOURCE_COMPANY_LOOKUP = 4;     // Company HQ lookup (future: Pelias)
+  LOCATION_SOURCE_JOB_POSTING = 5;        // Extracted/parsed from job posting
+  LOCATION_SOURCE_IP_GEOLOCATION = 6;     // IP-based geolocation (low confidence)
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TRANSIT MODE: Transportation methods for commute calculation
+// Foundation for OpenRouteService multi-modal routing
+// ════════════════════════════════════════════════════════════════════
+enum TransitMode {
+  TRANSIT_MODE_UNSPECIFIED = 0;
+  TRANSIT_MODE_DRIVING = 1;         // Personal vehicle
+  TRANSIT_MODE_PUBLIC_TRANSIT = 2;  // Bus, subway, light rail
+  TRANSIT_MODE_CYCLING = 3;         // Bicycle
+  TRANSIT_MODE_WALKING = 4;         // On foot
+  TRANSIT_MODE_RIDESHARE = 5;       // Taxi, Uber, Lyft
+  TRANSIT_MODE_TRAIN = 6;           // Commuter/regional rail
+  TRANSIT_MODE_FERRY = 7;           // Water ferry
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PAYMENT FREQUENCY: Compensation frequency
+// ════════════════════════════════════════════════════════════════════
+enum PaymentFrequency {
+  PAYMENT_FREQUENCY_UNSPECIFIED = 0;
+  PAYMENT_FREQUENCY_HOURLY = 1;
+  PAYMENT_FREQUENCY_DAILY = 2;
+  PAYMENT_FREQUENCY_WEEKLY = 3;
+  PAYMENT_FREQUENCY_BIWEEKLY = 4;
+  PAYMENT_FREQUENCY_MONTHLY = 5;
+  PAYMENT_FREQUENCY_ANNUALLY = 6;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// COMPENSATION SOURCE: Where compensation data came from
+// ════════════════════════════════════════════════════════════════════
+enum CompensationSource {
+  COMPENSATION_SOURCE_UNSPECIFIED = 0;
+  COMPENSATION_SOURCE_EMPLOYER_PROVIDED = 1;
+  COMPENSATION_SOURCE_ESTIMATED_BY_JOB_BOARD = 2;
+  COMPENSATION_SOURCE_ESTIMATED_BY_NOHIKI = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// EXPERIENCE SOURCE: Where experience requirement data came from
+// Mirrors CompensationSource pattern for consistent source tracking
+// ════════════════════════════════════════════════════════════════════
+enum ExperienceSource {
+  EXPERIENCE_SOURCE_UNSPECIFIED = 0;
+  EXPERIENCE_SOURCE_EMPLOYER_PROVIDED = 1;
+  EXPERIENCE_SOURCE_INFERRED_BY_NOHIKI = 2;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// COUNTRY CODE: ISO 3166-1 alpha-3 (supported countries)
+// ════════════════════════════════════════════════════════════════════
+enum CountryCode {
+  COUNTRY_CODE_UNSPECIFIED = 0;
+  COUNTRY_CODE_USA = 1;
+  COUNTRY_CODE_CAN = 2;
+  COUNTRY_CODE_GBR = 10;
+  COUNTRY_CODE_DEU = 11;
+  COUNTRY_CODE_FRA = 12;
+  COUNTRY_CODE_NLD = 13;
+  COUNTRY_CODE_IRL = 14;
+  COUNTRY_CODE_CHE = 15;
+  COUNTRY_CODE_AUS = 20;
+  COUNTRY_CODE_NZL = 21;
+  COUNTRY_CODE_SGP = 22;
+  COUNTRY_CODE_IND = 23;
+  COUNTRY_CODE_ARE = 30;
+  COUNTRY_CODE_ISR = 31;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CURRENCY CODE: ISO 4217 (supported currencies)
+// Aligned with supported CountryCode values for currency inference
+// ════════════════════════════════════════════════════════════════════
+enum CurrencyCode {
+  CURRENCY_CODE_UNSPECIFIED = 0;
+  CURRENCY_CODE_USD = 1;
+  CURRENCY_CODE_EUR = 2;
+  CURRENCY_CODE_GBP = 3;
+  CURRENCY_CODE_CAD = 4;
+  CURRENCY_CODE_AUD = 5;
+  CURRENCY_CODE_CHF = 6;
+  CURRENCY_CODE_NZD = 7;
+  CURRENCY_CODE_SGD = 8;
+  CURRENCY_CODE_INR = 9;
+  CURRENCY_CODE_AED = 10;
+  CURRENCY_CODE_ILS = 11;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SORT DIRECTION: Standard sorting
+// ════════════════════════════════════════════════════════════════════
+enum SortDirection {
+  SORT_DIRECTION_UNSPECIFIED = 0;
+  SORT_DIRECTION_ASC = 1;
+  SORT_DIRECTION_DESC = 2;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// RENDER OUTPUT FORMAT: Document rendering output types
+// ════════════════════════════════════════════════════════════════════
+enum RenderOutputFormat {
+  RENDER_OUTPUT_FORMAT_UNSPECIFIED = 0;
+  RENDER_OUTPUT_FORMAT_HTML = 1;
+  RENDER_OUTPUT_FORMAT_PDF = 2;
+  RENDER_OUTPUT_FORMAT_IMAGE = 3;
+  RENDER_OUTPUT_FORMAT_TEXT = 4;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// IMAGE OUTPUT FORMAT: Image rendering format options
+// ════════════════════════════════════════════════════════════════════
+enum ImageOutputFormat {
+  IMAGE_OUTPUT_FORMAT_UNSPECIFIED = 0;
+  IMAGE_OUTPUT_FORMAT_PNG = 1;
+  IMAGE_OUTPUT_FORMAT_JPEG = 2;
+  IMAGE_OUTPUT_FORMAT_WEBP = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// VALIDATION SEVERITY: Template/schema validation issue severity
+// ════════════════════════════════════════════════════════════════════
+enum ValidationSeverity {
+  VALIDATION_SEVERITY_UNSPECIFIED = 0;
+  VALIDATION_SEVERITY_ERROR = 1;
+  VALIDATION_SEVERITY_WARNING = 2;
+  VALIDATION_SEVERITY_INFO = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ERROR CODE: Standard gRPC error codes
+// ════════════════════════════════════════════════════════════════════
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_VALIDATION_ERROR = 1;
+  ERROR_CODE_NOT_FOUND = 2;
+  ERROR_CODE_PERMISSION_DENIED = 3;
+  ERROR_CODE_RATE_LIMITED = 4;
+  ERROR_CODE_INTERNAL_ERROR = 5;
+  ERROR_CODE_SERVICE_UNAVAILABLE = 6;
+  ERROR_CODE_TIMEOUT = 7;
+  ERROR_CODE_CONFLICT = 8;
+  ERROR_CODE_PRECONDITION_FAILED = 9;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DELIVERY FAILURE CAUSE: Notification delivery failure reasons
+// ════════════════════════════════════════════════════════════════════
+enum DeliveryFailureCause {
+  DELIVERY_FAILURE_CAUSE_UNSPECIFIED = 0;
+  DELIVERY_FAILURE_CAUSE_PROVIDER_NOT_FOUND = 1;
+  DELIVERY_FAILURE_CAUSE_PROVIDER_ERROR = 2;
+  DELIVERY_FAILURE_CAUSE_RATE_LIMITED = 3;
+  DELIVERY_FAILURE_CAUSE_INVALID_RECIPIENT = 4;
+  DELIVERY_FAILURE_CAUSE_TEMPLATE_ERROR = 5;
+  DELIVERY_FAILURE_CAUSE_NETWORK_ERROR = 6;
+  DELIVERY_FAILURE_CAUSE_AUTHENTICATION_ERROR = 7;
+  DELIVERY_FAILURE_CAUSE_UNEXPECTED_ERROR = 8;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SUBSCRIPTION TIER: User subscription level determining feature access
+// ════════════════════════════════════════════════════════════════════
+enum SubscriptionTier {
+  SUBSCRIPTION_TIER_UNSPECIFIED = 0;
+  SUBSCRIPTION_TIER_FREE = 1;        // Free tier with basic features
+  SUBSCRIPTION_TIER_BASIC = 2;       // Entry paid tier
+  SUBSCRIPTION_TIER_PRO = 3;         // Professional tier
+  SUBSCRIPTION_TIER_ENTERPRISE = 4;  // Enterprise tier with full access
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SUBSCRIPTION STATUS: Current state of user's subscription
+// ════════════════════════════════════════════════════════════════════
+enum SubscriptionStatus {
+  SUBSCRIPTION_STATUS_UNSPECIFIED = 0;
+  SUBSCRIPTION_STATUS_NONE = 1;         // No subscription (free tier)
+  SUBSCRIPTION_STATUS_TRIALING = 2;     // In trial period
+  SUBSCRIPTION_STATUS_ACTIVE = 3;       // Subscription is active and paid
+  SUBSCRIPTION_STATUS_PAST_DUE = 4;     // Payment failed, grace period
+  SUBSCRIPTION_STATUS_CANCELED = 5;     // User canceled, access until period end
+  SUBSCRIPTION_STATUS_EXPIRED = 6;      // Subscription fully ended
+  SUBSCRIPTION_STATUS_PAUSED = 7;       // Subscription paused by user
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BILLING PROVIDER: Third-party payment processor
+// ════════════════════════════════════════════════════════════════════
+enum BillingProvider {
+  BILLING_PROVIDER_UNSPECIFIED = 0;
+  BILLING_PROVIDER_NONE = 1;       // No billing (free tier)
+  BILLING_PROVIDER_STRIPE = 2;     // Stripe payments
+  BILLING_PROVIDER_PADDLE = 3;     // Paddle payments (merchant of record)
+  BILLING_PROVIDER_MANUAL = 4;     // Manual/enterprise billing
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DISCOVERY FREQUENCY: How often job discovery runs for a user
+// ════════════════════════════════════════════════════════════════════
+enum DiscoveryFrequency {
+  DISCOVERY_FREQUENCY_UNSPECIFIED = 0;
+  DISCOVERY_FREQUENCY_DAILY = 1;       // Once per day
+  DISCOVERY_FREQUENCY_TWICE_DAILY = 2; // Twice per day (12h intervals)
+  DISCOVERY_FREQUENCY_HOURLY = 3;      // Every hour (premium)
+  DISCOVERY_FREQUENCY_REALTIME = 4;    // Near real-time (enterprise)
+}
