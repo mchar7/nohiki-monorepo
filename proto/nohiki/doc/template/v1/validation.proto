@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package nohiki.doc.template.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/enums.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// VALIDATION ISSUE: A single validation issue found in a template
+// ════════════════════════════════════════════════════════════════════
+message ValidationIssue {
+  string path = 1 [(buf.validate.field).string.max_len = 255];
+  string keyword = 2 [(buf.validate.field).string.max_len = 100];
+  string message = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 1000}
+  ];
+  nohiki.common.v1.ValidationSeverity severity = 4 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+  optional int32 line = 5 [(buf.validate.field).int32.gte = 1];
+  optional int32 column = 6 [(buf.validate.field).int32.gte = 1];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// VALIDATION REQUEST: Request to validate template content
+// ════════════════════════════════════════════════════════════════════
+message ValidationRequest {
+  string template = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.min_len = 1
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// VALIDATION RESPONSE: Response containing validation results
+// ════════════════════════════════════════════════════════════════════
+message ValidationResponse {
+  bool valid = 1;
+  repeated ValidationIssue issues = 2;
+}

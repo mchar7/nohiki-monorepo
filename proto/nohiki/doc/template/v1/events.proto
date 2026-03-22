@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package nohiki.doc.template.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/snapshots.proto";
+import "nohiki/doc/template/v1/snapshots.proto";
+import "google/protobuf/struct.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// DOCUMENT RENDER REQUESTED: Published when template rendering is requested
+// Topic: doc-template.cmd.render-requested.v1
+// ECST: Includes template content and optional schema for validation
+// ════════════════════════════════════════════════════════════════════
+message DocumentRenderRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string template_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  optional string template_version = 3 [
+    (buf.validate.field).string.pattern = "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+  ];
+  optional string template_name = 10 [(buf.validate.field).string.max_len = 255];
+
+  google.protobuf.Struct data = 4;
+
+  nohiki.common.v1.RenderOutputFormat output_format = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  optional string schema_id = 6 [(buf.validate.field).string.uuid = true];
+  optional string schema_version = 7 [
+    (buf.validate.field).string.pattern = "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+  ];
+
+  bool include_text_alt = 8;
+  optional ImageOptions image_options = 9;
+
+  // ECST: Layout content embedded - no DB lookup needed
+  optional string template_content = 20 [
+    (buf.validate.field).string = {min_len: 10, max_len: 1048576}
+  ];
+
+  // ECST: Schema snapshot for validation - embedded directly, no external lookup
+  optional nohiki.common.v1.SchemaSnapshot validation_schema = 21;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DOCUMENT RENDER COMPLETED: Published when template rendering is completed
+// Topic: doc-template.fct.render-completed.v1
+// Storage: Rendered content stored in S3, referenced by storage_key
+// ════════════════════════════════════════════════════════════════════
+message DocumentRenderCompleted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string template_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string template_name = 3 [(buf.validate.field).string.max_len = 255];
+  string template_version = 4 [(buf.validate.field).string.max_len = 50];
+
+  // S3 storage key for rendered document
+  // Format: rendered/{correlation_id}/{template_id}.{ext}
+  string storage_key = 5 [(buf.validate.field).string.max_len = 512];
+
+  // MIME type of the rendered content (e.g., application/pdf, image/png)
+  string content_type = 6 [(buf.validate.field).string.max_len = 100];
+
+  // Plain text alternative for accessibility/search indexing
+  optional string text_alternative = 7;
+
+  // Processing result with status and any error details
+  nohiki.common.v1.OperationOutcome result = 8 [(buf.validate.field).required = true];
+
+  int64 file_size = 9;
+
+  // SHA-256 content hash for integrity verification (hex-encoded, 64 chars)
+  string content_hash = 10;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// IMAGE OPTIONS: Options for image rendering
+// ════════════════════════════════════════════════════════════════════
+message ImageOptions {
+  nohiki.common.v1.ImageOutputFormat format = 1 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+  int32 width = 2 [(buf.validate.field).int32 = {gte: 100, lte: 4000}];
+  int32 height = 3 [(buf.validate.field).int32 = {gte: 100, lte: 4000}];
+  int32 quality = 4 [(buf.validate.field).int32 = {gte: 1, lte: 100}];
+  bool clip = 5;
+  bool omit_background = 6;
+  bool optimize_for_speed = 7;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TEMPLATE CREATED: Published when a template is created
+// Topic: doc-template.cdc.template-created.v1
+// ECST: Includes full DocumentTemplateSnapshot for consumer projections
+// ════════════════════════════════════════════════════════════════════
+message TemplateCreated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string template_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  DocumentTemplateSnapshot template_snapshot = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TEMPLATE UPDATED: Published when a template version is added
+// Topic: doc-template.cdc.template-updated.v1
+// ECST: Includes full DocumentTemplateSnapshot for consumer projections
+// ════════════════════════════════════════════════════════════════════
+message TemplateUpdated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string template_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  DocumentTemplateSnapshot template_snapshot = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TEMPLATE DELETED: Published when a template is deleted
+// Topic: doc-template.cdc.template-deleted.v1
+// ════════════════════════════════════════════════════════════════════
+message TemplateDeleted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string template_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}

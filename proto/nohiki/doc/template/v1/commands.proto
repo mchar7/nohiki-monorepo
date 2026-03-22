@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package nohiki.doc.template.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/events.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// TEMPLATE CREATE REQUESTED: Command to create a new template family
+// Topic: doc-template.cmd.create-requested.v1
+// Publisher: bff-service
+// Consumer: doc-template-service
+// ════════════════════════════════════════════════════════════════════
+message TemplateCreateRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string name = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 100}
+  ];
+
+  optional string namespace = 5 [
+    (buf.validate.field).string = {max_len: 50}
+  ];
+
+  string template_content = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 1048576}
+  ];
+
+  optional string description = 7 [
+    (buf.validate.field).string.max_len = 1000
+  ];
+
+  nohiki.common.v1.AccessScope visibility = 8 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  // JSON Schema for LLM output structure - embedded directly in template
+  optional string content_schema_json = 9 [
+    (buf.validate.field).string.max_len = 1048576
+  ];
+
+  string display_name = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 255}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TEMPLATE VERSION ADD REQUESTED: Command to add a new version to a template
+// Topic: doc-template.cmd.version-add-requested.v1
+// Publisher: bff-service
+// Consumer: doc-template-service
+// ════════════════════════════════════════════════════════════════════
+message TemplateVersionAddRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string template_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string version = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+  ];
+
+  string template_content = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 1048576}
+  ];
+
+  optional string description = 7 [
+    (buf.validate.field).string.max_len = 1000
+  ];
+
+  // JSON Schema for LLM output structure - embedded directly in template
+  optional string content_schema_json = 8 [
+    (buf.validate.field).string.max_len = 1048576
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TEMPLATE DELETE REQUESTED: Command to delete a template family
+// Topic: doc-template.cmd.delete-requested.v1
+// Publisher: bff-service
+// Consumer: doc-template-service
+// ════════════════════════════════════════════════════════════════════
+message TemplateDeleteRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string template_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}

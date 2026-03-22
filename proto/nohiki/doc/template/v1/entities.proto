@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package nohiki.doc.template.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// DOCUMENT TEMPLATE: Jinja2 template for document generation
+// ════════════════════════════════════════════════════════════════════
+message DocumentTemplate {
+  // === IDENTIFICATION ===
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string name = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 255}
+  ];
+
+  optional string description = 3 [(buf.validate.field).string.max_len = 1000];
+
+  // === STATUS ===
+  bool is_active = 10;
+
+  // === TIMESTAMPS ===
+  google.protobuf.Timestamp created_at = 20 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp updated_at = 21 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DOCUMENT TEMPLATE VERSION: Specific version of a template
+// ════════════════════════════════════════════════════════════════════
+message DocumentTemplateVersion {
+  // === IDENTIFICATION ===
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string template_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string version = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.pattern = "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+  ];
+
+  // === CONTENT ===
+  string template_content = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 1048576}
+  ];
+
+  optional string content_schema_json = 11 [(buf.validate.field).string.max_len = 1048576];
+
+  // === TIMESTAMPS ===
+  google.protobuf.Timestamp created_at = 20 [(buf.validate.field).required = true];
+}
