@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package nohiki.doc.process.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/doc/process/v1/enums.proto";
+
+// ECST snapshot for processed document content.
+// Contains all extracted data for downstream consumers.
+message ProcessedDocumentSnapshot {
+  string content_id = 1 [(buf.validate.field).string = {min_len: 1, max_len: 255}];
+
+  string content_hash = 2 [(buf.validate.field).string.len = 64];
+
+  ProcessingLevel level = 3 [
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  string markdown = 4 [(buf.validate.field).string.max_len = 10000000];
+
+  optional string html = 5 [(buf.validate.field).string.max_len = 10000000];
+
+  int32 table_count = 6 [(buf.validate.field).int32 = {gte: 0}];
+
+  int32 image_count = 7 [(buf.validate.field).int32 = {gte: 0}];
+
+  optional string processed_storage_key = 8 [(buf.validate.field).string.max_len = 500];
+
+  optional string serialized_document = 9 [(buf.validate.field).string.max_len = 50000000];
+}

@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package nohiki.doc.process.v1;
+
+// Processing level determines which extraction capabilities are enabled.
+// Higher levels include all capabilities of lower levels.
+enum ProcessingLevel {
+  PROCESSING_LEVEL_UNSPECIFIED = 0;
+  PROCESSING_LEVEL_BASIC = 1;
+  PROCESSING_LEVEL_TABLES = 2;
+  PROCESSING_LEVEL_OCR = 3;
+  PROCESSING_LEVEL_IMAGES = 4;
+  PROCESSING_LEVEL_FULL = 5;
+}

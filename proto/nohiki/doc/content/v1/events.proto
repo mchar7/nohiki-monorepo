@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package nohiki.doc.content.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/job/listing/v1/snapshots.proto";
+import "nohiki/user/pref/v1/snapshots.proto";
+import "nohiki/doc/content/v1/entities.proto";
+import "google/protobuf/struct.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// CONTENT GENERATION REQUESTED: Published when content generation is requested
+// Topic: doc-content.cmd.generation-requested.v1
+// Contains ECST dependencies - NO gRPC calls needed during processing
+// ════════════════════════════════════════════════════════════════════
+message ContentGenerationRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  // Core identification
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  TriggerType trigger_type = 4 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  // ECST: All dependencies embedded - NO gRPC needed (LLM via events)
+  ContentGenerationContext context = 10 [(buf.validate.field).required = true];
+
+  // ECST: Pref snapshot for notification config pass-through
+  nohiki.user.pref.v1.SearchPrefSnapshot pref_snapshot = 11 [(buf.validate.field).required = true];
+  nohiki.common.v1.RenderOutputFormat output_format = 12 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+  string template_id = 13 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  optional string template_name = 14 [(buf.validate.field).string.max_len = 255];
+  string job_correlation_id = 15 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CONTENT GENERATION COMPLETED: Published when content generation is completed
+// Topic: doc-content.fct.generation-completed.v1
+// ECST: Includes snapshots so consumers have all context
+// ════════════════════════════════════════════════════════════════════
+message ContentGenerationCompleted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string listing_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // Layout version ID that provided the content schema
+  string template_version_id = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string generated_content_json = 6 [(buf.validate.field).string.max_len = 100000];
+
+  // S3 storage key for retrieving the full generated content
+  string storage_key = 9 [(buf.validate.field).string.max_len = 500];
+
+  google.protobuf.Struct generation_metadata = 7;
+
+  nohiki.common.v1.OperationOutcome result = 8 [(buf.validate.field).required = true];
+
+  // ECST snapshots - passed through from ContentGenerationRequested
+  nohiki.job.listing.v1.ListingNotificationSnapshot listing_snapshot = 20;
+  nohiki.user.pref.v1.SearchPrefSnapshot pref_snapshot = 21;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CONTENT GENERATION FAILED: Published when content generation fails
+// Topic: doc-content.fct.generation-failed.v1
+// ════════════════════════════════════════════════════════════════════
+message ContentGenerationFailed {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string listing_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // Layout version ID that provided the content schema
+  string template_version_id = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  nohiki.common.v1.OperationOutcome result = 6 [(buf.validate.field).required = true];
+
+  // ECST: Pref snapshot for notification config (even on failure, may need to notify)
+  nohiki.user.pref.v1.SearchPrefSnapshot pref_snapshot = 20;
+}

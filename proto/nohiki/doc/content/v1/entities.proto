@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package nohiki.doc.content.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/snapshots.proto";
+import "nohiki/doc/template/v1/snapshots.proto";
+import "nohiki/job/listing/v1/snapshots.proto";
+import "google/protobuf/struct.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// CONTENT GENERATION CONTEXT: All data needed for content generation
+// Implements Event-Carried State Transfer (ECST) to eliminate gRPC calls
+// ════════════════════════════════════════════════════════════════════
+message ContentGenerationContext {
+  // REQUIRED - Listing context for content generation
+  nohiki.job.listing.v1.ListingSnapshot listing = 1 [(buf.validate.field).required = true];
+
+  // REQUIRED - Layout with embedded content_schema for LLM structured output
+  nohiki.doc.template.v1.DocumentTemplateVersionSnapshot template_version = 2 [(buf.validate.field).required = true];
+
+  // OPTIONAL - Example output uploads (storage_key only - fetch content from S3)
+  repeated nohiki.common.v1.UploadReference example_uploads = 3 [(buf.validate.field).repeated.max_items = 20];
+
+  // OPTIONAL - Additional context uploads (storage_key only)
+  repeated nohiki.common.v1.UploadReference context_uploads = 4 [(buf.validate.field).repeated.max_items = 20];
+
+  // OPTIONAL - Custom preferences from user pref
+  google.protobuf.Struct user_preferences = 6;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TRIGGER TYPE: How content generation was initiated
+// ════════════════════════════════════════════════════════════════════
+enum TriggerType {
+  TRIGGER_TYPE_UNSPECIFIED = 0;
+  TRIGGER_TYPE_AUTOMATIC = 1;
+  TRIGGER_TYPE_MANUAL = 2;
+}
