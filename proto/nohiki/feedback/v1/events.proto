@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package nohiki.feedback.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/feedback/v1/types.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// ASYMMETRIC FEEDBACK CREATED: Published when user provides score feedback
+// Topic: feedback.cdc.asymmetric-feedback-created.v1
+// ════════════════════════════════════════════════════════════════════
+message AsymmetricFeedbackCreated {
+  AsymmetricFeedback feedback = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.EventMetadata metadata = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// MANUAL ADJUSTMENT CREATED: Published when user submits score adjustment
+// Topic: feedback.cdc.manual-adjustment-created.v1
+// ════════════════════════════════════════════════════════════════════
+message ManualAdjustmentCreated {
+  ManualScoreAdjustment adjustment = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.EventMetadata metadata = 10 [(buf.validate.field).required = true];
+}

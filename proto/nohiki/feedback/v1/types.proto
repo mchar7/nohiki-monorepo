@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package nohiki.feedback.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// SCORE FEEDBACK TYPE: Asymmetric feedback indicating score accuracy
+// ════════════════════════════════════════════════════════════════════
+enum ScoreFeedbackType {
+  SCORE_FEEDBACK_TYPE_UNSPECIFIED = 0;
+  SCORE_FEEDBACK_TYPE_GOOD = 1;      // Score accurately reflects match quality
+  SCORE_FEEDBACK_TYPE_TOO_HIGH = 2;  // Score overstates match (should be lower)
+  SCORE_FEEDBACK_TYPE_TOO_LOW = 3;   // Score understates match (should be higher)
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ASYMMETRIC FEEDBACK: User feedback on correlation score accuracy
+// Captures direction of scoring error (good, too high, too low)
+// ════════════════════════════════════════════════════════════════════
+message AsymmetricFeedback {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string correlation_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  ScoreFeedbackType feedback_type = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+  google.protobuf.Timestamp created_at = 5 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// MANUAL SCORE ADJUSTMENT: User-provided score override with reasoning
+// Provides richer signal than asymmetric feedback by specifying exact score
+// ════════════════════════════════════════════════════════════════════
+message ManualScoreAdjustment {
+  option (buf.validate.message).cel = {
+    id: "adjustment.score_must_differ",
+    message: "adjusted_score must differ from original_score",
+    expression: "this.adjusted_score != this.original_score"
+  };
+
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string correlation_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  double original_score = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).double = {gte: 0.0, lte: 1.0}
+  ];
+  double adjusted_score = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).double = {gte: 0.0, lte: 1.0}
+  ];
+  string reasoning = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 1000}
+  ];
+  google.protobuf.Timestamp created_at = 7 [(buf.validate.field).required = true];
+}

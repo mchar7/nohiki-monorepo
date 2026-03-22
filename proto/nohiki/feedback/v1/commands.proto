@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package nohiki.feedback.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/feedback/v1/types.proto";
+import "nohiki/common/v1/events.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// SCORE FEEDBACK REQUESTED: Command to submit asymmetric score feedback
+// Topic: feedback.cmd.score-feedback-requested.v1
+// ════════════════════════════════════════════════════════════════════
+message ScoreFeedbackRequested {
+  nohiki.common.v1.EventMetadata metadata = 10 [(buf.validate.field).required = true];
+  string request_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string correlation_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  ScoreFeedbackType feedback_type = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SCORE ADJUSTMENT REQUESTED: Command to submit manual score adjustment
+// Topic: feedback.cmd.score-adjustment-requested.v1
+// ════════════════════════════════════════════════════════════════════
+message ScoreAdjustmentRequested {
+  nohiki.common.v1.EventMetadata metadata = 10 [(buf.validate.field).required = true];
+  option (buf.validate.message).cel = {
+    id: "request.score_must_differ",
+    message: "adjusted_score must differ from original_score",
+    expression: "this.adjusted_score != this.original_score"
+  };
+
+  string request_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string correlation_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  double original_score = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).double = {gte: 0.0, lte: 1.0}
+  ];
+  double adjusted_score = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).double = {gte: 0.0, lte: 1.0}
+  ];
+  string reasoning = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 1000}
+  ];
+}
