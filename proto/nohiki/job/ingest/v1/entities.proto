@@ -1,0 +1,295 @@
+syntax = "proto3";
+
+package nohiki.job.ingest.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/types.proto";
+import "nohiki/ml/v1/types.proto";
+import "nohiki/skill/v1/entities.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// INGEST PROCESSING STATUS: Job ingest pipeline processing state
+// ════════════════════════════════════════════════════════════════════
+enum IngestProcessingStatus {
+  INGEST_PROCESSING_STATUS_UNSPECIFIED = 0;
+  INGEST_PROCESSING_STATUS_PENDING = 1;
+  INGEST_PROCESSING_STATUS_PROCESSING = 2;
+  INGEST_PROCESSING_STATUS_ACCEPTED = 3;
+  INGEST_PROCESSING_STATUS_REJECTED = 4;
+  INGEST_PROCESSING_STATUS_FAILED = 5;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// EXPERIENCE YEARS BOUND: Single experience bound with per-bound source tracking
+//
+// Enables independent source tracking for min vs max:
+//   - min_years might be explicit ("5+ years required")
+//   - max_years might be inferred (LLM estimated reasonable ceiling)
+//
+// Year value semantics:
+//   - 0 = explicitly zero years (entry-level, no experience required)
+//   - N > 0 = N years required
+// ════════════════════════════════════════════════════════════════════
+message ExperienceYearsBound {
+  uint32 years = 1 [(buf.validate.field).uint32.lte = 50];
+  nohiki.common.v1.ExperienceSource source = 2 [(buf.validate.field).enum.defined_only = true];
+  optional int32 confidence_percent = 3 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+
+  option (buf.validate.message).cel = {
+    id: "experience_bound.confidence_only_when_inferred",
+    message: "confidence_percent only valid for inferred experience",
+    expression: "!has(this.confidence_percent) || this.source == 2"
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// EXPERIENCE REQUIREMENT: Experience requirements with per-bound source tracking
+//
+// Each bound has independent source/confidence:
+//   - Employer states "5+ years" → min has EMPLOYER_PROVIDED source
+//   - LLM infers max of 10 years → max has INFERRED_BY_NOHIKI + confidence
+//
+// Field semantics:
+//   - Field not set (None) = data not available / not specified for that bound
+// ════════════════════════════════════════════════════════════════════
+message ExperienceRequirement {
+  optional ExperienceYearsBound min_years = 1;
+  optional ExperienceYearsBound max_years = 2;
+
+  option (buf.validate.message).cel = {
+    id: "experience.range_valid",
+    message: "max_years must be >= min_years when both are specified",
+    expression: "!has(this.min_years) || !has(this.max_years) || this.max_years.years >= this.min_years.years"
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SCRAPED LISTING: Raw job listing from scraping
+// ════════════════════════════════════════════════════════════════════
+message ScrapedListing {
+  // === IDENTIFICATION ===
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string listing_url = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 2048, uri: true}
+  ];
+
+  nohiki.common.v1.JobBoardSource source = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  optional string external_id = 4 [(buf.validate.field).string.max_len = 255];
+
+  // === RAW DATA ===
+  string raw_data_json = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 100000}
+  ];
+
+  // === PROCESSING STATE ===
+  IngestProcessingStatus processing_status = 20 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  optional string stored_listing_id = 21 [(buf.validate.field).string.uuid = true];
+
+  // === TIMESTAMPS ===
+  google.protobuf.Timestamp discovered_at = 30 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp created_at = 31 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INGESTION QUERY: Profile-agnostic scrape query
+// ════════════════════════════════════════════════════════════════════
+message IngestionQuery {
+  string query_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // Search parameters (REQUIRED for scraping)
+  repeated string search_keywords = 2 [
+    (buf.validate.field).repeated = {min_items: 1, max_items: 20},
+    (buf.validate.field).repeated.items.string = {min_len: 2, max_len: 100}
+  ];
+
+  repeated nohiki.common.v1.Location locations = 3;
+
+  repeated nohiki.common.v1.WorkArrangement work_arrangements = 4 [
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+
+  repeated nohiki.common.v1.JobBoardSource sources = 6 [
+    (buf.validate.field).repeated = {min_items: 1},
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+
+  // Backend-controlled parameters (NOT user-configurable)
+  int32 hours_old = 7 [(buf.validate.field).int32 = {gte: 1, lte: 168}];
+  int32 results_wanted = 8 [(buf.validate.field).int32 = {gte: 1, lte: 100}];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DISCOVERED LISTING: Typed output from job-ingest-discovery-service.
+// ════════════════════════════════════════════════════════════════════
+message DiscoveredListing {
+  // === IDENTIFICATION ===
+  string listing_url = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 2048, uri: true}
+  ];
+
+  nohiki.common.v1.JobBoardSource source = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  optional string external_id = 3 [(buf.validate.field).string.max_len = 255];
+
+  // === RAW SCRAPED DATA ===
+  string title = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+
+  string company_name = 11 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+  string description = 12 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 200, max_len: 50000}
+  ];
+  string location_raw = 13 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+
+  // Raw skills as scraped (before canonicalization)
+  repeated string raw_skills = 14 [
+    (buf.validate.field).repeated.max_items = 100,
+    (buf.validate.field).repeated.items.string.max_len = 200
+  ];
+
+  // Optional scraped compensation (from job board)
+  optional nohiki.common.v1.Compensation compensation = 15;
+
+  // === URLs ===
+  optional string apply_url = 20 [(buf.validate.field).string = {max_len: 2048}];
+  optional string company_url = 21 [(buf.validate.field).string = {max_len: 2048}];
+  optional string company_logo_url = 22 [(buf.validate.field).string = {max_len: 2048}];
+
+  // === TIMESTAMPS ===
+  google.protobuf.Timestamp discovered_timestamp = 30 [(buf.validate.field).required = true];
+  optional google.protobuf.Timestamp posted_timestamp = 31;
+
+  // === DEDUPLICATION ===
+  string content_hash = 40 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.len = 64
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// STORED LISTING: Enriched listing ready for storage
+// Output from job-ingest-enrichment-service after LLM processing
+// ════════════════════════════════════════════════════════════════════
+message StoredListing {
+  // === PASS-THROUGH FROM DISCOVERED ===
+  string listing_url = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 2048}
+  ];
+
+  nohiki.common.v1.JobBoardSource source = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  optional string external_id = 3 [(buf.validate.field).string.max_len = 255];
+
+  // === CLEANED/ENRICHED FIELDS ===
+  string title = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+
+  string company_name = 11 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+  string description = 12 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 200, max_len: 50000}
+  ];
+
+  // Canonical post-enrichment location; raw scrape lives only on DiscoveredListing.
+  nohiki.common.v1.Location location = 14 [(buf.validate.field).required = true];
+
+  // === CLASSIFICATIONS ===
+  nohiki.common.v1.WorkArrangement work_arrangement = 20 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  nohiki.common.v1.EmploymentTerm employment_term = 21 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  // === EXPERIENCE (with source tracking) ===
+  optional ExperienceRequirement experience = 22;
+
+  // Seniority level derived from experience at runtime - NOT stored
+  // Use derive_seniority_level(min_years, manifest) for L2R features
+  nohiki.common.v1.SeniorityLevel seniority_level = 23 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  string language = 24 [(buf.validate.field).string = {min_len: 2, max_len: 5}]; // IETF BCP 47 language tag (e.g. "en", "fr-CA", "zh-CN")
+
+  // === SKILLS ===
+  repeated nohiki.skill.v1.JobSkillRequirement skill_requirements = 30 [
+    (buf.validate.field).repeated.max_items = 100
+  ];
+
+  // Aggregated skills embedding
+  nohiki.ml.v1.EmbeddingVector skills_embedding = 33 [(buf.validate.field).required = true];
+
+  // Title embedding for L2R scoring
+  nohiki.ml.v1.EmbeddingVector title_embedding = 34 [(buf.validate.field).required = true];
+
+  // Retrieval embeddings (MUVERA + Sparse + ColBERT)
+  repeated nohiki.ml.v1.EmbeddingVector retrieval_embeddings = 35 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).repeated = {min_items: 1, max_items: 4}
+  ];
+
+  // === COMPENSATION (REQUIRED from LLM) ===
+  nohiki.common.v1.Compensation compensation = 40 [
+    (buf.validate.field).required = true
+  ];
+
+  // === URLs ===
+  optional string apply_url = 50 [(buf.validate.field).string = {max_len: 2048}];
+  optional string company_url = 51 [(buf.validate.field).string = {max_len: 2048}];
+  optional string company_logo_url = 52 [(buf.validate.field).string = {max_len: 2048}];
+
+  // === TIMESTAMPS ===
+  google.protobuf.Timestamp discovered_timestamp = 60 [(buf.validate.field).required = true];
+  optional google.protobuf.Timestamp posted_timestamp = 61;
+  google.protobuf.Timestamp stored_timestamp = 62 [(buf.validate.field).required = true];
+
+  // === METADATA ===
+  string content_hash = 70 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.len = 64
+  ];
+
+  int32 version = 71 [(buf.validate.field).int32.gte = 1];
+}

@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package nohiki.job.correlation.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/timestamps.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// CORRELATION SNAPSHOT: Full state of a correlation for ECST pattern
+// ════════════════════════════════════════════════════════════════════
+message CorrelationSnapshot {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string pref_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string listing_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  int32 fit_score = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32 = {gte: 0, lte: 100}
+  ];
+
+  nohiki.common.v1.CorrelationStatus status = 11 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  map<string, int32> score_breakdown = 20 [
+    (buf.validate.field).map.max_pairs = 20,
+    (buf.validate.field).map.keys.string.max_len = 64
+  ];
+
+  nohiki.common.v1.EntityTimestamps timestamps = 30;
+}

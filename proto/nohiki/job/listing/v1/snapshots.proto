@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package nohiki.job.listing.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/types.proto";
+import "nohiki/ml/v1/types.proto";
+import "nohiki/skill/v1/entities.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// LISTING SNAPSHOT: Full state of a listing carried inline on ECST events.
+// ════════════════════════════════════════════════════════════════════
+message ListingSnapshot {
+  // REQUIRED - Core identification fields (1-9)
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string listing_url = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 2048}
+  ];
+  nohiki.common.v1.JobBoardSource source = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  // REQUIRED - Primary data fields (10-19)
+  string title = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+  string company_name = 11 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+  string description = 12 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 200, max_len: 50000}
+  ];
+  // Canonical post-enrichment location; raw scrape lives only on DiscoveredListing.
+  nohiki.common.v1.Location location = 14 [(buf.validate.field).required = true];
+  optional string company_logo_url = 15 [(buf.validate.field).string = {max_len: 2048}];
+
+  // OPTIONAL - Secondary data fields (20-29)
+  nohiki.common.v1.WorkArrangement work_arrangement = 20 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+  nohiki.common.v1.SeniorityLevel seniority_level = 21 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+  repeated string required_skills = 22 [(buf.validate.field).repeated.max_items = 100];
+  string language = 24 [(buf.validate.field).string = {min_len: 2, max_len: 5}]; // IETF BCP 47 language tag (e.g. "en", "fr-CA", "zh-CN")
+
+  // OPTIONAL - Experience and compensation (30-39)
+  optional int32 experience_years_min = 30 [(buf.validate.field).int32.gte = 0];
+  optional int32 experience_years_max = 31 [(buf.validate.field).int32.gte = 0];
+  optional nohiki.common.v1.Compensation compensation = 32;
+
+  // REQUIRED - Timestamps (40-49)
+  google.protobuf.Timestamp posted_at = 40;
+  google.protobuf.Timestamp discovered_at = 41 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp processed_at = 42;
+  google.protobuf.Timestamp created_at = 43;
+  google.protobuf.Timestamp updated_at = 44;
+
+  // Versioning (50-59)
+  int32 version = 50 [(buf.validate.field).int32.gte = 1];
+  string raw_content_hash = 51 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.len = 64
+  ];
+
+  // Skill canonicalization data (60-69)
+  repeated nohiki.skill.v1.JobSkillRequirement skill_requirements = 60 [
+    (buf.validate.field).repeated.max_items = 100
+  ];
+  nohiki.ml.v1.EmbeddingVector skills_embedding = 61 [(buf.validate.field).required = true];
+  nohiki.ml.v1.EmbeddingVector title_embedding = 62 [(buf.validate.field).required = true];
+  string collection_version = 63 [
+    (buf.validate.field).string = {min_len: 2, max_len: 10, pattern: "^v[0-9]+$"}
+  ];
+
+  // Retrieval embeddings (MUVERA + Sparse + ColBERT)
+  repeated nohiki.ml.v1.EmbeddingVector retrieval_embeddings = 64 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).repeated = {min_items: 1, max_items: 4}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LISTING NOTIFICATION SNAPSHOT: Minimal data needed for notifications
+// ════════════════════════════════════════════════════════════════════
+message ListingNotificationSnapshot {
+  // REQUIRED - Core identification
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string listing_url = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 2048}
+  ];
+
+  // REQUIRED - Display fields for notifications
+  string title = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+  string company_name = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+  // Canonical post-enrichment location; raw scrape lives only on DiscoveredListing.
+  nohiki.common.v1.Location location = 7 [(buf.validate.field).required = true];
+
+  // OPTIONAL - Additional context
+  google.protobuf.Timestamp posted_at = 6;
+}

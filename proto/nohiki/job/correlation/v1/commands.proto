@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package nohiki.job.correlation.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/operations.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// FEEDBACK TYPE: Type of user feedback on a correlation
+// ════════════════════════════════════════════════════════════════════
+enum FeedbackType {
+  FEEDBACK_TYPE_UNSPECIFIED = 0;
+  FEEDBACK_TYPE_VIEWED = 1;      // User viewed the job listing
+  FEEDBACK_TYPE_SAVED = 2;       // User saved the job for later
+  FEEDBACK_TYPE_APPLIED = 3;     // User applied to the job (strongest positive)
+  FEEDBACK_TYPE_DISMISSED = 4;   // User dismissed the job (negative)
+  FEEDBACK_TYPE_LIKED = 5;       // User explicitly liked the match
+  FEEDBACK_TYPE_DISLIKED = 6;    // User explicitly disliked the match
+}
+
+// ════════════════════════════════════════════════════════════════════
+// FEEDBACK RECORDED: Command to record user feedback on a correlation
+// Topic: job-correlation.cmd.feedback-recorded.v1
+// Publisher: bff-service
+// Consumer: job-correlation-evaluation-service
+// ════════════════════════════════════════════════════════════════════
+message FeedbackRecorded {
+  option (buf.validate.message).cel = {
+    id: "feedback_recorded_ids_required",
+    expression: "this.correlation_id != '' && this.user_id != ''",
+    message: "correlation_id and user_id are required"
+  };
+
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string correlation_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  FeedbackType feedback_type = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TRAINING EXPORT REQUESTED: Command to export training data for L2R
+// Topic: job-correlation.cmd.training-export-requested.v1
+// Publisher: bff-service (scheduled job or admin trigger)
+// Consumer: job-correlation-evaluation-service
+// ════════════════════════════════════════════════════════════════════
+message TrainingExportRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.CommandHeader command = 2 [(buf.validate.field).required = true];
+
+  // Optional date filters (ISO 8601 strings)
+  optional string min_date = 10 [(buf.validate.field).string.max_len = 20];
+  optional string max_date = 11 [(buf.validate.field).string.max_len = 20];
+
+  int32 limit = 12 [
+    (buf.validate.field).int32 = {gt: 0, lte: 100000}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TRAINING EXPORT RESULT: Success payload for training export callbacks
+// ════════════════════════════════════════════════════════════════════
+message TrainingExportResult {
+  int32 total_samples = 1 [(buf.validate.field).int32 = {gte: 0, lte: 100000}];
+  repeated TrainingSample samples = 2 [(buf.validate.field).repeated.max_items = 1000];
+  optional string s3_key = 3 [(buf.validate.field).string = {min_len: 1, max_len: 1024}];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TRAINING EXPORT CALLBACK: Async callback for training export requests
+// Topic: Dynamic (callback_topic from CommandHeader)
+// Publisher: job-correlation-evaluation-service
+// Consumer: ML training pipeline, bff-service
+// ════════════════════════════════════════════════════════════════════
+message TrainingExportCallback {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.CallbackHeader callback = 2 [(buf.validate.field).required = true];
+
+  oneof result {
+    option (buf.validate.oneof).required = true;
+    TrainingExportResult success = 20;
+    nohiki.common.v1.ErrorInfo error = 30;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// TRAINING SAMPLE: Single training sample for L2R model
+// ════════════════════════════════════════════════════════════════════
+message TrainingSample {
+  string correlation_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  float label = 2 [
+    (buf.validate.field).float = {gte: 0.0, lte: 5.0}
+  ];
+
+  repeated float features = 3 [(buf.validate.field).repeated.max_items = 4096];
+
+  // User ID for LambdaMART query grouping
+  string query_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}

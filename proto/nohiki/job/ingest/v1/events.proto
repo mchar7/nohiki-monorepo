@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package nohiki.job.ingest.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/types.proto";
+import "nohiki/job/ingest/v1/entities.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// LISTING DISCOVERED: Published when a raw job listing is discovered
+// Topic: job-ingest.fct.listing-discovered.v1
+// NOTE: Profile-agnostic - discovery publishes jobs without user/profile context
+// ════════════════════════════════════════════════════════════════════
+message ListingDiscovered {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  // Query that triggered this discovery (for correlation/debugging)
+  string query_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  nohiki.common.v1.ListingReference listing = 3 [(buf.validate.field).required = true];
+
+  // TYPED discovered listing data (replaces raw_listing_data_json)
+  DiscoveredListing discovered_data = 4 [(buf.validate.field).required = true];
+
+  google.protobuf.Timestamp discovered_at = 5 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INGESTION TRIGGERED: Published when it's time to discover jobs
+// Topic: discovery.cmd.ingestion-triggered.v1
+// NOTE: Contains NO pref_id, NO user_id - job discovery is profile-agnostic
+// ════════════════════════════════════════════════════════════════════
+message IngestionTriggered {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  IngestionQuery query = 2 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ENRICHMENT COMPLETED: Published when job processing/enrichment is done
+// Topic: job-ingest.fct.enrichment-completed.v1
+// NOTE: Profile-agnostic - no ProfileReference
+// ════════════════════════════════════════════════════════════════════
+message EnrichmentCompleted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.ListingReference listing = 2 [(buf.validate.field).required = true];
+
+  // TYPED enriched listing data (replaces processed_listing_json)
+  StoredListing stored_data = 3 [(buf.validate.field).required = true];
+
+  nohiki.common.v1.OperationOutcome result = 4 [(buf.validate.field).required = true];
+
+  // Internal listing ID assigned by storage service
+  string listing_id = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // LLM model used for enrichment
+  string llm_model_id = 6 [(buf.validate.field).string.max_len = 128];
+
+  // Collection version from manifest for embedding compatibility tracking
+  string collection_version = 7 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 2, max_len: 10, pattern: "^v[0-9]+$"}
+  ];
+
+  // Geocoded coordinates (if location was geocoded)
+  optional nohiki.common.v1.GeoCoordinates geocoded_coordinates = 22;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INGESTION QUERY CHANGED: Published when a discovery query is modified
+// Topic: discovery.fct.ingestion-query-changed.v1
+// ════════════════════════════════════════════════════════════════════
+message IngestionQueryChanged {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string query_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // Deduplication key
+  repeated string search_keywords = 3 [
+    (buf.validate.field).repeated = {max_items: 20, unique: true},
+    (buf.validate.field).repeated.items.string = {min_len: 1, max_len: 100}
+  ];
+  repeated nohiki.common.v1.Location locations = 4 [
+    (buf.validate.field).repeated.max_items = 20
+  ];
+
+  // Aggregated from all contributors (UNION)
+  repeated nohiki.common.v1.WorkArrangement work_arrangements = 5 [
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+  repeated nohiki.common.v1.JobBoardSource sources = 6 [
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+
+  // Scheduling parameters
+  int32 frequency_seconds = 7 [(buf.validate.field).int32.gte = 0];
+  bool is_active = 8;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INGESTION QUERY DELETED: Published when a discovery query is deleted
+// Topic: discovery.fct.ingestion-query-deleted.v1
+// ════════════════════════════════════════════════════════════════════
+message IngestionQueryDeleted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string query_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}

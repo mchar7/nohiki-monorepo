@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package nohiki.job.listing.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/job/ingest/v1/entities.proto";
+import "nohiki/job/listing/v1/snapshots.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// LISTING ACCEPTED: Published when a listing is accepted for enrichment
+// Topic: job-listing.fct.accepted.v1
+// NOTE: Profile-agnostic - no ProfileReference
+// ════════════════════════════════════════════════════════════════════
+message ListingAccepted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.ListingReference listing = 2 [(buf.validate.field).required = true];
+
+  // Typed discovered listing data (replaces raw_listing_data_json)
+  nohiki.job.ingest.v1.DiscoveredListing discovered_data = 3 [(buf.validate.field).required = true];
+
+  // Internal listing ID assigned by storage service
+  string listing_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  google.protobuf.Timestamp discovered_at = 5 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DUPLICATE DETECTED: Published when a raw listing is identified as duplicate
+// Topic: listings.fct.duplicate-detected.v1
+// NOTE: Profile-agnostic - no ProfileReference
+// ════════════════════════════════════════════════════════════════════
+message DuplicateDetected {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.ListingReference listing = 2 [(buf.validate.field).required = true];
+
+  string existing_listing_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  google.protobuf.Timestamp first_seen_at = 4 [(buf.validate.field).required = true];
+
+  // ECST: Embedded snapshot of the existing listing for downstream consumers
+  ListingSnapshot existing_listing_snapshot = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LISTING CREATED: Published when a listing is stored in the job store
+// Topic: listings.fct.listing-created.v1
+// NOTE: Profile-agnostic - no ProfileReference
+// ════════════════════════════════════════════════════════════════════
+message ListingCreated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.ListingReference listing = 2 [(buf.validate.field).required = true];
+
+  bool was_updated = 3;
+  nohiki.common.v1.ListingStatus listing_status = 4 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  map<string, string> store_metadata = 5 [
+    (buf.validate.field).map.max_pairs = 20,
+    (buf.validate.field).map.keys.string.max_len = 64,
+    (buf.validate.field).map.values.string.max_len = 500
+  ];
+
+  // ECST: Embedded snapshot for downstream consumers (e.g., job-matcher-service)
+  ListingSnapshot listing_snapshot = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LISTING UPDATED: Published when a listing is updated
+// Topic: listings.cdc.listing-updated.v1
+// ════════════════════════════════════════════════════════════════════
+message ListingUpdated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string listing_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // ECST: Embedded snapshot for downstream consumers
+  ListingSnapshot listing_snapshot = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// LISTING DELETED: Published when a listing is deleted (cache invalidation)
+// Topic: listings.cdc.listing-deleted.v1
+// ════════════════════════════════════════════════════════════════════
+message ListingDeleted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string listing_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}

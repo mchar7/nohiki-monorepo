@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package nohiki.job.listing.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/operations.proto";
+import "nohiki/job/listing/v1/snapshots.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// BACKFILL REQUESTED: Command to request recent listings for a new profile
+// Topic: job-listing.cmd.backfill-requested.v1
+// Publisher: job-correlation-evaluation-service
+// Consumer: job-storage-service
+// ════════════════════════════════════════════════════════════════════
+message BackfillRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.CommandHeader command = 2 [(buf.validate.field).required = true];
+
+  string pref_id = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 11 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // Backfill parameters
+  int32 max_listings = 12 [(buf.validate.field).int32 = {gt: 0, lte: 500}];
+  int32 since_days = 13 [(buf.validate.field).int32 = {gt: 0, lte: 90}];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BACKFILL RESULT: Success payload for backfill callbacks
+// ════════════════════════════════════════════════════════════════════
+message BackfillResult {
+  // ECST: Full listing snapshots for matching
+  repeated ListingSnapshot listings = 1 [(buf.validate.field).repeated.max_items = 100];
+
+  // Batch information for large backfills
+  int32 batch_number = 2;
+  int32 total_batches = 3;
+  bool is_final_batch = 4;
+  int32 total_listings = 5;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BACKFILL CALLBACK: Async callback for backfill requests
+// Topic: Dynamic (callback_topic from CommandHeader)
+// Publisher: job-storage-service
+// Consumer: job-correlation-evaluation-service
+// ════════════════════════════════════════════════════════════════════
+message BackfillCallback {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.CallbackHeader callback = 2 [(buf.validate.field).required = true];
+
+  string pref_id = 10 [(buf.validate.field).string.uuid = true];
+  string user_id = 11 [(buf.validate.field).string.uuid = true];
+
+  oneof result {
+    option (buf.validate.oneof).required = true;
+    BackfillResult success = 20;
+    nohiki.common.v1.ErrorInfo error = 30;
+  }
+}

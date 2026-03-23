@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package nohiki.job.correlation.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/snapshots.proto";
+import "nohiki/job/listing/v1/snapshots.proto";
+import "nohiki/user/pref/v1/snapshots.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// CORRELATION EVALUATED: Published when a job is matched to user prefs
+// Topic: candidates.fct.correlation-evaluated.v1
+// Contains ECST snapshots for notification-service and doc-tailor-service
+// ════════════════════════════════════════════════════════════════════
+// Stable human-facing factors used by the deterministic fit ranking formula.
+enum FitFactor {
+  FIT_FACTOR_UNSPECIFIED = 0;
+  FIT_FACTOR_ROLE_RELEVANCE = 1;
+  FIT_FACTOR_SKILLS = 2;
+  FIT_FACTOR_LOCATION = 3;
+  FIT_FACTOR_WORK_ARRANGEMENT = 4;
+  FIT_FACTOR_EXPERIENCE = 5;
+  FIT_FACTOR_SALARY = 6;
+  FIT_FACTOR_RECENCY = 7;
+}
+
+// One available factor's compatibility and weighted effect on the fit ranking index.
+message FitFactorContribution {
+  FitFactor factor = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+  double compatibility_score = 2 [(buf.validate.field).double = {gte: 0, lte: 100}];
+  uint32 importance = 3 [(buf.validate.field).uint32.lte = 100];
+  double contribution_points = 4 [(buf.validate.field).double = {finite: true, gte: -100, lte: 100}];
+}
+
+// Versioned explanation of the deterministic fit ranking index.
+message FitRankingBreakdown {
+  string method_version = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 64}
+  ];
+  repeated FitFactorContribution factors = 2 [(buf.validate.field).repeated = {min_items: 1, max_items: 7}];
+}
+
+message CorrelationEvaluated {
+  option (buf.validate.message).cel = {
+    id: "correlation_evaluated_id_required",
+    expression: "this.correlation_id != ''",
+    message: "correlation_id is required"
+  };
+
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string correlation_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  int32 fit_score = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32 = {gte: 0, lte: 100}
+  ];
+
+  nohiki.common.v1.CorrelationStatus correlation_status = 4 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  map<string, string> correlation_metadata = 5 [
+    (buf.validate.field).map.max_pairs = 20,
+    (buf.validate.field).map.keys.string.max_len = 64,
+    (buf.validate.field).map.values.string.max_len = 500
+  ];
+  optional FitRankingBreakdown fit_ranking_breakdown = 6;
+
+
+  // ECST: All consumer dependencies embedded - NO gRPC needed
+  nohiki.job.listing.v1.ListingNotificationSnapshot listing_snapshot = 10 [
+    (buf.validate.field).required = true
+  ];
+  nohiki.user.pref.v1.SearchPrefSnapshot pref_snapshot = 11 [
+    (buf.validate.field).required = true
+  ];
+
+  // Upload references for auto-tailoring (storage_key only, never content)
+  repeated nohiki.common.v1.UploadReference pref_uploads = 20;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CORRELATION BATCH COMPLETED: Published when matching batch is done
+// Topic: candidates.fct.correlation-batch-completed.v1
+// ════════════════════════════════════════════════════════════════════
+message CorrelationBatchCompleted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.PrefReference pref = 2 [(buf.validate.field).required = true];
+
+  string scrape_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  int32 total_listings_processed = 4 [(buf.validate.field).int32.gte = 0];
+  int32 correlations_created = 5 [(buf.validate.field).int32.gte = 0];
+  int32 listings_filtered = 6 [(buf.validate.field).int32.gte = 0];
+}

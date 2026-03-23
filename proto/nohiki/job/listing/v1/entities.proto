@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package nohiki.job.listing.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/types.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// LISTING: Canonical job listing - user-agnostic, from scraped sources
+// ════════════════════════════════════════════════════════════════════
+message Listing {
+  // === IDENTIFICATION ===
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string listing_url = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 2048, uri: true}
+  ];
+
+  nohiki.common.v1.JobBoardSource source = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  optional string external_id = 4 [(buf.validate.field).string.max_len = 255];
+
+  // === CORE DETAILS ===
+  string title = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+
+  string company_name = 11 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 500}
+  ];
+
+  string description = 12 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 200, max_len: 100000}
+  ];
+
+  // === CLASSIFICATION ===
+  nohiki.common.v1.Location location = 20 [(buf.validate.field).required = true];
+
+  nohiki.common.v1.WorkArrangement work_arrangement = 21 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  nohiki.common.v1.EmploymentTerm employment_term = 22 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  nohiki.common.v1.SeniorityLevel seniority_level = 23 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  string language = 25 [(buf.validate.field).string = {min_len: 2, max_len: 5}]; // IETF BCP 47 language tag (e.g. "en", "fr-CA", "zh-CN")
+
+  // === REQUIREMENTS ===
+  repeated string required_skills = 30 [
+    (buf.validate.field).repeated = {max_items: 100, unique: true},
+    (buf.validate.field).repeated.items.string.max_len = 100
+  ];
+
+  optional int32 min_experience_years = 31 [(buf.validate.field).int32.gte = 0];
+  optional int32 max_experience_years = 32 [(buf.validate.field).int32.gte = 0];
+
+  // === COMPENSATION ===
+  optional nohiki.common.v1.Compensation compensation = 40;
+
+  // === STATUS ===
+  nohiki.common.v1.ListingStatus status = 50 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  // === VERSIONING ===
+  uint32 version = 60 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).uint32.gte = 1
+  ];
+
+  // === TIMESTAMPS ===
+  optional google.protobuf.Timestamp posted_at = 70;
+  google.protobuf.Timestamp discovered_at = 71 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp created_at = 72 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp updated_at = 73 [(buf.validate.field).required = true];
+
+  // === CROSS-FIELD VALIDATION ===
+  option (buf.validate.message).cel = {
+    id: "listing.experience_range_valid",
+    message: "max_experience_years must be >= min_experience_years",
+    expression: "!has(this.min_experience_years) || !has(this.max_experience_years) || this.max_experience_years >= this.min_experience_years"
+  };
+}
