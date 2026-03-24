@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+package nohiki.ml.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/operations.proto";
+import "nohiki/ml/v1/types.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// EMBEDDING REQUESTED: Command to encode a document or profile
+// Topic: ml.cmd.embedding-requested.v1
+// Publisher: user-pref-service, job-ingest-enrichment-service
+// Consumer: ml-gateway-service
+// ════════════════════════════════════════════════════════════════════
+message EmbeddingRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.CommandHeader command = 2 [(buf.validate.field).required = true];
+
+  // Entity identification
+  string entity_id = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  EntityType entity_type = 11 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  // Content to encode
+  string text = 12 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 100000}
+  ];
+
+  // Collection version for this entity type (e.g., "v1")
+  // Combined with entity_type to determine Qdrant collection name
+  string collection_version = 13 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 2, max_len: 20}
+  ];
+
+  // Which embedding types to compute
+  repeated EmbeddingType requested_types = 14 [
+    (buf.validate.field).repeated = {min_items: 1, max_items: 5, unique: true},
+    (buf.validate.field).repeated.items.enum = {defined_only: true, not_in: [0]}
+  ];
+
+  // How to encode - document (AVG) vs query (SUM)
+  EncodingMode encoding_mode = 15 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  // Whether to publish vectors to Qdrant via Kafka sink
+  bool publish_to_index = 16;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// RERANK REQUESTED: Command to rerank documents for a query
+// Topic: ml.cmd.rerank-requested.v1
+// Publisher: job-correlation-evaluation-service
+// Consumer: ml-gateway-service
+// ════════════════════════════════════════════════════════════════════
+message RerankRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.CommandHeader command = 2 [(buf.validate.field).required = true];
+
+  // Query and documents to rerank
+  string query_text = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 100000}
+  ];
+  repeated RerankDocument documents = 11 [
+    (buf.validate.field).repeated = {min_items: 1, max_items: 1000}
+  ];
+
+  // Reranking parameters
+  int32 top_k = 12 [(buf.validate.field).int32 = {gt: 0, lte: 100}];
+
+  // Collection version for the entity type being reranked
+  string collection_version = 13 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 2, max_len: 20}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BATCH EMBEDDING REQUESTED: Command to encode multiple texts in one call
+// Topic: ml.cmd.batch-embedding-requested.v1
+// Publisher: skill-graph-service (3 items per skill: label/desc/alt_labels)
+// Consumer: ml-gateway-service
+//
+// All items share entity_type, collection_version, encoding_mode.
+// Item count is bounded by the selected provider's advertised batch capability.
+// ════════════════════════════════════════════════════════════════════
+message BatchEmbeddingRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.CommandHeader command = 2 [(buf.validate.field).required = true];
+
+  EntityType entity_type = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+  string collection_version = 11 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 2, max_len: 20}
+  ];
+  EncodingMode encoding_mode = 12 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  repeated BatchEmbeddingItem items = 20 [
+    (buf.validate.field).repeated = {min_items: 1, max_items: 768}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ML OPERATION TYPE: Enumeration of ML operation types for internal routing
+// ════════════════════════════════════════════════════════════════════
+enum MLOperationType {
+  ML_OPERATION_TYPE_UNSPECIFIED = 0;
+  ML_OPERATION_TYPE_EMBEDDING = 1;
+  ML_OPERATION_TYPE_RERANK = 2;
+  ML_OPERATION_TYPE_BATCH_EMBEDDING = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INTERNAL COMPUTE REQUEST: Gateway → Provider routing envelope
+// Topic: ml.sys.kubernetes-compute.v1, ml.sys.modal-compute.v1
+// Publisher: ml-gateway-service
+// Consumer: ml-compute-service (K8s), Modal functions
+//
+// This message wraps the original request and adds routing metadata.
+// ml-gateway-service is ROUTING ONLY - it selects provider and routes.
+// Routing info (callback_topic, operation_id) is read from the nested
+// payload's CommandHeader - no duplication needed at envelope level.
+// ════════════════════════════════════════════════════════════════════
+message InternalComputeRequest {
+  option (buf.validate.message).cel = {
+    id: "internal_compute_request.operation_matches_payload",
+    message: "operation_type must match the selected payload",
+    expression: "(this.operation_type == 1 && has(this.embedding_request)) || (this.operation_type == 2 && has(this.rerank_request)) || (this.operation_type == 3 && has(this.batch_embedding_request))"
+  };
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  // Operation type determines which payload field is populated
+  MLOperationType operation_type = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  // One of these will be populated based on operation_type
+  oneof payload {
+    option (buf.validate.oneof).required = true;
+    EmbeddingRequested embedding_request = 20;
+    RerankRequested rerank_request = 22;
+    BatchEmbeddingRequested batch_embedding_request = 24;
+  }
+
+  // Routing metadata from gateway
+  string selected_provider = 30 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 64}
+  ];
+  int32 retry_attempt = 31 [(buf.validate.field).int32 = {gte: 0, lte: 10}];
+}

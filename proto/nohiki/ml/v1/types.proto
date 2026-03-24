@@ -1,0 +1,238 @@
+syntax = "proto3";
+
+package nohiki.ml.v1;
+
+import "buf/validate/validate.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// ML ENTITY TYPE: Type of entity being encoded
+// ════════════════════════════════════════════════════════════════════
+enum EntityType {
+  ENTITY_TYPE_UNSPECIFIED = 0;
+  ENTITY_TYPE_JOB = 1;
+  ENTITY_TYPE_PROFILE = 2;
+  ENTITY_TYPE_SKILL = 3;
+  ENTITY_TYPE_OCCUPATION = 4;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// MULTI-VECTOR DATA: Inline multi-vector embeddings for Qdrant sink
+// Used for ColBERT-style late interaction (MaxSim scoring)
+// Dimension is NOT hardcoded - validated at runtime against manifest
+// ════════════════════════════════════════════════════════════════════
+message MultiVectorData {
+  option (buf.validate.message).cel = {
+    id: "multi_vector_data.shape",
+    message: "values length must equal num_tokens multiplied by token_dim",
+    expression: "size(this.values) == this.num_tokens * this.token_dim"
+  };
+  repeated float values = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).repeated = {min_items: 1, max_items: 1000000}
+  ];
+  int32 num_tokens = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32 = {gte: 1, lte: 1024}
+  ];
+  int32 token_dim = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32 = {gte: 1, lte: 1024}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SPARSE DATA: BM25-style keyword vector with term indices and weights
+// Used for hybrid search in Qdrant alongside MUVERA FDE
+// ════════════════════════════════════════════════════════════════════
+message SparseData {
+  repeated uint32 indices = 1 [
+    (buf.validate.field).repeated.max_items = 10000
+  ];
+  repeated float values = 2 [
+    (buf.validate.field).repeated.max_items = 10000
+  ];
+
+  option (buf.validate.message).cel = {
+    id: "sparse_data.matching_lengths",
+    message: "indices and values must have the same length",
+    expression: "size(this.indices) == size(this.values)"
+  };
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// RERANK DOCUMENT: Document submitted for reranking
+// ════════════════════════════════════════════════════════════════════
+message RerankDocument {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string text = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 100000}
+  ];
+  map<string, string> metadata = 3 [
+    (buf.validate.field).map.max_pairs = 20
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// RERANK RESULT ITEM: Single reranking result with score and rank
+// ════════════════════════════════════════════════════════════════════
+message RerankResultItem {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  float score = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).float = {gte: 0.0, lte: 1.0}
+  ];
+  int32 rank = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// COLLECTION VERSION REF: Reference to collection version for an entity type
+// Combined with EntityType to determine Qdrant collection name
+// ════════════════════════════════════════════════════════════════════
+message CollectionVersionRef {
+  EntityType entity_type = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+  string collection_version = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 2, max_len: 10, pattern: "^v[0-9]+$"}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// EMBEDDING TYPE: Type of embedding (dense, sparse, muvera, etc.)
+// ════════════════════════════════════════════════════════════════════
+enum EmbeddingType {
+  EMBEDDING_TYPE_UNSPECIFIED = 0;
+  EMBEDDING_TYPE_DENSE = 1;
+  EMBEDDING_TYPE_SPARSE = 2;
+  EMBEDDING_TYPE_MUVERA = 3;
+  EMBEDDING_TYPE_COLBERT = 4;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ENCODING MODE: How to encode - document (AVG) vs query (SUM)
+// Controls aggregation strategy in MUVERA and tokenization in ColBERT
+// ════════════════════════════════════════════════════════════════════
+enum EncodingMode {
+  ENCODING_MODE_UNSPECIFIED = 0;
+  ENCODING_MODE_DOCUMENT = 1;
+  ENCODING_MODE_QUERY = 2;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DENSE DATA: Flat float vector for dense embeddings
+// Used for both EMBEDDING_TYPE_DENSE (1024-dim) and
+// EMBEDDING_TYPE_MUVERA (8192-dim) - disambiguated by EmbeddingVector.embedding_type
+// ════════════════════════════════════════════════════════════════════
+message DenseData {
+  repeated float values = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).repeated = {min_items: 1, max_items: 32768}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// EMBEDDING VECTOR: Type-safe, self-describing embedding with semantic tag
+// Each instance carries exactly one embedding geometry in the oneof arm
+// ════════════════════════════════════════════════════════════════════
+message EmbeddingVector {
+  EmbeddingType embedding_type = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  oneof data {
+    DenseData dense = 10;
+    SparseData sparse = 11;
+    MultiVectorData multi_vector = 12;
+  }
+
+  string content_hash = 20 [
+    (buf.validate.field).string = {len: 64, pattern: "^[a-f0-9]+$"}
+  ];
+  string model_id = 21 [
+    (buf.validate.field).string.max_len = 128
+  ];
+  string collection_version = 22 [
+    (buf.validate.field).string = {max_len: 10, pattern: "^v[0-9]+$"}
+  ];
+
+  option (buf.validate.message).cel = {
+    id: "embedding_vector.type_data_consistency",
+    message: "embedding_type must match populated data field",
+    expression:
+      "(this.embedding_type == 1 && has(this.dense)) || "
+      "(this.embedding_type == 2 && has(this.sparse)) || "
+      "(this.embedding_type == 3 && has(this.dense)) || "
+      "(this.embedding_type == 4 && has(this.multi_vector))"
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BATCH EMBEDDING ITEM: Single text item within a batch request
+// point_id is the Qdrant point identifier. It is UUID-shaped for skill
+// embeddings (e.g. uuid5(namespace, "{skill_uuid}_{variant}")) but other
+// entity types may use different opaque-string forms — validation only
+// enforces a non-empty bounded string here.
+// entity_id is the canonical entity UUID (e.g. "{skill_uuid}").
+// Both are required so the compute worker can echo them without
+// recomputing the compound key from context fields.
+// ════════════════════════════════════════════════════════════════════
+message BatchEmbeddingItem {
+  string point_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 256}
+  ];
+  string entity_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string text = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 100000}
+  ];
+  map<string, string> item_attributes = 4 [
+    (buf.validate.field).map.max_pairs = 20,
+    (buf.validate.field).map.keys.string = {min_len: 1, max_len: 64},
+    (buf.validate.field).map.values.string.max_len = 256
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// BATCH EMBEDDING RESULT ITEM: Per-item result within a batch response
+// Mirrors EmbeddingCompleted fields scoped to a single item.
+// content_hash is SHA-256 hex of the embedded text (64 chars).
+// ════════════════════════════════════════════════════════════════════
+message BatchEmbeddingResultItem {
+  string point_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 256}
+  ];
+  string entity_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  repeated EmbeddingVector embeddings = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).repeated = {min_items: 1, max_items: 4}
+  ];
+  string content_hash = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {len: 64, pattern: "^[a-f0-9]+$"}
+  ];
+  map<string, string> item_attributes = 5 [
+    (buf.validate.field).map.max_pairs = 20
+  ];
+}
