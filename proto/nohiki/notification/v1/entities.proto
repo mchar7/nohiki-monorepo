@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package nohiki.notification.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/enums.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// NOTIFICATION: A notification to be delivered to a user
+// ════════════════════════════════════════════════════════════════════
+message Notification {
+  // === IDENTIFICATION ===
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  optional string user_id = 2 [(buf.validate.field).string.uuid = true];
+  optional string listing_id = 3 [(buf.validate.field).string.uuid = true];
+
+  // === DELIVERY ===
+  nohiki.common.v1.NotificationChannel channel = 10 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+
+  string recipient = 11 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 255}
+  ];
+
+  optional string subject = 12 [(buf.validate.field).string.max_len = 1000];
+
+  // === PROVIDER ===
+  optional string provider_name = 20 [(buf.validate.field).string.max_len = 255];
+  optional string provider_message_id = 21 [(buf.validate.field).string.max_len = 255];
+
+  // === SCHEDULING ===
+  int32 priority = 30 [(buf.validate.field).int32 = {gte: 0, lte: 10}];
+  optional google.protobuf.Timestamp scheduled_at = 31;
+  int32 retry_count = 32 [(buf.validate.field).int32 = {gte: 0, lte: 10}];
+
+  // === TIMESTAMPS ===
+  google.protobuf.Timestamp created_at = 40 [(buf.validate.field).required = true];
+  optional google.protobuf.Timestamp sent_at = 41;
+}

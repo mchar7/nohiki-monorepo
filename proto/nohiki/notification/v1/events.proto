@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package nohiki.notification.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/enums.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// NOTIFICATION SENT: Published when a notification is successfully sent
+// Topic: notifications.fct.notification-sent.v1
+// ════════════════════════════════════════════════════════════════════
+message NotificationSent {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string notification_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  optional string user_id = 3 [(buf.validate.field).string.uuid = true];
+  optional string listing_id = 4 [(buf.validate.field).string.uuid = true];
+
+  nohiki.common.v1.NotificationChannel channel = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  string recipient = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 255}
+  ];
+
+  optional string subject = 7 [(buf.validate.field).string.max_len = 1000];
+  optional string provider_name = 8 [(buf.validate.field).string.max_len = 255];
+  optional string provider_message_id = 9 [(buf.validate.field).string.max_len = 255];
+
+  google.protobuf.Timestamp sent_at = 10 [(buf.validate.field).required = true];
+  int32 retry_count = 11 [(buf.validate.field).int32 = {gte: 0, lte: 10}];
+  int32 priority = 12 [(buf.validate.field).int32.gte = 0];
+  optional google.protobuf.Timestamp scheduled_at = 13;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// NOTIFICATION FAILED: Published when a notification fails to send
+// Topic: notifications.fct.notification-failed.v1
+// ════════════════════════════════════════════════════════════════════
+message NotificationFailed {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string notification_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  optional string user_id = 3 [(buf.validate.field).string.uuid = true];
+  optional string listing_id = 4 [(buf.validate.field).string.uuid = true];
+
+  nohiki.common.v1.NotificationChannel channel = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  string recipient = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 255}
+  ];
+
+  optional string subject = 7 [(buf.validate.field).string.max_len = 1000];
+  optional string provider_name = 8 [(buf.validate.field).string.max_len = 255];
+
+  string error_message = 9 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 1000}
+  ];
+
+  nohiki.common.v1.DeliveryFailureCause failure_cause = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  int32 retry_count = 11 [(buf.validate.field).int32 = {gte: 0, lte: 10}];
+  bool will_retry = 12;
+  optional google.protobuf.Timestamp retry_at = 13;
+
+  google.protobuf.Timestamp failed_at = 14 [(buf.validate.field).required = true];
+  int32 priority = 15 [(buf.validate.field).int32.gte = 0];
+  optional google.protobuf.Timestamp scheduled_at = 16;
+}
