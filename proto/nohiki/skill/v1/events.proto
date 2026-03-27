@@ -1,0 +1,233 @@
+syntax = "proto3";
+
+package nohiki.skill.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/operations.proto";
+import "nohiki/ml/v1/types.proto";
+import "nohiki/skill/v1/entities.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL MENTION CREATED: Published when a skill mention is extracted
+// Topic: skill.fct.mention-created.v1
+// Producer: job-ingest-enrichment-service, user-pref-service
+// Consumer: skill-graph-service
+// ════════════════════════════════════════════════════════════════════
+message SkillMentionCreated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  SkillMention mention = 2 [(buf.validate.field).required = true];
+
+  optional CanonicalSkillMatch match = 3;
+}
+
+// NOTE: SkillEmbeddingCompleted was DELETED per embedding architecture refactor.
+// Use ml.v1.EmbeddingCompleted with entity_type=SKILL instead.
+// Topic: ml.fct.embedding-completed.v1
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL NORMALIZATION REQUEST/CALLBACK PATTERN
+// ════════════════════════════════════════════════════════════════════
+
+// Topic: skill.cmd.normalization-requested.v1
+// Producer: job-ingest-enrichment-service, user-pref-service
+// Consumer: skill-graph-service
+message SkillNormalizationRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.CommandHeader command = 2 [(buf.validate.field).required = true];
+
+  // Raw skill strings to normalize
+  repeated string raw_skills = 10 [
+    (buf.validate.field).repeated.max_items = 100,
+    (buf.validate.field).repeated.items.string = {min_len: 1, max_len: 200}
+  ];
+
+  // Job context for disambiguation
+  optional JobContext job_context = 11;
+
+  // Raw skills with extracted requirement levels
+  repeated RawSkillWithLevel raw_skills_with_levels = 12 [
+    (buf.validate.field).repeated.max_items = 100
+  ];
+
+  // Canonical skill UUIDs to resolve without raw-text matching
+  repeated string canonical_skill_ids = 13 [
+    (buf.validate.field).repeated.max_items = 100,
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL NORMALIZATION RESULT: Success payload for normalization callbacks
+// ════════════════════════════════════════════════════════════════════
+message SkillNormalizationResult {
+  // UUIDs of canonical skills that matched
+  repeated string canonical_skill_ids = 1 [
+    (buf.validate.field).repeated.max_items = 100,
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+
+  // Aggregated dense embedding (dimension from semantic representation manifest).
+  // Absent when no canonical skills were resolved during normalization.
+  nohiki.ml.v1.EmbeddingVector skills_embedding = 2;
+
+  // Detailed results for each input skill
+  repeated SkillNormalizationResultDetail results = 3 [
+    (buf.validate.field).repeated.max_items = 100
+  ];
+
+  // Whether LLM clarification is needed
+  bool requires_clarification = 4;
+
+  // Skills needing clarification (if requires_clarification = true)
+  repeated SkillClarificationNeeded clarifications = 5 [
+    (buf.validate.field).repeated.max_items = 100
+  ];
+
+  // Complete skill requirements with levels and is_required
+  repeated JobSkillRequirement skill_requirements = 6 [
+    (buf.validate.field).repeated.max_items = 100
+  ];
+
+  // Collection version for tracking which collection version was used
+  string collection_version = 7 [
+    (buf.validate.field).string = {min_len: 2, max_len: 20}
+  ];
+}
+
+// Topic: Dynamic (callback_topic from CommandHeader)
+// Producer: skill-graph-service
+// Consumer: Original requester (user-pref-service, job-ingest-enrichment-service)
+message SkillNormalizationCallback {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  nohiki.common.v1.CallbackHeader callback = 2 [(buf.validate.field).required = true];
+
+  oneof result {
+    option (buf.validate.oneof).required = true;
+    SkillNormalizationResult success = 20;
+    nohiki.common.v1.ErrorInfo error = 30;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ALIAS LEARNED: Published when a new alias is confirmed
+// Topic: skill.fct.alias-learned.v1
+// Producer: job-ingest-enrichment-service (after LLM confirmation)
+// Consumer: skill-graph-service
+// ════════════════════════════════════════════════════════════════════
+message AliasLearned {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string alias_text = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  string canonical_skill_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string canonical_skill_name = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  // Context in which alias was confirmed.
+  // Set to job's industry (lowercase, normalized) for context-aware resolution.
+  // NULL for universal aliases (e.g., "k8s" → "kubernetes" in any context).
+  optional string context_hint = 5 [(buf.validate.field).string.max_len = 100];
+
+  // Provenance
+  string source_job_id = 6 [(buf.validate.field).string.uuid = true];
+
+  string source = 7 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 50}
+  ];  // "llm_clarification", "user_feedback", "manual"
+
+  double confidence = 8 [(buf.validate.field).double = {gte: 0.0, lte: 1.0}];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL PROPOSED: Published when LLM proposes a new skill
+// Topic: skill.cmd.skill-proposed.v1
+// Producer: job-ingest-enrichment-service (when LLM proposes new skill)
+// Consumer: skill-graph-service
+// ════════════════════════════════════════════════════════════════════
+message SkillProposed {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [(buf.validate.field).string.uuid = true];
+
+  SkillProposal proposal = 3 [(buf.validate.field).required = true];
+
+  // Provenance
+  string source_job_id = 4 [(buf.validate.field).string.uuid = true];
+
+  string source = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 50}
+  ];  // "llm_extraction", "user_submission"
+
+  // Pre-computed embedding (to avoid re-encoding)
+  nohiki.ml.v1.EmbeddingVector embedding = 6;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL CREATED: Published when a new canonical skill is created
+// Topic: skill.fct.skill-created.v1
+// Producer: skill-graph-service
+// Consumer: bff-service, Qdrant sink
+// ════════════════════════════════════════════════════════════════════
+message SkillCreated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string skill_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  CanonicalSkill skill_snapshot = 3 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL RELATIONSHIP CREATED: Published when a skill relationship is created
+// Topic: skill.fct.relationship-created.v1
+// Producer: skill-graph-service
+// Consumer: bff-service
+// ════════════════════════════════════════════════════════════════════
+message SkillRelationshipCreated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  SkillRelationship relationship = 2 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL GRAPH SEEDED: Published when bootstrap seeding completes
+// Topic: skill.fct.skill-graph-seeded.v1
+// Publisher: bootstrap-skill-graph job (via skill-graph-service CLI)
+// Consumer: skill-graph-service
+//
+// Triggers skill-graph-service to initiate batch embedding for all
+// seeded skills via BatchEmbeddingRequested commands.
+// ════════════════════════════════════════════════════════════════════
+message SkillGraphSeeded {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string source_version = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 64}
+  ];
+  int32 skills_seeded = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gte = 0
+  ];
+  int32 aliases_seeded = 4 [
+    (buf.validate.field).int32.gte = 0
+  ];
+  int32 occupations_seeded = 5 [
+    (buf.validate.field).int32.gte = 0
+  ];
+}

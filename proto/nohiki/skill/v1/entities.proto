@@ -1,0 +1,487 @@
+syntax = "proto3";
+
+package nohiki.skill.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/ml/v1/types.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// ENUMS
+// ════════════════════════════════════════════════════════════════════
+
+// Match confidence level from deterministic resolution
+enum MatchConfidence {
+  MATCH_CONFIDENCE_UNSPECIFIED = 0;
+  MATCH_CONFIDENCE_CONFIDENT = 1;    // Exact, alias, or very high semantic (≥0.85)
+  MATCH_CONFIDENCE_AUTO_MATCH = 2;   // High semantic (0.75-0.85) or Jaccard (≥0.90)
+  MATCH_CONFIDENCE_UNCERTAIN = 3;    // Mid semantic (0.55-0.75), needs LLM clarification
+  MATCH_CONFIDENCE_NO_MATCH = 4;     // Low semantic (<0.55), suggest new skill
+}
+
+// User's declared skill proficiency level
+enum SkillProficiencyLevel {
+  SKILL_PROFICIENCY_LEVEL_UNSPECIFIED = 0;
+  SKILL_PROFICIENCY_LEVEL_BEGINNER = 1;      // < 1 year, learning
+  SKILL_PROFICIENCY_LEVEL_INTERMEDIATE = 2;  // 1-3 years, competent
+  SKILL_PROFICIENCY_LEVEL_ADVANCED = 3;      // 3-5 years, proficient
+  SKILL_PROFICIENCY_LEVEL_EXPERT = 4;        // 5+ years, deep expertise
+}
+
+// How the skill was obtained/verified
+enum SkillProvenance {
+  SKILL_PROVENANCE_UNSPECIFIED = 0;
+  SKILL_PROVENANCE_USER_DECLARED = 1;      // User explicitly stated (highest trust)
+  SKILL_PROVENANCE_USER_INFERRED = 2;      // Inferred/extracted from uploaded user documents (e.g., resume, CV)
+  SKILL_PROVENANCE_JOB_EXTRACTED = 3;      // Extracted from job listing
+  SKILL_PROVENANCE_INFERRED = 4;           // Inferred from context
+}
+
+// Type of relationship between skills
+enum SkillRelationshipType {
+  SKILL_RELATIONSHIP_TYPE_UNSPECIFIED = 0;
+  SKILL_RELATIONSHIP_TYPE_PARENT_OF = 1;     // Hierarchical containment
+  SKILL_RELATIONSHIP_TYPE_ALIAS_OF = 2;      // Exact equivalence
+  SKILL_RELATIONSHIP_TYPE_RELATED_TO = 3;    // Conceptually related
+  SKILL_RELATIONSHIP_TYPE_COMPETES_WITH = 4; // Alternative technologies
+  SKILL_RELATIONSHIP_TYPE_REQUIRES = 5;      // Prerequisite
+  SKILL_RELATIONSHIP_TYPE_SUPERSEDES = 6;    // Deprecated by
+}
+
+// Source taxonomy for canonical skills
+enum SkillSource {
+  SKILL_SOURCE_UNSPECIFIED = 0;
+  SKILL_SOURCE_TABIYA = 1;   // From Tabiya taxonomy (CC BY 4.0)
+  SKILL_SOURCE_NOHIKI = 2;   // Nohiki-created (LLM-proposed or manual)
+}
+
+// Review status for proposed skills
+enum ReviewStatus {
+  REVIEW_STATUS_UNSPECIFIED = 0;
+  REVIEW_STATUS_APPROVED = 1;
+  REVIEW_STATUS_PENDING = 2;
+  REVIEW_STATUS_REJECTED = 3;
+  REVIEW_STATUS_DEPRECATED = 4;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CANONICAL SKILL: A normalized skill in the skill graph
+// ════════════════════════════════════════════════════════════════════
+message CanonicalSkill {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // Prefixed canonical ID (e.g., "tabiya:python", "nohiki:prompt-engineering")
+  string canonical_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 3, max_len: 150, pattern: "^(tabiya|nohiki):[a-z0-9]+(?:-[a-z0-9]+)*$"}
+  ];
+
+  SkillSource source = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  string normalized_text = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  optional string display_name = 5 [(buf.validate.field).string.max_len = 200];
+
+  // External references (for interoperability)
+  optional string tabiya_concept_id = 6 [(buf.validate.field).string.uuid = true];
+  optional string tabiya_version = 7 [(buf.validate.field).string.max_len = 20];
+  optional string esco_uri = 8 [(buf.validate.field).string.max_len = 200];
+  optional string isco_group = 9 [(buf.validate.field).string.max_len = 10];
+
+  // Metadata
+  optional string skill_type = 10 [(buf.validate.field).string.max_len = 20];  // 'common', 'specialized', 'certification'
+  optional string category = 11 [(buf.validate.field).string.max_len = 100];
+  optional string subcategory = 12 [(buf.validate.field).string.max_len = 100];
+  optional string description = 13 [(buf.validate.field).string.max_len = 1000];
+  optional string reuse_level = 19 [(buf.validate.field).string.max_len = 25];
+
+  // Quality tracking
+  int32 mention_count = 14 [(buf.validate.field).int32.gte = 0];
+  int32 job_count = 15 [(buf.validate.field).int32.gte = 0];
+  int32 profile_count = 16 [(buf.validate.field).int32.gte = 0];
+  double confidence_score = 17 [(buf.validate.field).double = {gte: 0.0, lte: 1.0}];
+
+  ReviewStatus review_status = 18;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CANONICAL SKILL MATCH: Result of matching a raw skill to canonical form
+// ════════════════════════════════════════════════════════════════════
+message CanonicalSkillMatch {
+  string canonical_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string canonical_name = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  SkillMatchType match_type = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  double similarity_score = 4 [(buf.validate.field).double = {gte: 0.0, lte: 1.0}];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL MATCH TYPE: How a raw skill was matched to canonical form
+// ════════════════════════════════════════════════════════════════════
+enum SkillMatchType {
+  SKILL_MATCH_TYPE_UNSPECIFIED = 0;
+  SKILL_MATCH_TYPE_EXACT = 1;
+  SKILL_MATCH_TYPE_ALIAS = 2;
+  SKILL_MATCH_TYPE_JACCARD = 3;        // Jaccard n-gram match
+  SKILL_MATCH_TYPE_SEMANTIC = 4;
+  SKILL_MATCH_TYPE_LLM_CONFIRMED = 5;  // LLM confirmed match
+  SKILL_MATCH_TYPE_NEW = 6;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// NORMALIZED SKILLS RESULT: Output of skill normalization
+// ════════════════════════════════════════════════════════════════════
+message NormalizedSkillsResult {
+  repeated string canonical_skill_ids = 1 [
+    (buf.validate.field).repeated.max_items = 100,
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+
+  repeated CanonicalSkillMatch matches = 2 [(buf.validate.field).repeated.max_items = 100];
+
+  // Aggregated embedding (mean-pooled, L2-normalized)
+  nohiki.ml.v1.EmbeddingVector aggregated_embedding = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL MENTION: A raw skill extraction from source text
+// ════════════════════════════════════════════════════════════════════
+message SkillMention {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string original_text = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  string normalized_text = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  SkillMentionSource source_type = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  string source_id = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL MENTION SOURCE: Where the skill mention originated
+// ════════════════════════════════════════════════════════════════════
+enum SkillMentionSource {
+  SKILL_MENTION_SOURCE_UNSPECIFIED = 0;
+  SKILL_MENTION_SOURCE_JOB = 1;
+  SKILL_MENTION_SOURCE_PROFILE = 2;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// JOB CONTEXT: Context from job for skill disambiguation
+// ════════════════════════════════════════════════════════════════════
+message JobContext {
+  string job_id = 1 [(buf.validate.field).string.uuid = true];
+
+  string job_title = 2 [(buf.validate.field).string.max_len = 200];
+
+  string industry = 3 [(buf.validate.field).string.max_len = 100];
+
+  // Skills already canonicalized in this batch (for context)
+  repeated string confirmed_skills = 4 [
+    (buf.validate.field).repeated.max_items = 50,
+    (buf.validate.field).repeated.items.string.max_len = 200
+  ];
+
+  // First 500 chars of job description
+  string description_excerpt = 5 [(buf.validate.field).string.max_len = 500];
+
+  // Skill UUIDs already accepted in this batch (for duplicate detection)
+  repeated string already_accepted_skill_ids = 6 [
+    (buf.validate.field).repeated.max_items = 100,
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CANDIDATE SKILL: A candidate skill for LLM clarification
+// ════════════════════════════════════════════════════════════════════
+message CandidateSkill {
+  string skill_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string skill_name = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  double similarity_score = 3 [(buf.validate.field).double = {gte: 0.0, lte: 1.0}];
+
+  optional string description = 4 [(buf.validate.field).string.max_len = 500];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL CLARIFICATION NEEDED: A skill that needs LLM clarification
+// ════════════════════════════════════════════════════════════════════
+message SkillClarificationNeeded {
+  // skill text extracted from the job listing
+  string extracted_skill = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  // Position in the original skills list (for result ordering)
+  int32 position = 2 [(buf.validate.field).int32.gte = 0];
+
+  // Top-N candidate matches from semantic/alias search
+  repeated CandidateSkill candidate_skills = 3 [
+    (buf.validate.field).repeated.max_items = 10
+  ];
+
+  // Surrounding context snippet from the job description for disambiguation
+  optional string context_snippet = 4 [(buf.validate.field).string.max_len = 500];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL DECISION TYPE: How LLM resolved an uncertain skill
+// ════════════════════════════════════════════════════════════════════
+enum SkillDecisionType {
+  SKILL_DECISION_TYPE_UNSPECIFIED = 0;
+  SKILL_DECISION_TYPE_MATCH = 1;      // Map to single canonical skill
+  SKILL_DECISION_TYPE_EXPAND = 2;     // Expand to multiple canonical skills
+  SKILL_DECISION_TYPE_NEW_SKILL = 3;  // Propose new canonical skill
+}
+
+// ════════════════════════════════════════════════════════════════════
+// EXPANDED SKILL MATCH: A single canonical skill match with metadata
+// Used in LLM clarification when expanding one raw skill to multiple
+// ════════════════════════════════════════════════════════════════════
+message ExpandedSkillMatch {
+  string canonical_skill_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string canonical_skill_name = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  // Proficiency level for job skills
+  SkillProficiencyLevel proficiency_level = 3;
+
+  // Required vs nice-to-have
+  bool is_required = 4;
+
+  // True if LLM added this skill beyond the original clarification
+  // Example: raw "git" expanded to Git (primary) + GitHub (additional)
+  bool is_additional = 5;
+
+  // LLM's confidence in this match
+  double confidence = 6 [(buf.validate.field).double = {gte: 0.0, lte: 1.0}];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL CLARIFICATION DECISION: Complete LLM decision for an uncertain skill
+// ════════════════════════════════════════════════════════════════════
+message SkillClarificationDecision {
+  string raw_skill = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  // Position in original skills list
+  int32 position = 2 [(buf.validate.field).int32.gte = 0];
+
+  SkillDecisionType decision_type = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  // For MATCH: Single skill match (fields 4-7)
+  optional string matched_canonical_id = 4 [(buf.validate.field).string.uuid = true];
+  optional string matched_canonical_name = 5 [(buf.validate.field).string.max_len = 200];
+  SkillProficiencyLevel matched_proficiency_level = 6;
+  bool matched_is_required = 7;
+
+  // For EXPAND: Multiple skill matches (first is primary, rest are additional)
+  repeated ExpandedSkillMatch expanded_skills = 8 [
+    (buf.validate.field).repeated.max_items = 10
+  ];
+
+  // For NEW_SKILL: Proposed new skill (fields 9-11)
+  optional SkillProposal proposed_skill = 9;
+  SkillProficiencyLevel proposed_proficiency_level = 10;
+  bool proposed_is_required = 11;
+
+  // LLM reasoning for this decision
+  string reasoning = 12 [(buf.validate.field).string.max_len = 500];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// RAW SKILL WITH LEVEL: Input skill with extracted requirement level
+// ════════════════════════════════════════════════════════════════════
+message RawSkillWithLevel {
+  string raw_skill = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  // Proficiency level extracted during job enrichment
+  SkillProficiencyLevel proficiency_level = 2;
+
+  // Required vs nice-to-have
+  bool is_required = 3;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL NORMALIZATION RESULT DETAIL: Detailed result for a single skill
+// ════════════════════════════════════════════════════════════════════
+message SkillNormalizationResultDetail {
+  string raw_skill = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  int32 position = 2 [(buf.validate.field).int32.gte = 0];
+
+  MatchConfidence confidence = 3;
+
+  // Present if confidence is CONFIDENT or AUTO_MATCH
+  optional string canonical_skill_id = 4 [(buf.validate.field).string.uuid = true];
+  optional string canonical_skill_name = 5 [(buf.validate.field).string.max_len = 200];
+
+  double similarity_score = 6 [(buf.validate.field).double = {gte: 0.0, lte: 1.0}];
+
+  SkillMatchType match_type = 7;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL PROPOSAL: Proposal for a new canonical skill
+// ════════════════════════════════════════════════════════════════════
+message SkillProposal {
+  string canonical_name = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 100, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"}
+  ];
+
+  string display_name = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  repeated string suggested_aliases = 3 [
+    (buf.validate.field).repeated.max_items = 5,
+    (buf.validate.field).repeated.items.string.max_len = 100
+  ];
+
+  optional string category = 4 [(buf.validate.field).string.max_len = 100];
+
+  optional string description = 5 [(buf.validate.field).string.max_len = 500];
+
+  optional string reuse_level = 6 [(buf.validate.field).string.max_len = 25];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// USER SKILL ENTRY: User's skill with proficiency and provenance
+// ════════════════════════════════════════════════════════════════════
+message UserSkillEntry {
+  string skill_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string skill_name = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  SkillProficiencyLevel proficiency = 3;
+
+  SkillProvenance provenance = 4;
+
+  double provenance_confidence = 5 [(buf.validate.field).double = {gte: 0.0, lte: 1.0}];
+
+  google.protobuf.Timestamp declared_at = 6;
+
+  optional google.protobuf.Timestamp last_verified_at = 7;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// JOB SKILL REQUIREMENT: Job's skill requirement with level
+// ════════════════════════════════════════════════════════════════════
+message JobSkillRequirement {
+  string skill_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string skill_name = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 200}
+  ];
+
+  SkillProficiencyLevel proficiency_level = 3;
+
+  bool is_required = 4;  // Required vs nice-to-have
+
+  double extraction_confidence = 5 [(buf.validate.field).double = {gte: 0.0, lte: 1.0}];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SKILL RELATIONSHIP: Relationship between two skills
+// ════════════════════════════════════════════════════════════════════
+message SkillRelationship {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string source_skill_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string target_skill_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  SkillRelationshipType relationship_type = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  double strength = 5 [(buf.validate.field).double = {gte: 0.0, lte: 1.0}];
+
+  bool bidirectional = 6;
+
+  string source = 7 [(buf.validate.field).string.max_len = 50];  // 'manual', 'tabiya', 'llm_inferred'
+}
