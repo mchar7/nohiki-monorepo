@@ -1,0 +1,334 @@
+syntax = "proto3";
+
+package nohiki.user.pref.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/types.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// PREF CREATE REQUESTED: Command to create a new search preference
+// Topic: user-pref.cmd.create-requested.v1
+// Publisher: bff-service
+// Consumer: user-pref-service
+// ════════════════════════════════════════════════════════════════════
+message PrefCreateRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string pref_name = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 100}
+  ];
+
+  repeated string search_keywords = 5 [
+    (buf.validate.field).repeated = {min_items: 1, max_items: 50}
+  ];
+
+  repeated string disallowed_keywords = 6 [
+    (buf.validate.field).repeated.max_items = 50
+  ];
+
+  repeated nohiki.common.v1.Location physical_locations = 7 [
+    (buf.validate.field).repeated.max_items = 20
+  ];
+
+  repeated nohiki.common.v1.CountryCode remote_locations = 8 [
+    (buf.validate.field).repeated.max_items = 20
+  ];
+
+  repeated nohiki.common.v1.WorkArrangement work_arrangements = 9 [
+    (buf.validate.field).repeated.max_items = 5
+  ];
+
+  nohiki.common.v1.SearchPrefNotificationConfig notification_config = 10;
+
+  optional int32 auto_tailor_threshold = 11 [
+    (buf.validate.field).int32 = {gte: 0, lte: 100}
+  ];
+
+  optional string tailoring_schema_id = 12 [
+    (buf.validate.field).string.uuid = true
+  ];
+
+  map<string, string> tailoring_preferences = 13 [
+    (buf.validate.field).map.max_pairs = 20
+  ];
+
+  bool is_active = 14;
+
+  // Whether user is open to relocating for job opportunities
+  bool open_to_relocation = 15;
+
+  // User's commute preferences (transit modes, max time) for location scoring
+  optional nohiki.common.v1.CommutePreferences commute_preferences = 16;
+
+  // User's skills (from profile/resume) - normalized to canonical IDs
+  repeated string user_skills = 20 [
+    (buf.validate.field).repeated.max_items = 100
+  ];
+
+  // Required skills for job matching (skills user must have in job)
+  repeated string required_skills = 21 [
+    (buf.validate.field).repeated.max_items = 50
+  ];
+
+  // Preferred skills for job matching (nice-to-have skills)
+  repeated string preferred_skills = 22 [
+    (buf.validate.field).repeated.max_items = 50
+  ];
+
+  // OPTIONAL - Salary preferences (for salary alignment scoring)
+  optional nohiki.common.v1.SalaryPreference salary_preference = 23;
+
+  // OPTIONAL - Experience preferences (years + seniority levels)
+  optional nohiki.common.v1.ExperiencePreference experience_preference = 24;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PREF UPDATE REQUESTED: Command to update an existing search preference
+// Topic: user-pref.cmd.update-requested.v1
+// Publisher: bff-service
+// Consumer: user-pref-service
+// ════════════════════════════════════════════════════════════════════
+message PrefUpdateRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string pref_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  optional string pref_name = 5 [(buf.validate.field).string = {min_len: 1, max_len: 100}];
+  repeated string search_keywords = 6 [
+    (buf.validate.field).repeated = {max_items: 50, unique: true},
+    (buf.validate.field).repeated.items.string = {min_len: 1, max_len: 100}
+  ];
+  repeated string disallowed_keywords = 7 [
+    (buf.validate.field).repeated = {max_items: 50, unique: true},
+    (buf.validate.field).repeated.items.string = {min_len: 1, max_len: 100}
+  ];
+  repeated nohiki.common.v1.Location physical_locations = 8 [(buf.validate.field).repeated.max_items = 20];
+  repeated nohiki.common.v1.CountryCode remote_locations = 9 [
+    (buf.validate.field).repeated = {max_items: 20, unique: true},
+    (buf.validate.field).repeated.items.enum = {defined_only: true, not_in: [0]}
+  ];
+  repeated nohiki.common.v1.WorkArrangement work_arrangements = 10 [
+    (buf.validate.field).repeated = {max_items: 5, unique: true},
+    (buf.validate.field).repeated.items.enum = {defined_only: true, not_in: [0]}
+  ];
+  nohiki.common.v1.SearchPrefNotificationConfig notification_config = 11;
+  optional int32 auto_tailor_threshold = 12 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+  optional string tailoring_schema_id = 13 [(buf.validate.field).string.uuid = true];
+  map<string, string> tailoring_preferences = 14 [
+    (buf.validate.field).map.max_pairs = 20,
+    (buf.validate.field).map.keys.string = {min_len: 1, max_len: 100},
+    (buf.validate.field).map.values.string.max_len = 1000
+  ];
+  optional bool is_active = 15;
+
+  repeated string updated_fields = 20 [
+    (buf.validate.field).repeated = {min_items: 1, max_items: 20, unique: true},
+    (buf.validate.field).repeated.items.string = {in: ["pref_name", "search_keywords", "disallowed_keywords", "physical_locations", "remote_locations", "work_arrangements", "notification_config", "auto_tailor_threshold", "tailoring_schema_id", "tailoring_preferences", "is_active", "open_to_relocation", "commute_preferences", "user_skills", "required_skills", "preferred_skills", "salary_preference", "experience_preference"]}
+  ];
+
+  // Whether user is open to relocating for job opportunities
+  optional bool open_to_relocation = 24;
+
+  // User's commute preferences (transit modes, max time) for location scoring
+  optional nohiki.common.v1.CommutePreferences commute_preferences = 25;
+
+  // User's skills (from profile/resume) - normalized to canonical IDs
+  repeated string user_skills = 21 [
+    (buf.validate.field).repeated = {max_items: 100, unique: true},
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+
+  // Required skills for job matching
+  repeated string required_skills = 22 [
+    (buf.validate.field).repeated = {max_items: 50, unique: true},
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+
+  // Preferred skills for job matching
+  repeated string preferred_skills = 23 [
+    (buf.validate.field).repeated = {max_items: 50, unique: true},
+    (buf.validate.field).repeated.items.string.uuid = true
+  ];
+
+  // OPTIONAL - Salary preferences (for salary alignment scoring)
+  optional nohiki.common.v1.SalaryPreference salary_preference = 26;
+
+  // OPTIONAL - Experience preferences (years + seniority levels)
+  optional nohiki.common.v1.ExperiencePreference experience_preference = 27;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PREF DELETE REQUESTED: Command to delete a search preference
+// Topic: user-pref.cmd.delete-requested.v1
+// Publisher: bff-service
+// Consumer: user-pref-service
+// ════════════════════════════════════════════════════════════════════
+message PrefDeleteRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string pref_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PREF ATTACH UPLOAD REQUESTED: Command to attach an upload to a preference
+// Topic: user-pref.cmd.attach-upload.v1
+// Publisher: bff-service
+// Consumer: user-pref-service
+// ════════════════════════════════════════════════════════════════════
+message PrefAttachUploadRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string pref_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string upload_id = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  nohiki.common.v1.DocumentCategory upload_category = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PREF DETACH UPLOAD REQUESTED: Command to detach an upload from a preference
+// Topic: user-pref.cmd.detach-upload.v1
+// Publisher: bff-service
+// Consumer: user-pref-service
+// ════════════════════════════════════════════════════════════════════
+message PrefDetachUploadRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string pref_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string upload_id = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// USER PREF SETTINGS UPDATE REQUESTED: Command to update user-level settings
+// Topic: user-pref.cmd.settings-update-requested.v1
+// Publisher: bff-service
+// Consumer: user-pref-service
+//
+// Used to set user-level default feature importance preferences.
+// These defaults apply to all search preferences unless overridden.
+// ════════════════════════════════════════════════════════════════════
+message UserPrefSettingsUpdateRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  optional nohiki.common.v1.FeatureImportancePrefs default_feature_importance = 10;
+
+  optional string preferred_timezone = 20 [(buf.validate.field).string.max_len = 50];
+  optional string preferred_locale = 21 [(buf.validate.field).string.max_len = 10];
+
+  repeated string updated_fields = 30 [(buf.validate.field).repeated.max_items = 10];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PREF FEATURE IMPORTANCE UPDATE REQUESTED: Command to update per-pref importance
+// Topic: user-pref.cmd.pref-importance-update-requested.v1
+// Publisher: bff-service
+// Consumer: user-pref-service
+//
+// Used to set per-search-preference feature importance overrides.
+// These override the user-level defaults for this specific search preference.
+// ════════════════════════════════════════════════════════════════════
+message PrefFeatureImportanceUpdateRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string pref_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  nohiki.common.v1.FeatureImportancePrefs feature_importance = 10 [(buf.validate.field).required = true];
+}

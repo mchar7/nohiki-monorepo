@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package nohiki.user.pref.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/types.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// SEARCH PREF: User's job search preferences
+// ════════════════════════════════════════════════════════════════════
+message SearchPref {
+  // === IDENTIFICATION ===
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string name = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 100}
+  ];
+
+  // === SEARCH CRITERIA ===
+  repeated string job_title_keywords = 10 [
+    (buf.validate.field).repeated = {min_items: 1, max_items: 20, unique: true},
+    (buf.validate.field).repeated.items.string = {min_len: 2, max_len: 100}
+  ];
+
+  repeated string excluded_keywords = 11 [
+    (buf.validate.field).repeated = {max_items: 50, unique: true},
+    (buf.validate.field).repeated.items.string.max_len = 100
+  ];
+
+  // === LOCATION PREFERENCES ===
+  repeated nohiki.common.v1.Location preferred_locations = 20 [
+    (buf.validate.field).repeated.max_items = 10
+  ];
+
+  // Whether user is open to relocating for job opportunities
+  // When true, jobs in preferred_locations are scored well regardless of distance
+  bool open_to_relocation = 21;
+
+  // User's commute preferences (transit modes, max time) for future ORS integration
+  optional nohiki.common.v1.CommutePreferences commute_preferences = 22;
+
+  // === FILTERS (required with defaults) ===
+  repeated nohiki.common.v1.EmploymentTerm employment_terms = 30 [
+    (buf.validate.field).repeated = {min_items: 1, max_items: 6, unique: true},
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+
+  repeated nohiki.common.v1.WorkArrangement work_arrangements = 31 [
+    (buf.validate.field).repeated = {min_items: 1, max_items: 3, unique: true},
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+
+  // === COMPENSATION PREFERENCES ===
+  optional nohiki.common.v1.MonetaryAmount min_salary = 40;
+
+  // === EXCLUSIONS ===
+  repeated string excluded_companies = 50 [
+    (buf.validate.field).repeated = {max_items: 100, unique: true},
+    (buf.validate.field).repeated.items.string.max_len = 200
+  ];
+
+  // === NOTIFICATION CONFIG ===
+  nohiki.common.v1.SearchPrefNotificationConfig notification_config = 60;
+
+  // === TAILORING CONFIG ===
+  optional int32 auto_tailor_threshold = 61 [
+    (buf.validate.field).int32 = {gte: 0, lte: 100}
+  ];
+
+  optional string tailoring_schema_id = 62 [(buf.validate.field).string.uuid = true];
+
+  // === STATUS ===
+  bool is_active = 70;
+
+  // === TIMESTAMPS ===
+  google.protobuf.Timestamp created_at = 80 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp updated_at = 81 [(buf.validate.field).required = true];
+
+  // === CROSS-FIELD VALIDATION ===
+  option (buf.validate.message).cel = {
+    id: "pref.tailor_threshold_valid",
+    message: "auto_tailor_threshold must be >= notification_config.threshold when set",
+    expression: "!has(this.auto_tailor_threshold) || this.auto_tailor_threshold >= this.notification_config.threshold"
+  };
+}

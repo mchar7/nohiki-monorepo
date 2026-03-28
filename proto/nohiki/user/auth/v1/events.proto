@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package nohiki.user.auth.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/user/auth/v1/entities.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// ACCOUNT UPDATED: Published when an account is created or updated
+// Topic: user-auth.cdc.account-updated.v1
+// Consumers: bff-service (account projection), other services needing account data
+// ECST: Carries full AccountSnapshot for consumer self-sufficiency
+// ════════════════════════════════════════════════════════════════════
+message AccountUpdated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  Account account_snapshot = 3 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ACCOUNT DELETED: Published when an account is deleted
+// Topic: user-auth.cdc.account-deleted.v1
+// Consumers: pref-service, upload-service, entitlement-service
+// ════════════════════════════════════════════════════════════════════
+message AccountDeleted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ACCESS TOKEN REVOKED: Published when an access token is revoked
+// Topic: user-auth.fct.access-token-revoked.v1
+// Consumers: bff-service
+// expires_at is the authoritative retention horizon and may exceed the revoked JTI's
+// expiration when session_family_id revokes an entire session family.
+// ════════════════════════════════════════════════════════════════════
+message AccessTokenRevoked {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  optional string jti = 3 [(buf.validate.field).string.uuid = true];
+  google.protobuf.Timestamp expires_at = 4 [(buf.validate.field).required = true];
+  optional string session_family_id = 5 [(buf.validate.field).string.uuid = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// USER ACTIVITY: Published when user shows activity (login, API call, etc.)
+// Topic: accounts.fct.user-activity.v1
+// Consumers: query-composer-service (reactivate inactive users)
+// ════════════════════════════════════════════════════════════════════
+message UserActivity {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string activity_type = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 50}
+  ];
+  google.protobuf.Timestamp activity_at = 4 [(buf.validate.field).required = true];
+}

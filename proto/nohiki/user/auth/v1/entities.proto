@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package nohiki.user.auth.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// ACCOUNT: User account entity
+// ════════════════════════════════════════════════════════════════════
+message Account {
+  // === IDENTIFICATION ===
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string email = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.email = true
+  ];
+
+  // === PROFILE ===
+  optional string display_name = 10 [(buf.validate.field).string.max_len = 255];
+  optional string first_name = 11 [(buf.validate.field).string.max_len = 100];
+  optional string last_name = 12 [(buf.validate.field).string.max_len = 100];
+
+  // === STATUS ===
+  bool is_active = 20;
+  bool email_verified = 21;
+
+  // === TIMESTAMPS ===
+  google.protobuf.Timestamp created_at = 30 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp updated_at = 31 [(buf.validate.field).required = true];
+  optional google.protobuf.Timestamp last_login_at = 32;
+}

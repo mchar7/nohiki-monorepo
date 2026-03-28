@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package nohiki.user.entitlement.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "nohiki/common/v1/enums.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// ENTITLEMENT: User's subscription and feature entitlements
+// ════════════════════════════════════════════════════════════════════
+message Entitlement {
+  // === IDENTIFICATION ===
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // === TIER AND SUBSCRIPTION ===
+  nohiki.common.v1.SubscriptionTier tier = 10 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  nohiki.common.v1.SubscriptionStatus subscription_status = 11 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).enum = {defined_only: true, not_in: [0]}
+  ];
+
+  // === BILLING ===
+  nohiki.common.v1.BillingProvider billing_provider = 12 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+  string external_subscription_id = 13 [(buf.validate.field).string.max_len = 255];
+  string external_customer_id = 14 [(buf.validate.field).string.max_len = 255];
+  google.protobuf.Timestamp current_period_start = 15;
+  google.protobuf.Timestamp current_period_end = 16;
+
+  // === COMPUTED LIMITS (derived from tier) ===
+  nohiki.common.v1.DiscoveryFrequency discovery_frequency_limit = 20 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+  int32 max_prefs = 21 [(buf.validate.field).int32.gte = 0];
+  int32 max_uploads_per_pref = 22 [(buf.validate.field).int32.gte = 0];
+
+  // === SOURCE ACCESS ===
+  repeated nohiki.common.v1.JobBoardSource allowed_sources = 30 [
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+
+  // === FEATURE FLAGS ===
+  map<string, bool> features_enabled = 40 [
+    (buf.validate.field).map.max_pairs = 50,
+    (buf.validate.field).map.keys.string.max_len = 64
+  ];
+
+  // === TIMESTAMPS ===
+  google.protobuf.Timestamp created_at = 50 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp updated_at = 51 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// USAGE RECORD: Tracks usage for quota enforcement
+// ════════════════════════════════════════════════════════════════════
+message UsageRecord {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string resource_type = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 50}
+  ];
+
+  int64 usage_count = 4 [(buf.validate.field).int64.gte = 0];
+  int64 quota_limit = 5 [(buf.validate.field).int64.gte = 0];
+
+  google.protobuf.Timestamp period_start = 6 [(buf.validate.field).required = true];
+  google.protobuf.Timestamp period_end = 7 [(buf.validate.field).required = true];
+}

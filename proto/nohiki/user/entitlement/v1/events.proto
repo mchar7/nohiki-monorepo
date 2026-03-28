@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package nohiki.user.entitlement.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/common/v1/snapshots.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// ENTITLEMENT CREATED: Published when entitlements are first created
+// Topic: entitlements.fct.entitlement-created.v1
+// ════════════════════════════════════════════════════════════════════
+message EntitlementCreated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  nohiki.common.v1.EntitlementSnapshot entitlement_snapshot = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ENTITLEMENT CHANGED: Published when entitlements change (tier upgrade/downgrade)
+// Topic: entitlements.fct.entitlement-changed.v1
+// Consumers: query-composer-service, scrape-scheduler-service, job-matcher-service
+// ════════════════════════════════════════════════════════════════════
+message EntitlementChanged {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  nohiki.common.v1.EntitlementSnapshot entitlement_snapshot = 10 [(buf.validate.field).required = true];
+  nohiki.common.v1.SubscriptionTier previous_tier = 20 [(buf.validate.field).enum.defined_only = true];
+  string change_reason = 21 [(buf.validate.field).string.max_len = 255];
+}

@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package nohiki.user.pref.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+import "nohiki/user/pref/v1/settings.proto";
+import "nohiki/user/pref/v1/snapshots.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// PREF CREATED: Published when a search preference is created
+// Topic: preferences.fct.pref-created.v1
+// ════════════════════════════════════════════════════════════════════
+message PrefCreated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string pref_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  SearchPrefSnapshot pref_snapshot = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PREF UPDATED: Published when a search preference is updated
+// Topic: preferences.fct.pref-updated.v1
+// ════════════════════════════════════════════════════════════════════
+message PrefUpdated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string pref_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  SearchPrefSnapshot pref_snapshot = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PREF DELETED: Published when a search preference is deleted
+// Topic: preferences.fct.pref-deleted.v1
+// ════════════════════════════════════════════════════════════════════
+message PrefDeleted {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string pref_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// UPLOAD ATTACHED: Published when an upload is attached to a preference
+// Topic: preferences.fct.upload-attached.v1
+// ════════════════════════════════════════════════════════════════════
+message UploadAttached {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string pref_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string upload_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string upload_type = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 50}
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// UPLOAD DETACHED: Published when an upload is removed from a preference
+// Topic: preferences.fct.upload-detached.v1
+// ════════════════════════════════════════════════════════════════════
+message UploadDetached {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string pref_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string upload_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// USER PREF SETTINGS CREATED: Published when user settings are created
+// Topic: user-pref.cdc.settings-created.v1
+//
+// Published when a user's preference settings record is first created.
+// Contains the full UserPrefSettings snapshot for ECST compliance.
+// ════════════════════════════════════════════════════════════════════
+message UserPrefSettingsCreated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  UserPrefSettings settings = 10 [(buf.validate.field).required = true];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// USER PREF SETTINGS UPDATED: Published when user settings are updated
+// Topic: user-pref.cdc.settings-updated.v1
+//
+// Published when a user's preference settings are modified.
+// Contains the full UserPrefSettings snapshot for ECST compliance.
+// Consumers should replace their cached copy with this snapshot.
+// ════════════════════════════════════════════════════════════════════
+message UserPrefSettingsUpdated {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  UserPrefSettings settings = 10 [(buf.validate.field).required = true];
+}
