@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package nohiki.sys.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+
+message ScheduleTick {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  int32 batch_limit = 2 [(buf.validate.field).int32 = {lte: 1000, gte: 0}];
+}
+
+message InactivityTick {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+  int32 inactivity_threshold_days = 2 [(buf.validate.field).int32 = {lte: 749, gte: 0}];
+}
