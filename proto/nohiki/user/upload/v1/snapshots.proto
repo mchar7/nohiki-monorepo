@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package nohiki.user.upload.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/timestamps.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// UPLOAD SNAPSHOT: Full state of an upload for ECST pattern
+// ════════════════════════════════════════════════════════════════════
+message UploadSnapshot {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string name = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 255}
+  ];
+  string content_type = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 100}
+  ];
+  string content_hash = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.pattern = "^[0-9a-f]{64}$"
+  ];
+  int64 file_size = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int64 = {gt: 0, lte: 10485760}
+  ];
+  string storage_key = 7 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 1024}
+  ];
+  nohiki.common.v1.DocumentCategory document_category = 8 [
+    (buf.validate.field).enum.defined_only = true
+  ];
+  nohiki.common.v1.EntityTimestamps timestamps = 9;
+}

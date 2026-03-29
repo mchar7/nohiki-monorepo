@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package nohiki.user.pref.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/enums.proto";
+import "nohiki/common/v1/snapshots.proto";
+import "nohiki/common/v1/timestamps.proto";
+import "nohiki/common/v1/types.proto";
+import "nohiki/ml/v1/types.proto";
+import "nohiki/skill/v1/entities.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// SEARCH PREF SNAPSHOT: Full state of a preference for ECST pattern
+// Used in events to provide consumers with preference data
+// Consumers: job-matcher-service, doc-tailor-service, query-composer-service
+// ════════════════════════════════════════════════════════════════════
+message SearchPrefSnapshot {
+  // REQUIRED - Core identification
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string user_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string pref_name = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 100}
+  ];
+
+  // REQUIRED - Search preferences (user-configurable)
+  repeated string search_keywords = 10 [(buf.validate.field).repeated.min_items = 1];
+  repeated string disallowed_keywords = 11;
+  repeated nohiki.common.v1.Location physical_locations = 12;
+  repeated nohiki.common.v1.Location remote_locations = 13;
+  repeated nohiki.common.v1.WorkArrangement work_arrangements = 14 [
+    (buf.validate.field).repeated.min_items = 1,
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+
+  // Whether user is open to relocating for job opportunities
+  bool open_to_relocation = 21;
+
+  // User's commute preferences (transit modes, max time) for location scoring
+  optional nohiki.common.v1.CommutePreferences commute_preferences = 22;
+
+  // REQUIRED - Experience preferences (for L2R EXPERIENCE features 6-10)
+  // Groups experience_years + seniority_levels for cohesive domain modeling
+  nohiki.common.v1.ExperiencePreference experience_preference = 17 [
+    (buf.validate.field).required = true
+  ];
+
+  // REQUIRED - Salary preferences (for L2R SALARY features 11-13)
+  // Used to compute salary alignment in L2R model
+  nohiki.common.v1.SalaryPreference salary_preference = 19 [
+    (buf.validate.field).required = true
+  ];
+
+  // OPTIONAL - Feature importance preferences (for personalized scoring)
+  // User-specified weights indicating how much each factor matters to them.
+  // These feed into the USER_PREF_ALIGNMENT L2R feature.
+  // See nohiki.common.v1.FeatureImportancePrefs for field documentation.
+  optional nohiki.common.v1.FeatureImportancePrefs feature_importance = 20;
+
+  // Source configuration
+  // scrape_sources = tier.allowed_sources - excluded_scrape_sources (computed by publisher)
+  repeated nohiki.common.v1.JobBoardSource scrape_sources = 15 [
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+  // User-excluded sources (for query-composer)
+  repeated nohiki.common.v1.JobBoardSource excluded_scrape_sources = 16 [
+    (buf.validate.field).repeated.items.enum.defined_only = true
+  ];
+
+  // OPTIONAL - Matching configuration (for job-matcher)
+  optional int32 min_fit_score_disqualify = 30 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+
+  // OPTIONAL - Tailoring configuration (for doc-tailor)
+  optional int32 auto_tailor_threshold = 40 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+  optional string tailoring_schema_id = 41 [(buf.validate.field).string.uuid = true];
+  map<string, string> tailoring_preferences = 42 [
+    (buf.validate.field).map.max_pairs = 50,
+    (buf.validate.field).map.keys.string.max_len = 64,
+    (buf.validate.field).map.values.string.max_len = 1000
+  ];
+
+  // ════════════════════════════════════════════════════════════════════
+  // SKILL DATA FIELDS (80-89)
+  // ════════════════════════════════════════════════════════════════════
+  repeated nohiki.skill.v1.UserSkillEntry user_skills = 80 [
+    (buf.validate.field).repeated.max_items = 100
+  ];
+  // Absent until skill normalization produces an aggregated embedding.
+  nohiki.ml.v1.EmbeddingVector user_skills_embedding = 81;
+  nohiki.ml.v1.EmbeddingVector query_embedding = 84 [
+    (buf.validate.field).required = true
+  ];
+  repeated nohiki.ml.v1.EmbeddingVector query_retrieval_embeddings = 85 [
+    (buf.validate.field).repeated = {max_items: 4}
+  ];
+
+  // Status
+  bool is_active = 50;
+
+  // Upload references with storage_key for S3 access (for doc-tailor)
+  repeated nohiki.common.v1.UploadReference example_uploads = 51;
+  repeated nohiki.common.v1.UploadReference context_uploads = 52;
+
+  // Timestamps
+  nohiki.common.v1.EntityTimestamps timestamps = 60;
+
+  // Per-preference notification configuration (for notification-service)
+  // Contains threshold, frequency, methods with destinations.
+  // Flows via ECST to notification-service - no projections needed.
+  nohiki.common.v1.SearchPrefNotificationConfig notification_config = 70;
+}

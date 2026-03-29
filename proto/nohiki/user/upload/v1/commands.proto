@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package nohiki.user.upload.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/events.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// UPLOAD CREATE REQUESTED: Command to create upload metadata after S3 upload
+// Topic: user-upload.cmd.create-requested.v1
+// Publisher: bff-service (after uploading file to S3)
+// Consumer: user-upload-service
+// ════════════════════════════════════════════════════════════════════
+message UploadCreateRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string storage_key = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 10, max_len: 500}
+  ];
+
+  string filename = 5 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 1, max_len: 255}
+  ];
+
+  string content_type = 6 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string = {min_len: 3, max_len: 100}
+  ];
+
+  int64 file_size = 7 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int64 = {gt: 0, lte: 10485760}
+  ];
+
+  string content_hash = 8 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.pattern = "^[0-9a-f]{64}$"
+  ];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// UPLOAD DELETE REQUESTED: Command to delete an upload
+// Topic: user-upload.cmd.delete-requested.v1
+// Publisher: bff-service
+// Consumer: user-upload-service
+// ════════════════════════════════════════════════════════════════════
+message UploadDeleteRequested {
+  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
+
+  string request_id = 2 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string user_id = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  string upload_id = 4 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}

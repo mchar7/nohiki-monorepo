@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package nohiki.user.pref.v1;
+
+import "buf/validate/validate.proto";
+import "nohiki/common/v1/timestamps.proto";
+import "nohiki/common/v1/types.proto";
+
+// ════════════════════════════════════════════════════════════════════
+// USER PREF SETTINGS: User-level preference settings
+//
+// Owned by: user-pref-service (NOT user-auth-service!)
+// user-auth-service handles ONLY authentication (login, tokens, sessions).
+// user-pref-service owns ALL user preference data including these settings.
+//
+// Contains user-level defaults that apply to all search preferences
+// unless overridden at the per-search-pref level.
+// ════════════════════════════════════════════════════════════════════
+message UserPrefSettings {
+  // User ID this settings record belongs to
+  string user_id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+
+  // Default importance prefs applied to all search prefs unless overridden.
+  // When a SearchPref.feature_importance is unset, these defaults apply.
+  // If both are unset, neutral (0.5) is used during scoring.
+  optional nohiki.common.v1.FeatureImportancePrefs default_feature_importance = 10;
+
+  // User's preferred timezone for notifications and scheduling
+  // IANA timezone format (e.g., "America/New_York", "Europe/London")
+  optional string preferred_timezone = 20 [(buf.validate.field).string.max_len = 50];
+
+  // User's preferred locale for formatting (e.g., "en-US", "fr-CA")
+  optional string preferred_locale = 21 [(buf.validate.field).string.max_len = 10];
+
+  // Timestamps for entity lifecycle tracking
+  nohiki.common.v1.EntityTimestamps timestamps = 30;
+}
