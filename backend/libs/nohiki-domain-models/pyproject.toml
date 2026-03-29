@@ -1,0 +1,29 @@
+[project]
+name = "nohiki-domain-models"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Canonical domain models for Nohiki platform (betterproto2 dataclasses)"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "betterproto2==0.10.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# Keep the generated ``nohiki`` root as a PEP 420 namespace while packaging
+# every top-level module referenced by generated imports.
+module-name = ["nohiki", "nohiki_proto_google", "nohiki_domain_utils", "message_pool"]
+namespace = true
+
+[tool.pytest.ini_options]
+addopts = "--cov=src/nohiki_domain_utils --cov-report=term-missing --cov-report=html"
+
+[tool.coverage.run]
+omit = [
+    "src/nohiki/*",
+    "src/nohiki_proto_google/*",
+]
