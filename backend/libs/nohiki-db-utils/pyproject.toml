@@ -1,0 +1,46 @@
+[project]
+name = "nohiki-db-utils"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Database utilities for the Nohiki platform"
+requires-python = ">=3.14"
+dependencies = [
+    "nohiki-core-settings==0.1.0",
+    "nohiki-observability==0.1.0",
+    "pydantic>=2.12.0",
+    "sqlalchemy>=2.0.44",
+]
+
+[project.optional-dependencies]
+async = [
+    "asyncpg>=0.31.0",
+]
+migrations = [
+    "alembic>=1.18.0",
+    "psycopg[binary]>=3.3.4",
+]
+outbox = [
+    "protobuf>=6.0.0",
+    "uuid-utils>=0.14.0",
+]
+otel = [
+    "nohiki-observability[sqlalchemy]==0.1.0",
+]
+testing = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "testcontainers>=4.14.0",
+    "pytest-unused-fixtures>=0.1.0",
+    "psycopg2-binary>=2.9.10",  # Required by testcontainers PostgresContainer
+    "nohiki-db-utils[async,outbox]",
+]
+full = [
+    "nohiki-db-utils[async,migrations,outbox,otel]",
+]
+
+[project.scripts]
+nohiki-db-migrate = "nohiki_db_utils.migrations.cli:migrate_cli"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
