@@ -1,0 +1,127 @@
+{
+  "collections": {
+    "jobs": {
+      "version": "v1",
+      "description": "Jobs collection with ColBERT, MUVERA, and sparse vectors",
+      "qdrant": {
+        "vectors": {
+          "muvera": {
+            "size": 8192,
+            "distance": "Dot"
+          },
+          "colbert": {
+            "size": 48,
+            "distance": "Cosine",
+            "multivector_config": {"comparator": "max_sim"}
+          }
+        },
+        "sparse": {},
+        "primary_dense_name": "muvera",
+        "colbert_name": "colbert"
+      }
+    },
+    "profiles": {
+      "version": "v2",
+      "description": "Profiles collection with ColBERT, MUVERA, and sparse vectors",
+      "qdrant": {
+        "vectors": {
+          "muvera": {
+            "size": 8192,
+            "distance": "Dot"
+          },
+          "colbert": {
+            "size": 48,
+            "distance": "Cosine",
+            "multivector_config": {"comparator": "max_sim"}
+          }
+        },
+        "sparse": {},
+        "primary_dense_name": "muvera",
+        "colbert_name": "colbert"
+      }
+    },
+    "skills": {
+      "version": "v1",
+      "description": "Skills collection with dense embeddings for skill matching",
+      "qdrant": {
+        "vectors": {
+          "skill_dense": {
+            "size": 1024,
+            "distance": "Cosine"
+          }
+        },
+        "primary_dense_name": "skill_dense"
+      }
+    },
+    "occupations": {
+      "version": "v1",
+      "description": "Occupations collection with dense embeddings for job title to ESCO occupation inference",
+      "qdrant": {
+        "vectors": {
+          "occupation_dense": {
+            "size": 1024,
+            "distance": "Cosine"
+          }
+        },
+        "primary_dense_name": "occupation_dense"
+      }
+    }
+  },
+  "late_interaction": {
+    "model_id": "mixedbread-ai/mxbai-edge-colbert-v0-17m",
+    "token_dim": 48,
+    "max_length": 32000,
+    "inference_backend": "direct",
+    "normalization": {
+      "per_token_sim_p5": 0.8634,
+      "per_token_sim_p95": 0.9999,
+      "per_token_sim_mean": 0.9355,
+      "per_token_sim_std": 0.0396,
+      "averaged_score_min": 0.92,
+      "averaged_score_max": 0.95,
+      "calibration": {
+        "calibration_model_id": "mixedbread-ai/mxbai-edge-colbert-v0-17m",
+        "calibration_pairs_count": 10000,
+        "calibration_date": "2025-12-01"
+      }
+    }
+  },
+  "muvera": {
+    "dim": 48,
+    "k_sim": 6,
+    "dim_proj": 16,
+    "r_reps": 8,
+    "random_seed": 42
+  },
+  "sparse": {
+    "enabled": true,
+    "model_id": "Qdrant/minicoil-v1",
+    "normalization": {
+      "score_p10": 1.5,
+      "score_p90": 5.5
+    }
+  },
+  "dense": {
+    "enabled": true,
+    "model_id": "TechWolf/JobBERT-v2",
+    "embedding_dim": 1024,
+    "max_length": 64,
+    "trust_remote_code": false,
+    "normalization": {
+      "auto_match_threshold": 0.83,
+      "uncertain_min_threshold": 0.50,
+      "calibration": {
+        "calibration_model_id": "TechWolf/JobBERT-v2",
+        "calibration_pairs_count": 85,
+        "calibration_date": "2025-01-07",
+        "max_fp_similarity": 0.8266
+      }
+    },
+    "inference_backend": "direct"
+  },
+  "metadata": {
+    "description": "Production semantic representation with per-collection versioning",
+    "created": "2025-12-24",
+    "updated": "2026-02-25"
+  }
+}
