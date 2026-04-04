@@ -1,0 +1,29 @@
+[project]
+name = "nohiki-fastapi-utils"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "FastAPI utilities for the Nohiki platform"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.129.0",
+    "limits>=5.8.0",
+]
+
+[project.optional-dependencies]
+server = [
+    "uvicorn>=0.41.0",
+]
+jwt = [
+    "PyJWT>=2.11.0",
+    "cryptography>=46.0.0",
+]
+otel = [
+    "nohiki-observability[fastapi,httpx]==0.1.0",
+]
+cache = [
+    "nohiki-redis-utils==0.1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
