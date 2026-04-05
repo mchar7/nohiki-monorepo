@@ -1,0 +1,14 @@
+[project]
+name = "nohiki-finance"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Pure financial domain utilities for Nohiki"
+requires-python = ">=3.14"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "nohiki_finance"
