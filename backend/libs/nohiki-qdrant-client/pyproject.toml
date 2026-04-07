@@ -1,0 +1,26 @@
+[project]
+name = "nohiki-qdrant-client"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Qdrant vector client for MUVERA + Sparse hybrid search"
+requires-python = ">=3.14"
+dependencies = [
+    "qdrant-client>=1.16.0",
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.14.2",
+    "nohiki-observability==0.1.0",
+    "nohiki-ml-manifest==0.1.0",
+    "nohiki-core-settings==0.1.0",
+    "nohiki-common-exceptions==0.1.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.3.0",
+    "nohiki-test-utils==0.1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
