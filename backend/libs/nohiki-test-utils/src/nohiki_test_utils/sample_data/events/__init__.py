@@ -1,0 +1,17 @@
+"""Pre-composed Kafka event fixtures for integration testing."""
+
+from .listings import (
+    LISTING_CREATED_DATA_SCIENTIST,
+    LISTING_CREATED_SENIOR_PYTHON,
+)
+from .prefs import (
+    PREF_CREATED_BACKEND_ENGINEER,
+    PREF_UPDATED_BACKEND_ENGINEER,
+)
+
+__all__ = [
+    "LISTING_CREATED_DATA_SCIENTIST",
+    "LISTING_CREATED_SENIOR_PYTHON",
+    "PREF_CREATED_BACKEND_ENGINEER",
+    "PREF_UPDATED_BACKEND_ENGINEER",
+]
