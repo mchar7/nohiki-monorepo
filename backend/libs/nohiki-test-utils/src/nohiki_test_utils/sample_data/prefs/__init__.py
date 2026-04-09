@@ -1,0 +1,21 @@
+"""Curated search preference personas for testing."""
+
+from .business import FINANCE_ANALYST_PREF
+from .healthcare import EXPERIENCED_NURSE_PREF
+from .software import (
+    BACKEND_ENGINEER_PREF,
+    DATA_SCIENTIST_PREF,
+    DEVOPS_ENGINEER_PREF,
+    FRONTEND_DEVELOPER_PREF,
+    FULLSTACK_DEVELOPER_PREF,
+)
+
+__all__ = [
+    "BACKEND_ENGINEER_PREF",
+    "DATA_SCIENTIST_PREF",
+    "DEVOPS_ENGINEER_PREF",
+    "EXPERIENCED_NURSE_PREF",
+    "FINANCE_ANALYST_PREF",
+    "FRONTEND_DEVELOPER_PREF",
+    "FULLSTACK_DEVELOPER_PREF",
+]
