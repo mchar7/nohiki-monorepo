@@ -1,0 +1,25 @@
+[project]
+name = "doc-content-service"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Microservice for LLM-powered content generation with flexible schemas"
+requires-python = ">=3.14"
+dependencies = [
+    "nohiki-common-exceptions==0.1.0",
+    "nohiki-core-settings==0.1.0",
+    "nohiki-domain-models==0.1.0",
+    "nohiki-observability[fastapi]==0.1.0",
+    "nohiki-fastapi-utils[server]==0.1.0",
+    "nohiki-kafka-client==0.1.0",
+    "nohiki-llm-client==0.1.0",
+    "nohiki-s3-client==0.1.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "nohiki-test-utils==0.1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
