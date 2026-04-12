@@ -1,0 +1,221 @@
+# Cover letter template lint rules: deterministic enforcement of CL quality.
+# Applicant-agnostic; employer-specific mentions enabled via _tailor_meta.lint_vars.
+#
+# Voice-level deterministic rules (em-dashes, AI-slop openers, cliché openers,
+# meta-joiners, cleft constructions, flat rhythm, contraction density,
+# employer/school mentions, structural run-ons, cross-paragraph phrase echo,
+# synthesis re-enumeration, resume echo, orphan final words) are all enforced
+# here. Subjective tone and voice guidelines stay in voice.md.
+#
+# Layout rules (``layout:`` block) require a rendered PDF and are evaluated
+# after Gotenberg renders.
+
+rules:
+  # Section: body_paragraphs, foundational bounds
+  - rule_id: content.body_paragraphs.min_items
+    type: min_items
+    severity: error
+    scope_paths: ["body_paragraphs"]
+    params: {value: 3}
+    description: "Cover letter needs at least 3 body paragraphs"
+
+  - rule_id: content.body_paragraphs.max_items
+    type: max_items
+    severity: warning
+    scope_paths: ["body_paragraphs"]
+    params: {value: 5}
+    description: "Cover letter should not exceed 5 body paragraphs"
+
+  - rule_id: content.body_paragraphs.min_words_per_item
+    type: min_words_per_item
+    severity: warning
+    scope_paths: ["body_paragraphs"]
+    params: {value: 40}
+    description: "Body paragraphs should be substantive (≥40 words)"
+
+  - rule_id: content.body_paragraphs.max_words_per_item
+    type: max_words_per_item
+    severity: warning
+    scope_paths: ["body_paragraphs"]
+    params: {value: 130}
+    description: "Body paragraphs should be focused (≤130 words)"
+
+  # Text: banned patterns in CL prose (split by severity)
+  - rule_id: text.cover_letter.banned_patterns_warning
+    type: banned_patterns
+    severity: warning
+    scope_paths: ["body_paragraphs"]
+    params:
+      patterns:
+        - pattern: "passionate about"
+          message: "Avoid overused 'passionate about'"
+        - pattern: "team player"
+          message: "Avoid generic 'team player'"
+        - pattern: "[—–]"
+          message: "Em dash / en dash banned in cover letter — use commas or periods"
+        - pattern: "(rest of this letter|in this letter)"
+          message: "Meta-joiner — cut and let prose stand on its own"
+
+  - rule_id: text.cover_letter.banned_patterns_info
+    type: banned_patterns
+    severity: info
+    scope_paths: ["body_paragraphs"]
+    params:
+      patterns:
+        - pattern: "I am writing to"
+          message: "Avoid cliché opener 'I am writing to'"
+        - pattern: "\\b(It is|It was) \\w+ that\\b"
+          message: "Cleft construction — consider rephrasing"
+
+  # Structural run-on detection (3+ semicolons / colons in one sentence)
+  - rule_id: content.body_paragraphs.max_structural_punctuation
+    type: max_structural_punctuation_per_sentence
+    severity: warning
+    scope_paths: ["body_paragraphs[*]"]
+    params:
+      max: 2
+      punctuation: [";", ":"]
+    description: "Flag sentences with 3+ semicolons/colons — likely run-on"
+
+  # I-avalanche: 3+ consecutive sentences opening with "I"
+  - rule_id: content.body_paragraphs.max_consecutive_i
+    type: max_consecutive_opener
+    severity: warning
+    scope_paths: ["body_paragraphs[*]"]
+    params:
+      token: "I"
+      max_consecutive: 2
+      granularity: sentence
+      case_sensitive: true
+    description: "Flag 3+ consecutive sentences starting with 'I'"
+
+  # Rhythm: 3+ consecutive sentences within a narrow word-count band
+  - rule_id: content.body_paragraphs.rhythm
+    type: rhythm_check
+    severity: info
+    scope_paths: ["body_paragraphs[*]"]
+    params:
+      mode: word_count
+      max_consecutive_similar: 3
+      tolerance: 5
+    description: "Flag 3+ consecutive sentences within 5 words of each other"
+
+  # Contraction density (conversational voice signal)
+  - rule_id: content.body_paragraphs.contraction_density
+    type: ratio
+    severity: warning
+    scope_paths: ["body_paragraphs[*]"]
+    params:
+      pattern: "\\b\\w+['\u2019](s|t|d|ll|ve|re|m)\\b"
+      min_per_100_words: 0.8
+      max_per_100_words: 2.0
+    description: "Cover letter voice accepts 0.8-2.0 contractions per 100 words (band wide enough to admit both formal and warm registers)"
+
+  # Mention counts (employer opt-in via _tailor_meta tag + variable)
+  - rule_id: content.body_paragraphs.employer_mentions_min
+    type: mention_count
+    severity: warning
+    scope_paths: ["body_paragraphs[*]"]
+    applies_when: "has_tag('has_employer_var')"
+    params:
+      target: "{{ employer_name }}"
+      min: 3
+      case_sensitive: false
+    description: "Cover letter should mention employer ≥3 times for earned specificity"
+
+  - rule_id: content.body_paragraphs.school_mentions_max
+    type: mention_count
+    severity: warning
+    scope_paths: ["body_paragraphs[*]"]
+    params:
+      target: "\\b(school|college|university|alma mater)\\b"
+      is_regex: true
+      max: 2
+    description: "Avoid over-referencing school (≤2 mentions)"
+
+  # Synthesis re-enumeration: evidence paragraphs [1] and [2] vs
+  # synthesis paragraph [3]; metric numbers should not repeat.
+  # Opt-in via the four_paragraph_structure tag.
+  - rule_id: content.body_paragraphs.synthesis_re_enumeration
+    type: repeated_literal_across_paths
+    severity: warning
+    scope_paths: ["$"]
+    applies_when: "has_tag('four_paragraph_structure')"
+    params:
+      source_paths: ["body_paragraphs[1]", "body_paragraphs[2]"]
+      target_paths: ["body_paragraphs[3]"]
+      literal_type: number
+    description: "Synthesis paragraph should not re-enumerate metrics from evidence paragraphs"
+
+  # Cross-paragraph phrase echo (within the cover letter itself)
+  - rule_id: content.body_paragraphs.cross_paragraph_echo
+    type: repeated_phrase_across_paths
+    severity: warning
+    scope_paths: ["body_paragraphs[*]"]
+    params:
+      min_phrase_words: 4
+      max_repeats: 1
+    description: "Same 4+ word phrase should not repeat across paragraphs"
+
+  # Cross-document: cover letter should not echo resume phrasing.
+  # Opt-in via has_sibling('resume'); sibling docs configured through
+  # _tailor_meta.sibling_documents.
+  - rule_id: content.cover_letter.resume_echo_check
+    type: repeated_phrase_across_paths
+    severity: warning
+    scope_paths: ["$"]
+    applies_when: "has_sibling('resume')"
+    params:
+      min_phrase_words: 6
+      max_repeats: 1
+      source_paths: ["body_paragraphs[*]"]
+      target_paths:
+        - "sibling.resume.experience.entries[*].bullets"
+        - "sibling.resume.projects.entries[*].bullets"
+    description: "Cover letter should not echo 6+ word phrases from resume"
+
+  # Orphan heuristic (content-side approximation; layout rule gives the
+  # final word). Seed with a conservative risky-final-word list; users
+  # extend via their own lint configs.
+  - rule_id: content.body_paragraphs.orphan_final_word
+    type: orphan_final_word_heuristic
+    severity: info
+    scope_paths: ["body_paragraphs[*]"]
+    params:
+      risky_final_words: [office, team, role, code, schedule, approaches]
+      check_last_sentence_only: true
+    description: "Final word may orphan when rendered; consider front-loading or extending"
+
+  # Word budget
+  - rule_id: content.body_paragraphs.min_total_words
+    type: min_total_words
+    severity: warning
+    scope_paths: ["body_paragraphs"]
+    params: {value: 250}
+
+  - rule_id: content.body_paragraphs.max_total_words
+    type: max_total_words
+    severity: warning
+    scope_paths: ["body_paragraphs"]
+    params: {value: 450}
+
+# Layout rules: evaluated post-render against the rendered PDF.
+# Requires pdfplumber-backed extraction.
+layout:
+  rules:
+    - rule_id: layout.orphan.body_paragraphs
+      type: orphan_detected
+      severity: warning
+      scope_paths: ["body_paragraphs[*]"]
+      params:
+        width_fill_ratio: 0.15
+        min_substantive_words: 3
+        exclude_single_line: true
+      description: "Final line of a body paragraph is dangerously short (orphaned)"
+
+    - rule_id: layout.max_pages_exceeded.cover_letter
+      type: max_pages_exceeded
+      severity: error
+      scope_paths: ["$"]
+      params: {max_pages: 1}
+      description: "Cover letter hard ceiling: 1 page"

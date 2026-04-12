@@ -1,0 +1,566 @@
+<!-- TMPL_META
+{
+  "name": "resume",
+  "title": "Resume Template",
+  "description": "Default resume template for generating professional resumes",
+  "namespace": "resume",
+  "visibility": "public",
+  "version": "1.2.0",
+  "access_scope": "SYSTEM"
+}
+-->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ full_name }} - Resume</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;600;900&display=swap');
+
+        :root {
+            --section-margin: 0.8em;
+            --entry-margin: 1.0em;
+            --bullet-margin: 0.3em;
+            --line-height: 1.35;
+            --base-font-size: 10pt;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans', sans-serif;
+            font-size: var(--base-font-size);
+            line-height: var(--line-height);
+            color: #333333;
+            background: white;
+            margin: 0;
+            padding: 0;
+        }
+
+        .resume-container {
+            width: 216mm;
+            height: 279mm;
+            margin: 10mm;
+            background: white;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+
+        .gray-background {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 75mm;
+            height: 100%;
+            background: #f0f0f0;
+            z-index: 1;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8mm 10mm 6mm 10mm;
+            background: #f0f0f0;
+            position: relative;
+            z-index: 2;
+            flex-shrink: 0;
+        }
+
+        .name-tagline {
+            text-align: left;
+            max-width: 60%;
+        }
+
+        .name-tagline h1 {
+            font-family: 'Noto Sans', sans-serif;
+            font-size: 36pt;
+            font-weight: 400;
+            letter-spacing: 0.05em;
+            color: #1a1a1a;
+            margin: 0;
+            line-height: 0.9;
+        }
+
+        .name-tagline .subtitle {
+            font-family: 'Noto Sans', sans-serif;
+            font-size: 13pt;
+            font-weight: 400;
+            letter-spacing: 0.1em;
+            color: #444444;
+            margin-top: 0.6em;
+            text-transform: uppercase;
+        }
+
+        .contact-info {
+            text-align: right;
+            font-size: 10pt;
+            line-height: 1.4;
+        }
+
+        .contact-item {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            margin-bottom: 0.3em;
+            color: #333333;
+            white-space: nowrap;
+        }
+
+        .contact-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .contact-icon {
+            margin-left: 0.8em;
+            height: 9pt;
+            width: auto;
+            fill: #000000;
+            flex-shrink: 0;
+        }
+
+        /* Grid keeps the two-column visual while the DOM order is
+           header -> main (right) -> aside (left) for ATS reading order. */
+        .content {
+            position: relative;
+            z-index: 2;
+            display: grid;
+            grid-template-columns: 75mm 141mm;
+            grid-template-rows: 1fr;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .left-column {
+            grid-column: 1;
+            grid-row: 1;
+            width: 75mm;
+            padding: 3mm 5mm 10mm 10mm;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            word-wrap: break-word;
+        }
+
+        .left-sections {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .right-column {
+            grid-column: 2;
+            grid-row: 1;
+            width: 141mm;
+            padding: 3mm 10mm 10mm 6mm;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            word-wrap: break-word;
+        }
+
+        .right-sections {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .section-title {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 900;
+            letter-spacing: 0.03em;
+            font-size: 12pt;
+            margin-bottom: var(--section-margin);
+            margin-left: -0.5em;
+            border-bottom: 0.75pt solid transparent; /* Reserve space */
+            text-transform: uppercase;
+        }
+
+        /* Bullets are a literal "• " text node (not native list markers, which
+           Chromium draws as vector glyphs that never reach the PDF text layer).
+           A hanging indent keeps wrapped lines aligned under the text. */
+        .bullet-list {
+            list-style: none;
+            margin: 0;
+            padding-left: 0;
+        }
+
+        .bullet-list li {
+            padding-left: 1.2em;
+            text-indent: -1.2em;
+            margin-bottom: var(--bullet-margin);
+            font-size: inherit;
+            line-height: inherit;
+        }
+
+        .bullet-list li:last-child {
+            margin-bottom: 0;
+        }
+
+        .stack-line {
+            display: flex;
+            margin-bottom: var(--bullet-margin);
+            padding-left: 0;
+            font-size: inherit;
+            line-height: inherit;
+        }
+
+        .stack-label {
+            flex-shrink: 0;
+            margin-right: 0.3em;
+            font-weight: 600;
+        }
+
+        .stack-content {
+            flex: 1;
+        }
+
+        .skills-category {
+            margin-bottom: 0.6em;
+        }
+
+        .skills-category:last-child {
+            margin-bottom: 0;
+        }
+
+        .skills-category-title {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 600;
+            font-size: inherit;
+            margin-bottom: 0.1em;
+            color: #1a1a1a;
+            line-height: 1.1;
+        }
+
+        .skills-list {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 400;
+            font-size: inherit;
+            line-height: inherit;
+            color: #444444;
+            margin-left: 0.5em;
+        }
+
+        .education-entry {
+            margin-bottom: 0.8em;
+        }
+
+        .education-entry:last-child {
+            margin-bottom: 0;
+        }
+
+        .education-period {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 300;
+            font-size: inherit;
+            color: #000000;
+            margin-bottom: 0.1em;
+        }
+
+        .education-credential {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 400;
+            font-size: inherit;
+            color: #1a1a1a;
+            margin-bottom: 0.05em;
+            margin-left: 0.5em;
+        }
+
+        .education-institution {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 300;
+            font-size: inherit;
+            color: #000000;
+            font-style: italic;
+            margin-left: 0.5em;
+        }
+
+        .certifications-list {
+            font-family: 'Noto Sans', sans-serif;
+            font-size: inherit;
+            line-height: inherit;
+            color: #000000;
+            margin-left: 0.5em;
+        }
+
+        .cert-date {
+            font-weight: 300;
+            margin-right: 1em;
+        }
+
+        .cert-names {
+            font-weight: 400;
+        }
+
+        .hobbies-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.1em;
+            font-size: inherit;
+            margin-left: 0.5em;
+            padding: 0;
+            list-style: none;
+        }
+
+        .hobby-item {
+            display: block;
+            list-style: none;
+            padding: 0.05em 0;
+        }
+
+        .experience-entry {
+            margin-bottom: var(--entry-margin);
+        }
+
+        .experience-entry:last-child {
+            margin-bottom: 0;
+        }
+
+        .experience-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 0.1em;
+        }
+
+        .experience-title {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 600;
+            font-size: inherit;
+            color: #1a1a1a;
+        }
+
+        .experience-period {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 300;
+            font-size: inherit;
+            color: #000000;
+            white-space: nowrap;
+        }
+
+        .experience-org-location {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 0.3em;
+        }
+
+        .experience-organization {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 400;
+            font-size: inherit;
+            color: #444444;
+        }
+
+        .experience-location {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 300;
+            font-size: inherit;
+            color: #000000;
+            font-style: italic;
+        }
+
+        .project-entry {
+            margin-bottom: var(--entry-margin);
+        }
+
+        .project-entry:last-child {
+            margin-bottom: 0;
+        }
+
+        .project-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 0.2em;
+        }
+
+        .project-title {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 600;
+            font-size: inherit;
+            color: #1a1a1a;
+        }
+
+        .project-title:before,
+        .project-title:after {
+            content: '';
+        }
+
+        .project-meta {
+            font-family: 'Noto Sans', sans-serif;
+            font-weight: 300;
+            font-size: inherit;
+            color: #000000;
+            font-style: italic;
+        }
+
+        @media print {
+            .resume-container {
+                margin: 0;
+                padding: 0;
+                width: 216mm;
+                height: 279mm;
+            }
+
+            .content {
+                page-break-inside: avoid;
+            }
+
+            .section {
+                page-break-inside: avoid;
+            }
+        }
+
+        @page {
+            size: letter;
+            margin: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="resume-container">
+        <div class="gray-background"></div>
+        <div class="header">
+            <div class="name-tagline">
+                <h1>{{ full_name.upper() }}</h1>
+                <div class="subtitle">{{ professional_title.upper() }}</div>
+            </div>
+            <div class="contact-info">
+                <div class="contact-item">
+                    {{ contact.email }} <svg class="contact-icon" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M48 64C21.5 64 0 85.5 0 112c0 15.1 7.1 29.3 19.2 38.4L236.8 313.6c11.4 8.5 27 8.5 38.4 0L492.8 150.4c12.1-9.1 19.2-23.3 19.2-38.4 0-26.5-21.5-48-48-48L48 64zM0 176L0 384c0 35.3 28.7 64 64 64l384 0c35.3 0 64-28.7 64-64l0-208L294.4 339.2c-22.8 17.1-54 17.1-76.8 0L0 176z"/></svg>
+                </div>
+                <div class="contact-item">
+                    {{ contact.phone }} <svg class="contact-icon" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M164.9 24.6c-7.7-18.6-28-28.5-47.4-23.2l-88 24C12.1 30.2 0 46 0 64C0 311.4 200.6 512 448 512c18 0 33.8-12.1 38.6-29.5l24-88c5.3-19.4-4.6-39.7-23.2-47.4l-96-40c-17-7.1-36.7-2.1-48.3 12.4l-40.4 49.3c-70.4-33.3-127.4-90.3-160.7-160.7l49.3-40.4c14.4-11.8 19.5-31.5 12.4-48.3l-40-96z"/></svg>
+                </div>
+                <div class="contact-item">
+                    {{ contact.location }} <svg class="contact-icon" viewBox="0 0 384 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M215.7 499.2C267 435 384 279.4 384 192C384 86 298 0 192 0S0 86 0 192c0 87.4 116.9 243 168.3 307.2c12.3 15.3 35.1 15.3 47.4 0zM192 256a64 64 0 1 1 0-128 64 64 0 1 1 0 128z"/></svg>
+                </div>
+                {% if contact.website %}
+                <div class="contact-item">
+                    {{ contact.website }} <svg class="contact-icon" viewBox="0 0 640 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M392.8 1.2c-17-4.9-34.7 5-39.6 22l-128 448c-4.9 17 5 34.7 22 39.6s34.7-5 39.6-22l128-448c4.9-17-5-34.7-22-39.6zm80.6 120.1c-12.5 12.5-12.5 32.8 0 45.3L562.7 256l-89.4 89.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l112-112c12.5-12.5 12.5-32.8 0-45.3l-112-112c-12.5-12.5-32.8-12.5-45.3 0zm-306.7 0c-12.5-12.5-32.8-12.5-45.3 0l-112 112c-12.5 12.5-12.5 32.8 0 45.3l112 112c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L77.3 256l89.4-89.4c12.5-12.5 12.5-32.8 0-45.3z"/></svg>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="content">
+            <main class="right-column">
+                <div class="right-sections">
+                    <div class="section">
+                        <h2 class="section-title">{{ experience.label }}</h2>
+                        {% for entry in experience.entries %}
+                        <div class="experience-entry">
+                            <div class="experience-header">
+                                <div class="experience-title">{{ entry.title }}</div>
+                                <div class="experience-period">
+                                    {% if entry.period.end == "Present" %}
+                                    {{ entry.period.start }} - Present
+                                    {% elif "(seasonal)" in entry.title %}
+                                    (seasonal) {{ entry.period.start }} - {{ entry.period.end }}
+                                    {% else %}
+                                    {{ entry.period.start }} - {{ entry.period.end }}
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="experience-org-location">
+                                <div class="experience-organization">{{ entry.organization }}</div>
+                                <div class="experience-location">{{ entry.location }}</div>
+                            </div>
+                            <ul class="bullet-list">
+                                {% for bullet in entry.bullets %}
+                                <li>&#8226; {{ bullet }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="section">
+                        <h2 class="section-title">{{ projects.label }}</h2>
+                        {% for project in projects.entries %}
+                        <div class="project-entry">
+                            <div class="project-header">
+                                <div class="project-title">{{ project.title }}</div>
+                                <div class="project-meta">{{ project.subtitle }}</div>
+                            </div>
+                            <ul class="bullet-list">
+                                {% for bullet in project.bullets %}
+                                {% if bullet.strip().startswith('Stack:') %}
+                                <div class="stack-line">
+                                    <span class="stack-label">Stack:</span>
+                                    <span class="stack-content">{{ bullet.strip()[6:].strip() }}</span>
+                                </div>
+                                {% else %}
+                                <li>&#8226; {{ bullet }}</li>
+                                {% endif %}
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </main>
+
+            <aside class="left-column">
+                <div class="left-sections">
+                    <div class="section">
+                        <h2 class="section-title">{{ skills.label }}</h2>
+                        {% for category in skills.categories %}
+                        <div class="skills-category">
+                            <div class="skills-category-title">{{ category.name }}:</div>
+                            <div class="skills-list">
+                                {% for skill in category.skills %}
+                                {{ skill }}{% if not loop.last %}, {% endif %}
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="section">
+                        <h2 class="section-title">{{ education.label }}</h2>
+                        {% for entry in education.entries %}
+                        <div class="education-entry">
+                            <div class="education-period">{% if entry.period.start %}{{ entry.period.start }} - {% endif %}{{ entry.period.end }}</div>
+                            <div class="education-credential">{{ entry.credential }}</div>
+                            <div class="education-institution">{{ entry.institution }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="section">
+                        <h2 class="section-title">{{ certifications.label }}</h2>
+                        <div class="certifications-list">
+                            <span class="cert-date">{{ certifications.entries[0].date }}</span>
+                            <span class="cert-names">{% for cert in certifications.entries %}{{ cert.name }}{% if not
+                                loop.last %}, {% endif %}{% endfor %}</span>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <h2 class="section-title">{{ hobbies.label }}</h2>
+                        <ul class="hobbies-grid">
+                            {% for hobby in hobbies.entries %}
+                            <li class="hobby-item">&#8226; {{ hobby }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+</body>
+
+</html>

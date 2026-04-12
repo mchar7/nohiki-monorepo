@@ -1,0 +1,226 @@
+# Resume template lint rules: deterministic enforcement of resume quality.
+# Rules are applicant-agnostic and template-specific; user tuning via
+# _tailor_meta tags/vars.
+#
+# Layout rules (``layout:`` block)
+# require a rendered PDF and are evaluated after Gotenberg renders.
+
+rules:
+  # Section: experience_bullets
+  - rule_id: content.experience_bullets.min_items
+    type: min_items
+    severity: error
+    scope_paths: ["experience.entries[*].bullets"]
+    params: {value: 1}
+    description: "Each experience entry needs at least one bullet"
+
+  - rule_id: content.experience_bullets.max_items
+    type: max_items
+    severity: warning
+    scope_paths: ["experience.entries[*].bullets"]
+    params: {value: 6}
+    description: "Experience entries should not exceed 6 bullets"
+
+  - rule_id: content.experience_bullets.min_words_per_item
+    type: min_words_per_item
+    severity: warning
+    scope_paths: ["experience.entries[*].bullets"]
+    params: {value: 6}
+    description: "Experience bullets should be substantive (≥6 words)"
+
+  - rule_id: content.experience_bullets.max_words_per_item
+    type: max_words_per_item
+    severity: warning
+    scope_paths: ["experience.entries[*].bullets"]
+    params: {value: 30}
+    description: "Experience bullets should be concise (≤30 words)"
+
+  - rule_id: content.experience_bullets.unique_opening_words
+    type: unique_opening_words
+    severity: warning
+    scope_paths: ["experience.entries[*].bullets"]
+    params: {scope: entry}
+    description: "Bullets within an entry should vary opening verbs"
+
+  - rule_id: content.experience_bullets.verb_tense
+    type: verb_tense
+    severity: warning
+    scope_paths: ["experience.entries[*].bullets"]
+    params: {require: past}
+    description: "Experience bullets use past tense"
+
+  - rule_id: content.experience_bullets.banned_openers
+    type: banned_openers
+    severity: warning
+    scope_paths: ["experience.entries[*].bullets"]
+    params:
+      scope: item
+      max_token_check: 1
+      patterns:
+        - pattern: "^(Architected|Engineered|Spearheaded|Leveraged|Utilized|Established|Validated|Orchestrated|Facilitated|Empowered)$"
+          message: "AI-slop opener — use a grounded action verb"
+    description: "Block AI-slop verb openers in experience bullets"
+
+  # Section: project_bullets (mirror of experience_bullets)
+  - rule_id: content.project_bullets.min_items
+    type: min_items
+    severity: error
+    scope_paths: ["projects.entries[*].bullets"]
+    params: {value: 1}
+
+  - rule_id: content.project_bullets.max_items
+    type: max_items
+    severity: warning
+    scope_paths: ["projects.entries[*].bullets"]
+    params: {value: 6}
+
+  - rule_id: content.project_bullets.min_words_per_item
+    type: min_words_per_item
+    severity: warning
+    scope_paths: ["projects.entries[*].bullets"]
+    params: {value: 6}
+
+  - rule_id: content.project_bullets.max_words_per_item
+    type: max_words_per_item
+    severity: warning
+    scope_paths: ["projects.entries[*].bullets"]
+    params: {value: 30}
+
+  - rule_id: content.project_bullets.unique_opening_words
+    type: unique_opening_words
+    severity: warning
+    scope_paths: ["projects.entries[*].bullets"]
+    params: {scope: entry}
+
+  - rule_id: content.project_bullets.verb_tense
+    type: verb_tense
+    severity: warning
+    scope_paths: ["projects.entries[*].bullets"]
+    params: {require: past}
+
+  - rule_id: content.project_bullets.banned_openers
+    type: banned_openers
+    severity: warning
+    scope_paths: ["projects.entries[*].bullets"]
+    params:
+      scope: item
+      max_token_check: 1
+      patterns:
+        - pattern: "^(Architected|Engineered|Spearheaded|Leveraged|Utilized|Established|Validated|Orchestrated|Facilitated|Empowered)$"
+          message: "AI-slop opener — use a grounded action verb"
+
+  # Section: skill_categories (applies only if skills section present)
+  - rule_id: content.skill_categories.min_items
+    type: min_items
+    severity: error
+    scope_paths: ["skills.categories"]
+    applies_when: "schema_has_path('skills.categories')"
+    params: {value: 1}
+
+  - rule_id: content.skill_categories.max_items
+    type: max_items
+    severity: warning
+    scope_paths: ["skills.categories"]
+    applies_when: "schema_has_path('skills.categories')"
+    params: {value: 6}
+
+  - rule_id: content.skill_categories.max_child_items
+    type: max_child_items
+    severity: warning
+    scope_paths: ["skills.categories"]
+    applies_when: "schema_has_path('skills.categories')"
+    params: {child_key: skills, value: 14}
+
+  - rule_id: content.skill_categories.banned_child_names
+    type: banned_child_names
+    severity: error
+    scope_paths: ["skills.categories"]
+    applies_when: "schema_has_path('skills.categories')"
+    params:
+      name_key: name
+      patterns:
+        - "Soft Skills"
+        - "Interpersonal Skills"
+        - "People Skills"
+
+  - rule_id: content.skill_categories.first_item_capitalization
+    type: first_item_capitalization
+    severity: warning
+    scope_paths: ["skills.categories"]
+    applies_when: "schema_has_path('skills.categories')"
+    params: {child_key: skills}
+
+  # Guard sections: experience_entries + education_entries
+  - rule_id: content.experience_entries.min_items
+    type: min_items
+    severity: error
+    scope_paths: ["experience.entries"]
+    params: {value: 1}
+
+  - rule_id: content.education_entries.min_items
+    type: min_items
+    severity: error
+    scope_paths: ["education.entries"]
+    params: {value: 1}
+
+  # Text: banned patterns across resume bullets (split by severity)
+  - rule_id: text.resume_bullets.banned_patterns_warning
+    type: banned_patterns
+    severity: warning
+    scope_paths:
+      - "experience.entries[*].bullets"
+      - "projects.entries[*].bullets"
+    params:
+      patterns:
+        - pattern: "responsible for"
+          message: "Avoid passive 'responsible for' — use an action verb"
+        - pattern: "assisted with"
+          message: "Avoid 'assisted with' — describe your direct contribution"
+        - pattern: "[—–]"
+          message: "Em dash / en dash in resume bullet — prefer commas or periods"
+
+  - rule_id: text.resume_bullets.banned_patterns_info
+    type: banned_patterns
+    severity: info
+    scope_paths:
+      - "experience.entries[*].bullets"
+      - "projects.entries[*].bullets"
+    params:
+      patterns:
+        - pattern: "\\bvarious\\b"
+          message: "Avoid vague 'various' — be specific"
+        - pattern: "\\butilized\\b"
+          message: "Prefer 'used' over 'utilized'"
+
+  # Structure: required sections and order
+  - rule_id: structure.required_sections
+    type: required_sections
+    severity: error
+    scope_paths: ["$"]
+    params:
+      value: [skills, experience, education]
+
+  - rule_id: structure.section_order
+    type: section_order
+    severity: info
+    scope_paths: ["$"]
+    params:
+      value: [skills, experience, projects, education, certifications, hobbies]
+
+# Layout rules: evaluated post-render against the rendered PDF.
+# Requires pdfplumber-backed extraction.
+layout:
+  rules:
+    - rule_id: layout.max_pages_exceeded.resume
+      type: max_pages_exceeded
+      severity: error
+      scope_paths: ["$"]
+      params: {max_pages: 2}
+      description: "Resume hard ceiling: 2 pages"
+
+    - rule_id: layout.page_overflow.resume
+      type: page_overflow
+      severity: warning
+      scope_paths: ["$"]
+      params: {max_pages: 2, tolerance_pt: 5.0}
+      description: "Warn on resumes that just barely spill to a new page"
