@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "Cover Letter Data",
+  "description": "Complete cover letter data for the professional cover letter template",
+  "properties": {
+    "full_name": {
+      "type": "string",
+      "title": "Full Name",
+      "description": "Your complete name as you want it to appear",
+      "minLength": 1,
+      "examples": ["John Smith", "Jane Doe"]
+    },
+    "professional_title": {
+      "type": "string",
+      "title": "Professional Title",
+      "description": "Your current role or professional designation",
+      "minLength": 1,
+      "examples": ["Full-Stack Software Developer", "Technical Support Specialist"]
+    },
+    "contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Contact Information",
+      "description": "Basic contact and personal details",
+      "properties": {
+        "email": { "type": "string", "title": "Email Address", "description": "Professional email address", "examples": ["john.smith@email.com"] },
+        "phone": { "type": "string", "title": "Phone Number", "description": "Primary contact number", "examples": ["+1 (555) 123-4567"] },
+        "location": { "type": "string", "title": "Location", "description": "City, State or City, Country", "examples": ["San Francisco, CA"] },
+        "website": { "type": "string", "title": "Website/Portfolio", "description": "Personal website or portfolio URL", "examples": ["linkedin.com/in/johndoe"] }
+      },
+      "required": ["email", "phone", "location"]
+    },
+    "position": { "type": "string", "title": "Position Title", "description": "The job title you are applying for", "minLength": 1, "examples": ["IS Service Desk Technician Tier 1 (Ref #2288)"] },
+    "salutation": { "type": "string", "title": "Salutation", "description": "How to address the recipient", "default": "Dear Hiring Manager,", "examples": ["Dear Hiring Manager,", "Dear Ms. Johnson,"] },
+    "body_paragraphs": {
+      "type": "array",
+      "title": "Body Paragraphs",
+      "description": "The main content paragraphs of the cover letter, in order",
+      "items": { "type": "string", "minLength": 50 },
+      "minItems": 1,
+      "maxItems": 6
+    },
+    "closing_line": { "type": "string", "title": "Closing Line", "description": "Final line before the sign-off", "examples": ["Thank you very much for considering my application."] },
+    "sign_off": { "type": "string", "title": "Sign-Off", "description": "How to close the letter", "default": "Sincerely,", "examples": ["Sincerely,", "Best regards,"] }
+  },
+  "required": ["full_name", "professional_title", "contact", "position", "salutation", "body_paragraphs", "sign_off"]
+}

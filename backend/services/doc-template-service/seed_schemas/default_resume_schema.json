@@ -1,0 +1,364 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "Resume Data",
+  "description": "Complete resume information for a professional two-column layout",
+  "properties": {
+    "full_name": {
+      "type": "string",
+      "title": "Full Name",
+      "description": "Your complete name as you want it to appear",
+      "minLength": 1,
+      "examples": ["John Smith", "Jane Doe"]
+    },
+    "professional_title": {
+      "type": "string",
+      "title": "Professional Title",
+      "description": "Your current role or professional designation",
+      "minLength": 1,
+      "examples": ["Full-Stack Software Developer", "Senior Product Manager"]
+    },
+    "contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Contact Information",
+      "description": "Basic contact and personal details",
+      "properties": {
+        "email": {
+          "type": "string",
+          "title": "Email Address",
+          "description": "Professional email address",
+          "examples": ["john.smith@email.com"]
+        },
+        "phone": {
+          "type": "string",
+          "title": "Phone Number",
+          "description": "Primary contact number",
+          "examples": ["+1 (555) 123-4567", "555-123-4567"]
+        },
+        "location": {
+          "type": "string",
+          "title": "Location",
+          "description": "City, State or City, Country",
+          "examples": ["San Francisco, CA", "London, UK"]
+        },
+        "website": {
+          "type": "string",
+          "title": "Website/Portfolio",
+          "description": "Personal website or portfolio URL",
+          "examples": ["https://johnsmith.dev", "github.com/johndoe"]
+        }
+      },
+      "required": ["email", "phone", "location"]
+    },
+    "skills": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Skills Section",
+      "description": "Technical and professional skills organized by category",
+      "properties": {
+        "label": {
+          "type": "string",
+          "title": "Section Label",
+          "description": "Title for the skills section",
+          "default": "Technical Skills",
+          "examples": ["Technical Skills", "Core Competencies"]
+        },
+        "categories": {
+          "type": "array",
+          "title": "Skill Categories",
+          "description": "Different categories of skills",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "title": "Category Name",
+                "minLength": 1,
+                "examples": ["Programming Languages", "Frameworks", "Tools", "Soft Skills"]
+              },
+              "skills": {
+                "type": "array",
+                "title": "Skills List",
+                "description": "Individual skills in this category",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "examples": ["JavaScript", "Python", "React", "Leadership"]
+                }
+              }
+            },
+            "required": ["name", "skills"]
+          }
+        }
+      },
+      "required": ["label", "categories"]
+    },
+    "education": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Education Section",
+      "description": "Educational background and qualifications",
+      "properties": {
+        "label": {
+          "type": "string",
+          "title": "Section Label",
+          "description": "Title for the education section",
+          "default": "Education",
+          "examples": ["Education", "Academic Background"]
+        },
+        "entries": {
+          "type": "array",
+          "title": "Education Entries",
+          "description": "Educational background entries",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "period": {
+                "type": "object",
+                "additionalProperties": false,
+                "title": "Study Period",
+                "description": "Start and graduation years",
+                "properties": {
+                  "start": {
+                    "type": "string",
+                    "title": "Start Year",
+                    "examples": ["2016", "2018"]
+                  },
+                  "end": {
+                    "type": "string",
+                    "title": "Graduation Year",
+                    "examples": ["2020", "2022"]
+                  }
+                },
+                "required": ["end"]
+              },
+              "credential": {
+                "type": "string",
+                "title": "Degree/Credential",
+                "minLength": 1,
+                "examples": ["Bachelor of Science in Computer Science", "High-School Diploma"]
+              },
+              "institution": {
+                "type": "string",
+                "title": "Institution Name",
+                "minLength": 1,
+                "examples": ["Stanford University", "MIT", "University of California"]
+              },
+              "location": {
+                "type": "string",
+                "title": "Location",
+                "examples": ["Stanford, CA", "Cambridge, MA"]
+              }
+            },
+            "required": ["period", "credential", "institution"]
+          }
+        }
+      },
+      "required": ["label", "entries"]
+    },
+    "certifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Certifications Section",
+      "description": "Professional certifications and credentials",
+      "properties": {
+        "label": {
+          "type": "string",
+          "title": "Section Label",
+          "description": "Title for the certifications section",
+          "default": "Certifications",
+          "examples": ["Certifications", "Professional Credentials"]
+        },
+        "entries": {
+          "type": "array",
+          "title": "Certification Entries",
+          "description": "List of certifications",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "title": "Certification Name",
+                "description": "Short certification name or abbreviation. Use official acronyms (e.g., 'CKA' not 'Certified Kubernetes Administrator'). Max 40 chars.",
+                "minLength": 1,
+                "maxLength": 40,
+                "examples": ["AWS SAA-C03", "CKA", "CKAD", "PMP", "CISSP", "LPIC-1", "CompTIA A+"]
+              },
+              "date": {
+                "type": "string",
+                "title": "Date Obtained",
+                "maxLength": 10,
+                "examples": ["2019", "2020", "2020-04"]
+              }
+            },
+            "required": ["name", "date"]
+          }
+        }
+      },
+      "required": ["label", "entries"]
+    },
+    "experience": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Experience Section",
+      "description": "Professional work history",
+      "properties": {
+        "label": {
+          "type": "string",
+          "title": "Section Label",
+          "description": "Title for the experience section",
+          "default": "Professional Experience",
+          "examples": ["Professional Experience", "Work History"]
+        },
+        "entries": {
+          "type": "array",
+          "title": "Experience Entries",
+          "description": "Professional work history in reverse chronological order",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "type": "string",
+                "title": "Job Title",
+                "minLength": 1,
+                "examples": ["Senior Software Engineer", "Product Manager"]
+              },
+              "organization": {
+                "type": "string",
+                "title": "Company/Organization",
+                "minLength": 1,
+                "examples": ["Google", "Microsoft", "Startup Inc."]
+              },
+              "location": {
+                "type": "string",
+                "title": "Location",
+                "examples": ["San Francisco, CA", "Remote"]
+              },
+              "period": {
+                "type": "object",
+                "additionalProperties": false,
+                "title": "Employment Period",
+                "description": "Start and end dates",
+                "properties": {
+                  "start": {
+                    "type": "string",
+                    "title": "Start Date",
+                    "examples": ["2020", "Jan 2020", "2020-01"]
+                  },
+                  "end": {
+                    "type": "string",
+                    "title": "End Date",
+                    "examples": ["Present", "2023", "Dec 2023", "2023-12"]
+                  }
+                },
+                "required": ["start", "end"]
+              },
+              "bullets": {
+                "type": "array",
+                "title": "Key Achievements",
+                "description": "Major accomplishments and responsibilities in this role",
+                "items": {
+                  "type": "string",
+                  "minLength": 10,
+                  "examples": [
+                    "Led development of microservices architecture serving 1M+ users",
+                    "Reduced system latency by 40% through optimization initiatives"
+                  ]
+                }
+              }
+            },
+            "required": ["title", "organization", "period"]
+          }
+        }
+      },
+      "required": ["label", "entries"]
+    },
+    "projects": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Projects Section",
+      "description": "Notable personal or professional projects",
+      "properties": {
+        "label": {
+          "type": "string",
+          "title": "Section Label",
+          "description": "Title for the projects section",
+          "default": "Software Projects",
+          "examples": ["Software Projects", "Notable Projects", "Portfolio"]
+        },
+        "entries": {
+          "type": "array",
+          "title": "Project Entries",
+          "description": "List of notable projects",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "type": "string",
+                "title": "Project Name",
+                "minLength": 1,
+                "examples": ["E-commerce Platform", "Mobile Weather App"]
+              },
+              "subtitle": {
+                "type": "string",
+                "title": "Project Subtitle",
+                "description": "Brief context such as repository status, tech stack summary, or project scope",
+                "examples": ["Public GitHub repository", "Private (company-sensitive) codebase"]
+              },
+              "bullets": {
+                "type": "array",
+                "title": "Project Details",
+                "description": "Key details, accomplishments, and technologies used",
+                "items": {
+                  "type": "string",
+                  "minLength": 10,
+                  "examples": [
+                    "Built a full-stack e-commerce platform using React and Node.js",
+                    "Stack: React, Node.js, PostgreSQL, AWS"
+                  ]
+                }
+              }
+            },
+            "required": ["title", "bullets"]
+          }
+        }
+      },
+      "required": ["label", "entries"]
+    },
+    "hobbies": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Hobbies Section",
+      "description": "Personal interests and hobbies",
+      "properties": {
+        "label": {
+          "type": "string",
+          "title": "Section Label",
+          "description": "Title for the hobbies section",
+          "default": "Interests",
+          "examples": ["Interests", "Hobbies"]
+        },
+        "entries": {
+          "type": "array",
+          "title": "Hobby List",
+          "description": "Brief, single-concept interests. Use 1-3 word phrases max. Avoid verbose descriptions. Max 25 chars each.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 25,
+            "examples": ["Hockey", "Homelab", "Piano", "Rock Climbing", "Open Source", "Photography"]
+          }
+        }
+      },
+      "required": ["label", "entries"]
+    }
+  },
+  "required": ["full_name", "professional_title", "contact", "skills", "education", "experience"]
+}

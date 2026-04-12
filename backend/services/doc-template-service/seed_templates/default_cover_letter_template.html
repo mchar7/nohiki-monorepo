@@ -1,0 +1,235 @@
+<!-- TMPL_META
+{
+  "name": "cover_letter",
+  "title": "Cover Letter Template",
+  "description": "Professional cover letter with adaptive layout, matching two-pane resume visual identity",
+  "namespace": "cover_letter",
+  "visibility": "public",
+  "version": "2.1.0",
+  "access_scope": "SYSTEM"
+}
+-->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ full_name }} - Cover Letter</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;600;900&display=swap');
+
+        :root {
+            --line-height: 1.42;
+            --font-size: 10pt;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Noto Sans', sans-serif;
+            font-size: var(--font-size);
+            line-height: var(--line-height);
+            color: #333333;
+            background: white;
+        }
+
+        /* Container IS the page. Exact US Letter dimensions, zero margin.
+           All visual margins are created by padding inside child elements. */
+        .letter-container {
+            width: 8.5in;
+            height: 11in;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Header - padding creates the visual "page margin" effect.
+           Top/sides: ~10mm inset from page edge for content breathing room. */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.7in 0.75in 0.25in 0.75in;
+            background: #f0f0f0;
+            flex-shrink: 0;
+        }
+
+        .name-tagline {
+            text-align: left;
+            max-width: 60%;
+        }
+
+        .name-tagline h1 {
+            font-family: 'Noto Sans', sans-serif;
+            font-size: 36pt;
+            font-weight: 400;
+            letter-spacing: 0.05em;
+            color: #1a1a1a;
+            margin: 0;
+            line-height: 0.9;
+        }
+
+        .name-tagline .subtitle {
+            font-family: 'Noto Sans', sans-serif;
+            font-size: 13pt;
+            font-weight: 400;
+            letter-spacing: 0.1em;
+            color: #444444;
+            margin-top: 0.6em;
+            text-transform: uppercase;
+        }
+
+        .contact-info {
+            text-align: right;
+            font-size: 10pt;
+            line-height: 1.4;
+        }
+
+        .contact-item {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            margin-bottom: 0.3em;
+            color: #333333;
+            white-space: nowrap;
+        }
+
+        .contact-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .contact-icon {
+            margin-left: 0.8em;
+            height: 9pt;
+            width: auto;
+            fill: #000000;
+            flex-shrink: 0;
+        }
+
+        /* Body - wider side padding than header for traditional letter proportions */
+        .body {
+            flex: 1;
+            padding: 0.3in 1.1in 0 1.1in;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .position-line {
+            font-weight: 300;
+        }
+
+        .position-label {
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+
+        .letter-content p {
+            text-align: left;
+        }
+
+        .position-line,
+        .salutation,
+        .letter-content {
+            margin-bottom: 14pt;
+        }
+
+        .letter-content p {
+            margin-bottom: 9pt;
+        }
+
+        .letter-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        .closing {
+            margin-top: 20pt;
+        }
+
+        .closing .sign-off {
+            margin-bottom: 4pt;
+        }
+
+        /* Footer - full width of container, which IS the page */
+        .footer {
+            height: 0.15in;
+            background: #f0f0f0;
+            flex-shrink: 0;
+        }
+
+        @media print {
+            .letter-container {
+                width: 8.5in;
+                height: 11in;
+            }
+        }
+
+        @page {
+            size: letter;
+            margin: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="letter-container">
+        <div class="header">
+            <div class="name-tagline">
+                <h1>{{ full_name.upper() }}</h1>
+                <div class="subtitle">{{ professional_title.upper() }}</div>
+            </div>
+            <div class="contact-info">
+                <div class="contact-item">
+                    {{ contact.email }} <svg class="contact-icon" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M48 64C21.5 64 0 85.5 0 112c0 15.1 7.1 29.3 19.2 38.4L236.8 313.6c11.4 8.5 27 8.5 38.4 0L492.8 150.4c12.1-9.1 19.2-23.3 19.2-38.4 0-26.5-21.5-48-48-48L48 64zM0 176L0 384c0 35.3 28.7 64 64 64l384 0c35.3 0 64-28.7 64-64l0-208L294.4 339.2c-22.8 17.1-54 17.1-76.8 0L0 176z"/></svg>
+                </div>
+                <div class="contact-item">
+                    {{ contact.phone }} <svg class="contact-icon" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M164.9 24.6c-7.7-18.6-28-28.5-47.4-23.2l-88 24C12.1 30.2 0 46 0 64C0 311.4 200.6 512 448 512c18 0 33.8-12.1 38.6-29.5l24-88c5.3-19.4-4.6-39.7-23.2-47.4l-96-40c-17-7.1-36.7-2.1-48.3 12.4l-40.4 49.3c-70.4-33.3-127.4-90.3-160.7-160.7l49.3-40.4c14.4-11.8 19.5-31.5 12.4-48.3l-40-96z"/></svg>
+                </div>
+                <div class="contact-item">
+                    {{ contact.location }} <svg class="contact-icon" viewBox="0 0 384 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M215.7 499.2C267 435 384 279.4 384 192C384 86 298 0 192 0S0 86 0 192c0 87.4 116.9 243 168.3 307.2c12.3 15.3 35.1 15.3 47.4 0zM192 256a64 64 0 1 1 0-128 64 64 0 1 1 0 128z"/></svg>
+                </div>
+                {% if contact.website %}
+                <div class="contact-item">
+                    {{ contact.website }} <svg class="contact-icon" viewBox="0 0 640 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M392.8 1.2c-17-4.9-34.7 5-39.6 22l-128 448c-4.9 17 5 34.7 22 39.6s34.7-5 39.6-22l128-448c4.9-17-5-34.7-22-39.6zm80.6 120.1c-12.5 12.5-12.5 32.8 0 45.3L562.7 256l-89.4 89.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l112-112c12.5-12.5 12.5-32.8 0-45.3l-112-112c-12.5-12.5-32.8-12.5-45.3 0zm-306.7 0c-12.5-12.5-32.8-12.5-45.3 0l-112 112c-12.5 12.5-12.5 32.8 0 45.3l112 112c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L77.3 256l89.4-89.4c12.5-12.5 12.5-32.8 0-45.3z"/></svg>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="body">
+            <div class="position-line"><span class="position-label">Position:</span> {{ position }}</div>
+
+            <div class="salutation">{{ salutation }}</div>
+
+            <div class="letter-content">
+                {% for paragraph in body_paragraphs %}
+                <p>{{ paragraph }}</p>
+                {% endfor %}
+                {% if closing_line %}
+                <p class="closing-line">{{ closing_line }}</p>
+                {% endif %}
+            </div>
+
+            <div class="closing">
+                <p class="sign-off">{{ sign_off }}</p>
+                <p class="signature-name">{{ full_name }}</p>
+            </div>
+        </div>
+
+        <div class="footer"></div>
+    </div>
+
+</body>
+
+</html>

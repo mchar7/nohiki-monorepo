@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "job_notification_schema",
+  "title": "Job Notification Email Data",
+  "description": "Data payload for the job-notification email template",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["subject", "listings"],
+  "properties": {
+    "subject": {
+      "type": "string",
+      "title": "Email Subject",
+      "description": "Subject line for the notification email"
+    },
+    "current_year": {
+      "type": "integer",
+      "title": "Current Year",
+      "description": "Current year for copyright footer",
+      "minimum": 2025
+    },
+    "view_all_url": {
+      "type": "string",
+      "title": "View All URL",
+      "description": "Link to view all job matches",
+      "format": "uri"
+    },
+    "help_url": {
+      "type": "string",
+      "title": "Help URL",
+      "description": "Link to help/support page",
+      "format": "uri"
+    },
+    "preferences_url": {
+      "type": "string",
+      "title": "Preferences URL",
+      "description": "Link to notification preferences",
+      "format": "uri"
+    },
+    "listings": {
+      "type": "array",
+      "title": "Job Listings",
+      "description": "List of matched job listings to include in notification",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "company", "job_url"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Job Title",
+            "description": "Title of the job position"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company Name",
+            "description": "Name of the hiring company"
+          },
+          "job_url": {
+            "type": "string",
+            "title": "Job URL",
+            "description": "Link to the full job listing",
+            "format": "uri"
+          },
+          "location": {
+            "type": "string",
+            "title": "Location",
+            "description": "Job location (city, remote, etc.)"
+          },
+          "job_type": {
+            "type": "string",
+            "title": "Job Type",
+            "description": "Employment type (full-time, contract, etc.)"
+          },
+          "compensation": {
+            "type": "string",
+            "title": "Compensation",
+            "description": "Salary or compensation range if available"
+          },
+          "match_score": {
+            "type": "integer",
+            "title": "Match Score",
+            "description": "How well this job matches user preferences (0-100)",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "match_reasoning": {
+            "type": "string",
+            "title": "Match Reasoning",
+            "description": "Brief explanation of why this job was matched"
+          }
+        }
+      }
+    }
+  }
+}

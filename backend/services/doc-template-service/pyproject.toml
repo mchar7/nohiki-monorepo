@@ -1,0 +1,26 @@
+[project]
+name = "doc-template-service"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Generate visually rich documents from layouts"
+requires-python = ">=3.14"
+dependencies = [
+    "nohiki-core-settings==0.1.0",
+    "nohiki-domain-models==0.1.0",
+    "nohiki-observability[fastapi]==0.1.0",
+    "nohiki-db-utils[full]==0.1.0",
+    "nohiki-redis-utils==0.1.0",
+    "nohiki-fastapi-utils[server]==0.1.0",
+    "nohiki-kafka-client==0.1.0",
+    "nohiki-s3-client==0.1.0",
+    "jinja2>=3.1.6",
+    "jsonschema>=4.25.1",
+    "lxml>=6.0.2",
+    "semver>=3.0.4",
+    "html2text>=2025.4.15",
+    "httpx>=0.28.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
