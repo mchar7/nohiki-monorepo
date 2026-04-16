@@ -1,0 +1,24 @@
+{
+  "listing": {
+    "source": "linkedin",
+    "source_id": "test-003",
+    "url": "https://example.com/jobs/software-engineer",
+    "title": "Software Engineer",
+    "company_name": "Enterprise Corp",
+    "location_raw": "New York, NY",
+    "description": "We are looking for a Software Engineer to work on-site at our New York office. 3-5 years of experience required. Strong knowledge of Java, Spring Boot, and microservices architecture. Competitive salary based on experience.",
+    "raw_skills": ["Java", "Spring Boot", "Microservices"],
+    "salary_text": "",
+    "employment_type": "FULL_TIME",
+    "discovered_at": "2025-01-15T10:00:00Z"
+  },
+  "expected": {
+    "seniority": "MID",
+    "work_arrangement": "ON_SITE",
+    "employment_term": "FULL_TIME",
+    "min_explicit": false,
+    "max_explicit": false,
+    "min_skills_count": 2,
+    "industry": "technology"
+  }
+}

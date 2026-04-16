@@ -1,0 +1,26 @@
+{
+  "listing": {
+    "source": "linkedin",
+    "source_id": "test-001",
+    "url": "https://example.com/jobs/senior-software-engineer",
+    "title": "Senior Software Engineer",
+    "company_name": "TechCorp Inc",
+    "location_raw": "Remote - United States",
+    "description": "We are seeking a Senior Software Engineer to join our team. Requirements: 5+ years of experience with Python, JavaScript, and cloud technologies. Experience with AWS, Docker, and Kubernetes preferred. Salary range: $150,000 - $200,000 per year. This is a fully remote position.",
+    "raw_skills": ["Python", "JavaScript", "AWS", "Docker", "Kubernetes"],
+    "salary_text": "$150,000 - $200,000 per year",
+    "employment_type": "FULL_TIME",
+    "discovered_at": "2025-01-15T10:00:00Z"
+  },
+  "expected": {
+    "seniority": "SENIOR",
+    "work_arrangement": "REMOTE",
+    "employment_term": "FULL_TIME",
+    "min_explicit": true,
+    "max_explicit": true,
+    "min_salary": 15000000,
+    "max_salary": 20000000,
+    "min_skills_count": 3,
+    "industry": "technology"
+  }
+}
