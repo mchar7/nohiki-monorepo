@@ -1,0 +1,26 @@
+{
+  "listing": {
+    "source": "linkedin",
+    "source_id": "test-004",
+    "url": "https://example.com/jobs/director-engineering",
+    "title": "Director of Engineering",
+    "company_name": "BigTech Inc",
+    "location_raw": "Remote",
+    "description": "Director of Engineering to lead our platform team. 10+ years of experience required with 5+ years in leadership. Experience with large-scale distributed systems, team management, and strategic planning. Base salary: $250,000 - $350,000 plus equity.",
+    "raw_skills": ["Leadership", "Distributed Systems", "Strategic Planning", "Team Management"],
+    "salary_text": "$250,000 - $350,000",
+    "employment_type": "FULL_TIME",
+    "discovered_at": "2025-01-15T10:00:00Z"
+  },
+  "expected": {
+    "seniority": "DIRECTOR",
+    "work_arrangement": "REMOTE",
+    "employment_term": "FULL_TIME",
+    "min_explicit": true,
+    "max_explicit": true,
+    "min_salary": 25000000,
+    "max_salary": 35000000,
+    "min_skills_count": 2,
+    "industry": "technology"
+  }
+}

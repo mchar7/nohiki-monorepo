@@ -1,0 +1,24 @@
+{
+  "listing": {
+    "source": "indeed",
+    "source_id": "test-002",
+    "url": "https://example.com/jobs/junior-developer",
+    "title": "Junior Software Developer",
+    "company_name": "StartupXYZ",
+    "location_raw": "San Francisco, CA (Hybrid)",
+    "description": "Looking for a Junior Developer to join our growing team. 0-2 years of experience required. Experience with React, Node.js, and PostgreSQL is a plus. We offer a hybrid work arrangement with 3 days in office. Great opportunity to learn and grow!",
+    "raw_skills": ["React", "Node.js", "PostgreSQL"],
+    "salary_text": "",
+    "employment_type": "FULL_TIME",
+    "discovered_at": "2025-01-15T10:00:00Z"
+  },
+  "expected": {
+    "seniority": "ENTRY",
+    "work_arrangement": "HYBRID",
+    "employment_term": "FULL_TIME",
+    "min_explicit": false,
+    "max_explicit": false,
+    "min_skills_count": 2,
+    "industry": "technology"
+  }
+}

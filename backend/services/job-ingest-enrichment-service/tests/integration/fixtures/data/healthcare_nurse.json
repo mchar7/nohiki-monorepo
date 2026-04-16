@@ -1,0 +1,24 @@
+{
+  "listing": {
+    "source": "indeed",
+    "source_id": "test-005",
+    "url": "https://example.com/jobs/registered-nurse",
+    "title": "Registered Nurse - ICU",
+    "company_name": "City Hospital",
+    "location_raw": "Chicago, IL",
+    "description": "Seeking an experienced ICU Registered Nurse. 2+ years of ICU experience required. BLS and ACLS certifications required. Strong patient care skills and ability to work in a fast-paced environment. Competitive pay with benefits.",
+    "raw_skills": ["ICU Care", "BLS Certification", "ACLS Certification", "Patient Care"],
+    "salary_text": "",
+    "employment_type": "FULL_TIME",
+    "discovered_at": "2025-01-15T10:00:00Z"
+  },
+  "expected": {
+    "seniority": "MID",
+    "work_arrangement": "ON_SITE",
+    "employment_term": "FULL_TIME",
+    "min_explicit": false,
+    "max_explicit": false,
+    "min_skills_count": 2,
+    "industry": "healthcare"
+  }
+}
