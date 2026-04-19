@@ -1,0 +1,27 @@
+[project]
+name = "job-storage-service"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Canonical storage and query interface for all processed job data"
+requires-python = ">=3.14"
+dependencies = [
+    "nohiki-common-exceptions==0.1.0",
+    "nohiki-core-settings==0.1.0",
+    "nohiki-domain-models==0.1.0",
+    "nohiki-observability[fastapi]==0.1.0",
+    "nohiki-db-utils[full]==0.1.0",
+    "nohiki-fastapi-utils[server,otel]==0.1.0",
+    "nohiki-kafka-client==0.1.0",
+    "nohiki-ml-manifest==0.1.0",
+    "nohiki-qdrant-client==0.1.0",
+    "uuid-utils>=0.14.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "nohiki-test-utils==0.1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
