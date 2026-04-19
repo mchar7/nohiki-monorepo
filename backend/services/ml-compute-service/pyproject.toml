@@ -1,0 +1,42 @@
+[project]
+name = "ml-compute-service"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Kubernetes ML compute service using nohiki-ml-core"
+requires-python = ">=3.14"
+dependencies = [
+    "huggingface-hub>=1.23.0",
+    "nohiki-core-settings==0.1.0",
+    "nohiki-fastapi-utils[server]==0.1.0",
+    "nohiki-ml-core[inference,cache]==0.1.0",
+    "nohiki-ml-manifest==0.1.0",
+    "nohiki-kafka-client==0.1.0",
+    "nohiki-s3-client==0.1.0",
+    "nohiki-redis-utils==0.1.0",
+    "nohiki-observability[fastapi]==0.1.0",
+    "nohiki-domain-models==0.1.0",
+    "uuid-utils>=0.14.0",
+]
+
+[project.optional-dependencies]
+# Mutually exclusive accelerator selection (enforced by root [tool.uv].conflicts).
+# Plain `uv sync` (no extra) resolves CPU-only torch (+cpu) via unsafe-best-match
+# against the non-explicit pytorch-cpu index. The production GPU image builds with
+# `--extra cuda` to pull CUDA 13.0 torch (+cu130) and its NVIDIA runtime deps.
+# torch is 2.11.0 - the newest release pylate 1.6.0 -> fast-plaid permits (it pins
+# torch==2.11.0); both indexes publish cp314 +cpu and +cu130 wheels for it, so the
+# graph resolves natively with no version override.
+cpu = ["torch>=2.11.0"]
+cuda = ["torch>=2.11.0"]
+
+[tool.uv.sources]
+# Route torch to the accelerator-specific PyTorch index for the enabled extra.
+# The pytorch-cpu / pytorch-cu130 indexes are declared at the workspace root.
+torch = [
+    { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux' or sys_platform == 'darwin' or sys_platform == 'win32'" },
+    { index = "pytorch-cu130", extra = "cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
