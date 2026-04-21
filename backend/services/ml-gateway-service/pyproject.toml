@@ -1,0 +1,21 @@
+[project]
+name = "ml-gateway-service"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "ML compute routing gateway - routes requests to provider-specific Kafka topics"
+requires-python = ">=3.14"
+dependencies = [
+    "nohiki-core-settings==0.1.0",
+    "nohiki-fastapi-utils[server]==0.1.0",
+    "nohiki-kafka-client==0.1.0",
+    "nohiki-domain-models==0.1.0",
+    "nohiki-redis-utils==0.1.0",
+    "nohiki-observability[fastapi]==0.1.0",
+    "nohiki-common-exceptions==0.1.0",
+    "nohiki-ml-core==0.1.0",
+    "nohiki-ml-manifest==0.1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
