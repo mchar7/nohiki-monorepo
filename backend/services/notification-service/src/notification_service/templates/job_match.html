@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>New Job Match</title>
+</head>
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h1 style="color: #2563eb;">New Job Match!</h1>
+    <p>We found a job that matches your preferences:</p>
+    <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+        <h2 style="margin-top: 0;">{{ listing_title }}</h2>
+        {% if company_name %}<p><strong>Company:</strong> {{ company_name }}</p>{% endif %}
+        <p><strong>Match Score:</strong> {{ fit_score }}%</p>
+        {% if listing_url %}<a href="{{ listing_url }}" style="color: #2563eb;">View Job Listing</a>{% endif %}
+    </div>
+    <p style="color: #6b7280; font-size: 14px;">
+        You received this email because you have job match notifications enabled.
+    </p>
+</body>
+</html>
