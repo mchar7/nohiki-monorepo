@@ -1,0 +1,15 @@
+[project]
+name = "snapshot-refresh-job"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "One-shot job to publish SnapshotRefreshRequested commands for ECST projection refresh"
+requires-python = ">=3.14"
+dependencies = [
+    "nohiki-kafka-client==0.1.0",
+    "nohiki-domain-models==0.1.0",
+    "nohiki-observability==0.1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
