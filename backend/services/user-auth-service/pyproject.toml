@@ -1,0 +1,34 @@
+[project]
+name = "user-auth-service"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Authentication, JWT management, sessions, and basic user profile for Nohiki."
+requires-python = ">=3.14"
+dependencies = [
+    "nohiki-core-settings==0.1.0",
+    "nohiki-fastapi-utils[server,otel]==0.1.0",
+    "nohiki-db-utils[full]==0.1.0",
+    "nohiki-kafka-client==0.1.0",
+    "nohiki-domain-models==0.1.0",
+    "nohiki-observability[fastapi,httpx,sqlalchemy]==0.1.0",
+    "nohiki-redis-utils==0.1.0",
+    "argon2-cffi>=25.1.0",
+    "pyjwt>=2.10.1",
+    "cryptography>=45.0.0",
+    "pydantic[email]>=2.12.5",
+    "authlib>=1.6.0",
+    "httpx>=0.28.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "nohiki-test-utils==0.1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
