@@ -1,0 +1,74 @@
+[project]
+name = "llm-benchmark"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "LLM model comparison benchmark for Nohiki services"
+requires-python = ">=3.14"
+dependencies = [
+    "genai-prices>=0.0.54",
+    "doc-content-service==0.1.0",
+    "doc-template-service==0.1.0",
+    "tailor==0.1.0",
+    "jsonschema>=4.25.1",
+    "pdfplumber>=0.11.0",
+    "nohiki-llm-client==0.1.0",
+    "nohiki-domain-models==0.1.0",
+    "nohiki-observability==0.1.0",
+    "job-ingest-enrichment-service==0.1.0",
+    "pyyaml>=6.0.0",
+    "rich>=14.0.0",
+    "httpx>=0.28.0",
+    "typer>=0.21.0",
+]
+
+[project.scripts]
+llm-benchmark = "llm_benchmark.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+doc-content-service = { workspace = true }
+doc-template-service = { workspace = true }
+tailor = { workspace = true }
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",   # trailing comma - conflicts with ruff formatter
+    "ISC001",   # implicit string concat - conflicts with ruff formatter
+    "D203",     # one-blank-line-before-class - conflicts with D211
+    "D213",     # multi-line-summary-second-line - conflicts with D212 (Google style)
+    "PLR0913",  # too many arguments - Typer CLI functions and engine APIs need many params
+    "FBT002",   # boolean default positional - standard for Typer CLI boolean flags
+    "PLC0415",  # import not at top level - intentional lazy imports to avoid circular deps
+    "TC001",    # move app import to TYPE_CHECKING - requires careful runtime analysis
+    "TC002",    # move third-party import to TYPE_CHECKING - requires careful runtime analysis
+    "TC003",    # move stdlib import to TYPE_CHECKING - requires careful runtime analysis
+    "PLR2004",  # magic values - inline thresholds are clearer in display/scoring code
+    "C901",     # too complex - evaluate.py orchestrator needs refactoring (tracked separately)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",    # assert in tests
+    "S105",    # hardcoded passwords in tests
+    "S106",    # hardcoded passwords in tests
+    "PLR2004", # magic values in tests
+    "D",       # docstrings optional in tests
+    "SLF001",  # Benchmark tests verify frozen private fingerprints and fixture path seams
+]
+"src/llm_benchmark/engine/document_qualification.py" = [
+    "BLE001",  # Qualification persists arbitrary provider/renderer failures and re-raises fatal exceptions
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ty.environment]
+root = ["src"]
