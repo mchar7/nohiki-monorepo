@@ -1,0 +1,22 @@
+[project]
+name = "calibrate-skill-thresholds"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Empirically calibrate skill normalization thresholds using real taxonomy data"
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.5.1",
+    "rich>=14.0",
+    "typer>=0.26.8",
+]
+
+[project.scripts]
+calibrate-skill-thresholds = "calibrate_skill_thresholds.cli:app"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["calibrate_skill_thresholds"]
+package-dir = {"calibrate_skill_thresholds" = "."}
