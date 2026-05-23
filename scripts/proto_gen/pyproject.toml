@@ -1,0 +1,29 @@
+[project]
+name = "proto-gen"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "betterproto2 proto generation CLI for Nohiki domain models"
+requires-python = ">=3.14"
+dependencies = [
+    "typer==0.26.8",
+    "rich==15.0.0",
+    "grpcio-tools==1.82.1",
+    "betterproto2==0.10.0",
+]
+
+[tool.uv]
+managed = false
+
+[project.scripts]
+proto-gen = "proto_gen.cli:app"
+
+[build-system]
+requires = ["setuptools>=82.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["proto_gen*"]
+
+[tool.ty.environment]
+extra-paths = [".."]
