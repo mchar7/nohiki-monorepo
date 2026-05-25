@@ -1,0 +1,53 @@
+[project]
+name = "nohiki-scaffold"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Monorepo-compliant scaffolder for Nohiki backend services and shared libraries"
+requires-python = ">=3.14"
+dependencies = [
+    "typer>=0.21.0",
+    "rich>=14.3.0",
+    "tomlkit>=0.13.0",
+    "jinja2>=3.1.6",
+    "ci-checks==0.1.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "nohiki-test-utils==0.1.0",
+]
+
+[project.scripts]
+nohiki-scaffold = "nohiki_scaffold.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+ci-checks = { workspace = true }
+nohiki-test-utils = { workspace = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = [
+    "integration: end-to-end scaffold tests that touch the filesystem via apply_plan",
+]
+
+[tool.coverage.run]
+source = ["nohiki_scaffold"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "^\\ *\\.\\.\\.$",
+    "if TYPE_CHECKING:",
+]
