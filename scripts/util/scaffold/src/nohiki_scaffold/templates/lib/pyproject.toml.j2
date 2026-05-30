@@ -1,0 +1,42 @@
+[project]
+name = "{{ spec.name }}"
+version = "0.1.0"
+description = "{{ spec.description }}"
+requires-python = ">=3.14"
+dependencies = [
+{% for dep in (spec.base_dependencies | sort_alpha) %}
+    "{{ dep }}==0.1.0",
+{% endfor %}
+]
+
+[project.optional-dependencies]
+{% if not spec.optional_extras %}
+test = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+]
+{% else %}
+{% for extra_name, extra_deps in spec.optional_extras.items() %}
+{{ extra_name }} = [
+{% for dep in (extra_deps | sort_alpha) %}
+    "{{ dep }}",
+{% endfor %}
+]
+{% endfor %}
+{% endif %}
+{% if spec.ships_console_script %}
+
+[project.scripts]
+{{ spec.ships_console_script }}
+{% endif %}
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
+{% if spec.namespace_package %}
+
+[tool.uv.build-backend]
+module-name = "nohiki"
+namespace = true
+{% endif %}

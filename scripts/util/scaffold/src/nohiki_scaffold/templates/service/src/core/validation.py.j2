@@ -1,0 +1,21 @@
+"""Fail-fast startup validation for {{ service_name }}."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from nohiki_observability import get_logger
+
+if TYPE_CHECKING:
+    from {{ module_name }}.core.config import Settings
+
+logger = get_logger(__name__)
+
+
+class StartupValidationError(RuntimeError):
+    """Raised when startup validation fails."""
+
+
+def run_startup_validation(settings: Settings) -> None:
+    """Validate service preconditions at startup. Raise StartupValidationError on failure."""
+    logger.info("Running startup validation", service=settings.service_name)

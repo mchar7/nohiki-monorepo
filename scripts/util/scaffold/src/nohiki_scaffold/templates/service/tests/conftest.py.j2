@@ -1,0 +1,58 @@
+"""Test fixtures for {{ service_name }}."""
+
+from __future__ import annotations
+
+import os
+
+# Environment variables are set before any imports that might trigger Settings loading.
+_ENV_PREFIX = "{{ env_prefix }}"
+_TEST_ENV: dict[str, str] = {
+    "TESTING": "true",
+    "OTEL_SDK_DISABLED": "true",
+{% if database.enabled %}
+    f"{_ENV_PREFIX}DATABASE__DSN": "postgresql://test:test@localhost:5432/test",
+    f"{_ENV_PREFIX}DATABASE__SCHEMA_NAME": "{{ database.schema_name }}",
+{% endif %}
+{% if kafka.role.value != "none" %}
+    f"{_ENV_PREFIX}KAFKA__BOOTSTRAP_SERVERS": "localhost:29092",
+    f"{_ENV_PREFIX}KAFKA__CONSUMER_GROUP": "{{ service_name }}",
+{% endif %}
+{% if redis.enabled %}
+    f"{_ENV_PREFIX}REDIS__URL": "redis://localhost:6379/0",
+{% endif %}
+{% if s3.enabled %}
+    f"{_ENV_PREFIX}S3__ENDPOINT_URL": "http://localhost:9000",
+    f"{_ENV_PREFIX}S3__ACCESS_KEY_ID": "test",
+    f"{_ENV_PREFIX}S3__SECRET_ACCESS_KEY": "test",
+    f"{_ENV_PREFIX}S3__BUCKET_NAME": "test-bucket",
+{% endif %}
+}
+os.environ.update(_TEST_ENV)
+
+from collections.abc import Generator
+
+import pytest
+{% if ml.manifest %}
+from nohiki_ml_manifest.testing import get_test_manifest_path
+
+os.environ[f"{_ENV_PREFIX}MANIFEST_PATH"] = str(get_test_manifest_path())
+{% endif %}
+
+
+@pytest.fixture(autouse=True)
+def _reset_caches() -> Generator[None]:
+    """Reset configuration caches before and after each test."""
+    from {{ module_name }}.core.config import get_settings
+{% if ml.manifest %}
+    from nohiki_ml_manifest import ManifestCache
+{% endif %}
+
+    get_settings.cache_clear()
+{% if ml.manifest %}
+    ManifestCache.reset()
+{% endif %}
+    yield
+    get_settings.cache_clear()
+{% if ml.manifest %}
+    ManifestCache.reset()
+{% endif %}

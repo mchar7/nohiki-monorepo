@@ -1,0 +1,15 @@
+"""Upstream CDC handlers for {{ service_name }}."""
+
+from __future__ import annotations
+
+from nohiki_observability import get_logger
+
+from {{ module_name }}.core.config import get_settings
+from {{ module_name }}.core.kafka import kafka_client
+
+logger = get_logger(__name__)
+settings = get_settings()
+
+upstream_cdc_group_id = f"{settings.kafka.consumer_group}-upstream-cdc"
+
+__all__ = ["kafka_client", "logger", "settings", "upstream_cdc_group_id"]

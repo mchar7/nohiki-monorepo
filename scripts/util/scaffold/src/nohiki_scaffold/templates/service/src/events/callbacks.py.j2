@@ -1,0 +1,15 @@
+"""Callback handlers for {{ service_name }}."""
+
+from __future__ import annotations
+
+from nohiki_observability import get_logger
+
+from {{ module_name }}.core.config import get_settings
+from {{ module_name }}.core.kafka import kafka_client
+
+logger = get_logger(__name__)
+settings = get_settings()
+
+callback_group_id = f"{settings.kafka.consumer_group}-callbacks"
+
+__all__ = ["callback_group_id", "kafka_client", "logger", "settings"]

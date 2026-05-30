@@ -1,0 +1,151 @@
+"""Configuration management for {{ service_name }}."""
+
+from __future__ import annotations
+
+{% set class_prefix = module_name.split("_") | map("capitalize") | join("") %}
+from functools import cache
+
+from nohiki_core_settings import NohikiBaseSettings
+{% if database.enabled %}
+from nohiki_db_utils import DatabaseMixin, DatabaseSettings
+{% endif %}
+{% if kafka.role.value != "none" %}
+{% if kafka.max_concurrent_handlers is not none %}
+from nohiki_kafka_client import KafkaConsumerSettings, KafkaMixin, KafkaSettings
+{% else %}
+from nohiki_kafka_client import KafkaMixin
+{% endif %}
+{% endif %}
+{% if ml.llm.enabled %}
+from nohiki_llm_client import LLMMixin
+{% endif %}
+{% if ml.manifest %}
+from nohiki_ml_manifest import ManifestCache, ManifestMixin, SemanticRepresentationManifest
+{% endif %}
+{% if ml.qdrant.enabled %}
+from nohiki_qdrant_client import QdrantMixin, QdrantVectorClient
+{% endif %}
+{% if redis.enabled %}
+from nohiki_redis_utils import CachingSettings, RedisMixin
+{% endif %}
+{% if s3.enabled %}
+from nohiki_s3_client import S3Mixin
+{% endif %}
+from pydantic import BaseModel, Field, PositiveInt
+from pydantic_settings import SettingsConfigDict
+
+
+class {{ class_prefix }}Config(BaseModel):
+    """Service-specific knobs for {{ service_name }}."""
+
+    request_timeout_seconds: PositiveInt = Field(default=30)
+{% if s3.enabled %}
+    s3_bucket_name: str = Field(
+        default="{{ s3.bucket_name }}",
+        description="S3 bucket for storing service artifacts.",
+    )
+{% if s3.key_prefix %}
+    s3_key_prefix: str = Field(
+        default="{{ s3.key_prefix }}",
+        description="Prefix for all object keys written to S3 by this service.",
+    )
+{% endif %}
+{% endif %}
+{% if ml.qdrant.enabled %}
+    qdrant_collection_entity: str = Field(
+        default="{{ ml.qdrant.collection_entity }}",
+        description="Manifest collection entity this service indexes or queries.",
+    )
+{% endif %}
+{% if ml.llm.enabled %}
+    llm_api_key_env: str = Field(
+        default="{{ ml.llm.api_key_env or 'CHANGE_ME' }}",
+        description="Environment variable name for LLM API key.",
+    )
+{% endif %}
+{% if redis.enabled %}
+
+
+class {{ class_prefix }}Caching(CachingSettings):
+    """Redis-backed caching settings for {{ service_name }}."""
+{% endif %}
+
+
+class Settings(
+{% if database.enabled %}
+    DatabaseMixin,
+{% endif %}
+{% if kafka.role.value != "none" %}
+    KafkaMixin,
+{% endif %}
+{% if redis.enabled %}
+    RedisMixin,
+{% endif %}
+{% if s3.enabled %}
+    S3Mixin,
+{% endif %}
+{% if ml.qdrant.enabled %}
+    QdrantMixin,
+{% endif %}
+{% if ml.manifest %}
+    ManifestMixin,
+{% endif %}
+{% if ml.llm.enabled %}
+    LLMMixin,
+{% endif %}
+    NohikiBaseSettings,
+):
+    """{{ friendly_name }} settings."""
+
+    model_config = SettingsConfigDict(env_prefix="{{ env_prefix }}")
+
+    service_name: str = "{{ service_name }}"
+    service_version: str = "0.1.0"
+    service_name_friendly: str = "{{ friendly_name }}"
+    service_desc_friendly: str = "{{ description }}"
+{% if database.enabled %}
+
+    database: DatabaseSettings = Field(default_factory=lambda: DatabaseSettings(schema="{{ database.schema_name }}"))
+{% endif %}
+{% if kafka.role.value != "none" and kafka.max_concurrent_handlers is not none %}
+
+    kafka: KafkaSettings = Field(
+        default_factory=lambda: KafkaSettings(
+            consumer=KafkaConsumerSettings(
+                max_concurrent_handlers={{ kafka.max_concurrent_handlers }},
+            ),
+        )
+    )
+{% endif %}
+
+    service_settings: {{ class_prefix }}Config = Field(
+        default_factory={{ class_prefix }}Config,
+    )
+{% if redis.enabled %}
+    caching: {{ class_prefix }}Caching = Field(
+        default_factory={{ class_prefix }}Caching,
+    )
+{% endif %}
+
+
+@cache
+def get_settings() -> Settings:
+    """Get cached settings singleton."""
+    return Settings()
+{% if ml.manifest %}
+
+
+def get_manifest() -> SemanticRepresentationManifest:
+    """Get cached manifest via shared ManifestCache."""
+    return ManifestCache.get(get_settings().manifest_path)
+{% endif %}
+{% if ml.qdrant.enabled %}
+
+
+@cache
+def get_qdrant_client() -> QdrantVectorClient:
+    """Construct the QdrantVectorClient for this service's manifest collection."""
+    settings = get_settings()
+    collection = get_manifest().get_collection_config(settings.service_settings.qdrant_collection_entity)
+    return QdrantVectorClient(settings.qdrant, collection.qdrant)
+{% endif %}

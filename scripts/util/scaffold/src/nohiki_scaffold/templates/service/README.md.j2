@@ -1,0 +1,16 @@
+# {{ friendly_name }}
+
+{{ description }}
+
+Owner: `{{ owner }}`
+
+## Local Development
+
+```bash
+just sync
+just test {{ service_name }}
+{% if database.alembic %}just migrate {{ service_name }}
+{% endif %}
+```
+
+Environment variables use the `{{ env_prefix }}` prefix. See `.env.example`.

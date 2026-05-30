@@ -1,0 +1,32 @@
+"""Event publishers for {{ service_name }}."""
+
+from __future__ import annotations
+
+{% if database.outbox %}
+from nohiki_db_utils import OutboxEventParams
+{% endif %}
+from nohiki_kafka_client import create_event_metadata
+from nohiki_observability import get_logger
+
+from {{ module_name }}.core.config import get_settings
+{% if not database.outbox %}
+from {{ module_name }}.core.kafka import kafka_client
+{% endif %}
+
+logger = get_logger(__name__)
+settings = get_settings()
+
+AGGREGATE_TYPE = "{{ module_name }}"
+
+__all__ = [
+    "AGGREGATE_TYPE",
+{% if database.outbox %}
+    "OutboxEventParams",
+{% endif %}
+    "create_event_metadata",
+{% if not database.outbox %}
+    "kafka_client",
+{% endif %}
+    "logger",
+    "settings",
+]

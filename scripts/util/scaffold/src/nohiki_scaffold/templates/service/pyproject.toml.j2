@@ -1,0 +1,53 @@
+[project]
+name = "{{ service_name }}"
+version = "0.1.0"
+description = "{{ description }}"
+requires-python = ">=3.14"
+dependencies = [
+    "nohiki-core-settings==0.1.0",
+    "nohiki-observability[fastapi]==0.1.0",
+{% if has_http %}
+    "nohiki-fastapi-utils[server]==0.1.0",
+{% endif %}
+{% if database.enabled %}
+{% if database.outbox or database.alembic %}
+    "nohiki-db-utils[full]==0.1.0",
+{% else %}
+    "nohiki-db-utils[async]==0.1.0",
+{% endif %}
+{% endif %}
+{% if kafka.role.value != "none" %}
+    "nohiki-kafka-client==0.1.0",
+    "nohiki-domain-models==0.1.0",
+{% endif %}
+{% if redis.enabled %}
+    "nohiki-redis-utils==0.1.0",
+{% endif %}
+{% if s3.enabled %}
+    "nohiki-s3-client==0.1.0",
+{% endif %}
+{% if kafka.embedding_callback %}
+    "nohiki-embedding-client==0.1.0",
+{% endif %}
+{% if ml.manifest %}
+    "nohiki-ml-manifest==0.1.0",
+{% endif %}
+{% if ml.qdrant.enabled %}
+    "nohiki-qdrant-client==0.1.0",
+{% endif %}
+{% if ml.llm.enabled %}
+    "nohiki-llm-client==0.1.0",
+{% endif %}
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "nohiki-test-utils==0.1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"

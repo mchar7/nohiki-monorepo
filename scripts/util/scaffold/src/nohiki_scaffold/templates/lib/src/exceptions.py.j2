@@ -1,0 +1,9 @@
+"""Typed exceptions for {{ spec.name }}."""
+
+from __future__ import annotations
+
+from nohiki_common_exceptions import NohikiError
+
+
+class {{ (module_name.split('_') | map('capitalize') | join) }}Error(NohikiError):
+    """Base exception for {{ spec.name }}."""

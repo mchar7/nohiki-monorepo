@@ -1,0 +1,17 @@
+"""S3 storage helpers for {{ service_name }}."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from nohiki_s3_client import S3Client
+
+from {{ module_name }}.core.config import get_settings
+
+{{ env_prefix_no_trailing }}_PREFIX = "{{ module_name }}"
+
+
+@lru_cache(maxsize=1)
+def _get_s3_client() -> S3Client:
+    """Return S3 client configured from service settings."""
+    return S3Client(get_settings().s3)

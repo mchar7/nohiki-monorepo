@@ -1,0 +1,37 @@
+"""Embedding publisher for {{ service_name }}."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from functools import cache
+
+from nohiki.ml.v1 import EmbeddingType, EncodingMode
+from nohiki_embedding_client import EmbeddingPublisher, EmbeddingSpec
+from nohiki_kafka_client import CallbackStateMixin
+
+from {{ module_name }}.core.config import get_settings
+
+{{ env_prefix_no_trailing }}_EMBEDDING_SPEC = EmbeddingSpec(
+    requested_types=[EmbeddingType.MUVERA, EmbeddingType.SPARSE, EmbeddingType.COLBERT],
+    encoding_mode=EncodingMode.DOCUMENT,
+    publish_to_index=False,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingCallbackState(CallbackStateMixin):
+    """State carried across the embedding request/callback boundary."""
+
+    entity_id: str
+    action: str
+
+
+@cache
+def get_embedding_publisher() -> EmbeddingPublisher:
+    """Return the singleton embedding publisher for this service."""
+    settings = get_settings()
+    return EmbeddingPublisher(
+        callback_topic=f"{settings.service_name}.sys.embedding-callback.v1",
+        service_name=settings.service_name,
+        collection_version="v1",
+    )

@@ -1,0 +1,38 @@
+"""Smoke tests for {{ service_name }}."""
+
+from __future__ import annotations
+
+from {{ module_name }} import main
+from {{ module_name }}.core.config import Settings, get_settings
+{% if kafka.role.value != "none" %}
+from {{ module_name }}.core.kafka import kafka_client
+{% endif %}
+
+
+def test_main_module_imports() -> None:
+    """The service's main module can be imported end-to-end."""
+    assert main.app is not None
+    assert main.settings.service_name == "{{ service_name }}"
+
+
+def test_settings_instantiates() -> None:
+    """Settings load cleanly from the test environment set up in conftest."""
+    settings = get_settings()
+    assert isinstance(settings, Settings)
+    assert settings.service_name == "{{ service_name }}"
+{% if database.enabled %}
+    assert settings.database.schema_name == "{{ database.schema_name }}"
+{% endif %}
+
+
+{% if kafka.role.value != "none" %}
+def test_kafka_client_builds() -> None:
+    """The module-level Kafka client is constructed successfully."""
+    assert kafka_client is not None
+{% else %}
+def test_service_package_imports() -> None:
+    """The service package itself is importable."""
+    import {{ module_name }}
+
+    assert {{ module_name }} is not None
+{% endif %}

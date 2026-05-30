@@ -1,0 +1,199 @@
+"""Main FastAPI application for {{ service_name }}."""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
+
+from fastapi import FastAPI
+{% if database.enabled %}
+from nohiki_db_utils import (
+    DatabaseHealthProbe,
+    close_all_engines,
+    get_async_engine,
+{% if has_consumer %}
+    get_async_sessionmaker,
+{% endif %}
+    initialize_database,
+)
+{% endif %}
+from nohiki_fastapi_utils import build_root_router
+from nohiki_fastapi_utils.errors import setup_error_handlers
+from nohiki_fastapi_utils.health_router import build_probe_health_router
+{% if kafka.role.value != "none" %}
+from nohiki_kafka_client import KafkaCapability, KafkaHealthProbe, ensure_kafka_ready
+{% endif %}
+{% if ml.llm.enabled %}
+from nohiki_llm_client import LLMHealthProbe, ensure_llm_ready
+{% endif %}
+from nohiki_observability import Observability, build_metrics_router
+{% if ml.qdrant.enabled %}
+from nohiki_qdrant_client import QdrantHealthProbe, ensure_qdrant_ready
+{% endif %}
+{% if redis.enabled %}
+{% if redis.bootstrap_distributed_lock %}
+from nohiki_redis_utils import CacheFactory, DistributedLockError, RedisHealthProbe, create_cache, ensure_redis_ready
+{% else %}
+from nohiki_redis_utils import CacheFactory, RedisHealthProbe, ensure_redis_ready
+{% endif %}
+{% endif %}
+{% if s3.enabled %}
+from nohiki_s3_client import S3Client, S3HealthProbe, ensure_s3_ready
+{% endif %}
+
+{% if ml.qdrant.enabled %}
+from {{ module_name }}.core.config import get_qdrant_client, get_settings
+{% else %}
+from {{ module_name }}.core.config import get_settings
+{% endif %}
+{% if kafka.role.value != "none" %}
+from {{ module_name }}.core.kafka import kafka_client
+{% endif %}
+{% if redis.bootstrap_distributed_lock %}
+from {{ module_name }}.core.seeder import run_seeder
+{% endif %}
+{% if ml.fail_fast_validation %}
+from {{ module_name }}.core.validation import run_startup_validation
+{% endif %}
+{% if has_consumer %}
+from {{ module_name }}.events import start_event_consumer
+{% endif %}
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+{% if redis.bootstrap_distributed_lock %}
+_SEEDER_LOCK_TTL_SECONDS: int = 600
+_SEEDER_LOCK_TIMEOUT_SECONDS: int = 60
+
+{% endif %}
+settings = get_settings()
+obs = Observability.from_settings(settings)
+obs.init()
+logger = obs.get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+    """Manage application lifespan events."""
+    logger.info("Starting service", service=settings.service_name)
+
+{% if ml.fail_fast_validation %}
+    run_startup_validation(settings)
+{% endif %}
+{% if database.enabled %}
+    await initialize_database(settings)
+{% endif %}
+{% if redis.enabled %}
+    await ensure_redis_ready(redis_url=settings.redis.connection_string)
+{% endif %}
+{% if s3.enabled %}
+    await ensure_s3_ready(S3Client(settings.s3))
+{% endif %}
+{% if ml.llm.enabled %}
+    await ensure_llm_ready(settings.llm)
+{% endif %}
+{% if ml.qdrant.enabled %}
+    await ensure_qdrant_ready(get_qdrant_client().raw_client)
+{% endif %}
+{% if kafka.role.value != "none" %}
+    await ensure_kafka_ready(bootstrap_servers=settings.kafka.bootstrap_servers)
+{% endif %}
+{% if redis.bootstrap_distributed_lock %}
+
+    try:
+        cache = create_cache(settings.service_name, redis_url=settings.redis.connection_string)
+        async with cache.distributed_lock(
+            "{{ module_name }}_seeder",
+            ttl_seconds=_SEEDER_LOCK_TTL_SECONDS,
+            timeout_seconds=_SEEDER_LOCK_TIMEOUT_SECONDS,
+        ):
+            await run_seeder()
+    except DistributedLockError:
+        logger.info("Seeding skipped, another pod holds the lock")
+    except Exception:
+        logger.exception("Seeding failed")
+{% endif %}
+{% if has_consumer and database.enabled %}
+    kafka_client.set_db_session_factory(get_async_sessionmaker(settings.database))
+{% endif %}
+{% if has_producer and not has_consumer %}
+    await kafka_client.ensure_producer_ready()
+{% endif %}
+{% if has_consumer %}
+    start_event_consumer()
+{% endif %}
+
+    yield
+
+    logger.info("Shutting down service", service=settings.service_name)
+{% if has_consumer %}
+    await kafka_client.stop_consumers()
+{% endif %}
+{% if kafka.role.value != "none" %}
+    await kafka_client.close()
+{% endif %}
+{% if redis.enabled %}
+    await CacheFactory.close_all()
+{% endif %}
+{% if database.enabled %}
+    await close_all_engines()
+{% endif %}
+    obs.shutdown()
+    logger.info("Service shutdown complete", service=settings.service_name)
+
+
+app = FastAPI(
+    title=settings.service_name_friendly,
+    description=settings.service_desc_friendly,
+    version=settings.service_version,
+    lifespan=lifespan,
+)
+
+obs.init_fastapi(app)
+setup_error_handlers(app)
+
+app.include_router(build_root_router(settings.service_name, settings.service_version))
+app.include_router(
+    build_probe_health_router(
+        settings.service_name,
+        lambda: [
+{% if database.enabled %}
+            DatabaseHealthProbe(get_async_engine(settings.database)),
+{% endif %}
+{% if kafka.role.value != "none" %}
+            KafkaHealthProbe(
+                settings.kafka.bootstrap_servers,
+                capabilities={
+                    KafkaCapability.BROKER_CONNECTIVITY,
+{% if has_consumer %}
+                    KafkaCapability.CONSUMER_READY,
+{% else %}
+                    KafkaCapability.PRODUCER_READY,
+{% endif %}
+                },
+            ),
+{% endif %}
+{% if redis.enabled %}
+            RedisHealthProbe(settings.redis.connection_string),
+{% endif %}
+{% if s3.enabled %}
+            S3HealthProbe(S3Client(settings.s3)),
+{% endif %}
+{% if ml.llm.enabled %}
+            LLMHealthProbe(settings.llm),
+{% endif %}
+{% if ml.qdrant.enabled %}
+            QdrantHealthProbe(get_qdrant_client().raw_client),
+{% endif %}
+        ],
+    )
+)
+app.include_router(build_metrics_router())
+
+logger.info("Service initialized", service=settings.service_name, version=settings.service_version)
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host=settings.host, port=settings.port)

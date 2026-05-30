@@ -1,0 +1,49 @@
+[project]
+name = "tailor"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Manual document tailoring CLI for Nohiki"
+requires-python = ">=3.14"
+dependencies = [
+    "typer>=0.21.0",
+    "rich>=14.3.0",
+    "pyyaml>=6.0",
+    "pdfplumber>=0.11.0",
+    "nohiki-llm-client",
+    "nohiki-core-settings",
+    "nohiki-observability",
+    "nohiki-test-utils",
+    "doc-template-service",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "pytest-mock>=3.12.0",
+    # reportlab is used only by tests/test_pdfplumber_extractor.py to
+    # build real PDFs in-memory. It has no runtime use.
+    "reportlab>=4.2.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[project.scripts]
+tailor = "tailor.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+nohiki-llm-client = { workspace = true }
+nohiki-core-settings = { workspace = true }
+nohiki-observability = { workspace = true }
+nohiki-test-utils = { workspace = true }
+doc-template-service = { workspace = true }
+
+[tool.ty.environment]
+root = ["src", "tests"]

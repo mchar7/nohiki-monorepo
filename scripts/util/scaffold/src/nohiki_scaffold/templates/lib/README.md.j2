@@ -1,0 +1,26 @@
+# {{ spec.name }}
+
+> {{ spec.description }}
+
+**Owner:** `{{ spec.owner }}`
+
+## Purpose
+
+`{{ spec.name }}` provides {{ spec.description | lower }} for the Nohiki workspace. The `{{ spec.owner }}` team owns its public contract and maintenance.
+
+## Install
+
+Add `{{ spec.name }}` to another workspace package's `pyproject.toml`:
+
+```toml
+[project]
+dependencies = [
+    "{{ spec.name }}==0.1.0",
+]
+```
+
+## Quickstart
+
+```python
+import {{ module_name }}
+```

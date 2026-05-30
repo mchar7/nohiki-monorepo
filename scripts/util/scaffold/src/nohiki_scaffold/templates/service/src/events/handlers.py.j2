@@ -1,0 +1,22 @@
+"""Shared service holder for {{ service_name }} event handlers."""
+
+from __future__ import annotations
+
+
+class _ServiceHolder:
+    """Container for module-level service references injected by main.py."""
+
+    ml_service: object | None = None
+
+
+_services = _ServiceHolder()
+
+
+def set_ml_service(service: object | None) -> None:
+    """Set the ML service handle used by event handlers."""
+    _services.ml_service = service
+
+
+def get_ml_service() -> object | None:
+    """Return the currently-configured ML service handle."""
+    return _services.ml_service

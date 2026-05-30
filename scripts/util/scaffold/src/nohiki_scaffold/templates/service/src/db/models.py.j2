@@ -1,0 +1,11 @@
+"""SQLAlchemy models for {{ service_name }}. Schema: {{ database.schema_name }}."""
+
+from __future__ import annotations
+
+from sqlalchemy.orm import DeclarativeBase
+
+SCHEMA_NAME = "{{ database.schema_name }}"
+
+
+class Base(DeclarativeBase):
+    """Base class for all models in this service."""

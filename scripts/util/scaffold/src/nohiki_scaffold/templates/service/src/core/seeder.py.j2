@@ -1,0 +1,15 @@
+"""Startup seeder for {{ service_name }}."""
+
+from __future__ import annotations
+
+from nohiki_observability import get_logger
+
+from {{ module_name }}.core.config import get_settings
+
+logger = get_logger(__name__)
+
+
+async def run_seeder() -> None:
+    """Seed bootstrap data. Caller holds a distributed lock so this runs once per deploy."""
+    settings = get_settings()
+    logger.info("Running startup seeder", service=settings.service_name)

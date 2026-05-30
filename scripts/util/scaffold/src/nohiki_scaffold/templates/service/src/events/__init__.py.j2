@@ -1,0 +1,31 @@
+"""Event handlers for {{ service_name }}.
+
+Importing this module registers all Kafka handlers via decorator side effects.
+"""
+{% set handler_values = kafka.handlers | map(attribute="value") | list %}
+{% set handler_modules = [] %}
+{% if "backfill" in handler_values %}{% set _ = handler_modules.append("backfill") %}{% endif %}
+{% if "callbacks" in handler_values %}{% set _ = handler_modules.append("callbacks") %}{% endif %}
+{% if "commands" in handler_values %}{% set _ = handler_modules.append("commands") %}{% endif %}
+{% if "feedback" in handler_values %}{% set _ = handler_modules.append("feedback") %}{% endif %}
+{% if "upstream-cdc" in handler_values %}{% set _ = handler_modules.append("upstream_cdc") %}{% endif %}
+
+from nohiki_observability import get_logger
+
+from {{ module_name }}.core.config import get_settings
+from {{ module_name }}.core.kafka import kafka_client
+{% if handler_modules %}
+from {{ module_name }}.events import {{ handler_modules | join(", ") }}
+{% endif %}
+
+{% set all_entries = (handler_modules + ["start_event_consumer"]) | sort %}
+__all__ = [{{ all_entries | map('tojson') | join(", ") }}]
+
+logger = get_logger(__name__)
+settings = get_settings()
+
+
+def start_event_consumer() -> None:
+    """Start the Kafka event consumer."""
+    logger.info("Starting event consumer", service=settings.service_name)
+    kafka_client.start_consumers()

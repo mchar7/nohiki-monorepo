@@ -1,0 +1,12 @@
+"""Kafka client for {{ service_name }}.
+
+Provides module-level `kafka_client` for decorator-based handler registration,
+consumer lifecycle, and event publishing. Handler modules must be imported
+before `kafka_client.start_consumers()` is called.
+"""
+
+from nohiki_kafka_client import create_kafka_client
+
+from {{ module_name }}.core.config import get_settings
+
+kafka_client = create_kafka_client(get_settings())
