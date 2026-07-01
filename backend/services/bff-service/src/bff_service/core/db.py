@@ -1,0 +1,34 @@
+"""Database dependencies for bff-service.
+
+FastAPI dependencies for database sessions.
+Import these in your routers to use with Depends().
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncGenerator
+from functools import lru_cache
+from typing import TYPE_CHECKING
+
+from nohiki_db_utils import DatabaseDependencies
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+from .config import get_settings
+
+
+@lru_cache
+def _get_db_deps() -> DatabaseDependencies:
+    """Get or create database dependencies singleton."""
+    settings = get_settings()
+    if settings.database is None:
+        msg = "DATABASE must be configured for database operations"
+        raise RuntimeError(msg)
+    return DatabaseDependencies(settings.database)
+
+
+async def get_async_db() -> AsyncGenerator[AsyncSession]:
+    """FastAPI dependency for database sessions."""
+    async for session in _get_db_deps().get_async_db():
+        yield session
