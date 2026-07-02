@@ -1,0 +1,11 @@
+id: no-useCallback-ts
+language: typescript
+rule:
+  pattern: useCallback($$$)
+files:
+  - "src/**"
+ignores:
+  - "src/shared/ui/**"
+  - "**/*.test.*"
+message: "useCallback is unnecessary with React Compiler active. Remove it."
+severity: error

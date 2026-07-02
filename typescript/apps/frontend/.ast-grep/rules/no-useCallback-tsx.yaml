@@ -1,0 +1,12 @@
+id: no-useCallback-tsx
+language: tsx
+rule:
+  pattern: useCallback($$$)
+files:
+  - "src/**"
+ignores:
+  - "src/shared/ui/**"
+  - "**/*.test.*"
+  - "src/features/auth/providers/AuthProvider.tsx"  # useCallback needed: navigation side-effect used as effect dep; test env lacks React Compiler
+message: "useCallback is unnecessary with React Compiler active. Remove it."
+severity: error

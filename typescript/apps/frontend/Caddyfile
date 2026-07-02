@@ -1,0 +1,22 @@
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	root * /srv
+	encode zstd gzip
+
+	route {
+		respond /healthz 200
+
+		handle /api/* {
+			reverse_proxy {$BFF_UPSTREAM}
+		}
+
+		handle {
+			try_files {path} /index.html
+			file_server
+		}
+	}
+}

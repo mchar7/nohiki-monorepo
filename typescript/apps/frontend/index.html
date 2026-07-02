@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- Security: Prevent MIME type sniffing -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+
+    <!-- Security: Referrer policy - send origin only for same-origin, nothing for cross-origin -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+    <!-- Security: Permissions policy - restrict browser features -->
+    <meta
+      http-equiv="Permissions-Policy"
+      content="camera=(), microphone=(), geolocation=(), payment=()"
+    />
+
+    <!-- Signal to browser which color schemes the app supports for initial paint background -->
+    <meta name="color-scheme" content="light dark" />
+
+    <!-- Preload + synchronously execute theme detection before React mounts to prevent FOUC -->
+    <link rel="preload" as="script" href="/theme-init.js" />
+    <script src="/theme-init.js"></script>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+
+    <!-- App metadata -->
+    <title>Nohiki</title>
+    <meta name="description" content="Nohiki - Job application automation platform" />
+    <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+  </head>
+  <body>
+    <noscript>
+      <div style="padding: 2rem; text-align: center; font-family: system-ui, sans-serif;">
+        <h1>JavaScript Required</h1>
+        <p>Please enable JavaScript to use Nohiki.</p>
+      </div>
+    </noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

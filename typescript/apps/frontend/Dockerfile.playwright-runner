@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1.16
+FROM docker.io/library/node:26.5.0-alpine@sha256:c9f02360d2bc66e709b300214395588acd2d3603f600db8141117e67c0faf4ff AS dependencies
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+WORKDIR /workspace
+RUN npm install --global pnpm@11.13.1
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY typescript/apps/frontend/package.json typescript/apps/frontend/package.json
+COPY typescript/libs/biome-config/package.json typescript/libs/biome-config/package.json
+COPY typescript/libs/tsconfig/package.json typescript/libs/tsconfig/package.json
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --filter nohiki-frontend...
+COPY typescript/apps/frontend typescript/apps/frontend
+COPY typescript/libs/biome-config typescript/libs/biome-config
+COPY typescript/libs/tsconfig typescript/libs/tsconfig
+
+FROM mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+
+RUN npm install --global pnpm@11.13.1
+WORKDIR /workspace
+COPY --from=dependencies --chown=pwuser:pwuser /workspace /workspace
+USER pwuser
+ENV CI=true E2E_BASE_URL=http://nohiki.localhost
+ENTRYPOINT ["node", "typescript/apps/frontend/e2e/run-k8s-verification.mjs"]

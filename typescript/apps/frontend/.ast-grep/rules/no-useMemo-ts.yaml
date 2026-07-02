@@ -1,0 +1,11 @@
+id: no-useMemo-ts
+language: typescript
+rule:
+  pattern: useMemo($$$)
+files:
+  - "src/**"
+ignores:
+  - "src/shared/ui/**"
+  - "**/*.test.*"
+message: "useMemo is unnecessary with React Compiler active. Remove it."
+severity: error

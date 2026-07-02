@@ -1,0 +1,310 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": ["@nohiki/biome-config/biome.json"],
+  "files": {
+    "includes": [
+      "src/**/*",
+      "!src/api/client",
+      "!src/api/schema.d.ts",
+      "!src/routeTree.gen.ts",
+      "!src/shared/api/types.gen.ts",
+      "scripts/**/*",
+      "e2e/**/*",
+      "!e2e/.output",
+      "!e2e/.auth"
+    ]
+  },
+  "css": {
+    "parser": {
+      "cssModules": true,
+      "tailwindDirectives": true
+    },
+    "linter": {
+      "enabled": true
+    },
+    "formatter": {
+      "enabled": true
+    }
+  },
+  "linter": {
+    "domains": {
+      "react": "recommended"
+    },
+    "rules": {
+      "nursery": {
+        "noReactNativeRawText": "off",
+        // These unstable style rules conflict with established function-component, callback,
+        // inferred-library-boundary, and instance-utility conventions. Keep correctness rules on.
+        "noMisleadingReturnType": "off",
+        "useExplicitReturnType": "off",
+        "useImportsFirst": "off",
+        "useReactFunctionComponentDefinition": "off",
+        "useThisInClassMethods": "off",
+        "useConsistentTestIt": {
+          "level": "error",
+          "options": {
+            "function": "test",
+            "withinDescribe": "test"
+          }
+        }
+      },
+      "performance": {
+        // Rule targets Next.js's <Image /> component. This project uses Vite with native <img>
+        // tags, which have no equivalent guidance from this rule.
+        "noImgElement": "off"
+      },
+      "style": {
+        // Conflicts with nursery.useExplicitType, which is the codebase-wide policy ("explicit
+        // types everywhere except API-boundary code that has its own scoped override").
+        // noInferrableTypes wants `param: number = 7` to become `param = 7`, which then trips
+        // useExplicitType ("the parameter doesn't have a type defined") on every default-valued
+        // primitive parameter. We chose explicitness. Keep this rule off.
+        "noInferrableTypes": "off"
+      },
+      "security": {
+        // gitleaks runs as a pre-commit hook (see lefthook.yml) with a tuned ruleset for this
+        // repo. noSecrets duplicates that scan with weaker, generic heuristics.
+        "noSecrets": "off"
+      },
+      "suspicious": {
+        // This rule is designed for non-React projects (e.g. Preact, Solid) where React-only
+        // props leak. We are React. `domains.react: "recommended"` is meant to disable this
+        // rule but does not in Biome 2.4.x; keep the explicit override until that is fixed.
+        "noReactSpecificProps": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      // Theme and animation classes are consumed through runtime-computed class names that
+      // this unstable cross-file rule cannot resolve reliably.
+      "includes": ["src/app/styles/theme-*.css"],
+      "linter": {
+        "rules": {
+          "nursery": {
+            "noUnusedClasses": "off"
+          }
+        }
+      }
+    },
+    {
+      // TanStack Router file-based routing: each route file declares `export const Route`
+      // (a non-component) alongside its component. The `Route` export already disables Vite
+      // Fast Refresh for the file regardless of how the component is exported, so the rule's
+      // underlying guarantee is unreachable. Splitting Route and component into separate
+      // files would defeat file-based routing.
+      "includes": ["src/app/routes/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useComponentExportOnlyModules": "off"
+          }
+        }
+      }
+    },
+    {
+      // Narrow shadcn/ui structural exceptions only. These files intentionally co-locate
+      // component-owned artifacts that are part of the shadcn/Radix API shape: cva variant
+      // configs (`buttonVariants`, `badgeVariants`), chart context/helpers next to chart
+      // components, React Hook Form field helpers, Radix primitive re-exports, and sidebar
+      // provider constants/hooks. Custom shared-ui components are kept outside this override.
+      "includes": [
+        "src/shared/ui/badge.tsx",
+        "src/shared/ui/button.tsx",
+        "src/shared/ui/chart.tsx",
+        "src/shared/ui/chart-context.tsx",
+        "src/shared/ui/chart-legend.tsx",
+        "src/shared/ui/chart-tooltip.tsx",
+        "src/shared/ui/form.tsx",
+        "src/shared/ui/popover.tsx",
+        "src/shared/ui/sidebar-context.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "useComponentExportOnlyModules": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/shared/ui/**"],
+      "linter": {
+        "rules": {
+          "nursery": {
+            "useExplicitType": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/shared/model/local/*.ts",
+        "src/shared/config/env.ts",
+        "src/shared/api/*.ts",
+        "src/features/*/api/*.ts",
+        "src/features/*/api/index.ts",
+        "src/features/*/schemas/*.ts",
+        "src/features/omakase/*/lib/*.ts",
+        "src/features/omakase/*/api/*.ts",
+        "src/pages/*/api/*.ts"
+      ],
+      "linter": {
+        "rules": {
+          "nursery": {
+            "useExplicitType": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["e2e/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noSkippedTests": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["e2e/playwright.config.ts", "src/vite-env.d.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDefaultExport": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["scripts/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noUnnecessaryConditions": "off",
+            "noConsole": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.test.*", "**/*.spec.*", "**/*test-helpers.*"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noUnnecessaryConditions": "off"
+          },
+          "style": {
+            "noJsxLiterals": "off"
+          },
+          "nursery": {
+            "noComponentHookFactories": "off",
+            "useExplicitType": "off"
+          }
+        }
+      }
+    },
+    {
+      // Test files: vitest test modules. Fast Refresh does not apply here \u2014 vitest
+      // runs them, never the dev server's HMR pipeline \u2014 so the rule's underlying
+      // guarantee is unreachable. Local test helper components (TestWrapper,
+      // TestConsumer, etc.) are correctly NOT exported, and `vi.mock(...)` /
+      // `describe`/`it`/`beforeEach` co-located with helpers do not benefit from
+      // the rule. Disabling here lets us keep test helpers local.
+      "includes": ["src/**/*.test.*"],
+      "linter": {
+        "rules": {
+          "nursery": {
+            "noPlaywrightMissingAwait": "off"
+          },
+          "style": {
+            "useComponentExportOnlyModules": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/shared/lib/utils/logger.test.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
+    },
+    {
+      // These paths intentionally defend runtime data or retain exhaustive switches that the
+      // type-aware rule reports as redundant. The rule remains enabled everywhere else.
+      "includes": [
+        "src/features/attachments/ui/AttachmentCard.tsx",
+        "src/features/auth/ui/auth-page.tsx",
+        "src/features/omakase/document-builder/lib/useTemplateJsWarning.ts",
+        "src/pages/auth/ui/AuthListingsCanvas.tsx",
+        "src/pages/documents/ui/DocumentTabContent.tsx",
+        "src/pages/documents/ui/UnifiedDocumentCard.tsx",
+        "src/pages/jobs/ui/jobListingsUtils.ts",
+        "src/pages/legal/ui/Licenses.tsx",
+        "src/pages/omakase/templates/lib/preview-image-generation.ts",
+        "src/shared/lib/hooks/useDensity.ts",
+        "src/shared/lib/services/validation/schemaZodConverter.ts",
+        "src/shared/ui/chart-tooltip.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noUnnecessaryConditions": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/shared/lib/persistence/index.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "useAwait": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/api/**",
+        "src/shared/api/**",
+        "src/features/*/api/**",
+        "src/features/omakase/*/api/**",
+        "src/pages/*/api/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "useNamingConvention": {
+              "level": "error",
+              "options": {
+                "strictCase": false,
+                "conventions": [
+                  {
+                    "selector": { "kind": "objectLiteralProperty" },
+                    "match": "\\$?(.+)",
+                    "formats": ["camelCase", "snake_case", "CONSTANT_CASE", "PascalCase"]
+                  },
+                  {
+                    "selector": { "kind": "typeProperty" },
+                    "formats": ["camelCase", "snake_case", "CONSTANT_CASE", "PascalCase"]
+                  },
+                  {
+                    "selector": { "kind": "const" },
+                    "match": "\\$?(.+)",
+                    "formats": ["camelCase", "PascalCase", "CONSTANT_CASE"]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

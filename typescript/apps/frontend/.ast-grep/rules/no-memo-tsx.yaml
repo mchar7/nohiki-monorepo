@@ -1,0 +1,11 @@
+id: no-memo-tsx
+language: tsx
+rule:
+  pattern: memo($$$)
+files:
+  - "src/**"
+ignores:
+  - "src/shared/ui/**"
+  - "**/*.test.*"
+message: "memo() is unnecessary with React Compiler active. Remove it."
+severity: error
