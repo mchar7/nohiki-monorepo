@@ -1,0 +1,61 @@
+/* ================================
+ * DASHBOARD COMPONENTS
+ * ================================ */
+
+@layer components {
+  /* Dashboard stat cards */
+  .dashboard-stat-card {
+    @apply bg-linear-to-t from-primary/5 to-card dark:bg-card;
+  }
+
+  .dashboard-stat-icon {
+    @apply flex size-8 items-center justify-center rounded-lg bg-primary/10;
+  }
+
+  .dashboard-feature-icon {
+    @apply flex size-10 items-center justify-center rounded-lg bg-primary/10;
+  }
+
+  .dashboard-action-icon {
+    @apply flex size-8 items-center justify-center rounded-md bg-primary/10;
+  }
+
+  /* Match score colors */
+  .match-score-excellent {
+    @apply text-green-600 dark:text-green-400;
+  }
+
+  .match-score-good {
+    @apply text-primary;
+  }
+
+  .match-score-fair {
+    @apply text-amber-600 dark:text-amber-400;
+  }
+
+  .match-score-low {
+    @apply text-muted-foreground;
+  }
+
+  /* Match progress colors */
+  .match-progress-excellent {
+    @apply [&>div]:bg-green-600 dark:[&>div]:bg-green-400;
+  }
+
+  .match-progress-good {
+    @apply [&>div]:bg-primary;
+  }
+
+  .match-progress-fair {
+    @apply [&>div]:bg-amber-500;
+  }
+
+  .match-progress-low {
+    @apply [&>div]:bg-muted-foreground;
+  }
+
+  /* Match new badge */
+  .match-new-badge {
+    @apply bg-primary/10 text-primary;
+  }
+}
