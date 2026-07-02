@@ -1,0 +1,38 @@
+name = "auth-listings-worker"
+main = "src/index.ts"
+compatibility_date = "2025-03-28"
+compatibility_flags = ["nodejs_compat"]
+
+# Local dev (wrangler dev). Secrets via `wrangler secret put` against local env
+# or via .dev.vars file (gitignored).
+[vars]
+BFF_ORIGIN = "http://localhost:8000"
+ALLOWED_ORIGINS = "http://localhost:5173"
+# Docker Compose observability profile exposes OTLP/HTTP on localhost:4318.
+OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318/v1/traces"
+
+# Secrets (set via `wrangler secret put`):
+# - AUTH_LISTINGS_SECRET  (shared HMAC with BFF; source of truth: Azure Key Vault key `auth-listings-secret`)
+
+# Local k3s via kgateway on nohiki.localhost:8080
+[env.k3s.vars]
+BFF_ORIGIN = "http://nohiki.localhost:8080"
+ALLOWED_ORIGINS = "http://nohiki.localhost:8080"
+OTEL_EXPORTER_OTLP_ENDPOINT = "http://nohiki.localhost:8080/v1/traces"
+
+# Staging. Worker ingress: https://listings-edge.staging.nohiki.com
+[env.staging.vars]
+BFF_ORIGIN = "https://staging.nohiki.com"
+ALLOWED_ORIGINS = "https://staging.nohiki.com"
+# TODO(ops): point at the cluster OTel collector's external OTLP/HTTP ingress
+# (to be exposed via kgateway, e.g. https://otel.staging.nohiki.com/v1/traces).
+# The self-hosted stack (Tempo/Mimir/Loki in nohiki-staging) does not require
+# an auth header; leave OTEL_EXPORTER_AUTH_TOKEN unset.
+OTEL_EXPORTER_OTLP_ENDPOINT = ""
+
+# Production. Worker ingress: https://listings-edge.nohiki.com
+[env.production.vars]
+BFF_ORIGIN = "https://nohiki.com"
+ALLOWED_ORIGINS = "https://nohiki.com"
+# TODO(ops): point at prod collector ingress, e.g. https://otel.nohiki.com/v1/traces
+OTEL_EXPORTER_OTLP_ENDPOINT = ""
