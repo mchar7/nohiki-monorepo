@@ -1,0 +1,27 @@
+{
+  "secondary": {
+    "documentation": "Documentation"
+  },
+  "sidebar": {
+    "account": "Account",
+    "settings": "Settings",
+    "dashboard": "Dashboard",
+    "documents": {
+      "title": "Documents",
+      "list": "My Documents",
+      "generate": "Generate",
+      "templates": "Templates"
+    },
+    "jobs": {
+      "browse": "Browse Listings",
+      "matches": "My Matches",
+      "title": "Jobs"
+    },
+    "navigation": "Navigation",
+    "profiles": {
+      "create": "Create New",
+      "list": "My Profiles",
+      "title": "Profiles"
+    }
+  }
+}

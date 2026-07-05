@@ -1,0 +1,246 @@
+{
+  "actions": {
+    "apply": "Marquer comme postulé",
+    "dislike": "Ne pas aimer",
+    "dismiss": "Ignorer",
+    "like": "Aimer",
+    "save": "Enregistrer",
+    "unsave": "Retirer",
+    "share": "Partager",
+    "linkCopied": "Lien copié dans le presse-papiers",
+    "applyExternal": "Postuler sur le site original",
+    "viewOriginal": "Voir l'offre originale",
+    "copyJobDescription": "Copier la description du poste"
+  },
+  "card": {
+    "actions": "Actions",
+    "company": "Entreprise",
+    "filterByCompany": "Filtrer par {{company}}",
+    "copiedToClipboard": "Description copiée dans le presse-papiers",
+    "copyDescription": "Copier la description du poste",
+    "languageAriaLabel": "Langue de l'offre : {{language}}",
+    "location": "Lieu",
+    "moreSkills": "+{{count}} de plus",
+    "noDescription": "Aucune description disponible",
+    "salary": "Salaire",
+    "viewDetails": "Voir les détails",
+    "seniority": {
+      "intern": "Stagiaire",
+      "entry": "Débutant",
+      "mid": "Intermédiaire",
+      "senior": "Sénior",
+      "staff": "Personnel",
+      "lead": "Chef d'équipe",
+      "manager": "Gestionnaire",
+      "director": "Directeur",
+      "vp": "VP",
+      "executive": "Cadre"
+    },
+    "factors": {
+      "strength": "Atout",
+      "concern": "Préoccupation"
+    },
+    "matchScoreLabel": "Indice d’adéquation : {{score}} / 100",
+    "matchToSave": "Associez un profil pour enregistrer",
+    "dismiss": "Pas intéressé"
+  },
+  "detail": {
+    "about": "À propos",
+    "language": "Langue",
+    "noSkills": "Aucune compétence listée",
+    "overview": "Aperçu",
+    "postedAt": "Publié",
+    "skills": "Compétences",
+    "source": "Source",
+    "salary": "Échelle salariale",
+    "unknownCompany": "Entreprise inconnue",
+    "similarJobs": "Emplois similaires",
+    "similarJobsDescription": "Autres emplois qui pourraient vous intéresser"
+  },
+  "empty": {
+    "noJobDetail": "Offre d'emploi introuvable",
+    "noListings": "Aucune offre d'emploi trouvée",
+    "noListingsDescription": "Essayez d'ajuster vos filtres ou revenez plus tard",
+    "noMatchDetail": "Correspondance introuvable",
+    "noMatches": "Aucune correspondance",
+    "noMatchesDescription": "Créez un profil cible pour commencer à recevoir des correspondances",
+    "noMatchesNoProfile": "Créez un profil cible pour commencer à recevoir des correspondances",
+    "noMatchesNoProfileDescription": "Configurez votre premier profil cible et nous commencerons à vous proposer des offres pertinentes.",
+    "noMatchesPending": "Nous analysons vos profils",
+    "noMatchesPendingDescription": "Nous analysons vos profils par rapport aux emplois disponibles. Revenez bientôt !",
+    "noMatchesFiltered": "Aucune correspondance ne répond à vos filtres",
+    "noMatchesFilteredDescription": "Essayez d'abaisser le score minimum ou d'effacer vos filtres pour voir plus de résultats.",
+    "createProfile": "Créer un profil cible",
+    "refresh": "Actualiser",
+    "clearFilters": "Effacer les filtres"
+  },
+  "feedback": {
+    "adjustDescription": "Aidez-nous à nous améliorer en nous disant pourquoi",
+    "adjustReason": "Raison",
+    "adjustReasonPlaceholder": "Pourquoi pensez-vous que le score devrait être différent ?",
+    "adjustTitle": "Ajuster le score",
+    "description": "Vos commentaires nous aident à améliorer notre algorithme de correspondance",
+    "feedbackError": "Impossible d'envoyer les commentaires : {{reason}}",
+    "feedbackErrorFallback": "Échec de l'envoi des commentaires. Veuillez réessayer.",
+    "feedbackSuccess": "Merci pour vos commentaires !",
+    "good": "Bonne correspondance",
+    "scoreQuestion": "Quelle est la précision de ce score ?",
+    "submitFeedback": "Envoyer les commentaires",
+    "submittingFeedback": "Envoi des commentaires…",
+    "title": "Commentaires",
+    "tooHigh": "Score trop élevé",
+    "tooLow": "Score trop bas"
+  },
+  "filters": {
+    "clearAll": "Tout effacer",
+    "searchPlaceholder": "Rechercher des emplois...",
+    "sources": {
+      "all": "Toutes les sources",
+      "company": "Site de l'entreprise",
+      "glassdoor": "Glassdoor",
+      "google": "Google Jobs",
+      "indeed": "Indeed",
+      "linkedin": "LinkedIn",
+      "ziprecruiter": "ZipRecruiter"
+    },
+    "title": "Filtres",
+    "showDismissed": "Afficher les ignorés",
+    "hasSalary": "Salaire divulgué seulement",
+    "workArrangement": {
+      "all": "Tous les types",
+      "remote": "Télétravail",
+      "hybrid": "Hybride",
+      "onsite": "Sur place"
+    },
+    "seniority": {
+      "all": "Tous les niveaux",
+      "entry": "Débutant",
+      "mid": "Intermédiaire",
+      "senior": "Sénior",
+      "lead": "Chef d'équipe",
+      "manager": "Gestionnaire",
+      "director": "Directeur",
+      "executive": "Cadre"
+    },
+    "dateRange": {
+      "all": "Tout temps",
+      "24h": "Dernières 24 heures",
+      "7d": "7 derniers jours",
+      "30d": "30 derniers jours"
+    }
+  },
+  "match": {
+    "breakdown": {
+      "compatibility": "Compatibilité {{score}} / 100",
+      "factors": {
+        "experience": "Expérience",
+        "location": "Lieu",
+        "recency": "Actualité de l’offre",
+        "roleRelevance": "Pertinence du rôle",
+        "salary": "Salaire",
+        "skills": "Compétences",
+        "workArrangement": "Mode de travail"
+      },
+      "fitRanking": "Indice d’adéquation {{score}} / 100",
+      "influence": {
+        "negative": "Préoccupation",
+        "neutral": "Neutre",
+        "points": "{{points}} points",
+        "positive": "Atout"
+      },
+      "title": "Détails de l’adéquation",
+      "unavailable": "Les détails de l’adéquation ne sont pas disponibles pour cette correspondance."
+    },
+    "matchedAt": "Correspondance",
+    "score": "Indice d’adéquation",
+    "totalMatches": "Correspondances totales",
+    "stats": {
+      "newThisWeek": "Nouveaux cette semaine"
+    },
+    "status": "Statut",
+    "topMatches": "Vos meilleures correspondances",
+    "viewAllMatches": "Voir toutes les correspondances",
+    "topMatchesDismiss": "Ignorer",
+    "methodology": {
+      "title": "Fonctionnement de la correspondance",
+      "description": "Nous analysons vos compétences, votre expérience et vos préférences par rapport aux exigences des postes grâce à un système de notation IA à plusieurs étapes pour trouver les meilleures correspondances pour vous.",
+      "dismiss": "Compris"
+    },
+    "reasoning": {
+      "strengths": "Points forts",
+      "concerns": "Points à considérer",
+      "whyMatched": "Pourquoi cette correspondance",
+      "aiAnalysis": "Analyse IA"
+    },
+    "bulk": {
+      "selected": "{{count}} sélectionné(s)",
+      "saveAll": "Enregistrer {{count}}",
+      "dismissAll": "Ignorer {{count}}",
+      "saveSuccess": "{{count}} correspondances enregistrées",
+      "dismissSuccess": "{{count}} correspondances ignorées",
+      "partialError": "Échec du traitement de {{failed}} sur {{total}} correspondances",
+      "selectAll": "Tout sélectionner"
+    }
+  },
+  "tailoredDocument": {
+    "close": "Fermer les options de document personnalisé",
+    "context": "Pour {{title}} chez {{company}}",
+    "emptyDescription": "Aucun modèle de document n’est encore disponible.",
+    "emptyTitle": "Aucun modèle disponible",
+    "formatLabel": "Format",
+    "generate": "Générer le document",
+    "generating": "Démarrage…",
+    "generationErrorDescription": "La génération du document n’a pas pu démarrer. Veuillez réessayer.",
+    "generationErrorTitle": "Impossible de générer le document",
+    "loadingTemplates": "Chargement des modèles de document",
+    "open": "Personnaliser un document",
+    "pending": "Démarrage de votre document personnalisé…",
+    "retry": "Réessayer",
+    "templateErrorDescription": "Impossible de charger les modèles.",
+    "templateErrorTitle": "Impossible de charger les modèles",
+    "templateLabel": "Modèle",
+    "templatePlaceholder": "Choisir un modèle",
+    "title": "Document personnalisé",
+    "unknownCompany": "cette entreprise"
+  },
+  "pages": {
+    "detail": {
+      "applyExternal": "Postuler sur le site original",
+      "title": "Détails de l'emploi",
+      "viewOriginal": "Voir l'offre originale"
+    },
+    "listings": {
+      "description": "Parcourez les offres d'emploi disponibles",
+      "title": "Offres d'emploi"
+    },
+    "matchDetail": {
+      "description": "Découvrez pourquoi cet emploi correspond à vos critères",
+      "title": "Détails de la correspondance"
+    },
+    "matches": {
+      "allTargets": "Tous les profils",
+      "description": "Emplois correspondant à vos profils cibles",
+      "filterByTarget": "Filtrer par profil",
+      "minScore": "Indice d’adéquation minimum",
+      "title": "Mes correspondances"
+    }
+  },
+  "sort": {
+    "matchScore": "Indice d’adéquation"
+  },
+  "status": {
+    "APPLIED": "Postulé",
+    "DISMISSED": "Ignoré",
+    "EVALUATED": "Évalué",
+    "EXPIRED": "Expiré",
+    "PENDING": "En attente",
+    "SAVED": "Enregistré",
+    "VIEWED": "Consulté"
+  },
+  "salary": {
+    "perYear": "/an",
+    "perMonth": "/mois",
+    "perHour": "/h",
+    "upTo": "Jusqu'à {{amount}}"
+  }
+}

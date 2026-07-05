@@ -1,0 +1,297 @@
+{
+  "icons": {
+    "google": "Google",
+    "github": "GitHub"
+  },
+  "a11y": {
+    "more": "Plus d'options",
+    "pagination": "Pagination",
+    "selectAll": "Sélectionner toutes les lignes",
+    "selectRow": "Sélectionner la ligne",
+    "hidePassword": "Masquer le mot de passe",
+    "showPassword": "Afficher le mot de passe",
+    "sidebarDescription": "Affiche la barre latérale mobile.",
+    "sidebarTitle": "Barre latérale",
+    "tags": "Étiquettes",
+    "toggleSidebar": "Basculer la barre latérale",
+    "close": "Fermer",
+    "userMenu": "Menu utilisateur",
+    "bottomNav": "Navigation principale",
+    "noJobsFound": "Aucun emploi trouvé",
+    "openCommandPalette": "Ouvrir la palette de commandes",
+    "pageLoading": "Chargement de la page",
+    "skipToContent": "Aller au contenu principal",
+    "fileDropZone": "Zone de d\u00e9p\u00f4t de fichiers"
+  },
+  "actions": {
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "deselectAll": "Ne rien sélectionner",
+    "downloadPdf": "Télécharger le PDF",
+    "duplicate": "Dupliquer",
+    "edit": "Modifier",
+    "export": "Exporter",
+    "goBack": "Retour",
+    "more": "Plus",
+    "refresh": "Actualiser",
+    "reloadPage": "Recharger la page",
+    "retry": "Réessayer",
+    "selectAll": "Tout sélectionner",
+    "tryAgain": "Essayer à nouveau",
+    "copied": "Copié",
+    "copyErrorStack": "Copier les détails de l'erreur",
+    "copyRequestId": "Copier l'identifiant",
+    "createNew": "Créer nouveau",
+    "viewAll": "Voir tout"
+  },
+  "app": {
+    "initFailed": "Échec de l'initialisation de l'application",
+    "initRetry": "Réessayer",
+    "storeInitFailed": "Échec de l'initialisation des magasins locaux"
+  },
+  "appName": "Nohiki",
+  "unavailable": "Indisponible",
+  "appTagline": "Automatisation de recherche d'emploi",
+  "characterCounter": {
+    "count": "{{current}}/{{max}}"
+  },
+  "connectivity": {
+    "checking": "Vérification de la connexion...",
+    "clickToRetry": "Cliquez pour réessayer la connexion",
+    "connected": "Connecté",
+    "disconnected": "Déconnecté",
+    "disconnectedDetail": "Impossible de joindre le serveur. Les données affichées peuvent être obsolètes. Veuillez vérifier votre connexion réseau.",
+    "lastChecked": "Dernière vérification : {{time}}",
+    "offline": "Hors ligne",
+    "offlineDescription": "Vous êtes actuellement hors ligne. Certaines fonctionnalités peuvent être indisponibles.",
+    "requiresConnection": "Connexion requise",
+    "retry": "Réessayer",
+    "unknown": "Connexion..."
+  },
+  "commandPalette": {
+    "title": "Palette de commandes",
+    "placeholder": "Rechercher navigation, actions...",
+    "noResults": "Aucun résultat.",
+    "quickActions": "Actions rapides",
+    "switchToDark": "Passer au thème sombre",
+    "switchToLight": "Passer au thème clair",
+    "signOut": "Se déconnecter",
+    "keyboardShortcuts": "Raccourcis clavier",
+    "searchResultsJobs": "Emplois",
+    "searchResultsSkills": "Comp\u00e9tences",
+    "searching": "Recherche en cours...",
+    "noSearchResults": "Aucun r\u00e9sultat pour \u00ab {{query}} \u00bb"
+  },
+  "shortcuts": {
+    "title": "Raccourcis clavier",
+    "groups": {
+      "global": "Général",
+      "navigation": "Navigation",
+      "editor": "Éditeur"
+    },
+    "openPalette": "Ouvrir la palette de commandes",
+    "toggleSidebar": "Basculer la barre latérale",
+    "openShortcutsGuide": "Raccourcis clavier",
+    "closeDialog": "Fermer la boîte de dialogue"
+  },
+  "columns": "Colonnes",
+  "counts": {
+    "more": "+{{count}} de plus",
+    "result": "{{count}} résultat",
+    "results": "{{count}} résultats"
+  },
+  "direction": "Direction",
+  "filters": {
+    "activeCount_one": "{{count}} actif",
+    "activeCount_other": "{{count}} actifs"
+  },
+  "empty": {
+    "noData": "Aucune donnée disponible",
+    "noListings": "Aucune annonce disponible",
+    "noListingsDescription": "Il n'y a aucune annonce à afficher pour le moment."
+  },
+  "emptyStates": {
+    "document": {
+      "createAction": "Créer un document",
+      "createDescription": "Commencez en créant un nouveau document. Remplissez les champs du formulaire et générez de beaux PDF.",
+      "createNewAction": "Créer un nouveau document",
+      "createTitle": "Créez votre premier document",
+      "noMatches": "Aucune correspondance pour l'instant",
+      "noMatchesAria": "Aucune correspondance trouvée",
+      "noMatchesDescription": "Créez un profil cible pour commencer à recevoir des correspondances",
+      "selectDescription": "Choisissez un document existant dans la barre latérale ou créez-en un nouveau pour commencer l'édition.",
+      "selectTitle": "Sélectionnez un document"
+    },
+    "preview": {
+      "action": "Générer l'aperçu",
+      "description": "Générez un aperçu pour voir à quoi ressemblera votre document une fois exporté.",
+      "title": "Aperçu de votre document"
+    }
+  },
+  "features": {
+    "accountSettings": "Paramètres du compte",
+    "attachments": "Pièces jointes",
+    "dashboard": "Tableau de bord",
+    "documentEditor": "Éditeur de documents",
+    "documents": "Documents",
+    "jobDetail": "Détail de l'emploi",
+    "jobListings": "Offres d'emploi",
+    "jobMatches": "Mes correspondances",
+    "licenses": "Licences",
+    "matchDetail": "Détail de la correspondance",
+    "omakase": "Documents",
+    "omakaseEditor": "Éditeur de documents",
+    "omakaseTemplates": "Studio de modèles",
+    "profileCreate": "Créer un profil",
+    "profileDetail": "Détail du profil",
+    "profileList": "Profils",
+    "settings": "Paramètres"
+  },
+  "fieldNames": "Noms des champs",
+  "errorBoundary": {
+    "description": "Une erreur inattendue s'est produite dans ce composant",
+    "detailsSummary": "Détails de l'erreur (développement uniquement)",
+    "featureError": "La fonctionnalité {{feature}} a rencontré une erreur inattendue.",
+    "title": "Une erreur est survenue"
+  },
+  "errors": {
+    "fixIssues": "Veuillez corriger les problèmes suivants :",
+    "generic": "Une erreur inattendue est survenue",
+    "genericWithReason": "{{context}} : {{reason}}",
+    "notFound": "Ressource introuvable",
+    "noTemplateSelected": "Aucun modèle sélectionné",
+    "schemaLoadingDescription": "Impossible de charger le schéma du document. Veuillez vérifier votre connexion et réessayer.",
+    "schemaLoadingHint": "Essayez de rafraîchir la page ou de sélectionner un autre modèle.",
+    "schemaLoadingIssue": "Problème de chargement du schéma"
+  },
+  "confirm": {
+    "deleteDescription": "Êtes-vous sûr de vouloir supprimer « {{name}} » ? Cette action est irréversible.",
+    "deleteTitle": "Supprimer"
+  },
+  "density": {
+    "compact": "Compact",
+    "comfortable": "Confortable",
+    "spacious": "Spacieux",
+    "label": "Densité d'affichage"
+  },
+  "dropZone": {
+    "dropToUpload": "D\u00e9posez pour t\u00e9l\u00e9verser"
+  },
+  "labels": {
+    "column": "Colonne",
+    "highQuality": "Haute qualité",
+    "line": "Ligne",
+    "selected": "{{count}} sélectionné(s)",
+    "version": "Version {{version}}"
+  },
+  "modules": {
+    "platform": {
+      "title": "Plateforme Nohiki"
+    }
+  },
+  "pages": {
+    "notFound": {
+      "description": "La page que vous recherchez n'existe pas.",
+      "goHome": "Retour au tableau de bord",
+      "heading": "Page non trouvée",
+      "title": "404"
+    }
+  },
+  "pagination": {
+    "first": "Première page",
+    "goToNext": "Aller à la page suivante",
+    "goToPrevious": "Aller à la page précédente",
+    "last": "Dernière page",
+    "morePages": "Plus de pages",
+    "next": "Suivant",
+    "previous": "Précédent",
+    "pageOf": "Page {{current}} sur {{total}}",
+    "rowsPerPage": "Lignes par page",
+    "showing": "Affichage {{start}}-{{end}} sur {{total}}"
+  },
+  "placeholder": "Espace réservé",
+  "renderAsFields": "Afficher comme champs",
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "editor": "Éditeur",
+    "settings": "Paramètres",
+    "templates": "Modèles"
+  },
+  "showItemLabels": "Afficher les étiquettes",
+  "sidebar": {
+    "account": "Compte",
+    "allSettings": "Tous les paramètres",
+    "attachments": "Pièces jointes",
+    "dashboard": "Tableau de bord",
+    "docsUrl": "https://www.nohiki.com/docs",
+    "jobs": {
+      "browse": "Parcourir les emplois",
+      "matches": "Mes correspondances",
+      "title": "Emplois"
+    },
+    "preferencesTheme": "Préférences et thème",
+    "profiles": {
+      "create": "Créer nouveau",
+      "list": "Mes profils",
+      "title": "Profils"
+    },
+    "quickSettings": "Paramètres rapides",
+    "recentDocuments": "Documents récents",
+    "unknownTemplate": "Modèle inconnu"
+  },
+  "skills": {
+    "maxReached": "Maximum de {{max}} compétences atteint",
+    "noResults": "Aucune compétence trouvée",
+    "resultCount_one": "{{count}} compétence disponible",
+    "resultCount_other": "{{count}} compétences disponibles",
+    "searchError": "Impossible de rechercher des compétences",
+    "placeholder": "Cliquez pour ajouter des compétences...",
+    "searchPlaceholder": "Rechercher des compétences...",
+    "typeToSearch": "Tapez au moins 2 caractères pour rechercher"
+  },
+  "tagInput": {
+    "duplicate": "« {{tag}} » a déjà été ajouté"
+  },
+  "states": {
+    "autoRefreshing": "Actualisation automatique...",
+    "loading": "Chargement...",
+    "processing": "Traitement en cours...",
+    "refreshing": "Actualisation...",
+    "syncing": "Synchronisation...",
+    "lastSynced": "Synchronisé {{time}}"
+  },
+  "unsavedChanges": {
+    "title": "Modifications non enregistrées",
+    "description": "Vous avez des modifications non enregistrées. Êtes-vous sûr de vouloir quitter ? Vos modifications seront perdues.",
+    "stay": "Continuer l'édition",
+    "leave": "Abandonner les modifications"
+  },
+  "form": {
+    "optional": "optionnel",
+    "optionalLabel": "(optionnel)"
+  },
+  "status": {
+    "active": "Actif",
+    "success": "Succès"
+  },
+  "theme": {
+    "dark": "Thème sombre",
+    "light": "Thème clair",
+    "system": "Thème système"
+  },
+  "widget": "Widget",
+  "appearance": {
+    "colorScheme": {
+      "blue": "Bleu",
+      "blueDescription": "Sobre et professionnel",
+      "emerald": "Émeraude",
+      "emeraldDescription": "Frais et naturel",
+      "orange": "Orange",
+      "orangeDescription": "Chaleureux et énergique",
+      "rose": "Rose",
+      "roseDescription": "Élégant et doux",
+      "violet": "Violet",
+      "violetDescription": "Créatif et moderne"
+    }
+  }
+}

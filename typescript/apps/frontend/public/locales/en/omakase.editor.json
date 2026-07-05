@@ -1,0 +1,164 @@
+{
+  "actions": {
+    "cancel": "Cancel",
+    "downloadPdf": "Download PDF"
+  },
+  "dataset": {
+    "delete": {
+      "confirm": "Delete",
+      "message": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone.",
+      "title": "Delete Dataset"
+    }
+  },
+  "datasets": {
+    "allTemplates": "All Templates",
+    "card": {
+      "actions": "Actions",
+      "ariaLabel": "Dataset: {{name}}, created {{date}}",
+      "ariaLabelWithTemplate": "Dataset: {{name}}, using {{template}} template, created {{date}}",
+      "cancel": "Cancel",
+      "cancelEdit": "Cancel editing",
+      "created": "Created: {{date}}",
+      "delete": "Delete",
+      "downloadPdf": "Download PDF",
+      "duplicate": "Duplicate",
+      "editDataset": "Edit Dataset",
+      "editName": "Edit dataset name",
+      "htmlCached": "HTML Cached",
+      "rename": "Rename",
+      "save": "Save",
+      "saveName": "Save dataset name"
+    },
+    "create": {
+      "cancel": "Cancel",
+      "create": "Create Dataset",
+      "creating": "Creating...",
+      "description": "Create a new dataset with default data based on your selected template.",
+      "engine": "Engine: Jinja2",
+      "latestVersion": "Latest Version:",
+      "nameLabel": "Dataset Name",
+      "namePlaceholder": "Enter dataset name...",
+      "templateDetails": "Template Details",
+      "templateLabel": "Template",
+      "templatePlaceholder": "Select a template",
+      "title": "Create New Dataset"
+    },
+    "createDataset": "Create Dataset",
+    "exportAll": "Export All",
+    "newDataset": "New Dataset",
+    "noDatasets": "No datasets yet",
+    "noDatasetsDescription": "Create your first dataset to get started.",
+    "noResults": "No datasets found",
+    "noResultsDescription": "Try adjusting your search or filter criteria.",
+    "searchPlaceholder": "Search datasets...",
+    "sort": {
+      "nameAsc": "Name A-Z",
+      "nameDesc": "Name Z-A",
+      "oldestCreated": "Oldest Created",
+      "oldestUpdated": "Oldest Updated",
+      "recentlyCreated": "Recently Created",
+      "recentlyUpdated": "Recently Updated"
+    },
+    "sortBy": "Sort by"
+  },
+  "document": {
+    "untitled": "Untitled Document"
+  },
+  "editingDocument": "Editing document: {{id}}",
+  "errors": {
+    "dataMustBeObject": "Data must be a valid object",
+    "datasetNotFound": "The dataset you are looking for does not exist.",
+    "failedToLoadTemplates": "Failed to Load Templates",
+    "invalidJsonFormat": "Invalid JSON format: {{error}}",
+    "invalidSchema": "Invalid Template Schema",
+    "invalidValue": "Invalid value",
+    "loadFailed": "Failed to load document",
+    "multipleValidationErrors": "Multiple validation errors:",
+    "schemaFetchFailed": "Failed to fetch schema",
+    "schemaProcessingError": "Schema Processing Error",
+    "schemaProcessingErrorDescription": "Unable to process template schema. The template schema format is not supported or contains errors.",
+    "schemaValidationFailed": "Schema validation failed: {{error}}",
+    "templateNotFound": "Template not found",
+    "unknownError": "Unknown error",
+    "validationFailed": "Validation failed: {{error}}"
+  },
+  "export": {
+    "created": "Created {{date}}",
+    "description": "Select datasets to export as JSON files",
+    "multipleFilesNote": "Multiple files will be downloaded separately. Each dataset will be saved as \"{dataset-name}.json\"",
+    "noDatasets": "No datasets available for export",
+    "selectPrompt": "Select datasets to export ({{count}} selected)",
+    "title": "Export JSON Datasets"
+  },
+  "fields": {
+    "addItem": "Add",
+    "defaultFieldLabel": "Field {{index}}",
+    "hidePassword": "Hide password",
+    "itemPlaceholder": "Enter item",
+    "noItemsYet": "No items added yet. Click \"Add\" to create the first entry.",
+    "placeholder": "Enter {{field}}...",
+    "required": "Required",
+    "selectPlaceholder": "Select {{field}}",
+    "showPassword": "Show password"
+  },
+  "form": {
+    "autoSaved": "Auto-saved",
+    "description": "Fill in the fields below to populate your document.",
+    "placeholder": "Form fields will be rendered here based on template schema",
+    "saving": "Saving...",
+    "title": "Document Data"
+  },
+  "import": {
+    "andMore": "and {{count}} more",
+    "browseFiles": "Browse Files",
+    "description": "Import a JSON file containing data for this template",
+    "dropzone": "Drop JSON file here",
+    "dropzoneOr": "or",
+    "failedToReadFile": "Failed to read file",
+    "fieldsFound": "Found {{count}} top-level fields: {{fields}}",
+    "importDataset": "Import Dataset",
+    "invalidData": "Invalid JSON data",
+    "preview": "Preview:",
+    "title": "Import JSON Dataset",
+    "validDataFound": "Valid data found",
+    "validating": "Validating..."
+  },
+  "loading": {
+    "templates": "Loading Templates",
+    "templatesDescription": "Fetching available document templates from the server..."
+  },
+  "modals": {
+    "export": {
+      "description": "Select datasets to export as JSON files",
+      "title": "Export JSON Datasets"
+    },
+    "import": {
+      "description": "Import a JSON file containing document data",
+      "title": "Import JSON Dataset"
+    },
+    "unsavedChanges": {
+      "cancel": "Cancel",
+      "continue": "Continue",
+      "description": "You have unsaved changes. Are you sure you want to switch datasets? Your changes will be lost.",
+      "title": "Unsaved Changes"
+    }
+  },
+  "labels": {
+    "version": "Version {{version}}"
+  },
+  "sidebar": {
+    "newDocument": "New Document"
+  },
+  "templates": {
+    "errors": {
+      "authRequired": "Authentication required to load templates",
+      "forbidden": "You do not have permission to access templates",
+      "networkError": "Network error — please check your connection",
+      "serverError": "Server error — please try again later",
+      "timeout": "Request timed out — please try again",
+      "notFound": "Templates not found",
+      "generic": "Failed to load templates"
+    }
+  },
+  "title": "Document Editor"
+}

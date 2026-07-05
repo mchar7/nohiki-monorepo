@@ -1,0 +1,30 @@
+{
+  "backToSettings": "Back to Settings",
+  "licenses": {
+    "description": "Nohiki is built with the help of many open source projects. We are grateful to the maintainers and contributors of these projects.",
+    "fullText": {
+      "description": "The complete license texts for all third-party packages are available below.",
+      "download": "Download Full License File",
+      "error": "Failed to load license information",
+      "title": "Full License Texts"
+    },
+    "licenses": {
+      "apache": "Apache",
+      "bsd2": "BSD 2-Clause",
+      "bsd3": "BSD 3-Clause",
+      "isc": "ISC",
+      "mit": "MIT",
+      "mpl": "MPL",
+      "other": "Other"
+    },
+    "summary": {
+      "breakdown": "License breakdown:",
+      "packages": "{{count}} packages included",
+      "packages_one": "{{count}} package included",
+      "packages_many": "{{count}} packages included",
+      "packages_other": "{{count}} packages included",
+      "title": "License Summary"
+    },
+    "title": "Open Source Licenses"
+  }
+}

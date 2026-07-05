@@ -1,0 +1,215 @@
+{
+  "actions": {
+    "create": "Create Profile",
+    "delete": "Delete",
+    "edit": "Edit",
+    "save": "Save"
+  },
+  "card": {
+    "creating": "Creating...",
+    "matchCount": "{{count}} matches",
+    "noKeywords": "No keywords",
+    "metadata": "{{matchCount}} · {{timeAgo}}"
+  },
+  "completeness": {
+    "scoreLabel": "{{score}}% / {{max}}%",
+    "suggestions": {
+      "experiencePreference": "Add your experience level and seniority preferences",
+      "notificationThreshold": "Customize your notification threshold for better results",
+      "prefName": "Give your profile a descriptive name",
+      "salaryPreference": "Set your salary expectations",
+      "searchKeywords": "Add at least 1 search keyword for better job discovery",
+      "userSkills": "Add at least one skill to improve match accuracy",
+      "workArrangements": "Select your preferred work arrangements"
+    },
+    "title": "Profile Completeness"
+  },
+  "confirmDelete": {
+    "description": "Are you sure you want to delete this profile? This action cannot be undone.",
+    "title": "Delete Profile"
+  },
+  "empty": {
+    "noProfiles": "No profiles found",
+    "noProfilesDescription": "Create your first job search profile to start finding matches."
+  },
+  "featureImportance": {
+    "description": "Adjust how much each factor contributes to your match score",
+    "experience": "Experience Level",
+    "experienceDescription": "How well your experience matches job requirements",
+    "location": "Location",
+    "locationDescription": "Proximity to your preferred locations",
+    "recency": "Recency",
+    "recencyDescription": "How recently the job was posted",
+    "resetToDefaults": "Reset to Defaults",
+    "salary": "Salary",
+    "salaryDescription": "How well the salary matches your expectations",
+    "skillMatch": "Skill Match",
+    "skillMatchDescription": "How well your skills match the job requirements",
+    "title": "Feature Importance",
+    "workArrangement": "Work Arrangement",
+    "workArrangementDescription": "Match with your preferred work environment"
+  },
+  "fields": {
+    "autoTailorThreshold": {
+      "hint": "Automatically tailor resume for matches above this fit index. Leave empty to disable.",
+      "label": "Auto-Tailor Threshold"
+    },
+    "experience": {
+      "description": "Specify your experience level and preferred seniority.",
+      "decreaseYears": "Decrease years of experience",
+      "displayYears": "{{count}} years of experience",
+      "increaseYears": "Increase years of experience",
+      "label": "Experience",
+      "seniorityLabel": "Seniority Levels",
+      "seniorityOptions": {
+        "DIRECTOR": "Director",
+        "ENTRY": "Entry Level",
+        "EXECUTIVE": "Executive",
+        "INTERN": "Intern",
+        "MANAGER": "Manager",
+        "MID": "Mid Level",
+        "SENIOR": "Senior",
+        "STAFF": "Staff",
+        "VP": "VP"
+      },
+      "yearsLabel": "Years of Experience"
+    },
+    "disallowedKeywords": {
+      "description": "Jobs containing these keywords will be automatically filtered out.",
+      "label": "Excluded Keywords",
+      "placeholder": "Add keyword to exclude..."
+    },
+    "notificationThreshold": {
+      "description": "Minimum fit index required to notify you about a job.",
+      "descriptions": {
+        "excellent": "You'll only be notified about excellent matches",
+        "good": "Recommended — you'll be notified about good matches",
+        "many": "You'll receive many notifications, including lower-quality matches",
+        "decent": "You'll receive notifications for decent matches and above"
+      },
+      "hint": "Notify on matches ≥ {{threshold}} / 100",
+      "label": "Notification Threshold",
+      "tooltip": "Fit indices range from 0 to 100. Higher thresholds mean fewer but better quality notifications."
+    },
+    "prefName": {
+      "description": "Give this job search profile a name (e.g., 'Senior Frontend Role').",
+      "label": "Profile Name",
+      "placeholder": "Enter profile name..."
+    },
+    "relocation": {
+      "description": "Indicate if you are willing to move for the right opportunity.",
+      "displayLabel": "Willing to relocate",
+      "hint": "This will broaden your search to include jobs outside your current area.",
+      "label": "Open to relocation",
+      "title": "Relocation Preference"
+    },
+    "searchKeywords": {
+      "addHint": "Press enter or comma to add a search term",
+      "description": "Job titles and phrases used to discover relevant listings, such as “backend engineer” or “distributed systems”.",
+      "label": "Search Keywords",
+      "placeholder": "e.g. platform developer"
+    },
+    "userSkills": {
+      "description": "Skills you are proficient in. Used to improve job matching.",
+      "label": "Your Skills",
+      "placeholder": "Search for skills..."
+    },
+    "salary": {
+      "currencyLabel": "Currency",
+      "currencyOptions": {
+        "CAD": "CAD",
+        "EUR": "EUR",
+        "GBP": "GBP",
+        "USD": "USD"
+      },
+      "currencyPlaceholder": "Select currency",
+      "description": "Set your salary expectations and preferred payment frequency.",
+      "frequencyLabel": "Payment Frequency",
+      "frequencyOptions": {
+        "ANNUALLY": "Annually",
+        "BIWEEKLY": "Biweekly",
+        "DAILY": "Daily",
+        "HOURLY": "Hourly",
+        "MONTHLY": "Monthly",
+        "WEEKLY": "Weekly"
+      },
+      "frequencyPlaceholder": "Select frequency",
+      "label": "Salary Preference",
+      "minLabel": "Minimum Salary",
+      "minPlaceholder": "e.g. 80000",
+      "targetLabel": "Target Salary",
+      "targetPlaceholder": "e.g. 120000"
+    },
+    "workArrangements": {
+      "description": "Select your preferred work environments.",
+      "label": "Work Arrangements",
+      "options": {
+        "HYBRID": "Hybrid",
+        "ON_SITE": "On-site",
+        "REMOTE": "Remote"
+      }
+    }
+  },
+  "pages": {
+    "create": {
+      "description": "Define your ideal job criteria",
+      "error": "Failed to create profile: {{reason}}",
+      "errorFallback": "Could not create profile. Please try again.",
+      "submitting": "Creating...",
+      "success": "Profile created! It may take a moment to appear in the list.",
+      "title": "Create Job Target"
+    },
+    "detail": {
+      "deleteError": "Failed to delete profile: {{reason}}",
+      "deleteErrorFallback": "Could not delete profile. Please try again.",
+      "deleteSuccess": "Profile deleted successfully",
+      "editMode": "Edit Job Target",
+      "submitting": "Saving...",
+      "success": "Profile updated successfully!",
+      "hydrationError": "Failed to load skill data: {{reason}}",
+      "hydrationErrorFallback": "Could not load skill data. Please try again.",
+      "hydrationIncomplete": "Some skills could not be loaded. Please retry before editing so none of your selections are lost.",
+      "updateError": "Failed to update profile: {{reason}}",
+      "updateErrorFallback": "Could not save profile changes. Please try again.",
+      "viewMode": "Overview"
+    },
+    "list": {
+      "description": "Manage your job search profiles and preferences"
+    }
+  },
+  "sections": {
+    "userSkills": {
+      "description": "Add your professional skills to improve job match accuracy.",
+      "title": "Your Skills"
+    }
+  },
+  "validation": {
+    "experience": {
+      "seniorityRequired": "Select at least one seniority level"
+    },
+    "prefName": {
+      "maxLength": "Profile name must be at most {{max}} characters",
+      "minLength": "Profile name must be at least {{min}} characters"
+    },
+    "searchKeywords": {
+      "maxItems": "Maximum of {{max}} keywords allowed",
+      "maxLength": "Each search term must be at most {{max}} characters",
+      "minLength": "Each search term must be at least {{min}} characters",
+      "required": "At least one search keyword is required",
+      "unique": "Search terms must be unique"
+    },
+    "disallowedKeywords": {
+      "maxItems": "Maximum of {{max}} excluded keywords allowed",
+      "maxLength": "Each excluded keyword must be at most {{max}} characters",
+      "minLength": "Each excluded keyword must be at least {{min}} characters",
+      "required": "At least one excluded keyword is required",
+      "unique": "Excluded keywords must be unique"
+    },
+    "userSkills": {
+      "maxItems": "Maximum of {{max}} skills allowed"
+    },
+    "workArrangements": {
+      "required": "Select at least one work arrangement"
+    }
+  }
+}

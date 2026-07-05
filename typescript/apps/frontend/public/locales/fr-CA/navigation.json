@@ -1,0 +1,27 @@
+{
+  "secondary": {
+    "documentation": "Documentation"
+  },
+  "sidebar": {
+    "account": "Compte",
+    "settings": "Paramètres",
+    "dashboard": "Tableau de bord",
+    "documents": {
+      "title": "Documents",
+      "list": "Mes documents",
+      "generate": "Générer",
+      "templates": "Modèles"
+    },
+    "jobs": {
+      "browse": "Parcourir les offres",
+      "matches": "Mes correspondances",
+      "title": "Emplois"
+    },
+    "navigation": "Navigation",
+    "profiles": {
+      "create": "Créer nouveau",
+      "list": "Mes profils",
+      "title": "Profils"
+    }
+  }
+}

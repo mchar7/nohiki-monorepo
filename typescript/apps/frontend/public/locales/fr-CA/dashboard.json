@@ -1,0 +1,188 @@
+{
+  "actionItems": {
+    "browseJobs": "Parcourir les emplois",
+    "completeSkills": {
+      "description": "Ajouter des compétences aide à trouver de meilleures correspondances",
+      "title": "Complétez votre profil de compétences"
+    },
+    "createProfile": {
+      "description": "Ciblez des rôles ou emplacements différents",
+      "title": "Créer un autre profil de recherche"
+    },
+    "downloadResume": {
+      "description": "Votre CV personnalisé est prêt",
+      "title": "Téléchargez votre CV généré"
+    },
+    "empty": {
+      "title": "Tout est à jour ! 🎉"
+    },
+    "reviewMatches": {
+      "description": "Nouvelles correspondances avec un indice d’adéquation de 70 / 100 ou plus",
+      "title": "Examiner {{count}} correspondances de qualité",
+      "title_one": "Examiner {{count}} correspondance de qualité"
+    },
+    "title": "Actions à faire"
+  },
+  "activity": {
+    "chartInfo": "Ce graphique montre combien de correspondances d'emploi vos profils ont reçues chaque jour.",
+    "chartInfoAriaLabel": "Informations sur le graphique",
+    "selectTimeRange": "Sélectionner la période",
+    "series": {
+      "matches": "Correspondances d'emploi",
+      "trend": "Tendance"
+    },
+    "subtitle": "Correspondances et candidatures dans le temps",
+    "subtitleShort": "Tendances d'activité",
+    "timeRange": {
+      "days30": "30 jours",
+      "days7": "7 jours",
+      "days90": "90 jours",
+      "last30": "30 derniers jours",
+      "last7": "7 derniers jours",
+      "last90": "90 derniers jours"
+    },
+    "title": "Aperçu de l'activité",
+    "trend": {
+      "down": "↓ {{percent}} % moins de correspondances",
+      "steady": "→ Stable",
+      "up": "↑ {{percent}} % plus de correspondances"
+    }
+  },
+  "banner": {
+    "newMatches": {
+      "dismiss": "Fermer la notification de nouvelles correspondances",
+      "message": "{{count}} nouvelles correspondances depuis votre dernière visite",
+      "message_one": "{{count}} nouvelle correspondance depuis votre dernière visite",
+      "viewMatches": "Voir les correspondances"
+    }
+  },
+  "highlights": {
+    "ariaLabel": "Points saillants du tableau de bord",
+    "latestDocument": {
+      "ariaLabel": "Dernier document",
+      "downloadPdf": "Télécharger le PDF",
+      "emptyDescription": "Générez un CV personnalisé à partir de votre profil",
+      "emptyTitle": "Aucun document pour le moment",
+      "generatingHint": "Votre document est en cours de génération. Cela prend habituellement quelques minutes.",
+      "goToDocuments": "Aller aux documents",
+      "status": {
+        "unknown": "{{status}}"
+      },
+      "statusFailed": "Échoué",
+      "statusGenerating": "En cours de génération…",
+      "statusReady": "Prêt",
+      "title": "Dernier document"
+    },
+    "topMatch": {
+      "ariaLabel": "Meilleure correspondance d'emploi",
+      "browseJobs": "Parcourir les emplois",
+      "emptyDescription": "Créez un profil de recherche pour commencer à recevoir des correspondances",
+      "emptyTitle": "Aucune correspondance pour le moment",
+      "title": "Meilleure correspondance",
+      "viewMatch": "Voir la correspondance"
+    }
+  },
+  "missingSkills": {
+    "comingSoon": {
+      "cta": "Parcourir les emplois",
+      "description": "L'analyse détaillée des lacunes en compétences arrive bientôt. Gardez vos compétences à jour.",
+      "title": "Analyse des lacunes en compétences"
+    },
+    "improve": {
+      "cta": "Ajouter des compétences au profil",
+      "description": "Ajouter des compétences à votre profil aide notre moteur de correspondance à trouver de meilleures opportunités pour vous.",
+      "title": "Améliorez vos correspondances"
+    }
+  },
+  "onboarding": {
+    "cta": "Commencer",
+    "progress": {
+      "label": "{{completed}} de {{total}} étapes complétées",
+      "percent": "{{value}} % complété"
+    },
+    "step": "Étape {{number}}",
+    "stepState": {
+      "active": "Étape en cours",
+      "completed": "Complétée",
+      "pending": "Étape à venir"
+    },
+    "steps": {
+      "browse": {
+        "cta": "Parcourir les emplois correspondants",
+        "description": "Explorez les offres d'emploi correspondant à vos critères",
+        "title": "Parcourir les emplois"
+      },
+      "matches": {
+        "cta": "Voir vos correspondances",
+        "description": "Consultez vos recommandations et scores personnalisés",
+        "title": "Voir les correspondances"
+      },
+      "profile": {
+        "completionSummary": "Profil « {{name}} » créé",
+        "cta": "Créer votre premier profil",
+        "description": "Définissez vos préférences et postes cibles",
+        "title": "Créer votre profil"
+      },
+      "resume": {
+        "cta": "Générer un CV",
+        "description": "Créez un CV personnalisé adapté à vos postes cibles",
+        "title": "Générer un CV personnalisé"
+      }
+    },
+    "stepsAriaLabel": "Étapes d'intégration",
+    "subtitle": "Commencez par créer votre profil de recherche d'emploi",
+    "title": "Bienvenue sur Nohiki",
+    "welcome": {
+      "greeting": "Bon retour, {{name}} !",
+      "greetingGeneric": "Bienvenue sur Nohiki !",
+      "subtitle": "Configurons votre recherche d'emploi en 4 étapes simples. Ça prend environ 10 minutes."
+    }
+  },
+  "skeleton": {
+    "ariaLabel": "Chargement du tableau de bord"
+  },
+  "recentMatches": {
+    "createProfile": "Créer un profil",
+    "emptyDescription": "Créez un profil cible pour commencer à recevoir des correspondances",
+    "emptyTitle": "Aucune correspondance",
+    "new": "Nouveau",
+    "remote": "À distance",
+    "subtitle": "Vos dernières correspondances d'emploi",
+    "title": "Correspondances récentes",
+    "unknownCompany": "Entreprise inconnue",
+    "viewAll": "Voir tout"
+  },
+  "stage": {
+    "gettingStarted": {
+      "dismiss": "Fermer la progression de la configuration",
+      "next": "Suivant : {{step}}",
+      "progress": "Configuration : {{completed}}/{{total}} étapes"
+    }
+  },
+  "stats": {
+    "documents": {
+      "description": "Documents personnalisés",
+      "title": "Documents"
+    },
+    "jobMatches": {
+      "description": "Correspondances actives",
+      "title": "Correspondances"
+    },
+    "profiles": {
+      "description": "Profils configurés",
+      "title": "Profils de recherche"
+    },
+    "savedJobs": {
+      "description": "Emplois sauvegardés",
+      "title": "Emplois sauvegardés"
+    },
+    "trend": {
+      "ariaLabel": "{{direction}} {{delta}} cette semaine",
+      "down": "En baisse",
+      "steady": "Stable",
+      "up": "En hausse"
+    }
+  },
+  "subtitle": "Bon retour ! Voici un aperçu de votre recherche d'emploi.",
+  "title": "Tableau de bord"
+}

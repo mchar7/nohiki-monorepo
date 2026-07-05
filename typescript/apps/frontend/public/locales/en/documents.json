@@ -1,0 +1,164 @@
+{
+  "actions": {
+    "download": "Download"
+  },
+  "card": {
+    "createdAt": "Created {{time}}",
+    "outputFormat": "{{format}} format",
+    "processing": "Processing..."
+  },
+  "empty": {
+    "createFirst": "Generate your first document",
+    "noDocuments": "No documents yet",
+    "noDocumentsDescription": "Upload or generate documents to get started",
+    "noGenerated": "No generated documents yet",
+    "noGeneratedDescription": "Your generated documents will appear here",
+    "noUploaded": "No uploaded documents yet",
+    "noUploadedDescription": "Upload your resume, cover letter, or other documents"
+  },
+  "generation": {
+    "completed": "Document generated successfully!",
+    "failed": "Document generation failed: {{reason}}",
+    "failedFallback": "Document generation failed. Please try again.",
+    "generating": "Generating document...",
+    "progress": "{{progress}}% complete",
+    "timedOut": "Generation timed out. Please try again."
+  },
+  "mobile": {
+    "errorLabel": "Error:",
+    "requestId": "Request ID",
+    "status": "Status"
+  },
+  "pages": {
+    "list": {
+      "description": "View and manage your documents",
+      "title": "Documents"
+    }
+  },
+  "status": {
+    "completed": "Completed",
+    "failed": "Failed",
+    "pending": "Pending",
+    "processing": "Processing"
+  },
+  "table": {
+    "actions": "Actions",
+    "requestId": "Request ID",
+    "status": "Status"
+  },
+  "tabs": {
+    "all": "All",
+    "generated": "Generated",
+    "uploaded": "Uploaded"
+  },
+  "sort": {
+    "date": "Date",
+    "name": "Name"
+  },
+  "typeBadge": {
+    "generated": "Generated",
+    "uploaded": "Uploaded"
+  },
+  "wizard": {
+    "title": "Generate Document",
+    "steps": {
+      "type": "Document Type",
+      "profile": "Profile",
+      "match": "Match",
+      "template": "Template",
+      "review": "Review"
+    },
+    "navigation": {
+      "next": "Next",
+      "back": "Back",
+      "generate": "Generate Document"
+    },
+    "type": {
+      "heading": "What would you like to create?",
+      "resume": "Resume",
+      "resumeDescription": "Generate a formatted resume from your profile",
+      "coverLetter": "Cover Letter",
+      "coverLetterDescription": "Generate a tailored cover letter for a position"
+    },
+    "profile": {
+      "heading": "Select a profile",
+      "description": "Choose which profile to use for this document",
+      "keywords": "Keywords:",
+      "emptyTitle": "No profiles yet",
+      "emptyDescription": "Create a profile first to generate documents",
+      "emptyAction": "Create Profile"
+    },
+    "match": {
+      "heading": "Select a job match",
+      "description": "Optionally tailor this document to a specific job",
+      "skip": "Skip - generate without tailoring",
+      "score": "Fit index: {{score}} / 100",
+      "emptyTitle": "No matches found",
+      "emptyDescription": "Generate a document without tailoring, or create matches first"
+    },
+    "template": {
+      "heading": "Choose a template",
+      "description": "Select a template for your document",
+      "version": "v{{version}}",
+      "emptyTitle": "No templates available",
+      "emptyDescription": "No templates found for this document type"
+    },
+    "review": {
+      "heading": "Review and generate",
+      "description": "Confirm your selections and fill in any additional data",
+      "summary": "Summary",
+      "selectedType": "Document type",
+      "selectedProfile": "Profile",
+      "selectedMatch": "Job match",
+      "selectedTemplate": "Template",
+      "noMatch": "None (general document)",
+      "additionalData": "Additional Data",
+      "generating": "Generating...",
+      "generationStarted": "Document generation started",
+      "generationFailed": "Failed to start generation",
+      "nameRequired": "Set your Display Name in Account Settings before generating this document."
+    },
+    "loading": "Loading...",
+    "errorTitle": "Failed to load",
+    "retry": "Retry",
+    "a11y": {
+      "progress": "Wizard progress",
+      "loading": "Loading content"
+    }
+  },
+  "progress": {
+    "title": "Generating your document",
+    "description": "This may take a moment. You can wait here or check back later.",
+    "percentComplete": "{{progress}}% complete",
+    "completedTitle": "Document ready",
+    "completedDescription": "Your document has been generated and is ready to download.",
+    "downloadPdf": "Download PDF",
+    "viewDocuments": "View in Documents",
+    "failedTitle": "Generation failed",
+    "failedFallback": "An unexpected error occurred. Please try again.",
+    "retry": "Try Again",
+    "a11y": {
+      "progressBar": "Document generation progress",
+      "elapsedTime": "Time elapsed",
+      "downloadPdf": "Download generated PDF document",
+      "viewDocuments": "Navigate to documents list",
+      "retry": "Retry document generation"
+    }
+  },
+  "templates": {
+    "gallery": {
+      "title": "Templates",
+      "search": "Search templates...",
+      "empty": "No templates found",
+      "emptyDescription": "Try adjusting your search query",
+      "noTemplates": "There are no templates available at the moment",
+      "error": "Failed to load templates",
+      "retry": "Try again"
+    },
+    "card": {
+      "useTemplate": "Use Template",
+      "customize": "Customize",
+      "version": "v{{version}}"
+    }
+  }
+}

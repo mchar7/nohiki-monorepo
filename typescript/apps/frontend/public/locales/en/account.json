@@ -1,0 +1,119 @@
+{
+  "actions": {
+    "changePassword": "Change Password",
+    "deleteAccount": "Delete Account",
+    "save": "Save Changes",
+    "saving": "Saving..."
+  },
+  "deleteAccount": {
+    "cancelButton": "Cancel",
+    "confirmButton": "Delete Account",
+    "confirmDescription": "This action cannot be undone. All your data will be permanently deleted.",
+    "confirmTitle": "Are you sure?",
+    "deleting": "Deleting...",
+    "description": "Once you delete your account, there is no going back. Please be certain.",
+    "error": "Failed to delete account",
+    "placeholder": "Type DELETE to confirm",
+    "success": "Account deleted successfully",
+    "typeToConfirm": "Type DELETE to confirm deletion",
+    "warning": "This will permanently delete your account and all associated data."
+  },
+  "feedback": {
+    "passwordChanged": "Password changed successfully",
+    "passwordError": "Failed to change password: {{reason}}",
+    "passwordErrorFallback": "Failed to change password. Please try again.",
+    "profileUpdated": "Profile updated successfully",
+    "unlinkSuccess": "Account disconnected successfully",
+    "updateError": "Failed to update account: {{reason}}",
+    "updateErrorFallback": "Could not save account changes. Please try again."
+  },
+  "fields": {
+    "confirmPassword": {
+      "label": "Confirm Password",
+      "placeholder": "Confirm new password"
+    },
+    "currentPassword": {
+      "label": "Current Password",
+      "placeholder": "Enter current password"
+    },
+    "displayName": {
+      "description": "This is how your name will appear across the platform",
+      "label": "Display Name",
+      "placeholder": "Enter display name"
+    },
+    "email": {
+      "description": "Your email cannot be changed",
+      "label": "Email"
+    },
+    "firstName": {
+      "label": "First Name",
+      "placeholder": "Enter first name"
+    },
+    "lastName": {
+      "label": "Last Name",
+      "placeholder": "Enter last name"
+    },
+    "newPassword": {
+      "hint": "Must be at least 8 characters",
+      "label": "New Password",
+      "placeholder": "Enter new password"
+    }
+  },
+  "pages": {
+    "settings": {
+      "description": "Manage your account information and preferences",
+      "title": "Account Settings"
+    }
+  },
+  "sections": {
+    "avatar": {
+      "title": "Profile Picture",
+      "description": "Customize your avatar displayed across the application",
+      "placeholderMessage": "Avatar upload coming soon",
+      "helpText": "We're working on allowing you to upload your own profile picture. In the meantime, we'll use your initials."
+    },
+    "dangerZone": {
+      "description": "Irreversible and destructive actions",
+      "title": "Danger Zone"
+    },
+    "profile": {
+      "description": "Update your personal information",
+      "title": "Profile Information"
+    },
+    "linkedAccounts": {
+      "title": "Connected Accounts",
+      "description": "Manage your connected OAuth providers",
+      "linkedOn": "Linked on {{date}}",
+      "notLinked": "Not connected",
+      "link": "Connect",
+      "unlink": "Disconnect",
+      "unlinkDisabledWarning": "You cannot disconnect your only login method if you don't have a password set."
+    },
+    "security": {
+      "description": "Manage your password and security settings",
+      "title": "Security"
+    }
+  },
+  "validation": {
+    "confirmPassword": {
+      "mismatch": "Passwords do not match"
+    },
+    "currentPassword": {
+      "required": "Current password is required"
+    },
+    "displayName": {
+      "controlCharacters": "Display name cannot contain control characters",
+      "maxLength": "Display name must be at most {{max}} characters",
+      "required": "Display name is required"
+    },
+    "firstName": {
+      "maxLength": "First name must be at most {{max}} characters"
+    },
+    "lastName": {
+      "maxLength": "Last name must be at most {{max}} characters"
+    },
+    "newPassword": {
+      "minLength": "Password must be at least {{min}} characters"
+    }
+  }
+}

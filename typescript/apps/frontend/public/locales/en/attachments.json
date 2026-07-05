@@ -1,0 +1,80 @@
+{
+  "actions": {
+    "delete": "Delete",
+    "download": "Download",
+    "linkToProfile": "Link to Profile",
+    "preview": "Preview",
+    "unlinkFromProfile": "Unlink from Profile",
+    "upload": "Upload File"
+  },
+  "card": {
+    "actions": "Actions",
+    "categoryLabel": "Category",
+    "linkedProfile": "Linked to {{name}}",
+    "uploadedAt": "Uploaded {{time}}"
+  },
+  "confirmDelete": {
+    "description": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone.",
+    "title": "Delete Attachment"
+  },
+  "empty": {
+    "noAttachments": "No attachments yet",
+    "noAttachmentsDescription": "Upload your resume, cover letter, or other documents"
+  },
+  "pages": {
+    "list": {
+      "description": "Manage your uploaded files and documents.",
+      "title": "Uploaded Documents"
+    }
+  },
+  "preview": {
+    "close": "Close preview",
+    "description": "Previewing {{filename}}",
+    "download": "Download file",
+    "errorExpired": "The preview link has expired. Close and reopen to refresh.",
+    "notAvailable": "Preview is not available for this file type.",
+    "title": "File Preview"
+  },
+  "size": {
+    "bytes": "{{size}} B",
+    "kb": "{{size}} KB",
+    "mb": "{{size}} MB"
+  },
+  "upload": {
+    "allowedTypes": "Maximum file size {{size}}MB. Supported formats: PDF, DOCX, TXT",
+    "browse": "Browse files",
+    "description": "Upload documents to help Nohiki tailor your job applications.",
+    "dropzone": "Drag and drop a file here, or click to browse",
+    "dropzoneActive": "Drop the file here...",
+    "success": "File uploaded successfully!",
+    "title": "Upload Document",
+    "uploading": "Uploading..."
+  },
+  "validation": {
+    "fileTooLarge": "File is too large. Maximum size is {{max}}MB.",
+    "invalidType": "Invalid file type: {{type}}",
+    "uploadFailed": "Could not upload \"{{filename}}\": {{reason}}",
+    "uploadFailedFallback": "Failed to upload file. Please try again."
+  },
+  "category": {
+    "resume": "Resume",
+    "cover_letter": "Cover Letter",
+    "portfolio": "Portfolio",
+    "other": "Other",
+    "label": "Document category",
+    "selectPlaceholder": "Select category",
+    "filterAll": "All categories",
+    "filterLabel": "Filter by category"
+  },
+  "parsedContent": {
+    "title": "Document Analysis",
+    "description": "Automatic skill and experience extraction from your documents - coming soon"
+  },
+  "linkDialog": {
+    "title": "Link to Profile",
+    "description": "Select a profile to associate this attachment with.",
+    "noProfiles": "No profiles available. Create a profile first.",
+    "loading": "Loading profiles...",
+    "selectProfile": "Select a profile"
+  }
+}

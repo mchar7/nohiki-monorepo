@@ -1,0 +1,115 @@
+{
+  "actions": {
+    "apply": "Appliquer",
+    "cancel": "Annuler",
+    "hidePanel": "Masquer le panneau",
+    "newTemplate": "Nouveau modèle",
+    "showPanel": "Afficher le panneau"
+  },
+  "editor": {
+    "placeholder": "Entrez votre code HTML/Jinja2 ici..."
+  },
+  "fab": {
+    "label": "Actions",
+    "openPreview": "Ouvrir l'aperçu",
+    "validate": "Valider"
+  },
+  "jsWarning": {
+    "choiceDescription": "Vous pouvez choisir de rendre ce modèle directement (avec JavaScript activé) ou en tant qu'aperçu d'image statique.",
+    "description": "Ce modèle nécessite JavaScript pour s'afficher correctement.",
+    "dontAskAgain": "Ne plus demander pour « {{template}} »",
+    "reason": "Raison",
+    "renderHtml": "Rendu direct (HTML)",
+    "renderImage": "Rendu en image (WebP)",
+    "title": "Avertissement de modèle JavaScript"
+  },
+  "list": {
+    "createFirst": "Créez votre premier modèle",
+    "description": "Gérez vos modèles de documents",
+    "empty": "Aucun modèle trouvé",
+    "title": "Modèles"
+  },
+  "metadata": {
+    "description": {
+      "label": "Description",
+      "placeholder": "Décrivez l'utilité de ce modèle"
+    },
+    "name": {
+      "label": "Nom du modèle",
+      "placeholder": "Entrez le nom du modèle"
+    },
+    "requiresJs": {
+      "charCount": "{{count}}/140 caractères (5-140 requis)",
+      "label": "Nécessite JavaScript",
+      "reasonLabel": "Raison JavaScript",
+      "reasonPlaceholder": "Expliquez pourquoi ce modèle a besoin de JavaScript (ex: 'Nécessaire pour la numérotation des pages dans le pied de page PDF')"
+    },
+    "subtitle": "Configurez les métadonnées de base du modèle",
+    "title": "Informations du modèle",
+    "version": {
+      "hint": "Utilisez le versionnage sémantique (ex: 1.0.0)",
+      "label": "Version",
+      "placeholder": "1.0.0"
+    }
+  },
+  "labels": {
+    "column": "Colonne",
+    "editingLocked": "Édition verrouillée (en aperçu)",
+    "line": "Ligne"
+  },
+  "pageSize": {
+    "aspectRatio": "Proportions : {{ratio}}",
+    "customDialog": {
+      "description": "Entrez vos dimensions de page personnalisées.",
+      "title": "Taille de page personnalisée"
+    },
+    "height": "Hauteur",
+    "preset": {
+      "a4": "A4",
+      "a4Dimensions": "210mm × 297mm",
+      "custom": "Personnalisé",
+      "label": "Préréglage",
+      "letter": "Lettre US",
+      "letterDimensions": "8,5\" × 11\""
+    },
+    "landscape": "Paysage",
+    "portrait": "Portrait",
+    "swap": "Inverser les dimensions",
+    "title": "Taille de page",
+    "unit": "Unité",
+    "units": {
+      "inches": "Pouces (po)",
+      "millimeters": "Millimètres (mm)"
+    },
+    "width": "Largeur"
+  },
+  "modes": {
+    "advanced": "Avancé",
+    "label": "Mode éditeur",
+    "simple": "Simple"
+  },
+  "panels": {
+    "formFields": "Champs du formulaire",
+    "htmlTemplate": "Modèle HTML",
+    "metadata": "Métadonnées"
+  },
+  "schema": {
+    "noProperties": "Aucune propriété définie",
+    "options": "Options :",
+    "properties": "Propriétés",
+    "structureTitle": "Structure du schéma",
+    "viewRawJson": "Voir le schéma JSON brut"
+  },
+  "subtitle": "Créez et modifiez des modèles de documents avec validation en direct",
+  "title": "Studio de modèles",
+  "tooltips": {
+    "requiresConnection": "Cette action nécessite une connexion au serveur"
+  },
+  "validation": {
+    "missingDoctype": "Déclaration <!DOCTYPE html> manquante. Cela peut causer des incohérences de rendu.",
+    "unclosedBlock": "Bloc Jinja2 non fermé détecté. Assurez-vous que tous les {% if %}, {% for %}, etc. ont leurs {% endif %}, {% endfor %} correspondants.",
+    "unclosedExpression": "Expression Jinja2 non fermée. Vérifiez les délimiteurs {{ et }} non appariés.",
+    "validate": "Valider le modèle",
+    "validating": "Validation en cours..."
+  }
+}

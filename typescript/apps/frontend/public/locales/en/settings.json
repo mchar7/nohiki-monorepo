@@ -1,0 +1,137 @@
+{
+  "about": {
+    "copyright": "© {{year}} Nohiki. All rights reserved.",
+    "description": "Nohiki is a document generation platform designed for job search automation. Create professional resumes and cover letters with ease.",
+    "sectionDescription": "Version information and links",
+    "legal": {
+      "licenses": "Open Source Licenses",
+      "privacy": "Privacy Policy",
+      "terms": "Terms of Service"
+    },
+    "links": {
+      "documentation": "Documentation",
+      "github": "GitHub",
+      "reportBug": "Report a Bug",
+      "requestFeature": "Request a Feature"
+    },
+    "title": "About Nohiki",
+    "version": "Version {{version}}"
+  },
+  "api": {
+    "actions": {
+      "resetToDefault": "Reset to Default",
+      "saveEndpoint": "Save Endpoint",
+      "testConnection": "Test Connection",
+      "testing": "Testing..."
+    },
+    "baseUrl": {
+      "invalidUrl": "Please enter a valid HTTP or HTTPS URL",
+      "label": "API Endpoint URL",
+      "placeholder": "http://localhost:8000"
+    },
+    "connectionFailed": "Connection failed",
+    "connectionSuccess": "Connection successful!",
+    "currentEndpoint": {
+      "custom": "Custom",
+      "default": "Default",
+      "title": "Current Endpoint"
+    },
+    "description": "Configure the document generation service endpoint. Changes require a connection test before saving.",
+    "errors": {
+      "corsError": "CORS Error: The server needs to allow requests from this domain. Check the server's CORS configuration.",
+      "invalidUrlFormat": "Invalid URL format. Please enter a valid HTTP or HTTPS URL.",
+      "networkError": "Network Error: Unable to reach the server. This could be due to CORS restrictions, network connectivity issues, or the server being unreachable.",
+      "timeout": "Timeout: The server took too long to respond (>10 seconds).",
+      "unknownError": "Unknown error occurred"
+    },
+    "healthCheck": {
+      "componentHealth": "Component Health:",
+      "failedAfter": "Failed after {{latency}}ms",
+      "serviceStatus": "Service Status:"
+    },
+    "help": {
+      "baseUrlHint": "Enter just the base URL (e.g., http://localhost:8000)",
+      "endpointHint": "The endpoint should point to a running document generation service",
+      "saveHint": "Changes are only saved after a successful connection test"
+    },
+    "title": "API Endpoint Configuration"
+  },
+  "appearance": {
+    "accentColor": {
+      "description": "Select your preferred accent color for the interface",
+      "title": "Accent Color",
+      "useSystem": "Use system accent",
+      "useSystemDescription": "Automatically match your system's accent color"
+    },
+    "colorScheme": {
+      "blue": "Blue",
+      "blueDescription": "Cool and professional",
+      "emerald": "Emerald",
+      "emeraldDescription": "Fresh and natural",
+      "orange": "Orange",
+      "orangeDescription": "Warm and energetic",
+      "rose": "Rose",
+      "roseDescription": "Elegant and soft",
+      "violet": "Violet",
+      "violetDescription": "Creative and modern"
+    },
+    "description": "Customize how Nohiki looks on your device",
+    "disabled": "Disabled",
+    "enabled": "Enabled",
+    "modeDescription": {
+      "dark": "Always use dark mode",
+      "light": "Always use light mode",
+      "system": "Match system preference"
+    },
+    "theme": {
+      "dark": "Dark",
+      "light": "Light",
+      "system": "System"
+    },
+    "title": "Appearance"
+  },
+  "developer": {
+    "actions": {
+      "clearCache": "Clear Cache",
+      "clearCacheHelp": "Removes all local storage, session storage, and IndexedDB data. The page will reload automatically.",
+      "copied": "Copied!",
+      "copiedAlert": "Debug information copied to clipboard. You can paste this in bug reports or support requests.",
+      "copyDebugInfo": "Copy Debug Info",
+      "description": "Utilities for debugging and troubleshooting.",
+      "title": "Debug Actions"
+    },
+    "browser": {
+      "description": "Browser capabilities and system information for debugging.",
+      "language": "Language:",
+      "localStorage": "LocalStorage:",
+      "online": "Online:",
+      "pixelRatio": "Pixel Ratio:",
+      "platform": "Platform:",
+      "screenSize": "Screen Size:",
+      "timezone": "Timezone:",
+      "title": "Browser & System Information",
+      "userAgent": "User Agent:",
+      "windowSize": "Window Size:"
+    },
+    "description": "Environment information and debugging details",
+    "devMode": "Development Mode",
+    "devModeDescription": "The following settings are only available during development and will not appear in production.",
+    "devOnly": "Dev Only",
+    "environment": {
+      "apiBaseUrl": "API Base URL:",
+      "buildTime": "Build Time:",
+      "description": "Current build and environment configuration details.",
+      "mode": "Mode:",
+      "nodeEnv": "Node Environment:",
+      "title": "Environment Information",
+      "version": "Version:"
+    },
+    "title": "Developer Information"
+  },
+  "sections": {
+    "about": "About",
+    "privacy": "Privacy"
+  },
+  "subtitle": "Configure your application preferences",
+  "title": "Settings"
+}

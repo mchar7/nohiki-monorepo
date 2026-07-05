@@ -1,0 +1,119 @@
+{
+  "actions": {
+    "changePassword": "Changer le mot de passe",
+    "deleteAccount": "Supprimer le compte",
+    "save": "Enregistrer les modifications",
+    "saving": "Enregistrement..."
+  },
+  "deleteAccount": {
+    "cancelButton": "Annuler",
+    "confirmButton": "Supprimer le compte",
+    "confirmDescription": "Cette action est irréversible. Toutes vos données seront définitivement supprimées.",
+    "confirmTitle": "Êtes-vous sûr ?",
+    "deleting": "Suppression...",
+    "description": "Une fois votre compte supprimé, il n'y a pas de retour en arrière. Veuillez être certain.",
+    "error": "Échec de la suppression du compte",
+    "placeholder": "Tapez DELETE pour confirmer",
+    "success": "Compte supprimé avec succès",
+    "typeToConfirm": "Tapez DELETE pour confirmer la suppression",
+    "warning": "Ceci supprimera définitivement votre compte et toutes les données associées."
+  },
+  "feedback": {
+    "passwordChanged": "Mot de passe modifié avec succès",
+    "passwordError": "Échec du changement de mot de passe : {{reason}}",
+    "passwordErrorFallback": "Échec du changement de mot de passe. Veuillez réessayer.",
+    "profileUpdated": "Profil mis à jour avec succès",
+    "unlinkSuccess": "Compte déconnecté avec succès",
+    "updateError": "Échec de la mise à jour du compte : {{reason}}",
+    "updateErrorFallback": "Impossible d'enregistrer les modifications du compte. Veuillez réessayer."
+  },
+  "fields": {
+    "confirmPassword": {
+      "label": "Confirmer le mot de passe",
+      "placeholder": "Confirmez le nouveau mot de passe"
+    },
+    "currentPassword": {
+      "label": "Mot de passe actuel",
+      "placeholder": "Entrez le mot de passe actuel"
+    },
+    "displayName": {
+      "description": "C'est ainsi que votre nom apparaîtra sur la plateforme",
+      "label": "Nom d'affichage",
+      "placeholder": "Entrez le nom d'affichage"
+    },
+    "email": {
+      "description": "Votre courriel ne peut pas être modifié",
+      "label": "Courriel"
+    },
+    "firstName": {
+      "label": "Prénom",
+      "placeholder": "Entrez le prénom"
+    },
+    "lastName": {
+      "label": "Nom de famille",
+      "placeholder": "Entrez le nom de famille"
+    },
+    "newPassword": {
+      "hint": "Doit contenir au moins 8 caractères",
+      "label": "Nouveau mot de passe",
+      "placeholder": "Entrez le nouveau mot de passe"
+    }
+  },
+  "pages": {
+    "settings": {
+      "description": "Gérez les informations et préférences de votre compte",
+      "title": "Paramètres du compte"
+    }
+  },
+  "sections": {
+    "avatar": {
+      "title": "Photo de profil",
+      "description": "Personnalisez votre avatar affiché dans l'application",
+      "placeholderMessage": "Le téléchargement d'avatar arrive bientôt",
+      "helpText": "Nous travaillons pour vous permettre de télécharger votre propre photo de profil. En attendant, nous utiliserons vos initiales."
+    },
+    "dangerZone": {
+      "description": "Actions irréversibles et destructrices",
+      "title": "Zone de danger"
+    },
+    "profile": {
+      "description": "Mettez à jour vos informations personnelles",
+      "title": "Informations du profil"
+    },
+    "linkedAccounts": {
+      "title": "Comptes connectés",
+      "description": "Gérez vos fournisseurs OAuth connectés",
+      "linkedOn": "Lié le {{date}}",
+      "notLinked": "Non connecté",
+      "link": "Connecter",
+      "unlink": "Déconnecter",
+      "unlinkDisabledWarning": "Vous ne pouvez pas déconnecter votre seule méthode de connexion si vous n'avez pas de mot de passe défini."
+    },
+    "security": {
+      "description": "Gérez votre mot de passe et vos paramètres de sécurité",
+      "title": "Sécurité"
+    }
+  },
+  "validation": {
+    "confirmPassword": {
+      "mismatch": "Les mots de passe ne correspondent pas"
+    },
+    "currentPassword": {
+      "required": "Le mot de passe actuel est requis"
+    },
+    "displayName": {
+      "controlCharacters": "Le nom d'affichage ne peut pas contenir de caractères de contrôle",
+      "maxLength": "Le nom d'affichage doit contenir au maximum {{max}} caractères",
+      "required": "Le nom d'affichage est requis"
+    },
+    "firstName": {
+      "maxLength": "Le prénom doit contenir au maximum {{max}} caractères"
+    },
+    "lastName": {
+      "maxLength": "Le nom de famille doit contenir au maximum {{max}} caractères"
+    },
+    "newPassword": {
+      "minLength": "Le mot de passe doit contenir au moins {{min}} caractères"
+    }
+  }
+}

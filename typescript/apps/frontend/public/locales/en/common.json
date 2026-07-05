@@ -1,0 +1,297 @@
+{
+  "icons": {
+    "google": "Google",
+    "github": "GitHub"
+  },
+  "a11y": {
+    "more": "More options",
+    "pagination": "Pagination",
+    "selectAll": "Select all rows",
+    "selectRow": "Select row",
+    "hidePassword": "Hide password",
+    "showPassword": "Show password",
+    "sidebarDescription": "Displays the mobile sidebar.",
+    "sidebarTitle": "Sidebar",
+    "tags": "Tags",
+    "toggleSidebar": "Toggle Sidebar",
+    "close": "Close",
+    "userMenu": "User menu",
+    "bottomNav": "Primary navigation",
+    "noJobsFound": "No jobs found",
+    "openCommandPalette": "Open command palette",
+    "pageLoading": "Page loading",
+    "skipToContent": "Skip to main content",
+    "fileDropZone": "File drop zone"
+  },
+  "actions": {
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "deselectAll": "Select None",
+    "downloadPdf": "Download PDF",
+    "duplicate": "Duplicate",
+    "edit": "Edit",
+    "export": "Export",
+    "goBack": "Go Back",
+    "more": "More",
+    "refresh": "Refresh",
+    "reloadPage": "Reload Page",
+    "retry": "Retry",
+    "selectAll": "Select All",
+    "tryAgain": "Try Again",
+    "copied": "Copied",
+    "copyErrorStack": "Copy error details",
+    "copyRequestId": "Copy request ID",
+    "createNew": "Create New",
+    "viewAll": "View All"
+  },
+  "app": {
+    "initFailed": "Failed to initialize application",
+    "initRetry": "Retry",
+    "storeInitFailed": "Failed to initialize local stores"
+  },
+  "appName": "Nohiki",
+  "unavailable": "Unavailable",
+  "appTagline": "Job Search Automation",
+  "characterCounter": {
+    "count": "{{current}}/{{max}}"
+  },
+  "connectivity": {
+    "checking": "Checking connection...",
+    "clickToRetry": "Click to retry connection",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "disconnectedDetail": "Unable to reach the server. Data shown may be stale. Please check your network connection.",
+    "lastChecked": "Last checked: {{time}}",
+    "offline": "Offline",
+    "offlineDescription": "You are currently offline. Some features may be unavailable.",
+    "requiresConnection": "Connection required",
+    "retry": "Retry",
+    "unknown": "Connecting..."
+  },
+  "commandPalette": {
+    "title": "Command palette",
+    "placeholder": "Search navigation, actions...",
+    "noResults": "No results found.",
+    "quickActions": "Quick Actions",
+    "switchToDark": "Switch to Dark Theme",
+    "switchToLight": "Switch to Light Theme",
+    "signOut": "Sign Out",
+    "keyboardShortcuts": "Keyboard Shortcuts",
+    "searchResultsJobs": "Jobs",
+    "searchResultsSkills": "Skills",
+    "searching": "Searching...",
+    "noSearchResults": "No results for \"{{query}}\""
+  },
+  "shortcuts": {
+    "title": "Keyboard Shortcuts",
+    "groups": {
+      "global": "Global",
+      "navigation": "Navigation",
+      "editor": "Editor"
+    },
+    "openPalette": "Open command palette",
+    "toggleSidebar": "Toggle sidebar",
+    "openShortcutsGuide": "Keyboard shortcuts",
+    "closeDialog": "Close dialog"
+  },
+  "columns": "Columns",
+  "counts": {
+    "more": "+{{count}} more",
+    "result": "{{count}} result",
+    "results": "{{count}} results"
+  },
+  "direction": "Direction",
+  "filters": {
+    "activeCount_one": "{{count}} active",
+    "activeCount_other": "{{count}} active"
+  },
+  "empty": {
+    "noData": "No data available",
+    "noListings": "No listings available",
+    "noListingsDescription": "There are no listings to display at this time."
+  },
+  "emptyStates": {
+    "document": {
+      "createAction": "Create Document",
+      "createDescription": "Get started by creating a new document. Fill in the form fields and generate beautiful PDFs.",
+      "createNewAction": "Create New Document",
+      "createTitle": "Create Your First Document",
+      "noMatches": "No matches yet",
+      "noMatchesAria": "No matches found",
+      "noMatchesDescription": "Create a job target to start receiving matches",
+      "selectDescription": "Choose an existing document from the sidebar or create a new one to start editing.",
+      "selectTitle": "Select a Document"
+    },
+    "preview": {
+      "action": "Generate Preview",
+      "description": "Generate a preview to see how your document will look when exported.",
+      "title": "Preview Your Document"
+    }
+  },
+  "features": {
+    "accountSettings": "Account Settings",
+    "attachments": "Attachments",
+    "dashboard": "Dashboard",
+    "documentEditor": "Document Editor",
+    "documents": "Documents",
+    "jobDetail": "Job Detail",
+    "jobListings": "Job Listings",
+    "jobMatches": "Job Matches",
+    "licenses": "Licenses",
+    "matchDetail": "Match Detail",
+    "omakase": "Documents",
+    "omakaseEditor": "Document Editor",
+    "omakaseTemplates": "Template Studio",
+    "profileCreate": "Create Profile",
+    "profileDetail": "Profile Detail",
+    "profileList": "Profiles",
+    "settings": "Settings"
+  },
+  "fieldNames": "Field Names",
+  "errorBoundary": {
+    "description": "An unexpected error occurred in this component",
+    "detailsSummary": "Error Details (Development Only)",
+    "featureError": "The {{feature}} encountered an unexpected error.",
+    "title": "Something went wrong"
+  },
+  "errors": {
+    "fixIssues": "Please fix the following issues:",
+    "generic": "An unexpected error occurred",
+    "genericWithReason": "{{context}}: {{reason}}",
+    "notFound": "Resource not found",
+    "noTemplateSelected": "No template selected",
+    "schemaLoadingDescription": "Unable to load the document schema. Please check your connection and try again.",
+    "schemaLoadingHint": "Try refreshing the page or selecting a different template.",
+    "schemaLoadingIssue": "Schema Loading Issue"
+  },
+  "density": {
+    "compact": "Compact",
+    "comfortable": "Comfortable",
+    "spacious": "Spacious",
+    "label": "Display density"
+  },
+  "dropZone": {
+    "dropToUpload": "Drop to upload"
+  },
+  "confirm": {
+    "deleteDescription": "Are you sure you want to delete '{{name}}'? This action cannot be undone.",
+    "deleteTitle": "Delete"
+  },
+  "labels": {
+    "column": "Column",
+    "highQuality": "High Quality",
+    "line": "Line",
+    "selected": "{{count}} selected",
+    "version": "Version {{version}}"
+  },
+  "modules": {
+    "platform": {
+      "title": "Nohiki Platform"
+    }
+  },
+  "pages": {
+    "notFound": {
+      "description": "The page you're looking for doesn't exist.",
+      "goHome": "Go back to Dashboard",
+      "heading": "Page Not Found",
+      "title": "404"
+    }
+  },
+  "pagination": {
+    "first": "First page",
+    "goToNext": "Go to next page",
+    "goToPrevious": "Go to previous page",
+    "last": "Last page",
+    "morePages": "More pages",
+    "next": "Next",
+    "previous": "Previous",
+    "pageOf": "Page {{current}} of {{total}}",
+    "rowsPerPage": "Rows per page",
+    "showing": "Showing {{start}}-{{end}} of {{total}}"
+  },
+  "placeholder": "Placeholder",
+  "renderAsFields": "Render as fields",
+  "nav": {
+    "dashboard": "Dashboard",
+    "editor": "Editor",
+    "settings": "Settings",
+    "templates": "Templates"
+  },
+  "showItemLabels": "Show item labels",
+  "sidebar": {
+    "account": "Account",
+    "allSettings": "All Settings",
+    "attachments": "Attachments",
+    "dashboard": "Dashboard",
+    "docsUrl": "https://www.nohiki.com/docs",
+    "jobs": {
+      "browse": "Browse Jobs",
+      "matches": "My Matches",
+      "title": "Jobs"
+    },
+    "preferencesTheme": "Preferences & Theme",
+    "profiles": {
+      "create": "Create New",
+      "list": "My Profiles",
+      "title": "Profiles"
+    },
+    "quickSettings": "Quick Settings",
+    "recentDocuments": "Recent Documents",
+    "unknownTemplate": "Unknown Template"
+  },
+  "skills": {
+    "maxReached": "Maximum of {{max}} skills reached",
+    "noResults": "No skills found",
+    "resultCount_one": "{{count}} skill available",
+    "resultCount_other": "{{count}} skills available",
+    "searchError": "Unable to search skills",
+    "placeholder": "Click to add skills...",
+    "searchPlaceholder": "Search skills...",
+    "typeToSearch": "Type at least 2 characters to search"
+  },
+  "tagInput": {
+    "duplicate": "\"{{tag}}\" has already been added"
+  },
+  "states": {
+    "autoRefreshing": "Auto-refreshing...",
+    "loading": "Loading...",
+    "processing": "Processing...",
+    "refreshing": "Refreshing...",
+    "syncing": "Syncing...",
+    "lastSynced": "Synced {{time}}"
+  },
+  "unsavedChanges": {
+    "title": "Unsaved Changes",
+    "description": "You have unsaved changes. Are you sure you want to leave? Your changes will be lost.",
+    "stay": "Keep Editing",
+    "leave": "Discard Changes"
+  },
+  "form": {
+    "optional": "optional",
+    "optionalLabel": "(optional)"
+  },
+  "status": {
+    "active": "Active",
+    "success": "Success"
+  },
+  "theme": {
+    "dark": "Dark Theme",
+    "light": "Light Theme",
+    "system": "System Theme"
+  },
+  "widget": "Widget",
+  "appearance": {
+    "colorScheme": {
+      "blue": "Blue",
+      "blueDescription": "Cool and professional",
+      "emerald": "Emerald",
+      "emeraldDescription": "Fresh and natural",
+      "orange": "Orange",
+      "orangeDescription": "Warm and energetic",
+      "rose": "Rose",
+      "roseDescription": "Elegant and soft",
+      "violet": "Violet",
+      "violetDescription": "Creative and modern"
+    }
+  }
+}

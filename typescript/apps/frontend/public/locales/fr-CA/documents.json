@@ -1,0 +1,164 @@
+{
+  "actions": {
+    "download": "Télécharger"
+  },
+  "card": {
+    "createdAt": "Créé {{time}}",
+    "outputFormat": "Format {{format}}",
+    "processing": "Traitement en cours..."
+  },
+  "empty": {
+    "createFirst": "Générez votre premier document",
+    "noDocuments": "Aucun document pour le moment",
+    "noDocumentsDescription": "Téléversez ou générez des documents pour commencer",
+    "noGenerated": "Aucun document généré pour le moment",
+    "noGeneratedDescription": "Vos documents générés apparaîtront ici",
+    "noUploaded": "Aucun document téléversé pour le moment",
+    "noUploadedDescription": "Téléversez votre CV, lettre de motivation ou autres documents"
+  },
+  "generation": {
+    "completed": "Document généré avec succès !",
+    "failed": "Échec de la génération du document : {{reason}}",
+    "failedFallback": "Échec de la génération du document. Veuillez réessayer.",
+    "generating": "Génération du document...",
+    "progress": "{{progress}} % terminé",
+    "timedOut": "La génération a expiré. Veuillez réessayer."
+  },
+  "mobile": {
+    "errorLabel": "Erreur :",
+    "requestId": "ID de requête",
+    "status": "Statut"
+  },
+  "pages": {
+    "list": {
+      "description": "Consultez et gérez vos documents",
+      "title": "Documents"
+    }
+  },
+  "status": {
+    "completed": "Terminé",
+    "failed": "Échoué",
+    "pending": "En attente",
+    "processing": "En cours"
+  },
+  "table": {
+    "actions": "Actions",
+    "requestId": "ID de requête",
+    "status": "Statut"
+  },
+  "tabs": {
+    "all": "Tous",
+    "generated": "Générés",
+    "uploaded": "Téléversés"
+  },
+  "sort": {
+    "date": "Date",
+    "name": "Nom"
+  },
+  "typeBadge": {
+    "generated": "Généré",
+    "uploaded": "Téléversé"
+  },
+  "wizard": {
+    "title": "Générer un document",
+    "steps": {
+      "type": "Type de document",
+      "profile": "Profil",
+      "match": "Correspondance",
+      "template": "Modèle",
+      "review": "Révision"
+    },
+    "navigation": {
+      "next": "Suivant",
+      "back": "Retour",
+      "generate": "Générer le document"
+    },
+    "type": {
+      "heading": "Que souhaitez-vous créer ?",
+      "resume": "CV",
+      "resumeDescription": "Générez un CV formaté à partir de votre profil",
+      "coverLetter": "Lettre de motivation",
+      "coverLetterDescription": "Générez une lettre de motivation adaptée à un poste"
+    },
+    "profile": {
+      "heading": "Sélectionnez un profil",
+      "description": "Choisissez le profil à utiliser pour ce document",
+      "keywords": "Mots-clés :",
+      "emptyTitle": "Aucun profil pour le moment",
+      "emptyDescription": "Créez d'abord un profil pour générer des documents",
+      "emptyAction": "Créer un profil"
+    },
+    "match": {
+      "heading": "Sélectionnez une correspondance d'emploi",
+      "description": "Vous pouvez optionnellement adapter ce document à une offre d'emploi spécifique",
+      "skip": "Ignorer - générer sans adaptation",
+      "score": "Indice d’adéquation : {{score}} / 100",
+      "emptyTitle": "Aucune correspondance trouvée",
+      "emptyDescription": "Générez un document sans l'adapter, ou créez d'abord des correspondances"
+    },
+    "template": {
+      "heading": "Choisissez un modèle",
+      "description": "Sélectionnez un modèle pour votre document",
+      "version": "v{{version}}",
+      "emptyTitle": "Aucun modèle disponible",
+      "emptyDescription": "Aucun modèle trouvé pour ce type de document"
+    },
+    "review": {
+      "heading": "Réviser et générer",
+      "description": "Confirmez vos sélections et remplissez les données supplémentaires",
+      "summary": "Résumé",
+      "selectedType": "Type de document",
+      "selectedProfile": "Profil",
+      "selectedMatch": "Correspondance d'emploi",
+      "selectedTemplate": "Modèle",
+      "noMatch": "Aucun (document général)",
+      "additionalData": "Données supplémentaires",
+      "generating": "Génération en cours...",
+      "generationStarted": "Génération du document lancée",
+      "generationFailed": "Échec du lancement de la génération",
+      "nameRequired": "Définissez votre nom d’affichage dans les paramètres du compte avant de générer ce document."
+    },
+    "loading": "Chargement...",
+    "errorTitle": "Échec du chargement",
+    "retry": "Réessayer",
+    "a11y": {
+      "progress": "Progression de l'assistant",
+      "loading": "Chargement du contenu"
+    }
+  },
+  "progress": {
+    "title": "Génération de votre document",
+    "description": "Cela peut prendre un moment. Vous pouvez patienter ici ou revenir plus tard.",
+    "percentComplete": "{{progress}} % terminé",
+    "completedTitle": "Document prêt",
+    "completedDescription": "Votre document a été généré et est prêt à être téléchargé.",
+    "downloadPdf": "Télécharger le PDF",
+    "viewDocuments": "Voir dans les documents",
+    "failedTitle": "Échec de la génération",
+    "failedFallback": "Une erreur inattendue s'est produite. Veuillez réessayer.",
+    "retry": "Réessayer",
+    "a11y": {
+      "progressBar": "Progression de la génération du document",
+      "elapsedTime": "Temps écoulé",
+      "downloadPdf": "Télécharger le document PDF généré",
+      "viewDocuments": "Naviguer vers la liste des documents",
+      "retry": "Réessayer la génération du document"
+    }
+  },
+  "templates": {
+    "gallery": {
+      "title": "Modèles",
+      "search": "Rechercher des modèles...",
+      "empty": "Aucun modèle trouvé",
+      "emptyDescription": "Essayez d'ajuster votre recherche",
+      "noTemplates": "Il n'y a aucun modèle disponible pour le moment",
+      "error": "Échec du chargement des modèles",
+      "retry": "Réessayer"
+    },
+    "card": {
+      "useTemplate": "Utiliser le modèle",
+      "customize": "Personnaliser",
+      "version": "v{{version}}"
+    }
+  }
+}

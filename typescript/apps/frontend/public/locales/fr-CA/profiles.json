@@ -1,0 +1,215 @@
+{
+  "actions": {
+    "create": "Créer un profil",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "save": "Enregistrer"
+  },
+  "card": {
+    "creating": "Création...",
+    "matchCount": "{{count}} correspondances",
+    "noKeywords": "Aucun mot-clé",
+    "metadata": "{{matchCount}} · {{timeAgo}}"
+  },
+  "completeness": {
+    "scoreLabel": "{{score}}% / {{max}}%",
+    "suggestions": {
+      "experiencePreference": "Ajoutez votre niveau d'expérience et vos préférences d'ancienneté",
+      "notificationThreshold": "Personnalisez votre seuil de notification pour de meilleurs résultats",
+      "prefName": "Donnez un nom descriptif à votre profil",
+      "salaryPreference": "Définissez vos attentes salariales",
+      "searchKeywords": "Ajoutez au moins 1 mot-clé pour une meilleure découverte d'emplois",
+      "userSkills": "Ajoutez au moins une compétence pour améliorer la précision",
+      "workArrangements": "Sélectionnez vos modes de travail préférés"
+    },
+    "title": "Complétude du profil"
+  },
+  "confirmDelete": {
+    "description": "Êtes-vous sûr de vouloir supprimer ce profil ? Cette action est irréversible.",
+    "title": "Supprimer le profil"
+  },
+  "empty": {
+    "noProfiles": "Aucun profil trouvé",
+    "noProfilesDescription": "Créez votre premier profil de recherche pour commencer à trouver des correspondances."
+  },
+  "featureImportance": {
+    "description": "Ajustez l'importance de chaque facteur dans votre score de correspondance",
+    "experience": "Niveau d'expérience",
+    "experienceDescription": "Correspondance entre votre expérience et les exigences du poste",
+    "location": "Localisation",
+    "locationDescription": "Proximité avec vos lieux préférés",
+    "recency": "Récence",
+    "recencyDescription": "Date de publication de l'offre",
+    "resetToDefaults": "Réinitialiser par défaut",
+    "salary": "Salaire",
+    "salaryDescription": "Correspondance avec vos attentes salariales",
+    "skillMatch": "Correspondance des compétences",
+    "skillMatchDescription": "Correspondance entre vos compétences et les exigences du poste",
+    "title": "Importance des facteurs",
+    "workArrangement": "Mode de travail",
+    "workArrangementDescription": "Correspondance avec votre environnement de travail préféré"
+  },
+  "fields": {
+    "autoTailorThreshold": {
+      "hint": "Personnaliser automatiquement le CV pour les correspondances au-dessus de cet indice d’adéquation. Laissez vide pour désactiver.",
+      "label": "Seuil de personnalisation auto"
+    },
+    "experience": {
+      "description": "Précisez votre niveau d'expérience et l'ancienneté souhaitée.",
+      "decreaseYears": "Diminuer les années d’expérience",
+      "displayYears": "{{count}} ans d'expérience",
+      "increaseYears": "Augmenter les années d’expérience",
+      "label": "Expérience",
+      "seniorityLabel": "Niveaux d'ancienneté",
+      "seniorityOptions": {
+        "DIRECTOR": "Directeur",
+        "ENTRY": "Débutant",
+        "EXECUTIVE": "Cadre supérieur",
+        "INTERN": "Stagiaire",
+        "MANAGER": "Gestionnaire",
+        "MID": "Intermédiaire",
+        "SENIOR": "Sénior",
+        "STAFF": "Employé",
+        "VP": "VP"
+      },
+      "yearsLabel": "Années d'expérience"
+    },
+    "disallowedKeywords": {
+      "description": "Les offres contenant ces mots-clés seront automatiquement filtrées.",
+      "label": "Mots-clés exclus",
+      "placeholder": "Ajouter un mot-clé à exclure..."
+    },
+    "notificationThreshold": {
+      "description": "Indice d’adéquation minimum requis pour vous notifier d'un emploi.",
+      "descriptions": {
+        "excellent": "Vous ne serez notifié que des correspondances excellentes",
+        "good": "Recommandé — vous serez notifié des bonnes correspondances",
+        "many": "Vous recevrez de nombreuses notifications, y compris des correspondances de moindre qualité",
+        "decent": "Vous recevrez des notifications pour les correspondances correctes et supérieures"
+      },
+      "hint": "Notifier pour les correspondances ≥ {{threshold}} / 100",
+      "label": "Seuil de notification",
+      "tooltip": "Les indices d’adéquation vont de 0 à 100. Des seuils plus élevés signifient moins de notifications, mais de meilleure qualité."
+    },
+    "prefName": {
+      "description": "Donnez un nom à ce profil de recherche (ex: 'Poste Développeur Senior').",
+      "label": "Nom du profil",
+      "placeholder": "Entrez le nom du profil..."
+    },
+    "relocation": {
+      "description": "Indiquez si vous êtes prêt à déménager pour la bonne opportunité.",
+      "displayLabel": "Prêt à déménager",
+      "hint": "Ceci élargira votre recherche pour inclure des emplois en dehors de votre zone actuelle.",
+      "label": "Ouvert au déménagement",
+      "title": "Préférence de déménagement"
+    },
+    "searchKeywords": {
+      "addHint": "Appuyez sur Entrée ou virgule pour ajouter un terme de recherche",
+      "description": "Titres et expressions utilisés pour découvrir des offres pertinentes, comme « ingénieur backend » ou « systèmes distribués ».",
+      "label": "Mots-clés de recherche",
+      "placeholder": "p. ex. développeur de plateforme"
+    },
+    "userSkills": {
+      "description": "Compétences que vous maîtrisez. Utilisées pour améliorer la correspondance d'emploi.",
+      "label": "Vos Compétences",
+      "placeholder": "Rechercher des compétences..."
+    },
+    "salary": {
+      "currencyLabel": "Devise",
+      "currencyOptions": {
+        "CAD": "CAD",
+        "EUR": "EUR",
+        "GBP": "GBP",
+        "USD": "USD"
+      },
+      "currencyPlaceholder": "Sélectionner une devise",
+      "description": "Définissez vos attentes salariales et la fréquence de paiement souhaitée.",
+      "frequencyLabel": "Fréquence de paiement",
+      "frequencyOptions": {
+        "ANNUALLY": "Annuellement",
+        "BIWEEKLY": "Aux deux semaines",
+        "DAILY": "Quotidiennement",
+        "HOURLY": "À l'heure",
+        "MONTHLY": "Mensuellement",
+        "WEEKLY": "Hebdomadairement"
+      },
+      "frequencyPlaceholder": "Sélectionner une fréquence",
+      "label": "Préférence salariale",
+      "minLabel": "Salaire minimum",
+      "minPlaceholder": "ex. 80000",
+      "targetLabel": "Salaire cible",
+      "targetPlaceholder": "ex. 120000"
+    },
+    "workArrangements": {
+      "description": "Sélectionnez vos environnements de travail préférés.",
+      "label": "Modes de travail",
+      "options": {
+        "HYBRID": "Hybride",
+        "ON_SITE": "En présentiel",
+        "REMOTE": "Télétravail"
+      }
+    }
+  },
+  "pages": {
+    "create": {
+      "description": "Définissez vos critères d'emploi idéaux",
+      "error": "Échec de la création du profil : {{reason}}",
+      "errorFallback": "Impossible de créer le profil. Veuillez réessayer.",
+      "submitting": "Création...",
+      "success": "Profil créé ! Il peut prendre un moment avant d'apparaître dans la liste.",
+      "title": "Créer un profil cible"
+    },
+    "detail": {
+      "deleteError": "Échec de la suppression du profil : {{reason}}",
+      "deleteErrorFallback": "Impossible de supprimer le profil. Veuillez réessayer.",
+      "deleteSuccess": "Profil supprimé avec succès",
+      "editMode": "Modifier le profil cible",
+      "submitting": "Enregistrement...",
+      "success": "Profil mis à jour avec succès !",
+      "hydrationError": "Échec du chargement des compétences : {{reason}}",
+      "hydrationErrorFallback": "Impossible de charger les compétences. Veuillez réessayer.",
+      "hydrationIncomplete": "Certaines compétences n’ont pas pu être chargées. Réessayez avant de modifier le profil afin de conserver toutes vos sélections.",
+      "updateError": "Échec de la mise à jour du profil : {{reason}}",
+      "updateErrorFallback": "Impossible d'enregistrer les modifications. Veuillez réessayer.",
+      "viewMode": "Aperçu"
+    },
+    "list": {
+      "description": "Gérez vos profils de recherche d'emploi et vos préférences"
+    }
+  },
+  "sections": {
+    "userSkills": {
+      "description": "Ajoutez vos compétences professionnelles pour améliorer la précision de correspondance.",
+      "title": "Vos Compétences"
+    }
+  },
+  "validation": {
+    "experience": {
+      "seniorityRequired": "Sélectionnez au moins un niveau d’ancienneté"
+    },
+    "prefName": {
+      "maxLength": "Le nom du profil doit contenir au maximum {{max}} caractères",
+      "minLength": "Le nom du profil doit contenir au moins {{min}} caractères"
+    },
+    "searchKeywords": {
+      "maxItems": "Maximum de {{max}} mots-clés autorisés",
+      "maxLength": "Chaque terme de recherche doit contenir au maximum {{max}} caractères",
+      "minLength": "Chaque terme de recherche doit contenir au moins {{min}} caractères",
+      "required": "Au moins un mot-clé de recherche est requis",
+      "unique": "Les termes de recherche doivent être uniques"
+    },
+    "disallowedKeywords": {
+      "maxItems": "Maximum de {{max}} mots-clés exclus autorisés",
+      "maxLength": "Chaque mot-clé exclu doit contenir au maximum {{max}} caractères",
+      "minLength": "Chaque mot-clé exclu doit contenir au moins {{min}} caractères",
+      "required": "Au moins un mot-clé exclu est requis",
+      "unique": "Les mots-clés exclus doivent être uniques"
+    },
+    "userSkills": {
+      "maxItems": "Maximum de {{max}} compétences autorisées"
+    },
+    "workArrangements": {
+      "required": "Sélectionnez au moins un mode de travail"
+    }
+  }
+}

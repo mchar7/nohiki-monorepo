@@ -1,0 +1,246 @@
+{
+  "actions": {
+    "apply": "Mark Applied",
+    "dislike": "Dislike",
+    "dismiss": "Dismiss",
+    "like": "Like",
+    "save": "Save",
+    "unsave": "Remove Save",
+    "share": "Share",
+    "linkCopied": "Link copied to clipboard",
+    "applyExternal": "Apply on Original Site",
+    "viewOriginal": "View Original",
+    "copyJobDescription": "Copy Job Description"
+  },
+  "card": {
+    "actions": "Actions",
+    "company": "Company",
+    "filterByCompany": "Filter by {{company}}",
+    "copiedToClipboard": "Description copied to clipboard",
+    "copyDescription": "Copy job description",
+    "languageAriaLabel": "Listing language: {{language}}",
+    "location": "Location",
+    "moreSkills": "+{{count}} more",
+    "noDescription": "No description available",
+    "salary": "Salary",
+    "viewDetails": "View Details",
+    "seniority": {
+      "intern": "Intern",
+      "entry": "Entry",
+      "mid": "Mid-Level",
+      "senior": "Senior",
+      "staff": "Staff",
+      "lead": "Lead",
+      "manager": "Manager",
+      "director": "Director",
+      "vp": "VP",
+      "executive": "Executive"
+    },
+    "factors": {
+      "strength": "Strength",
+      "concern": "Concern"
+    },
+    "matchScoreLabel": "Fit index: {{score}} / 100",
+    "matchToSave": "Match with a profile to save",
+    "dismiss": "Not interested"
+  },
+  "detail": {
+    "about": "About",
+    "language": "Language",
+    "noSkills": "No skills listed",
+    "overview": "Overview",
+    "postedAt": "Posted",
+    "skills": "Skills",
+    "source": "Source",
+    "salary": "Salary Range",
+    "unknownCompany": "Unknown Company",
+    "similarJobs": "Similar Jobs",
+    "similarJobsDescription": "Other jobs you might be interested in"
+  },
+  "empty": {
+    "noJobDetail": "Job listing not found",
+    "noListings": "No job listings found",
+    "noListingsDescription": "Try adjusting your filters or check back later",
+    "noMatchDetail": "Match not found",
+    "noMatches": "No matches yet",
+    "noMatchesDescription": "Create a job target to start receiving matches",
+    "noMatchesNoProfile": "Create a job target to start receiving matches",
+    "noMatchesNoProfileDescription": "Set up your first job target profile and we'll start surfacing relevant opportunities.",
+    "noMatchesPending": "We're analyzing your profiles",
+    "noMatchesPendingDescription": "We're analyzing your profiles against available jobs. Check back soon!",
+    "noMatchesFiltered": "No matches meet your filters",
+    "noMatchesFilteredDescription": "Try lowering the minimum score or clearing your filters to see more results.",
+    "createProfile": "Create Job Target",
+    "refresh": "Refresh",
+    "clearFilters": "Clear Filters"
+  },
+  "feedback": {
+    "adjustDescription": "Help us improve by telling us why",
+    "adjustReason": "Reason",
+    "adjustReasonPlaceholder": "Why do you think the score should be different?",
+    "adjustTitle": "Adjust Score",
+    "description": "Your feedback helps improve our matching algorithm",
+    "feedbackError": "Could not submit feedback: {{reason}}",
+    "feedbackErrorFallback": "Failed to submit feedback. Please try again.",
+    "feedbackSuccess": "Thank you for your feedback!",
+    "good": "Good match",
+    "scoreQuestion": "How accurate was this match score?",
+    "submitFeedback": "Submit Feedback",
+    "submittingFeedback": "Submitting feedback…",
+    "title": "Feedback",
+    "tooHigh": "Score too high",
+    "tooLow": "Score too low"
+  },
+  "filters": {
+    "clearAll": "Clear all",
+    "searchPlaceholder": "Search jobs...",
+    "sources": {
+      "all": "All sources",
+      "company": "Company Website",
+      "glassdoor": "Glassdoor",
+      "google": "Google Jobs",
+      "indeed": "Indeed",
+      "linkedin": "LinkedIn",
+      "ziprecruiter": "ZipRecruiter"
+    },
+    "title": "Filters",
+    "showDismissed": "Show dismissed",
+    "hasSalary": "Disclosed salary only",
+    "workArrangement": {
+      "all": "All types",
+      "remote": "Remote",
+      "hybrid": "Hybrid",
+      "onsite": "On-site"
+    },
+    "seniority": {
+      "all": "All levels",
+      "entry": "Entry",
+      "mid": "Mid",
+      "senior": "Senior",
+      "lead": "Lead",
+      "manager": "Manager",
+      "director": "Director",
+      "executive": "Executive"
+    },
+    "dateRange": {
+      "all": "All time",
+      "24h": "Last 24 hours",
+      "7d": "Last 7 days",
+      "30d": "Last 30 days"
+    }
+  },
+  "match": {
+    "breakdown": {
+      "compatibility": "Compatibility {{score}} / 100",
+      "factors": {
+        "experience": "Experience",
+        "location": "Location",
+        "recency": "Listing recency",
+        "roleRelevance": "Role relevance",
+        "salary": "Salary",
+        "skills": "Skills",
+        "workArrangement": "Work arrangement"
+      },
+      "fitRanking": "Fit index {{score}} / 100",
+      "influence": {
+        "negative": "Concern",
+        "neutral": "Neutral",
+        "points": "{{points}} points",
+        "positive": "Strength"
+      },
+      "title": "Fit breakdown",
+      "unavailable": "Fit details are not available for this match."
+    },
+    "matchedAt": "Matched",
+    "score": "Fit index",
+    "totalMatches": "Total Matches",
+    "stats": {
+      "newThisWeek": "New This Week"
+    },
+    "status": "Status",
+    "topMatches": "Your Top Matches",
+    "viewAllMatches": "View all matches",
+    "topMatchesDismiss": "Dismiss",
+    "methodology": {
+      "title": "How Matching Works",
+      "description": "We analyze your skills, experience, and preferences against job requirements using multi-stage AI scoring to find the best matches for you.",
+      "dismiss": "Got it"
+    },
+    "reasoning": {
+      "strengths": "Strengths",
+      "concerns": "Areas to Consider",
+      "whyMatched": "Why this matched",
+      "aiAnalysis": "AI Analysis"
+    },
+    "bulk": {
+      "selected": "{{count}} selected",
+      "saveAll": "Save {{count}}",
+      "dismissAll": "Dismiss {{count}}",
+      "saveSuccess": "Saved {{count}} matches",
+      "dismissSuccess": "Dismissed {{count}} matches",
+      "partialError": "Failed to process {{failed}} of {{total}} matches",
+      "selectAll": "Select all"
+    }
+  },
+  "tailoredDocument": {
+    "close": "Close tailored document options",
+    "context": "For {{title}} at {{company}}",
+    "emptyDescription": "No document templates are available yet.",
+    "emptyTitle": "No templates available",
+    "formatLabel": "Format",
+    "generate": "Generate document",
+    "generating": "Starting…",
+    "generationErrorDescription": "The document could not be started. Please try again.",
+    "generationErrorTitle": "Could not generate document",
+    "loadingTemplates": "Loading document templates",
+    "open": "Tailor a document",
+    "pending": "Starting your tailored document…",
+    "retry": "Try again",
+    "templateErrorDescription": "Templates could not be loaded.",
+    "templateErrorTitle": "Could not load templates",
+    "templateLabel": "Template",
+    "templatePlaceholder": "Choose a template",
+    "title": "Tailored document",
+    "unknownCompany": "this company"
+  },
+  "pages": {
+    "detail": {
+      "applyExternal": "Apply on Original Site",
+      "title": "Job Details",
+      "viewOriginal": "View Original Posting"
+    },
+    "listings": {
+      "description": "Browse available job listings",
+      "title": "Job Listings"
+    },
+    "matchDetail": {
+      "description": "See why this job matched your target criteria",
+      "title": "Match Details"
+    },
+    "matches": {
+      "allTargets": "All Targets",
+      "description": "Jobs matched to your job targets",
+      "filterByTarget": "Filter by Target",
+      "minScore": "Minimum fit index",
+      "title": "My Matches"
+    }
+  },
+  "sort": {
+    "matchScore": "Fit index"
+  },
+  "status": {
+    "APPLIED": "Applied",
+    "DISMISSED": "Dismissed",
+    "EVALUATED": "Evaluated",
+    "EXPIRED": "Expired",
+    "PENDING": "Pending",
+    "SAVED": "Saved",
+    "VIEWED": "Viewed"
+  },
+  "salary": {
+    "perYear": "/yr",
+    "perMonth": "/mo",
+    "perHour": "/hr",
+    "upTo": "Up to {{amount}}"
+  }
+}

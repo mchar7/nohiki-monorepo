@@ -1,0 +1,62 @@
+{
+  "a11y": {
+    "iframeTitle": "Document Preview",
+    "imageAlt": "Document preview"
+  },
+  "actions": {
+    "download": "Download",
+    "generate": "Generate Preview",
+    "retry": "Try Again",
+    "tryAgain": "Try Again"
+  },
+  "download": {
+    "downloading": "Downloading...",
+    "error": "Download failed"
+  },
+  "errors": {
+    "dataValidationFailed": "Data validation failed",
+    "failedToLoadImage": "Failed to load generated image",
+    "generationFailed": "Failed to generate preview",
+    "networkError": "Network error - check your connection",
+    "noTemplateVersionSelected": "No template version selected",
+    "pdfDownloadFailed": "PDF download failed",
+    "serverError": "Server error - please try again",
+    "templateFamilyRequired": "Template family ID is required",
+    "templateVersionRequired": "Template version ID is required",
+    "timeout": "Preview generation timed out"
+  },
+  "floatingButton": {
+    "generating": "Generating Preview...",
+    "preview": "Preview Document"
+  },
+  "fullscreen": {
+    "title": "Preview - Fullscreen"
+  },
+  "header": {
+    "close": "Close",
+    "download": "Download",
+    "fullscreen": "Fullscreen",
+    "generate": "Generate"
+  },
+  "livePreview": "Live Preview",
+  "mobilePreview": {
+    "close": "Close preview",
+    "description": "Document preview on mobile"
+  },
+  "scale": {
+    "fitToWidth": "Fit to Width",
+    "zoomIn": "Zoom In",
+    "zoomOut": "Zoom Out"
+  },
+  "states": {
+    "generating": "Generating preview...",
+    "noPreview": "No preview available"
+  },
+  "title": "Preview",
+  "tooltips": {
+    "closePreview": "Close preview",
+    "downloadPdf": "Download PDF",
+    "enterFullscreen": "Enter fullscreen",
+    "generatePreview": "Generate document preview"
+  }
+}

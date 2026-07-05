@@ -1,0 +1,164 @@
+{
+  "actions": {
+    "cancel": "Annuler",
+    "downloadPdf": "Télécharger le PDF"
+  },
+  "dataset": {
+    "delete": {
+      "confirm": "Supprimer",
+      "message": "Êtes-vous sûr de vouloir supprimer « {{name}} » ? Cette action est irréversible.",
+      "title": "Supprimer le jeu de données"
+    }
+  },
+  "datasets": {
+    "allTemplates": "Tous les modèles",
+    "card": {
+      "actions": "Actions",
+      "ariaLabel": "Jeu de données : {{name}}, créé le {{date}}",
+      "ariaLabelWithTemplate": "Jeu de données : {{name}}, utilisant le modèle {{template}}, créé le {{date}}",
+      "cancel": "Annuler",
+      "cancelEdit": "Annuler la modification",
+      "created": "Créé le {{date}}",
+      "delete": "Supprimer",
+      "downloadPdf": "Télécharger le PDF",
+      "duplicate": "Dupliquer",
+      "editDataset": "Modifier le jeu de données",
+      "editName": "Modifier le nom du jeu de données",
+      "htmlCached": "HTML en cache",
+      "rename": "Renommer",
+      "save": "Enregistrer",
+      "saveName": "Enregistrer le nom du jeu de données"
+    },
+    "create": {
+      "cancel": "Annuler",
+      "create": "Créer le jeu de données",
+      "creating": "Création...",
+      "description": "Créez un nouveau jeu de données avec des données par défaut basées sur votre modèle sélectionné.",
+      "engine": "Moteur : Jinja2",
+      "latestVersion": "Dernière version :",
+      "nameLabel": "Nom du jeu de données",
+      "namePlaceholder": "Entrez le nom du jeu de données...",
+      "templateDetails": "Détails du modèle",
+      "templateLabel": "Modèle",
+      "templatePlaceholder": "Sélectionnez un modèle",
+      "title": "Créer un nouveau jeu de données"
+    },
+    "createDataset": "Créer un jeu de données",
+    "exportAll": "Tout exporter",
+    "newDataset": "Nouveau jeu de données",
+    "noDatasets": "Aucun jeu de données",
+    "noDatasetsDescription": "Créez votre premier jeu de données pour commencer.",
+    "noResults": "Aucun jeu de données trouvé",
+    "noResultsDescription": "Essayez d'ajuster vos critères de recherche ou de filtre.",
+    "searchPlaceholder": "Rechercher des jeux de données...",
+    "sort": {
+      "nameAsc": "Nom A-Z",
+      "nameDesc": "Nom Z-A",
+      "oldestCreated": "Plus ancien créé",
+      "oldestUpdated": "Plus ancien mis à jour",
+      "recentlyCreated": "Récemment créé",
+      "recentlyUpdated": "Récemment mis à jour"
+    },
+    "sortBy": "Trier par"
+  },
+  "document": {
+    "untitled": "Document sans titre"
+  },
+  "editingDocument": "Modification du document : {{id}}",
+  "errors": {
+    "dataMustBeObject": "Les données doivent être un objet valide",
+    "datasetNotFound": "Le jeu de données que vous recherchez n'existe pas.",
+    "failedToLoadTemplates": "Échec du chargement des modèles",
+    "invalidJsonFormat": "Format JSON invalide : {{error}}",
+    "invalidSchema": "Schéma de modèle invalide",
+    "invalidValue": "Valeur invalide",
+    "loadFailed": "Échec du chargement du document",
+    "multipleValidationErrors": "Plusieurs erreurs de validation :",
+    "schemaFetchFailed": "Échec de la récupération du schéma",
+    "schemaProcessingError": "Erreur de traitement du schéma",
+    "schemaProcessingErrorDescription": "Impossible de traiter le schéma du modèle. Le format du schéma n'est pas pris en charge ou contient des erreurs.",
+    "schemaValidationFailed": "Échec de la validation du schéma : {{error}}",
+    "templateNotFound": "Modèle introuvable",
+    "unknownError": "Erreur inconnue",
+    "validationFailed": "Échec de la validation : {{error}}"
+  },
+  "export": {
+    "created": "Créé le {{date}}",
+    "description": "Sélectionnez les jeux de données à exporter en fichiers JSON",
+    "multipleFilesNote": "Plusieurs fichiers seront téléchargés séparément. Chaque jeu de données sera enregistré sous « {dataset-name}.json »",
+    "noDatasets": "Aucun jeu de données disponible pour l'exportation",
+    "selectPrompt": "Sélectionnez les jeux de données à exporter ({{count}} sélectionnés)",
+    "title": "Exporter les jeux de données JSON"
+  },
+  "fields": {
+    "addItem": "Ajouter",
+    "defaultFieldLabel": "Champ {{index}}",
+    "hidePassword": "Masquer le mot de passe",
+    "itemPlaceholder": "Entrez un élément",
+    "noItemsYet": "Aucun élément ajouté. Cliquez sur « Ajouter » pour créer la première entrée.",
+    "placeholder": "Entrez {{field}}...",
+    "required": "Requis",
+    "selectPlaceholder": "Sélectionnez {{field}}",
+    "showPassword": "Afficher le mot de passe"
+  },
+  "form": {
+    "autoSaved": "Enregistré automatiquement",
+    "description": "Remplissez les champs ci-dessous pour générer votre document.",
+    "placeholder": "Les champs du formulaire seront affichés ici en fonction du schéma du modèle",
+    "saving": "Enregistrement...",
+    "title": "Données du document"
+  },
+  "import": {
+    "andMore": "et {{count}} de plus",
+    "browseFiles": "Parcourir les fichiers",
+    "description": "Importez un fichier JSON contenant des données pour ce modèle",
+    "dropzone": "Déposez le fichier JSON ici",
+    "dropzoneOr": "ou",
+    "failedToReadFile": "Échec de la lecture du fichier",
+    "fieldsFound": "{{count}} champs de premier niveau trouvés : {{fields}}",
+    "importDataset": "Importer le jeu de données",
+    "invalidData": "Données JSON invalides",
+    "preview": "Aperçu :",
+    "title": "Importer un jeu de données JSON",
+    "validDataFound": "Données valides trouvées",
+    "validating": "Validation en cours..."
+  },
+  "loading": {
+    "templates": "Chargement des modèles",
+    "templatesDescription": "Récupération des modèles de documents disponibles depuis le serveur..."
+  },
+  "modals": {
+    "export": {
+      "description": "Sélectionnez les jeux de données à exporter en fichiers JSON",
+      "title": "Exporter les jeux de données JSON"
+    },
+    "import": {
+      "description": "Importez un fichier JSON contenant des données de document",
+      "title": "Importer un jeu de données JSON"
+    },
+    "unsavedChanges": {
+      "cancel": "Annuler",
+      "continue": "Continuer",
+      "description": "Vous avez des modifications non enregistrées. Êtes-vous sûr de vouloir changer de jeu de données ? Vos modifications seront perdues.",
+      "title": "Modifications non enregistrées"
+    }
+  },
+  "labels": {
+    "version": "Version {{version}}"
+  },
+  "sidebar": {
+    "newDocument": "Nouveau document"
+  },
+  "templates": {
+    "errors": {
+      "authRequired": "Authentification requise pour charger les modèles",
+      "forbidden": "Vous n'avez pas la permission d'accéder aux modèles",
+      "networkError": "Erreur réseau — veuillez vérifier votre connexion",
+      "serverError": "Erreur serveur — veuillez réessayer plus tard",
+      "timeout": "Délai de la requête dépassé — veuillez réessayer",
+      "notFound": "Modèles introuvables",
+      "generic": "Échec du chargement des modèles"
+    }
+  },
+  "title": "Éditeur de documents"
+}

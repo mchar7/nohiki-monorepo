@@ -1,0 +1,137 @@
+{
+  "about": {
+    "copyright": "© {{year}} Nohiki. Tous droits réservés.",
+    "description": "Nohiki est une plateforme de génération de documents conçue pour l'automatisation de la recherche d'emploi. Créez des CV et lettres de motivation professionnels facilement.",
+    "sectionDescription": "Informations de version et liens",
+    "legal": {
+      "licenses": "Licences open source",
+      "privacy": "Politique de confidentialité",
+      "terms": "Conditions d'utilisation"
+    },
+    "links": {
+      "documentation": "Documentation",
+      "github": "GitHub",
+      "reportBug": "Signaler un bogue",
+      "requestFeature": "Demander une fonctionnalité"
+    },
+    "title": "À propos de Nohiki",
+    "version": "Version {{version}}"
+  },
+  "api": {
+    "actions": {
+      "resetToDefault": "Réinitialiser par défaut",
+      "saveEndpoint": "Enregistrer le point d'accès",
+      "testConnection": "Tester la connexion",
+      "testing": "Test en cours..."
+    },
+    "baseUrl": {
+      "invalidUrl": "Veuillez entrer une URL HTTP ou HTTPS valide",
+      "label": "URL du point d'accès API",
+      "placeholder": "http://localhost:8000"
+    },
+    "connectionFailed": "Échec de la connexion",
+    "connectionSuccess": "Connexion réussie !",
+    "currentEndpoint": {
+      "custom": "Personnalisé",
+      "default": "Par défaut",
+      "title": "Point d'accès actuel"
+    },
+    "description": "Configurez le point d'accès du service de génération de documents. Les modifications nécessitent un test de connexion avant l'enregistrement.",
+    "errors": {
+      "corsError": "Erreur CORS : Le serveur doit autoriser les requêtes de ce domaine. Vérifiez la configuration CORS du serveur.",
+      "invalidUrlFormat": "Format d'URL invalide. Veuillez entrer une URL HTTP ou HTTPS valide.",
+      "networkError": "Erreur réseau : Impossible de joindre le serveur. Cela peut être dû aux restrictions CORS, à des problèmes de connectivité ou à l'inaccessibilité du serveur.",
+      "timeout": "Délai dépassé : Le serveur a mis trop de temps à répondre (>10 secondes).",
+      "unknownError": "Une erreur inconnue s'est produite"
+    },
+    "healthCheck": {
+      "componentHealth": "État des composants :",
+      "failedAfter": "Échec après {{latency}}ms",
+      "serviceStatus": "État du service :"
+    },
+    "help": {
+      "baseUrlHint": "Entrez uniquement l'URL de base (ex: http://localhost:8000)",
+      "endpointHint": "Le point d'accès doit pointer vers un service de génération de documents en cours d'exécution",
+      "saveHint": "Les modifications ne sont enregistrées qu'après un test de connexion réussi"
+    },
+    "title": "Configuration du point d'accès API"
+  },
+  "appearance": {
+    "accentColor": {
+      "description": "Sélectionnez votre couleur d'accentuation préférée pour l'interface",
+      "title": "Couleur d'accentuation",
+      "useSystem": "Utiliser l'accent système",
+      "useSystemDescription": "S'ajuster automatiquement à la couleur d'accent de votre système"
+    },
+    "colorScheme": {
+      "blue": "Bleu",
+      "blueDescription": "Frais et professionnel",
+      "emerald": "Émeraude",
+      "emeraldDescription": "Frais et naturel",
+      "orange": "Orange",
+      "orangeDescription": "Chaleureux et énergique",
+      "rose": "Rose",
+      "roseDescription": "Élégant et doux",
+      "violet": "Violet",
+      "violetDescription": "Créatif et moderne"
+    },
+    "description": "Personnalisez l'apparence de Nohiki sur votre appareil",
+    "disabled": "Désactivé",
+    "enabled": "Activé",
+    "modeDescription": {
+      "dark": "Toujours utiliser le mode sombre",
+      "light": "Toujours utiliser le mode clair",
+      "system": "Selon les préférences système"
+    },
+    "theme": {
+      "dark": "Sombre",
+      "light": "Clair",
+      "system": "Système"
+    },
+    "title": "Apparence"
+  },
+  "developer": {
+    "actions": {
+      "clearCache": "Vider le cache",
+      "clearCacheHelp": "Supprime toutes les données de stockage local, de session et d'IndexedDB. La page sera rechargée automatiquement.",
+      "copied": "Copié!",
+      "copiedAlert": "Informations de débogage copiées dans le presse-papiers. Vous pouvez les coller dans les rapports de bogues ou les demandes de support.",
+      "copyDebugInfo": "Copier les infos de débogage",
+      "description": "Utilitaires pour le débogage et le dépannage.",
+      "title": "Actions de débogage"
+    },
+    "browser": {
+      "description": "Capacités du navigateur et informations système pour le débogage.",
+      "language": "Langue :",
+      "localStorage": "Stockage local :",
+      "online": "En ligne :",
+      "pixelRatio": "Ratio de pixels :",
+      "platform": "Plateforme :",
+      "screenSize": "Taille de l'écran :",
+      "timezone": "Fuseau horaire :",
+      "title": "Informations navigateur et système",
+      "userAgent": "Agent utilisateur :",
+      "windowSize": "Taille de la fenêtre :"
+    },
+    "description": "Informations d'environnement et détails de débogage",
+    "devMode": "Mode développement",
+    "devModeDescription": "Les paramètres suivants ne sont disponibles qu'en développement et n'apparaîtront pas en production.",
+    "devOnly": "Développement uniquement",
+    "environment": {
+      "apiBaseUrl": "URL de base API :",
+      "buildTime": "Heure de compilation :",
+      "description": "Détails de configuration de l'environnement et de la compilation.",
+      "mode": "Mode :",
+      "nodeEnv": "Environnement Node :",
+      "title": "Informations d'environnement",
+      "version": "Version :"
+    },
+    "title": "Informations développeur"
+  },
+  "sections": {
+    "about": "À propos",
+    "privacy": "Confidentialité"
+  },
+  "subtitle": "Configurez vos préférences d'application",
+  "title": "Paramètres"
+}

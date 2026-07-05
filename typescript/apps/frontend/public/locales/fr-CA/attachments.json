@@ -1,0 +1,80 @@
+{
+  "actions": {
+    "delete": "Supprimer",
+    "download": "Télécharger",
+    "linkToProfile": "Lier au profil",
+    "preview": "Aperçu",
+    "unlinkFromProfile": "Délier du profil",
+    "upload": "Téléverser un fichier"
+  },
+  "card": {
+    "actions": "Actions",
+    "categoryLabel": "Catégorie",
+    "linkedProfile": "Lié à {{name}}",
+    "uploadedAt": "Téléversé {{time}}"
+  },
+  "confirmDelete": {
+    "description": "Êtes-vous sûr de vouloir supprimer « {{name}} » ? Cette action est irréversible.",
+    "title": "Supprimer la pièce jointe"
+  },
+  "empty": {
+    "noAttachments": "Aucune pièce jointe",
+    "noAttachmentsDescription": "Téléversez votre CV, lettre de motivation ou autres documents"
+  },
+  "pages": {
+    "list": {
+      "description": "Gérez vos fichiers et documents téléversés.",
+      "title": "Documents téléversés"
+    }
+  },
+  "preview": {
+    "close": "Fermer l'aperçu",
+    "description": "Aperçu de {{filename}}",
+    "download": "Télécharger le fichier",
+    "errorExpired": "Le lien d'aperçu a expiré. Fermez et rouvrez pour actualiser.",
+    "notAvailable": "L'aperçu n'est pas disponible pour ce type de fichier.",
+    "title": "Aperçu du fichier"
+  },
+  "size": {
+    "bytes": "{{size}} o",
+    "kb": "{{size}} Ko",
+    "mb": "{{size}} Mo"
+  },
+  "upload": {
+    "allowedTypes": "Taille maximale {{size}} Mo. Formats acceptés : PDF, DOCX, TXT",
+    "browse": "Parcourir les fichiers",
+    "description": "Téléversez des documents pour aider Nohiki à personnaliser vos candidatures.",
+    "dropzone": "Glissez-déposez un fichier ici, ou cliquez pour parcourir",
+    "dropzoneActive": "Déposez le fichier ici...",
+    "success": "Fichier téléversé avec succès !",
+    "title": "Téléverser un document",
+    "uploading": "Téléversement..."
+  },
+  "validation": {
+    "fileTooLarge": "Le fichier est trop volumineux. Taille maximale : {{max}} Mo.",
+    "invalidType": "Type de fichier non valide : {{type}}",
+    "uploadFailed": "Impossible de téléverser « {{filename}} » : {{reason}}",
+    "uploadFailedFallback": "Échec du téléversement. Veuillez réessayer."
+  },
+  "category": {
+    "resume": "CV",
+    "cover_letter": "Lettre de motivation",
+    "portfolio": "Portfolio",
+    "other": "Autre",
+    "label": "Catégorie du document",
+    "selectPlaceholder": "Sélectionner la catégorie",
+    "filterAll": "Toutes les catégories",
+    "filterLabel": "Filtrer par catégorie"
+  },
+  "parsedContent": {
+    "title": "Analyse du document",
+    "description": "Extraction automatique des compétences et de l'expérience de vos documents - à venir"
+  },
+  "linkDialog": {
+    "title": "Lier au profil",
+    "description": "Sélectionnez un profil auquel associer cette pièce jointe.",
+    "noProfiles": "Aucun profil disponible. Créez d'abord un profil.",
+    "loading": "Chargement des profils...",
+    "selectProfile": "Sélectionnez un profil"
+  }
+}
