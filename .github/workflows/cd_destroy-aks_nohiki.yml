@@ -1,0 +1,109 @@
+# .github/workflows/cd_destroy-aks_nohiki.yml
+name: CD - Destroy Nohiki AKS Environment
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        required: true
+        description: "Nohiki environment to destroy"
+        options:
+          - "dev"
+          - "staging"
+          # Production destruction should be handled with extreme caution, possibly via a separate, locked-down workflow.
+      confirm_destroy:
+        type: string
+        required: true
+        description: "Type the selected environment name to confirm destruction"
+jobs:
+  cleanup-environment:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: ${{ inputs.environment }}
+    env:
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+      TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+      TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER || 'tfstate' }}
+      IAC_WORKING_DIR: "./infra/terraform"
+      ROOT_DOMAIN: "nohiki.com"
+      AZURE_CONTAINER_REGISTRY: ${{ vars.AZURE_CONTAINER_REGISTRY }}
+      ACR_RESOURCE_GROUP_NAME: ${{ vars.ACR_RESOURCE_GROUP_NAME }}
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 30
+    steps:
+      - name: Verify destruction confirmation
+        id: confirm-destroy
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM_DESTROY: ${{ inputs.confirm_destroy }}
+        run: |
+          if [[ "$CONFIRM_DESTROY" != "$TARGET_ENVIRONMENT" ]]; then
+            echo "Confirmation must exactly match the selected environment."
+            exit 1
+          fi
+
+      - name: Checkout OpenTofu code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        # Destroy uses the OpenTofu configuration from the default branch.
+
+      - name: Azure CLI login with OIDC
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: "1.12.3"
+
+      - name: Determine environment to destroy
+        id: determine-env-to-destroy
+        run: |
+          envToDestroy="${{ github.event.inputs.environment }}"
+          echo "env_to_destroy=$envToDestroy" >> "$GITHUB_OUTPUT"
+          echo "Environment targeted for destruction: $envToDestroy"
+
+
+      - name: OpenTofu Init for destruction
+        if: steps.determine-env-to-destroy.outputs.env_to_destroy != ''
+        working-directory: ${{ env.IAC_WORKING_DIR }}
+        run: |
+          tofu init -input=false -reconfigure \
+            -backend-config="subscription_id=$ARM_SUBSCRIPTION_ID" \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER" \
+            -backend-config="key=nohiki/${{ steps.determine-env-to-destroy.outputs.env_to_destroy }}.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: OpenTofu Destroy
+        if: steps.determine-env-to-destroy.outputs.env_to_destroy != ''
+        working-directory: ${{ env.IAC_WORKING_DIR }}
+        run: |
+          envToDestroyValue="${{ steps.determine-env-to-destroy.outputs.env_to_destroy }}"
+          echo "Executing OpenTofu destroy for environment: $envToDestroyValue"
+
+          # Check for environment-specific .tfvars file for destroy operation
+          tfvars_file_destroy="${envToDestroyValue}.tfvars"
+          if [ ! -f "$tfvars_file_destroy" ]; then
+            echo "Warning: Environment-specific tfvars file '$tfvars_file_destroy' not found for destroy. Proceeding without it."
+            tfvars_file_destroy_option=""
+          else
+            tfvars_file_destroy_option="-var-file=$tfvars_file_destroy"
+          fi
+
+          tofu destroy -auto-approve -input=false \
+            $tfvars_file_destroy_option \
+            -var "app_environment=$envToDestroyValue" \
+            -var "deployment_type=aks" \
+            -var "dns_zone_name=$ROOT_DOMAIN" \
+            -var "container_registry=$AZURE_CONTAINER_REGISTRY" \
+            -var "acr_resource_group_name=$ACR_RESOURCE_GROUP_NAME"

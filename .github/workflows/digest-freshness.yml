@@ -1,0 +1,60 @@
+name: Digest freshness
+
+on:
+  schedule:
+    # Weekly; catches registry-side GC of pinned base manifests while a fix
+    # is still cheap instead of inside a release build.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: digest-freshness
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe pinned base digests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+
+      - name: Probe pinned digests
+        id: probe
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            uv sync --frozen --package ci-checks
+            uv run --no-sync ci-checks image-freshness
+          '
+
+      - name: Open or update rot issue
+        if: failure() && steps.probe.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Pinned base-image digest no longer resolves"
+          body="Scheduled probe run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} found at least one dead pinned base digest. Repin via a protected PR before the next image build."
+          existing=$(gh issue list --repo "${{ github.repository }}" --label digest-rot --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "${{ github.repository }}" --body "$body"
+          else
+            gh label create digest-rot --repo "${{ github.repository }}" --force --color B60205 --description "Pinned base-image digest vanished upstream"
+            gh issue create --repo "${{ github.repository }}" --title "$title" --label digest-rot --body "$body"
+          fi

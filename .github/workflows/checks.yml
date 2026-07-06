@@ -1,0 +1,781 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# actions: write lets cache-nix-action purge superseded nix store caches;
+# without it the purge list call fails and aborts the post-job cache save.
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Change gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Job-scoped grants: sticky gate comment + area labels on pull requests.
+    # actions: write is required here for the cache purge, as at workflow level.
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
+      issues: write
+    outputs:
+      full: ${{ steps.gate.outputs.full }}
+      lint_python: ${{ steps.gate.outputs.lint_python }}
+      lint_frontend: ${{ steps.gate.outputs.lint_frontend }}
+      lint_proto: ${{ steps.gate.outputs.lint_proto }}
+      lint_markdown: ${{ steps.gate.outputs.lint_markdown }}
+      lint_workflows: ${{ steps.gate.outputs.lint_workflows }}
+      lint_docker: ${{ steps.gate.outputs.lint_docker }}
+      nix: ${{ steps.gate.outputs.nix }}
+      typecheck_backend: ${{ steps.gate.outputs.typecheck_backend }}
+      typecheck_frontend: ${{ steps.gate.outputs.typecheck_frontend }}
+      python_any: ${{ steps.gate.outputs.python_any }}
+      tests_matrix: ${{ steps.gate.outputs.tests_matrix }}
+      frontend_tests: ${{ steps.gate.outputs.frontend_tests }}
+      frontend_smoke: ${{ steps.gate.outputs.frontend_smoke }}
+      hygiene: ${{ steps.gate.outputs.hygiene }}
+      generated_artifacts: ${{ steps.gate.outputs.generated_artifacts }}
+      proto_breaking: ${{ steps.gate.outputs.proto_breaking }}
+      commitlint_expected: ${{ steps.gate.outputs.commitlint_expected }}
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Cache uv downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Compute change gate
+        id: gate
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            uv sync --frozen --package ci-checks
+            uv run --no-sync ci-checks gate --event "$EVENT" --base-ref "$BASE" --head-ref "$HEAD" --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --comment-file gate-comment.md
+          '
+
+      - name: Publish gate verdict to PR
+        if: github.event_name == 'pull_request'
+        # Advisory: fork and Dependabot PRs get a read-only token; a 403
+        # here must not fail the required gate job.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          marker='<!-- nohiki-change-gate -->'
+          existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@gate-comment.md > /dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@gate-comment.md > /dev/null
+          fi
+
+      - name: Sync area labels
+        if: github.event_name == 'pull_request'
+        # Advisory: fork and Dependabot PRs get a read-only token; a 403
+        # here must not fail the required gate job.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          L_BACKEND: ${{ steps.gate.outputs.python_any }}
+          L_FRONTEND: ${{ steps.gate.outputs.frontend_tests }}
+          L_PROTO: ${{ steps.gate.outputs.lint_proto }}
+          L_DOCKER: ${{ steps.gate.outputs.lint_docker }}
+          L_WORKFLOWS: ${{ steps.gate.outputs.lint_workflows }}
+          L_DOCS: ${{ steps.gate.outputs.lint_markdown }}
+          L_FULL: ${{ steps.gate.outputs.full }}
+        run: |
+          current=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
+          sync() {
+            label="$1"; want="$2"
+            if [ "$want" = "true" ]; then
+              if ! grep -qxF "$label" <<< "$current"; then
+                gh label create "$label" --repo "$REPO" --force --color 5319E7 \
+                  --description "Gate-managed area label" > /dev/null
+                gh api -X POST "repos/$REPO/issues/$PR/labels" -f "labels[]=$label" > /dev/null
+              fi
+            elif grep -qxF "$label" <<< "$current"; then
+              encoded=$(printf %s "$label" | jq -sRr @uri)
+              gh api -X DELETE "repos/$REPO/issues/$PR/labels/$encoded" > /dev/null
+            fi
+          }
+          sync "area:backend" "$L_BACKEND"
+          sync "area:frontend" "$L_FRONTEND"
+          sync "area:proto" "$L_PROTO"
+          sync "area:docker" "$L_DOCKER"
+          sync "area:workflows" "$L_WORKFLOWS"
+          sync "area:docs" "$L_DOCS"
+          sync "ci:full-run" "$L_FULL"
+
+  nix:
+    needs: [changes]
+    if: needs.changes.outputs.nix == 'true'
+    name: Nix toolchain parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LEFTHOOK_VERSION: '2.1.10'
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Check flake
+        run: nix flake check
+
+      - name: Check Lefthook version
+        run: |
+          actual="$(nix develop .#ci --command lefthook version)"
+          if [ "$actual" != "$LEFTHOOK_VERSION" ]; then
+            echo "expected Lefthook $LEFTHOOK_VERSION, got: $actual" >&2
+            exit 1
+          fi
+
+  lint:
+    needs: [changes]
+    name: Lint (non-fixing surface)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # gitleaks scans the full commit history
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Cache uv downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            uv sync --frozen
+          '
+
+      - name: Lint Python
+        if: needs.changes.outputs.lint_python == 'true'
+        run: >
+          nix develop .#ci --command uv run --no-sync ruff check --output-format=github
+          --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+
+      - name: Check Python formatting
+        if: needs.changes.outputs.lint_python == 'true'
+        run: >
+          nix develop .#ci --command uv run --no-sync ruff format --check
+          --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+
+      - name: Install frontend dependencies
+        if: needs.changes.outputs.lint_frontend == 'true'
+        run: nix develop .#ci --command pnpm install --frozen-lockfile
+
+      - name: Lint frontend
+        if: needs.changes.outputs.lint_frontend == 'true'
+        run: nix develop .#ci --command pnpm --filter nohiki-frontend run check
+
+      - name: Check i18n keys
+        if: needs.changes.outputs.lint_frontend == 'true'
+        run: nix develop .#ci --command pnpm --filter nohiki-frontend run i18n:check
+
+      - name: Lint Markdown
+        if: needs.changes.outputs.lint_markdown == 'true'
+        run: >
+          nix develop .#ci --command pnpm exec markdownlint-cli2 '**/*.md' '!**/node_modules/**'
+
+      - name: Lint protos
+        if: needs.changes.outputs.lint_proto == 'true'
+        run: nix develop .#ci --command bash -euc 'cd proto && buf lint'
+
+      - name: Scan for secrets (gitleaks)
+        run: nix develop .#ci --command gitleaks detect --source . --no-banner --redact
+
+      - name: Lint workflows (actionlint)
+        if: needs.changes.outputs.lint_workflows == 'true'
+        run: nix develop .#ci --command actionlint
+
+      - name: Lint Dockerfiles (hadolint)
+        if: needs.changes.outputs.lint_docker == 'true'
+        run: git ls-files -z '*Dockerfile' | xargs -0 -r nix develop .#ci --command hadolint
+
+  commitlint:
+    name: Commit messages (conventional)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # commitlint walks the PR commit range
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: nix develop .#ci --command pnpm install --frozen-lockfile
+
+      - name: Validate PR commit messages
+        run: >
+          nix develop .#ci --command pnpm exec commitlint
+          --from ${{ github.event.pull_request.base.sha }}
+          --to ${{ github.event.pull_request.head.sha }}
+          --verbose
+
+  frontend-smoke:
+    needs: [changes]
+    if: needs.changes.outputs.frontend_smoke == 'true'
+    name: Frontend production container smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Cache uv downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install workspace (all packages + extras)
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            uv sync --all-packages --all-extras --no-extra cuda --frozen
+          '
+
+      - name: Smoke production frontend container
+        run: >
+          nix develop .#ci --command uv run --no-sync pytest scripts/ci/tests
+          -m requires_docker
+        env:
+          CONTAINER_RUNTIME: docker
+
+  typecheck:
+    needs: [changes]
+    if: needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true'
+    name: Backend and frontend typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Cache uv downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Resolve pnpm store path
+        if: needs.changes.outputs.typecheck_frontend == 'true'
+        id: pnpm-store
+        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        if: needs.changes.outputs.typecheck_frontend == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install workspace (all packages + extras)
+        if: needs.changes.outputs.typecheck_backend == 'true'
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            uv sync --all-packages --all-extras --no-extra cuda --frozen
+          '
+
+      - name: Install frontend dependencies
+        if: needs.changes.outputs.typecheck_frontend == 'true'
+        run: nix develop .#ci --command pnpm install --frozen-lockfile
+
+      - name: Typecheck backend
+        if: needs.changes.outputs.typecheck_backend == 'true'
+        run: >
+          nix develop .#ci --command uv run --no-sync ty check backend/
+          --exclude '**/alembic/**'
+          --exclude '**/nohiki-domain-models/**'
+          --exclude '**/tests/**'
+
+      - name: Typecheck frontend
+        if: needs.changes.outputs.typecheck_frontend == 'true'
+        run: nix develop .#ci --command pnpm -C typescript/apps/frontend type-check
+
+  python-tests:
+    needs: [changes]
+    if: needs.changes.outputs.python_any == 'true'
+    name: Python tests (${{ matrix.scope }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix: ${{ fromJSON(needs.changes.outputs.tests_matrix) }}
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Cache uv downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Resolve pnpm store path
+        if: matrix.scope == 'scripts'
+        id: pnpm-store
+        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        if: matrix.scope == 'scripts'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install workspace (all packages + extras)
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            uv sync --all-packages --all-extras --no-extra cuda --frozen
+            if [ "${{ matrix.scope }}" = "scripts" ]; then
+              pnpm install --frozen-lockfile
+            fi
+          '
+
+      - name: Run scoped tests
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            workers=2
+            if [ "${{ matrix.scope }}" = "scripts" ]; then
+              workers=1
+            fi
+            uv run --no-sync ci-checks tests all --scope ${{ matrix.scope }} --packages "${{ matrix.packages }}" --ci --workers "$workers"
+          '
+        env:
+          OTEL_SDK_DISABLED: "true"
+          UV_NO_SYNC: "1"
+          COVERAGE_CORE: "sysmon"
+
+  frontend-tests:
+    needs: [changes]
+    if: needs.changes.outputs.frontend_tests == 'true'
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        run: nix develop .#ci --command pnpm install --frozen-lockfile
+
+      - name: Test frontend
+        run: nix develop .#ci --command pnpm -C typescript/apps/frontend test --run --maxWorkers=25%
+
+  hygiene:
+    needs: [changes]
+    if: needs.changes.outputs.hygiene == 'true'
+    name: Python hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Cache uv downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install workspace (all packages + extras)
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            uv sync --all-packages --all-extras --no-extra cuda --frozen
+          '
+
+      - name: Check dead code
+        run: nix develop .#ci --command uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
+
+      - name: Check dependencies
+        run: nix develop .#ci --command uv run --no-sync ci-checks deptry --scope all --ci
+
+      - name: Scan architecture
+        run: >
+          nix develop .#ci --command env -u LD_LIBRARY_PATH
+          uvx --override semgrep-overrides.txt semgrep scan
+          --config semgrep.yml --error --no-git-ignore backend/
+
+      - name: Check build backends
+        run: nix develop .#ci --command uv run --no-sync ci-checks build-backend --scope all --ci --strict
+
+  generated-artifacts:
+    needs: [changes]
+    if: needs.changes.outputs.generated_artifacts == 'true'
+    name: Generated API and image matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Cache uv downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install workspace (all packages + extras)
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            uv sync --all-packages --all-extras --no-extra cuda --frozen
+          '
+
+      - name: Install frontend dependencies
+        run: nix develop .#ci --command pnpm install --frozen-lockfile
+
+      - name: Check API schema freshness
+        run: nix develop .#ci --command just api-schema-check
+
+      - name: Check image matrix parity
+        run: nix develop .#ci --command just image-matrix-check
+
+  proto-breaking:
+    needs: [changes]
+    if: needs.changes.outputs.proto_breaking == 'true'
+    name: Proto breaking changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Check proto compatibility
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if git cat-file -e "${BASE_SHA}^{commit}" && git ls-tree --name-only "$BASE_SHA" proto/ | grep -q .; then
+            nix develop .#ci --command bash -euc "cd proto && buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'"
+          else
+            echo "Skipping: proto/ is absent from the checked-out base commit"
+          fi
+
+  checks:
+    name: Checks
+    if: always()
+    needs:
+      - changes
+      - nix
+      - lint
+      - commitlint
+      - frontend-smoke
+      - typecheck
+      - python-tests
+      - frontend-tests
+      - hygiene
+      - generated-artifacts
+      - proto-breaking
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every check
+        run: |
+          test '${{ needs.changes.result }}' = success
+          test '${{ needs.lint.result }}' = success
+          test '${{ needs.nix.result }}' = success || {
+            test '${{ needs.nix.result }}' = skipped &&
+              test '${{ needs.changes.outputs.nix }}' != true
+          }
+          test '${{ needs.frontend-smoke.result }}' = success || {
+            test '${{ needs.frontend-smoke.result }}' = skipped &&
+              test '${{ needs.changes.outputs.frontend_smoke }}' != true
+          }
+          test '${{ needs.typecheck.result }}' = success || {
+            test '${{ needs.typecheck.result }}' = skipped &&
+              test '${{ needs.changes.outputs.typecheck_backend }}' != true &&
+              test '${{ needs.changes.outputs.typecheck_frontend }}' != true
+          }
+          test '${{ needs.python-tests.result }}' = success || {
+            test '${{ needs.python-tests.result }}' = skipped &&
+              test '${{ needs.changes.outputs.python_any }}' != true
+          }
+          test '${{ needs.frontend-tests.result }}' = success || {
+            test '${{ needs.frontend-tests.result }}' = skipped &&
+              test '${{ needs.changes.outputs.frontend_tests }}' != true
+          }
+          test '${{ needs.hygiene.result }}' = success || {
+            test '${{ needs.hygiene.result }}' = skipped &&
+              test '${{ needs.changes.outputs.hygiene }}' != true
+          }
+          test '${{ needs.generated-artifacts.result }}' = success || {
+            test '${{ needs.generated-artifacts.result }}' = skipped &&
+              test '${{ needs.changes.outputs.generated_artifacts }}' != true
+          }
+          test '${{ needs.proto-breaking.result }}' = success || {
+            test '${{ needs.proto-breaking.result }}' = skipped &&
+              test '${{ needs.changes.outputs.proto_breaking }}' != true
+          }
+          if [ '${{ github.event_name }}' = push ]; then
+            test '${{ needs.commitlint.result }}' = skipped
+          else
+            test '${{ needs.commitlint.result }}' = success
+          fi

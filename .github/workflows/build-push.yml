@@ -1,0 +1,373 @@
+# .github/workflows/build-push.yml
+name: CI - Build and Push Nohiki Services
+on:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      push_to_registry:
+        description: 'Push images to container registry? (false = build + scan only)'
+        type: boolean
+        default: false
+      image_tag:
+        description: 'Common image tag for all services (e.g., manual-build-v1; only if pushing images)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel an in-flight publish; queued runs coalesce per ref.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  event-validation:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.name == 'Checks' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          vars.IMAGE_PUBLICATION_ENABLED == 'true'
+        )
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      authorized: ${{ steps.authorize.outputs.authorized }}
+      source_sha: ${{ steps.validate-event.outputs.source_sha }}
+      short_source_sha: ${{ steps.validate-event.outputs.short_source_sha }}
+      should_push: ${{ steps.validate-event.outputs.should_push }}
+      image_tags_metadata_string: ${{ steps.validate-event.outputs.tags_metadata_string }}
+      common_image_tag_output: ${{ steps.validate-event.outputs.common_tag }}
+    steps:
+      - name: Validate publication event
+        id: validate-event
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHECKS_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CHECKS_EVENT: ${{ github.event.workflow_run.event }}
+          CHECKS_NAME: ${{ github.event.workflow_run.name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          IMAGE_TAG: ${{ github.event.inputs.image_tag }}
+          PUSH_TO_REGISTRY: ${{ github.event.inputs.push_to_registry }}
+          PUBLICATION_ENABLED: ${{ vars.IMAGE_PUBLICATION_ENABLED }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          common_tag=""
+          tags_metadata_string=""
+
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            [[ "$CHECKS_NAME" == "Checks" ]]
+            [[ "$CHECKS_EVENT" == "push" ]]
+            [[ "$CHECKS_CONCLUSION" == "success" ]]
+            [[ "$HEAD_BRANCH" == "main" ]]
+            [[ "$HEAD_REPOSITORY" == "$REPOSITORY" ]]
+            [[ "$PUBLICATION_ENABLED" == "true" ]]
+            [[ "$WORKFLOW_RUN_SHA" =~ ^[0-9a-f]{40}$ ]]
+            source_sha="$WORKFLOW_RUN_SHA"
+            should_push="true"
+          else
+            [[ "$EVENT_NAME" == "workflow_dispatch" ]]
+            [[ "$DISPATCH_SHA" =~ ^[0-9a-f]{40}$ ]]
+            source_sha="$DISPATCH_SHA"
+            should_push="$PUSH_TO_REGISTRY"
+            if [[ "$should_push" == "true" ]]; then
+              [[ -n "$IMAGE_TAG" ]] || {
+                echo "Error: Image tag must be provided when registry publication is enabled." >&2
+                exit 1
+              }
+              [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || {
+                echo "Error: Image tag must match the OCI tag policy." >&2
+                exit 1
+              }
+              common_tag="$IMAGE_TAG"
+              tags_metadata_string="type=raw,value=${IMAGE_TAG},enable=true"
+            else
+              [[ "$should_push" == "false" ]]
+            fi
+          fi
+
+          short_source_sha="${source_sha:0:7}"
+          [[ "$short_source_sha" =~ ^[0-9a-f]{7}$ ]]
+
+          {
+            echo "source_sha=$source_sha"
+            echo "short_source_sha=$short_source_sha"
+            echo "should_push=$should_push"
+            echo "tags_metadata_string=$tags_metadata_string"
+            echo "common_tag=$common_tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out publication source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.validate-event.outputs.source_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Authorize source publication
+        id: authorize
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_SHA: ${{ steps.validate-event.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          authorized="true"
+          if [[ "$EVENT_NAME" == "workflow_run" ]] && git rev-parse --verify "$SOURCE_SHA^2^{commit}" >/dev/null 2>&1; then
+            changed_paths="$(git diff-tree --no-commit-id --name-only -r "$SOURCE_SHA^" "$SOURCE_SHA")"
+            if [[ "$changed_paths" == "infra/k8s/helm/values.prod.digests.yaml" ]]; then
+              echo "Digest-overlay-only Checks run; image publication is not required."
+              authorized="false"
+            fi
+          fi
+          echo "authorized=$authorized" >> "$GITHUB_OUTPUT"
+
+  build-push:
+    needs: [ event-validation ]
+    if: needs.event-validation.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: user-auth-service, dockerfile: backend/services/user-auth-service/Dockerfile }
+          - { name: user-pref-service, dockerfile: backend/services/user-pref-service/Dockerfile }
+          - { name: user-upload-service, dockerfile: backend/services/user-upload-service/Dockerfile }
+          - { name: user-entitlement-service, dockerfile: backend/services/user-entitlement-service/Dockerfile }
+          - { name: job-storage-service, dockerfile: backend/services/job-storage-service/Dockerfile }
+          - { name: job-ingest-discovery-service, dockerfile: backend/services/job-ingest-discovery-service/Dockerfile }
+          - { name: job-ingest-schedule-service, dockerfile: backend/services/job-ingest-schedule-service/Dockerfile }
+          - { name: job-ingest-enrichment-service, dockerfile: backend/services/job-ingest-enrichment-service/Dockerfile }
+          - { name: job-query-composition-service, dockerfile: backend/services/job-query-composition-service/Dockerfile }
+          - { name: job-correlation-evaluation-service, dockerfile: backend/services/job-correlation-evaluation-service/Dockerfile }
+          - { name: skill-graph-service, dockerfile: backend/services/skill-graph-service/Dockerfile }
+          - { name: doc-template-service, dockerfile: backend/services/doc-template-service/Dockerfile }
+          - { name: doc-content-service, dockerfile: backend/services/doc-content-service/Dockerfile }
+          - { name: doc-process-service, dockerfile: backend/services/doc-process-service/Dockerfile }
+          - { name: notification-service, dockerfile: backend/services/notification-service/Dockerfile }
+          - { name: bff-service, dockerfile: backend/services/bff-service/Dockerfile }
+          - { name: frontend, context: ., dockerfile: typescript/apps/frontend/Dockerfile }
+          - { name: api-verification-runner, context: ., dockerfile: tests/Dockerfile.api-runner }
+          - { name: playwright-verification-runner, context: ., dockerfile: typescript/apps/frontend/Dockerfile.playwright-runner }
+          - { name: health-runner, context: ., dockerfile: scripts/util/health_check/Dockerfile }
+          - { name: ml-gateway-service, dockerfile: backend/services/ml-gateway-service/Dockerfile }
+          - { name: ml-compute-service, dockerfile: backend/services/ml-compute-service/Dockerfile }
+          # Production GPU variant: same Dockerfile + single lockfile, built via the
+          # CUDA builder stage (torch +cu130). Distinct image name so its digest keys a
+          # separate global.imageDigests entry; only values.prod.yaml points ml-compute
+          # at it, keeping local/staging on the CPU ml-compute-service image.
+          - { name: ml-compute-service-gpu, dockerfile: backend/services/ml-compute-service/Dockerfile, build_args: ML_COMPUTE_BUILDER=sync-gpu, timeout_minutes: 35 }
+          - { name: sys-tick-job, dockerfile: backend/jobs/sys-tick-job/Dockerfile }
+          - { name: snapshot-refresh-job, dockerfile: backend/jobs/snapshot-refresh-job/Dockerfile }
+          - { name: qdrant-init, dockerfile: infra/shared/qdrant-init/Dockerfile }
+          - { name: kafka-connect, context: infra/k8s/kafka-connect, dockerfile: infra/k8s/kafka-connect/Dockerfile }
+    timeout-minutes: ${{ matrix.timeout_minutes || 20 }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.event-validation.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Verify checked-out source
+        env:
+          SOURCE_SHA: ${{ needs.event-validation.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+
+      - name: Reclaim runner disk for GPU image
+        if: matrix.name == 'ml-compute-service-gpu'
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+
+      - name: Determine push mode
+        id: mode
+        env:
+          SHOULD_PUSH: ${{ needs.event-validation.outputs.should_push }}
+        run: |
+          set -euo pipefail
+          [[ "$SHOULD_PUSH" == "true" || "$SHOULD_PUSH" == "false" ]]
+          echo "push=$SHOULD_PUSH" >> "$GITHUB_OUTPUT"
+
+      - name: Set image base path (lowercase repository)
+        id: image-base-path
+        run: |
+          # Image name format: ghcr.io/OWNER/MONOREPO_NAME/SERVICE_NAME
+          imageBasePath="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "image_base_path=$imageBasePath" >> "$GITHUB_OUTPUT"
+
+      - name: Log into GitHub Container Registry
+        if: steps.mode.outputs.push == 'true'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare container metadata for ${{ matrix.name }}
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: |
+            ${{ steps.image-base-path.outputs.image_base_path }}/${{ matrix.name }}
+          tags: |
+            type=raw,value=sha-${{ needs.event-validation.outputs.short_source_sha }},enable=true
+            type=raw,value=latest,enable={{is_default_branch}}
+            ${{ needs.event-validation.outputs.image_tags_metadata_string }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build container image for ${{ matrix.name }}
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        id: build
+        with:
+          context: ${{ matrix.context || '.' }} # Most images require the monorepo workspace; Kafka Connect is self-contained.
+          file: ./${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build_args }}
+          push: ${{ steps.mode.outputs.push == 'true' }}
+          load: ${{ steps.mode.outputs.push != 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: ${{ matrix.name == 'ml-compute-service-gpu' && 'type=inline' || format('type=gha,mode=max,scope={0}', matrix.name) }}
+          platforms: linux/amd64
+          provenance: ${{ steps.mode.outputs.push == 'true' }}
+
+      - name: Capture pushed image digest
+        id: capture-digest
+        if: steps.mode.outputs.push == 'true'
+        env:
+          IMAGE_NAME: ${{ matrix.name }}
+          IMAGE_REF: ${{ steps.image-base-path.outputs.image_base_path }}/${{ matrix.name }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE_SHA: ${{ needs.event-validation.outputs.source_sha }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/ci/image_digests.py record --output "digest-records/${IMAGE_NAME}.json"
+
+      - name: Upload pushed image digest
+        id: upload-digest
+        if: steps.mode.outputs.push == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-digest-${{ matrix.name }}
+          path: digest-records/${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Reclaim build cache before scan
+        run: docker buildx prune --all --force
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.name }}.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
+        # code scanning uploads 403 on private repos without Advanced Security
+        if: always() && !github.event.repository.private
+        with:
+          sarif_file: 'trivy-results-${{ matrix.name }}.sarif'
+
+  aggregate-digests:
+    needs: [ event-validation, build-push ]
+    if: ${{ needs.event-validation.outputs.authorized == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.push_to_registry == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.event-validation.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Download image digest records
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: image-digest-*
+          path: digest-records
+          merge-multiple: true
+
+      - name: Assemble and validate production digests
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/ci/image_digests.py assemble --records digest-records --repository "$GITHUB_REPOSITORY" --output infra/k8s/helm/values.prod.digests.yaml
+
+      - name: Upload aggregate production digests
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-image-digests
+          path: infra/k8s/helm/values.prod.digests.yaml
+          if-no-files-found: error
+          retention-days: 30
+
+  propose-digests:
+    needs: [ event-validation, aggregate-digests ]
+    if: ${{ github.event_name == 'workflow_run' && needs.event-validation.outputs.authorized == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout successful Checks source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.event-validation.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Download aggregate production digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: production-image-digests
+          path: infra/k8s/helm
+
+      - name: Verify production digest overlay path
+        run: test -s infra/k8s/helm/values.prod.digests.yaml
+
+      - name: Create or update digest PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: bot/update-production-image-digests
+          base: main
+          add-paths: infra/k8s/helm/values.prod.digests.yaml
+          commit-message: 'chore(deploy): update production image digests'
+          title: 'chore(deploy): update production image digests'
+          body: |
+            Automated immutable first-party image digests from a successful main build.
+
+            Source revision: `${{ needs.event-validation.outputs.source_sha }}`
+            Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Review and merge this generated overlay to promote the images.
+          delete-branch: true

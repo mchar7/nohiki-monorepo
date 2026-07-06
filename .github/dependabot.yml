@@ -1,0 +1,67 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directories:
+      - /
+      - /scripts/ml/calibrate_skill_thresholds
+      - /scripts/ml/job_embedding_finetuning
+      - /scripts/ml/skill_semantic_analysis
+      - /scripts/proto_gen
+      - /scripts/util/ast_explorer
+    schedule:
+      interval: weekly
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      js-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories:
+      - /backend/services/*
+      - /backend/jobs/*
+      - /infra/k8s/kafka-connect
+      - /infra/shared/qdrant-init
+    schedule:
+      interval: weekly
+    groups:
+      base-images:
+        patterns: ["*"]
+
+  - package-ecosystem: docker-compose
+    directory: /infra/compose
+    schedule:
+      interval: weekly
+    groups:
+      compose-images:
+        patterns: ["*"]
+
+  - package-ecosystem: helm
+    directory: /infra/k8s/helm
+    schedule:
+      interval: weekly
+    groups:
+      helm-charts:
+        patterns: ["*"]
+
+  - package-ecosystem: terraform
+    directory: /infra/terraform
+    schedule:
+      interval: weekly
+    groups:
+      iac-providers:
+        patterns: ["*"]

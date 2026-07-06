@@ -1,0 +1,564 @@
+# .github/workflows/cd_deploy-to-aks_nohiki.yml
+name: CD - Deploy Nohiki to AKS
+permissions:
+  contents: read
+env:
+  ROOT_DOMAIN: "nohiki.com"
+  TF_STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+  TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+  TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER || 'tfstate' }}
+on:
+  # dispatch-only while the Azure environment is torn down; the build-chain
+  # trigger returns with the CD redesign
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        required: true
+        description: "Deployment environment"
+        options:
+          - "dev"
+          - "staging"
+          - "prod"
+      acme_provider_name:
+        type: choice
+        required: true
+        description: "ACME provider for TLS certificates"
+        default: "Let's Encrypt - Staging"
+        options:
+          - "Let's Encrypt - Production"
+          - "Let's Encrypt - Staging"
+      production_confirmation:
+        description: "Type 'deploy-production' to confirm a manual production deployment. Required only when environment=prod."
+        type: string
+        required: false
+        default: ""
+  pull_request:
+    types: [closed]
+
+jobs:
+  check-context:
+    runs-on: ubuntu-latest
+    env:
+      WF_RUN_HEAD_BRANCH: "${{ github.event.workflow_run.head_branch }}"
+      WF_RUN_PR_BASE_REF: "${{ github.event.workflow_run.pull_requests[0].base.ref }}"
+      WF_RUN_HEAD_SHA: "${{ github.event.workflow_run.head_sha }}"
+      WF_RUN_PR_NUMBER: "${{ github.event.workflow_run.pull_requests[0].number }}"
+    outputs:
+      should_deploy: ${{ steps.should-deploy.outputs.should_deploy }}
+    steps:
+      - name: Require explicit confirmation for manual production dispatch
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+        env:
+          PRODUCTION_CONFIRMATION: ${{ github.event.inputs.production_confirmation }}
+        run: |
+          if [[ "$PRODUCTION_CONFIRMATION" != "deploy-production" ]]; then
+            echo "Manual production dispatch requires production_confirmation=deploy-production."
+            echo "Refusing to proceed without explicit production confirmation."
+            exit 1
+          fi
+          echo "Manual production confirmation accepted."
+      - name: Evaluate workflow trigger context
+        id: context-check
+        run: |
+          deploymentRoadblock="false"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Workflow triggered manually."
+          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "Workflow triggered by CI workflow completion."
+            if [[ "${{ github.event.workflow_run.event }}" == "push" ]]; then
+              echo "CI triggered by a push event."
+              if [[ "$WF_RUN_HEAD_BRANCH" == "main" ]]; then
+                echo "Push to 'main' branch. Preparing 'prod' deployment."
+              else
+                echo "Push to '$WF_RUN_HEAD_BRANCH', not 'main'. Deployment blocked."
+                deploymentRoadblock="true"
+              fi
+            elif [[ "${{ github.event.workflow_run.event }}" == "pull_request" ]]; then
+              echo "CI triggered by a pull_request event."
+              if [[ "$WF_RUN_PR_BASE_REF" == "main" ]]; then
+                echo "PR targets 'main'. Preparing 'staging' deployment."
+              else
+                echo "PR does not target 'main'. Deployment blocked."
+                deploymentRoadblock="true"
+              fi
+            else
+              echo "Error: CI triggered by unsupported event: '${{ github.event.workflow_run.event }}'."
+              deploymentRoadblock="true"
+            fi
+          else
+            echo "Error: CD triggered by unsupported event: '${{ github.event_name }}'."
+            deploymentRoadblock="true"
+          fi
+          echo "deployment_roadblock_status=$deploymentRoadblock" >> "$GITHUB_ENV"
+
+      - name: Verify CI workflow conclusion
+        if: github.event_name == 'workflow_run'
+        run: |
+          if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+            echo "Triggering CI workflow ('${{ github.event.workflow_run.workflow.name }}') failed. Deployment blocked."
+            echo "deployment_roadblock_status=true" >> "$GITHUB_ENV"
+          else
+            echo "Triggering CI workflow succeeded."
+          fi
+
+      - name: Determine deployment eligibility
+        id: should-deploy
+        run: |
+          if [[ "${{ env.deployment_roadblock_status }}" == "true" ]]; then
+            echo "Deployment blocked by prior checks."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Deployment will proceed."
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  prepare-deployment:
+    needs: [ check-context ]
+    runs-on: ubuntu-latest
+    if: needs.check-context.outputs.should_deploy == 'true'
+    permissions:
+      deployments: write
+    outputs:
+      deployment_id: ${{ steps.create-deployment.outputs.deployment_id }}
+      env_name: ${{ steps.determine-env.outputs.env_name }}
+      env_url: ${{ steps.determine-env.outputs.env_url }}
+      acme_provider_url: ${{ steps.determine-acme-url.outputs.acme_provider_url }}
+    steps:
+      - name: Determine deployment environment name and URL
+        id: determine-env
+        run: |
+          envName=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            envName="${{ github.event.inputs.environment }}"
+          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            if [[ "${{ github.event.workflow_run.event }}" == "pull_request" ]]; then
+              envName="staging"
+            elif [[ "${{ github.event.workflow_run.event }}" == "push" && "${{ github.event.workflow_run.head_branch }}" == "main" ]]; then
+              envName="prod"
+            fi
+          fi
+          if [[ -z "$envName" ]]; then echo "Error: Could not determine environment name."; exit 1; fi
+
+          envURL="https://$envName.$ROOT_DOMAIN"
+          echo "env_name=$envName" >> "$GITHUB_OUTPUT"
+          echo "env_url=$envURL" >> "$GITHUB_OUTPUT"
+
+      - name: Determine ACME server URL
+        id: determine-acme-url
+        run: |
+          acmeProviderURL=""
+          inputAcmeProvider="${{ github.event.inputs.acme_provider_name }}"
+          determinedEnvName="${{ steps.determine-env.outputs.env_name }}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "$inputAcmeProvider" == "Let's Encrypt - Production" ]]; then
+              acmeProviderURL="https://acme-v02.api.letsencrypt.org/directory"
+            elif [[ "$inputAcmeProvider" == "Let's Encrypt - Staging" ]]; then
+              acmeProviderURL="https://acme-staging-v02.api.letsencrypt.org/directory"
+            else
+              echo "Error: Unsupported ACME provider input '$inputAcmeProvider'."; exit 1
+            fi
+          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            if [[ "$determinedEnvName" == "prod" ]]; then
+              acmeProviderURL="https://acme-v02.api.letsencrypt.org/directory"
+            else # Staging/Dev environments use LE Staging
+              acmeProviderURL="https://acme-staging-v02.api.letsencrypt.org/directory"
+            fi
+          fi
+          if [[ -z "$acmeProviderURL" ]]; then echo "Error: Could not determine ACME provider URL."; exit 1; fi
+          echo "acme_provider_url=$acmeProviderURL" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Deployment
+        uses: chrnorm/deployment-action@500aa6a23c81ffa1acf71072aee3cfa2cc2e556a # v2.0.8
+        id: create-deployment
+        with:
+          token: ${{ github.token }}
+          environment: ${{ steps.determine-env.outputs.env_name }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }} # Ref of the CI run or current commit
+          # Note: environment_url is set in the deployment-status action instead
+
+  deploy-to-aks:
+    needs: [ prepare-deployment ]
+    runs-on: ubuntu-latest
+    env:
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      IAC_WORKING_DIR: "./infra/terraform"
+    environment:
+      name: ${{ needs.prepare-deployment.outputs.env_name }}
+      url: ${{ needs.prepare-deployment.outputs.env_url }}
+    concurrency:
+      group: ${{ needs.prepare-deployment.outputs.env_name }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Azure CLI login with OIDC
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: "1.12.3"
+
+
+      - name: OpenTofu Init
+        working-directory: ${{ env.IAC_WORKING_DIR }}
+        run: |
+          tofu init -input=false -reconfigure \
+            -backend-config="subscription_id=$ARM_SUBSCRIPTION_ID" \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER" \
+            -backend-config="key=nohiki/${{ needs.prepare-deployment.outputs.env_name }}.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: OpenTofu Validate
+        working-directory: ${{ env.IAC_WORKING_DIR }}
+        run: tofu validate
+
+      - name: OpenTofu Plan
+        working-directory: ${{ env.IAC_WORKING_DIR }}
+        id: iac-plan
+        env:
+          DEPLOYMENT_ENVIRONMENT: ${{ needs.prepare-deployment.outputs.env_name }}
+        run: |
+          tfvars_file="${DEPLOYMENT_ENVIRONMENT}.tfvars"
+          if [ ! -f "$tfvars_file" ]; then
+            echo "Warning: Environment-specific tfvars file '$tfvars_file' not found. Proceeding without it."
+            tfvars_file_option=""
+          else
+            tfvars_file_option="-var-file=$tfvars_file"
+          fi
+
+          tofu plan -input=false \
+            ${tfvars_file_option:+"$tfvars_file_option"} \
+            -var "dns_zone_name=${{ env.ROOT_DOMAIN }}" \
+            -var "az_subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -var "container_registry=${{ vars.AZURE_CONTAINER_REGISTRY }}" \
+            -var "acr_resource_group_name=${{ vars.ACR_RESOURCE_GROUP_NAME }}" \
+            -var "acme_provider_url=${{ needs.prepare-deployment.outputs.acme_provider_url }}" \
+            -var "app_environment=$DEPLOYMENT_ENVIRONMENT" \
+            -var "aks_gpu_node_pool_enabled=${{ needs.prepare-deployment.outputs.env_name == 'prod' && 'true' || 'false' }}" \
+            -var "event_hubs_namespace_name=${{ needs.prepare-deployment.outputs.env_name == 'prod' && vars.PROD_EVENT_HUBS_NAMESPACE_NAME || '' }}" \
+            -var "event_hubs_resource_group_name=${{ needs.prepare-deployment.outputs.env_name == 'prod' && vars.PROD_EVENT_HUBS_RESOURCE_GROUP_NAME || '' }}" \
+            -var "azure_redis_sku_name=${{ needs.prepare-deployment.outputs.env_name == 'prod' && 'Standard' || 'Basic' }}" \
+            -var "azure_redis_family=C" \
+            -var "azure_redis_capacity=0" \
+            -var "postgres_flexible_sku_name=${{ needs.prepare-deployment.outputs.env_name == 'prod' && 'GP_Standard_D2s_v3' || 'B_Standard_B1ms' }}" \
+            -var "postgres_backup_retention_days=${{ needs.prepare-deployment.outputs.env_name == 'prod' && '14' || '7' }}" \
+            -var "postgres_geo_redundant_backup_enabled=${{ needs.prepare-deployment.outputs.env_name == 'prod' && 'true' || 'false' }}" \
+            -var "storage_account_replication_type=${{ needs.prepare-deployment.outputs.env_name == 'prod' && 'GRS' || 'LRS' }}" \
+            -out=iac-plan
+
+      - name: OpenTofu Apply
+        working-directory: ${{ env.IAC_WORKING_DIR }}
+        run: tofu apply -auto-approve -input=false iac-plan
+
+      - name: Get dev AKS credentials
+        if: needs.prepare-deployment.outputs.env_name == 'dev'
+        env:
+          # ponytail: names follow the terraform convention (var.app_name "nohiki" +
+          # var.aks_cluster_name_suffix "aks"); no tofu output exposes them.
+          RESOURCE_GROUP: "nohiki-${{ needs.prepare-deployment.outputs.env_name }}-rg"
+          CLUSTER_NAME: "nohiki-${{ needs.prepare-deployment.outputs.env_name }}-aks"
+        run: |
+          az aks get-credentials \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CLUSTER_NAME" \
+            --overwrite-existing \
+            --only-show-errors
+
+      - name: Install Nix
+        if: needs.prepare-deployment.outputs.env_name == 'dev'
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Resolve dev runtime coordinates
+        if: needs.prepare-deployment.outputs.env_name == 'dev'
+        working-directory: ${{ env.IAC_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          # Non-secret GHCR coordinates and current image tag; GHCR requires a
+          # lowercase owner and repository, matching the build workflow.
+          repository="${GITHUB_REPOSITORY,,}"
+          deployment_sha="${{ github.event.workflow_run.head_sha || github.sha }}"
+          if [[ ! "$deployment_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve an immutable deployment SHA." >&2
+            exit 1
+          fi
+          # Values are written to the step environment file only, never echoed.
+          {
+            echo "NOHIKI_IMAGE_OWNER=${repository%%/*}"
+            echo "NOHIKI_IMAGE_REPOSITORY=${repository##*/}"
+            echo "NOHIKI_IMAGE_TAG=sha-${deployment_sha::7}"
+            echo "NOHIKI_ESO_CLIENT_ID=$(tofu output -raw external_secrets_workload_identity_client_id)"
+            echo "NOHIKI_ESO_TENANT_ID=$(tofu output -raw external_secrets_workload_identity_tenant_id)"
+            echo "NOHIKI_ESO_VAULT_URL=$(tofu output -raw external_secrets_key_vault_url)"
+          } >> "$GITHUB_ENV"
+
+      - name: Bootstrap dev GitOps
+        if: needs.prepare-deployment.outputs.env_name == 'dev'
+        env:
+          # Short-lived fine-grained PAT used only to create the read-only deploy
+          # key and commit the generated flux-system files; the built-in token
+          # lacks Administration and is never used here.
+          GITHUB_TOKEN: ${{ secrets.FLUX_GITHUB_TOKEN }}
+          GITOPS_GITHUB_OWNER: ${{ github.repository_owner }}
+          GITOPS_GITHUB_REPOSITORY: ${{ github.event.repository.name }}
+          GITOPS_GITHUB_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          GITOPS_GITHUB_PERSONAL: ${{ github.event.repository.owner.type == 'User' }}
+          NOHIKI_CLUSTER: dev-aks
+          NOHIKI_IMAGE_REGISTRY: ghcr.io
+          NOHIKI_IMAGE_OWNER: ${{ env.NOHIKI_IMAGE_OWNER }}
+          NOHIKI_IMAGE_REPOSITORY: ${{ env.NOHIKI_IMAGE_REPOSITORY }}
+          NOHIKI_IMAGE_TAG: ${{ env.NOHIKI_IMAGE_TAG }}
+          NOHIKI_ESO_CLIENT_ID: ${{ env.NOHIKI_ESO_CLIENT_ID }}
+          NOHIKI_ESO_TENANT_ID: ${{ env.NOHIKI_ESO_TENANT_ID }}
+          NOHIKI_ESO_VAULT_URL: ${{ env.NOHIKI_ESO_VAULT_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+            echo "FLUX_GITHUB_TOKEN is not configured; refusing to bootstrap dev GitOps." >&2
+            exit 1
+          fi
+          nix develop .#k8s --command just gitops-bootstrap
+
+      - name: Wait for dev GitOps convergence
+        if: needs.prepare-deployment.outputs.env_name == 'dev'
+        env:
+          NOHIKI_CLUSTER: dev-aks
+        run: nix develop .#k8s --command just gitops-wait
+
+      - name: Export allowlisted production outputs
+        if: needs.prepare-deployment.outputs.env_name == 'prod'
+        working-directory: ${{ env.IAC_WORKING_DIR }}
+        run: |
+          tofu output -json | jq '{external_secrets_workload_identity_client_id, external_secrets_workload_identity_tenant_id, external_secrets_key_vault_url}' > production-identity-outputs.json
+          tofu output -json | jq '{cert_manager_workload_identity_client_id, cert_manager_workload_identity_tenant_id, cert_manager_dns_subscription_id, cert_manager_dns_resource_group, cert_manager_dns_zone_name}' > cert-manager-identity-outputs.json
+          jq -s '.[0] * .[1]' production-identity-outputs.json cert-manager-identity-outputs.json > production-identity-outputs.merged.json
+          mv production-identity-outputs.merged.json production-identity-outputs.json
+          rm cert-manager-identity-outputs.json
+          tofu output -json | jq '{production_network}' > production-network-output.json
+
+      - name: Generate production identity overlay
+        if: needs.prepare-deployment.outputs.env_name == 'prod'
+        run: |
+          python3 scripts/ci/production_identity.py \
+            --opentofu-output infra/terraform/production-identity-outputs.json \
+            --output infra/k8s/helm/values.prod.identity.yaml
+
+      - name: Generate production network overlay
+        if: needs.prepare-deployment.outputs.env_name == 'prod'
+        run: |
+          python3 scripts/ci/production_network.py \
+            --opentofu-output infra/terraform/production-network-output.json \
+            --output infra/k8s/helm/values.prod.network.yaml
+
+      - name: Upload production identity and network overlays
+        if: needs.prepare-deployment.outputs.env_name == 'prod'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: production-runtime-overlays
+          path: |
+            infra/k8s/helm/values.prod.identity.yaml
+            infra/k8s/helm/values.prod.network.yaml
+          if-no-files-found: error
+          retention-days: 1
+
+  promote-production-runtime:
+    needs: [ prepare-deployment, deploy-to-aks ]
+    if: needs.prepare-deployment.outputs.env_name == 'prod'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+
+      - name: Download production runtime overlays
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: production-runtime-overlays
+          path: infra/k8s/helm
+
+      - name: Verify production runtime overlay paths
+        run: test -s infra/k8s/helm/values.prod.identity.yaml && test -s infra/k8s/helm/values.prod.network.yaml
+
+      - name: Create or update production runtime PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: bot/update-production-runtime
+          base: ${{ github.event.repository.default_branch }}
+          add-paths: |
+            infra/k8s/helm/values.prod.identity.yaml
+            infra/k8s/helm/values.prod.network.yaml
+          commit-message: 'chore(deploy): update production runtime overlays'
+          title: 'chore(deploy): update production runtime overlays'
+          body: |
+            Atomically promotes the allowlisted, non-sensitive identity and private-network references produced by OpenTofu.
+          delete-branch: true
+
+  activate-production-runtime:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.head.ref == 'bot/update-production-runtime' || github.event.pull_request.head.ref == 'bot/update-production-image-digests')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+      CANONICAL_RELEASE_REPOSITORY: mchar7/nohiki-monorepo
+    steps:
+      - name: Checkout merged runtime revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Verify immutable release inputs
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REPOSITORY}" != "${CANONICAL_RELEASE_REPOSITORY}" ]]; then
+            echo "Production activation is bound to ${CANONICAL_RELEASE_REPOSITORY}; refusing fork ${GITHUB_REPOSITORY}." >&2
+            exit 1
+          fi
+          for path in \
+            infra/k8s/helm/values.prod.yaml \
+            infra/k8s/helm/values.prod.identity.yaml \
+            infra/k8s/helm/values.prod.network.yaml \
+            infra/k8s/helm/values.prod.digests.yaml \
+            infra/k8s/observability/overlays/prod/kustomization.yaml \
+            infra/k8s/observability/overlays/prod/otel-receiver-pki.yaml \
+            infra/k8s/gitops/clusters/prod-aks/kustomization.yaml \
+            infra/k8s/gitops/clusters/prod-aks/release-source.yaml \
+            infra/k8s/gitops/clusters/prod-aks/infrastructure.yaml \
+            infra/k8s/gitops/clusters/prod-aks/platform.yaml \
+            infra/k8s/gitops/clusters/prod-aks/observability.yaml \
+            infra/k8s/gitops/gateway-api-crds/kustomization.yaml \
+            infra/k8s/helm-foundation/Chart.yaml \
+            infra/k8s/helm-foundation/Chart.lock \
+            infra/k8s/helm-foundation/charts/cert-manager-v1.21.0.tgz \
+            infra/k8s/helm-foundation/templates/clusterissuer.yaml \
+            infra/k8s/helm-foundation/values.yaml \
+            infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml \
+            infra/k8s/gitops/clusters/prod-aks/gateway-api-crds.yaml; do
+            git cat-file -e "$RELEASE_SHA:$path"
+            test -s "$path"
+          done
+          helm template nohiki infra/k8s/helm -n nohiki-prod \
+            -f infra/k8s/helm/values.prod.yaml \
+            -f infra/k8s/helm/values.prod.identity.yaml \
+            -f infra/k8s/helm/values.prod.network.yaml \
+            -f infra/k8s/helm/values.prod.digests.yaml >/tmp/nohiki-prod.yaml
+          kustomize build infra/k8s/observability/overlays/prod >/tmp/nohiki-observability-prod.yaml
+          kustomize build infra/k8s/gitops/clusters/prod-aks >/tmp/nohiki-gitops-prod-aks.yaml
+          kustomize build infra/k8s/gitops/infrastructure/prod >/tmp/nohiki-gitops-infrastructure.yaml
+          kustomize build infra/k8s/gitops/platform/prod >/tmp/nohiki-gitops-platform.yaml
+          helm dependency update infra/k8s/helm-foundation
+          helm template nohiki-foundation infra/k8s/helm-foundation -n nohiki-foundation \
+            --include-crds -f infra/k8s/helm/values.prod.identity.yaml >/tmp/nohiki-foundation.yaml
+
+      - name: Stamp and activate production GitOps source
+        env:
+          RELEASE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          sha = os.environ["RELEASE_SHA"]
+          base = Path("infra/k8s/gitops/clusters/prod-aks")
+
+          source = base / "release-source.yaml"
+          text = source.read_text()
+          if text.count("commit: PROMOTION_REQUIRED") != 1:
+              raise SystemExit(f"{source}: expected exactly one promotion gate")
+          source.write_text(text.replace("commit: PROMOTION_REQUIRED", f"commit: {sha}"))
+
+          for name in ("gateway-api-crds.yaml", "infrastructure.yaml", "platform.yaml", "observability.yaml"):
+              path = base / name
+              text = path.read_text()
+              if text.count("suspend: true") != 1:
+                  raise SystemExit(f"{path}: expected exactly one suspended stack")
+              path.write_text(text.replace("suspend: true", "suspend: false"))
+
+          src = source.read_text()
+          if f"commit: {sha}" not in src or "PROMOTION_REQUIRED" in src:
+              raise SystemExit("source commit pin was not applied")
+          for name in ("gateway-api-crds.yaml", "infrastructure.yaml", "platform.yaml", "observability.yaml"):
+              text = (base / name).read_text()
+              if "suspend: false" not in text or "suspend: true" in text:
+                  raise SystemExit(f"{name}: stack was not unsuspended")
+          PY
+
+      - name: Create activation PR
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: bot/activate-production-runtime-${{ github.event.pull_request.merge_commit_sha }}
+          base: ${{ github.event.repository.default_branch }}
+          add-paths: |
+            infra/k8s/gitops/clusters/prod-aks/release-source.yaml
+            infra/k8s/gitops/clusters/prod-aks/gateway-api-crds.yaml
+            infra/k8s/gitops/clusters/prod-aks/infrastructure.yaml
+            infra/k8s/gitops/clusters/prod-aks/platform.yaml
+            infra/k8s/gitops/clusters/prod-aks/observability.yaml
+          commit-message: 'chore(deploy): activate validated production revision'
+          title: 'chore(deploy): activate validated production revision'
+          body: |
+            Pins the production GitOps source to immutable revision `${{ github.event.pull_request.merge_commit_sha }}` and unsuspends the Gateway API CRDs, infrastructure, platform, and observability stacks.
+
+            The revision was validated to contain every production Helm value overlay and immutable GitOps path, and to render Helm, observability Kustomize, and GitOps manifests before this PR was opened.
+          delete-branch: true
+  report-pr-status:
+    needs: [ prepare-deployment, deploy-to-aks ]
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write # To create commit statuses for PRs
+      deployments: write # To update GitHub Deployment status
+    # This job runs if the original trigger was a workflow_run for a PR,
+    # regardless of whether deploy-to-aks succeeded or failed.
+    if: always() && github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0]
+    steps:
+      - name: Update PR commit status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const conclusion = '${{ needs.deploy-to-aks.result }}'; // 'success', 'failure', 'cancelled', or 'skipped'
+            const state = (conclusion === 'success') ? 'success' : 'failure';
+            const description = (conclusion === 'success') ? 'Staging deployment successful.' : 'Staging deployment failed or was cancelled.';
+            // Get SHA from the PR head that triggered the CI run
+            const commitSha = context.payload.workflow_run.pull_requests[0].head.sha;
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: commitSha,
+              state: state,
+              context: 'Deployment to Staging (Nohiki)', // Clear context for the status check
+              description: description,
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
+      - name: Update GitHub Deployment status
+        if: needs.prepare-deployment.outputs.deployment_id # Only if a GitHub Deployment object was created
+        uses: chrnorm/deployment-status@6df8d036fd2fee9eb82936733953da1f8382b41e # v2.0.4
+        with:
+          token: '${{ github.token }}'
+          state: ${{ needs.deploy-to-aks.result }} # Reflects the outcome of the deploy-to-aks job
+          deployment-id: ${{ needs.prepare-deployment.outputs.deployment_id }}
+          environment-url: ${{ needs.prepare-deployment.outputs.env_url }}
+          description: "Deployment to ${{ needs.prepare-deployment.outputs.env_name }} has ${{ needs.deploy-to-aks.result }}."
