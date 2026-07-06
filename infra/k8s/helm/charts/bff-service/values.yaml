@@ -1,0 +1,93 @@
+enabled: true
+replicaCount: 1
+
+networkPolicy:
+  allowGatewayIngress: true
+  allowAuthEgress: true
+
+envPrefix: "BFF_"
+
+image:
+  name: bff-service
+  tag: ""
+
+service:
+  name: bff-service
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  enabled: true
+  database: true
+  redis: true
+  s3: true
+
+database:
+  enabled: true
+  schema: bff_schema
+
+redis:
+  enabled: true
+
+kafka:
+  enabled: true
+  consumerGroup: bff-service-consumer
+
+s3:
+  enabled: true
+  bucket: nohiki-attachments
+
+observability:
+  enabled: true
+
+scaling:
+  enabled: false
+  type: http
+  minReplicas: 1
+  maxReplicas: 5
+  http:
+    targetPendingRequests: 100
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+extraEnv:
+  - name: BFF_JWT__JWKS_URL
+    value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000/.well-known/jwks.json"
+  - name: BFF_JWT__ISSUER
+    value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000"
+  - name: BFF_JWT__AUDIENCE
+    value: "nohiki-api"
+  - name: BFF_ORIGINS__CORS_ORIGINS
+    value: ""
+  - name: BFF_ORIGINS__CSRF_ORIGINS
+    value: ""
+  - name: NOHIKI_TRUSTED_PROXY_CIDRS
+    value: ""
