@@ -1,0 +1,10 @@
+apiVersion: v2
+name: doc-template-service
+description: Document template storage and PDF rendering service (via Gotenberg)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+dependencies:
+  - name: nohiki-common
+    version: "0.1.x"
+    repository: "file://../nohiki-common"

@@ -1,0 +1,81 @@
+enabled: true
+replicaCount: 1
+
+envPrefix: "DOC_TEMPLATE_"
+
+image:
+  name: doc-template-service
+  tag: ""
+
+service:
+  name: doc-template-service
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  enabled: true
+  database: true
+  redis: true
+  s3: true
+
+database:
+  enabled: true
+  schema: doc_template_schema
+
+redis:
+  enabled: true
+
+kafka:
+  enabled: true
+  consumerGroup: doc-template-service-consumer
+
+s3:
+  enabled: true
+  bucket: nohiki-templates
+
+observability:
+  enabled: true
+
+scaling:
+  enabled: false
+  type: kafka
+  minReplicas: 0
+  maxReplicas: 5
+  pollingInterval: 15
+  cooldownPeriod: 300
+  kafka:
+    lagThreshold: "10"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+extraEnv:
+  - name: DOC_TEMPLATE_GOTENBERG__BASE_URL
+    value: "http://nohiki-gotenberg:3000"
