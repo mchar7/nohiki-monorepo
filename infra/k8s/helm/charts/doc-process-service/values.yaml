@@ -1,0 +1,80 @@
+enabled: true
+replicaCount: 1
+terminationGracePeriodSeconds: 60
+
+envPrefix: "DOC_PROCESS_"
+
+image:
+  name: doc-process-service
+  tag: ""
+
+service:
+  name: doc-process-service
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  enabled: true
+  redis: true
+  s3: true
+
+database:
+  enabled: false
+
+redis:
+  enabled: true
+
+kafka:
+  enabled: true
+  consumerGroup: doc-process-service-consumer
+
+s3:
+  enabled: true
+  bucket: nohiki-attachments
+
+observability:
+  enabled: true
+
+scaling:
+  enabled: false
+  type: kafka
+  minReplicas: 0
+  maxReplicas: 5
+  pollingInterval: 15
+  cooldownPeriod: 300
+  kafka:
+    lagThreshold: "10"
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+extraEnv:
+  - name: DOC_PROCESS_DOCLING__BASE_URL
+    value: "http://nohiki-docling:5001"
