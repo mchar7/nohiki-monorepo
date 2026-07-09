@@ -1,0 +1,105 @@
+# job-correlation-evaluation-service values
+enabled: true
+replicaCount: 1
+terminationGracePeriodSeconds: 60
+
+
+envPrefix: "JOB_CORRELATION_EVAL_"
+
+llm:
+  enabled: false
+
+mlManifest:
+  enabled: true
+  configMapName: nohiki-ml-manifest
+  mountPath: /app/data/config/semantic_representation_manifest.json
+
+image:
+  name: job-correlation-evaluation-service
+  tag: ""
+
+service:
+  name: job-correlation-evaluation-service
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  enabled: true
+  database: true
+  redis: true
+  s3: true
+
+database:
+  enabled: true
+  schema: job_correlation_schema
+
+debezium:
+  mode: wal
+  resourcePrefix: job_correlation
+
+redis:
+  enabled: true
+
+kafka:
+  enabled: true
+  consumerGroup: job-correlation-evaluation-service-consumer
+
+s3:
+  enabled: true
+  bucket: nohiki-ml-artifacts
+
+qdrant:
+  enabled: true
+
+observability:
+  enabled: true
+
+scaling:
+  enabled: false
+  type: kafka
+  minReplicas: 0
+  maxReplicas: 5
+  pollingInterval: 15
+  cooldownPeriod: 300
+  kafka:
+    lagThreshold: "10"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+extraEnv:
+  - name: JOB_CORRELATION_EVAL_BACKFILL__ENABLED
+    value: "true"
+  - name: JOB_CORRELATION_EVAL_BACKFILL__MAX_LISTINGS
+    value: "500"
+  - name: JOB_CORRELATION_EVAL_BACKFILL__SINCE_DAYS
+    value: "30"
+  - name: JOB_CORRELATION_EVAL_ML__PIPELINE__MIN_SCORE_THRESHOLD
+    value: "30"
