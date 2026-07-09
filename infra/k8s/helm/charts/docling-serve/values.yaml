@@ -1,0 +1,78 @@
+image:
+  repository: quay.io/docling-project/docling-serve-cpu
+  tag: "v1.26.0@sha256:7e07522e0240c1db3ff5b837ffa969c2ecd5a71664c0e0369f5a69fc169e30ba"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 5001
+  metricsPort: 9090
+
+env:
+  # Core
+  DOCLING_SERVE_ENABLE_UI: "false"
+  DOCLING_SERVE_ENABLE_REMOTE_SERVICES: "true"
+  DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_DESCRIPTION_CONFIG: "true"
+  DOCLING_SERVE_LOAD_MODELS_AT_BOOT: "true"
+  UVICORN_WORKERS: "1"
+  # Metrics on separate port (isolates scraping from API traffic)
+  DOCLING_SERVE_METRICS_PORT: "9090"
+  USER: "docling"
+  HOME: "/tmp"
+  XDG_CACHE_HOME: "/tmp/.cache"
+  HF_HOME: "/tmp/.cache/huggingface"
+  TORCHINDUCTOR_CACHE_DIR: "/tmp/.cache/torchinductor"
+  # Telemetry
+  DOCLING_SERVE_OTEL_ENABLE_METRICS: "true"
+  DOCLING_SERVE_OTEL_ENABLE_TRACES: "true"
+  DOCLING_SERVE_OTEL_ENABLE_PROMETHEUS: "true"
+  DOCLING_SERVE_OTEL_SERVICE_NAME: "docling-serve"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://nohiki-otel-collector:4317"
+
+resources:
+  requests:
+    memory: 1Gi
+    cpu: 500m
+  limits:
+    memory: 4Gi
+    cpu: 2000m
+
+# Liveness: process alive, responds to HTTP.
+# Uses /health (lightweight, no model gate).
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Readiness: models loaded, ready to accept conversion requests.
+# Uses /readyz which gates on model loading completion.
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+# Startup: generous window for initial model download/load.
+# Prevents liveness from killing the pod during cold start.
+startupProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000

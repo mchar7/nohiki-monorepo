@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nohiki-docling
+  labels:
+    app.kubernetes.io/name: docling-serve
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: document-conversion
+    app.kubernetes.io/part-of: nohiki
+spec:
+  type: {{ .Values.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.service.port | default 5001 }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.service.metricsPort | default 9090 }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    app.kubernetes.io/name: docling-serve
+    app.kubernetes.io/instance: {{ .Release.Name }}
