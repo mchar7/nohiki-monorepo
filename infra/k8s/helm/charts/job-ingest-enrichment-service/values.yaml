@@ -1,0 +1,120 @@
+enabled: true
+replicaCount: 1
+
+# Nominatim uses public HTTPS; native NetworkPolicy cannot select its FQDN.
+networkPolicy:
+  allowExtraEgressWithModelEgress: true
+  extraEgress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+
+envPrefix: "JOB_INGEST_ENRICHMENT_"
+
+llm:
+  enabled: true
+  provider:
+    models:
+      - model: openai:gpt-5.6-luna
+        reasoningEffort: medium
+    temperature: "0.0"
+    timeoutSeconds: "120"
+  chains:
+    extraction:
+      models:
+        - model: openai:gpt-5.6-luna
+          reasoningEffort: medium
+      temperature: "0.0"
+      timeoutSeconds: "120"
+    skill_clarification:
+      models:
+        - model: openai:gpt-5.6-luna
+          reasoningEffort: medium
+      temperature: "0.0"
+      timeoutSeconds: "60"
+  caching:
+    enabled: "true"
+
+mlManifest:
+  enabled: true
+  configMapName: nohiki-ml-manifest
+  mountPath: /app/data/config/semantic_representation_manifest.json
+
+image:
+  name: job-ingest-enrichment-service
+  tag: ""
+
+service:
+  name: job-ingest-enrichment-service
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  enabled: true
+  database: true
+  redis: true
+  llm: true
+
+database:
+  enabled: true
+  schema: job_ingest_enrichment_schema
+
+redis:
+  enabled: true
+
+kafka:
+  enabled: true
+  consumerGroup: job-ingest-enrichment-service-consumer
+
+observability:
+  enabled: true
+
+scaling:
+  enabled: false
+  type: kafka
+  minReplicas: 0
+  maxReplicas: 5
+  pollingInterval: 15
+  cooldownPeriod: 300
+  kafka:
+    lagThreshold: "10"
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 1024Mi
+  limits:
+    cpu: 1000m
+    memory: 2560Mi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
