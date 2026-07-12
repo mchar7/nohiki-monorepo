@@ -1,0 +1,2 @@
+{{- $_ := include "nohiki-common.accelerator.normalize" . -}}
+{{- include "nohiki-common.deployment" . }}

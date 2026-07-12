@@ -1,0 +1,141 @@
+enabled: true
+replicaCount: 1
+
+envPrefix: "ML_COMPUTE_"
+
+mlManifest:
+  enabled: true
+  configMapName: nohiki-ml-manifest
+  mountPath: /app/data/config/semantic_representation_manifest.json
+
+# --- Accelerator: the SINGLE switch selecting CPU vs CUDA end to end. ---
+# Flip accelerator.mode; nohiki-common.accelerator.normalize derives the image
+# variant, compute-backend env, nvidia.com/gpu resource, pod nodeSelector,
+# toleration, and the NVIDIA device plugin coherently. Operators never hand-wire
+# those fields. CPU is the default and is fully production-safe.
+#   cpu  (default): CPU torch image, zero GPU artifacts anywhere.
+#   cuda:           GPU torch image variant, 1 nvidia.com/gpu, GPU node-pool
+#                   selector+toleration, device plugin, gpu compute backend.
+#                   Render FAILS unless the GPU image digest is pinned in prod.
+# mode=cpu alongside an explicit GPU field (gpuDevicePlugin.enabled or
+# resources.gpu) is an incoherent mix and fails render.
+accelerator:
+  mode: cpu
+  cpuImageName: ml-compute-service
+  gpuImageName: ml-compute-service-gpu
+  gpuCount: 1
+
+image:
+  name: ml-compute-service
+  tag: ""
+
+service:
+  name: ml-compute-service
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  enabled: true
+  redis: true
+  s3: true
+
+database:
+  enabled: false
+
+redis:
+  enabled: true
+
+kafka:
+  enabled: true
+  consumerGroup: ml-compute-service-consumer
+
+s3:
+  enabled: true
+  bucket: nohiki-ml-artifacts
+
+observability:
+  enabled: true
+
+scaling:
+  enabled: false
+  type: kafka
+  minReplicas: 0
+  maxReplicas: 5
+  pollingInterval: 15
+  cooldownPeriod: 300
+  kafka:
+    lagThreshold: "10"
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: 2000m
+    memory: 6Gi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 5
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+extraEnv:
+  - name: FASTEMBED_CACHE_PATH
+    value: /home/app/.cache/fastembed
+  - name: HF_HOME
+    value: /home/app/.cache/huggingface
+
+extraVolumes:
+  - name: model-cache
+    emptyDir:
+      sizeLimit: 5Gi
+
+extraVolumeMounts:
+  - name: model-cache
+    mountPath: /home/app/.cache
+
+# NVIDIA device plugin DaemonSet (self-managed AKS GPU path).
+# Disabled by default so local/staging stay CPU-only. Production enables it in
+# values.prod.yaml. The image is pinned by immutable digest per repo convention.
+# nodeSelector/tolerations MUST match the Terraform GPU node pool contract
+# (label workload=nohiki-ml-gpu, taint sku=gpu:NoSchedule).
+gpuDevicePlugin:
+  enabled: false
+  name: nvidia-device-plugin
+  image:
+    repository: nvcr.io/nvidia/k8s-device-plugin
+    tag: v0.19.3@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77
+    pullPolicy: IfNotPresent
+  priorityClassName: system-node-critical
+  updateStrategy: RollingUpdate
+  nodeSelector:
+    workload: nohiki-ml-gpu
+  tolerations:
+    - key: sku
+      operator: Equal
+      value: gpu
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: 50m
+      memory: 30Mi
+    limits:
+      cpu: 100m
+      memory: 60Mi
