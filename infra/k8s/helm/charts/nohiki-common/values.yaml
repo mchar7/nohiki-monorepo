@@ -1,0 +1,320 @@
+# Default values for nohiki-common library chart
+# These are DEFAULTS that subcharts can override
+
+global:
+  environment: dev
+  imageTag: latest
+  imageDigests: {}
+
+  labels:
+    appGroup: nohiki
+
+  # Azure configuration (empty = use Kubernetes Secrets)
+  azure:
+    keyVaultName: ""
+    managedIdentityClientId: ""
+    tenantId: ""
+    cloudName: ""
+
+  secrets:
+    databaseSecretName: nohiki-database-credentials
+    redisSecretName: nohiki-redis-credentials
+    jwtSecretName: nohiki-jwt-keys
+    oauthSecretName: nohiki-oauth-credentials
+    llmSecretName: nohiki-llm-runtime
+    emailSecretName: nohiki-email-api-keys
+    jsearchSecretName: nohiki-jsearch-api-keys
+    s3SecretName: nohiki-s3-credentials
+
+  # Database configuration
+  database:
+    host: nohiki-postgresql
+    port: 5432
+
+  redis:
+    host: nohiki-redis
+    port: 6379
+
+  kafka:
+    bootstrapServers: nohiki-kafka:9092
+    dsn: "kafka://nohiki-kafka:9092"
+
+  s3:
+    endpoint: http://nohiki-rustfs:9000
+    region: us-east-1
+
+  qdrant:
+    host: nohiki-qdrant
+    grpcPort: "6334"
+
+  observability:
+    otelEndpoint: http://otel-collector:4317
+    otelInsecure: "true"
+    otelEnabled: "false"
+    phoenixEndpoint: ""
+    phoenixEnabled: "false"
+    phoenixProjectName: nohiki
+    otelTls:
+      enabled: false
+      secretName: otel-receiver-tls
+      mountPath: /etc/otel/ca
+      certificatePath: /etc/otel/ca/ca.crt
+
+  # Scaling defaults
+  scaling:
+    minReplicas: 0
+    maxReplicas: 10
+    cooldownPeriod: 300
+
+  # Prometheus server for metrics-based scaling
+  prometheus:
+    serverAddress: "http://prometheus-server.monitoring.svc.cluster.local"
+
+# Service-level defaults (overridden per-service)
+enabled: true
+replicaCount: 1
+
+# Graceful shutdown configuration
+terminationGracePeriodSeconds: 30
+
+# Network policy configuration (deny-all + allowlist)
+networkPolicy:
+  enabled: true
+
+# Container lifecycle hooks (optional override)
+# lifecycle:
+#   preStop:
+#     exec:
+#       command:
+#         - /bin/sh
+#         - -c
+#         - sleep 5
+
+# Environment variable prefix for nested settings (e.g., "NOTIFICATION_" -> NOTIFICATION_DATABASE__HOST)
+envPrefix: ""
+
+image:
+  name: ""
+  tag: ""
+  pullPolicy: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+service:
+  name: ""
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+# Secrets configuration - which secret categories this service needs
+# Secrets are mounted at /run/secrets/ with nested directory structure
+secrets:
+  enabled: true
+  mountPath: /run/secrets
+  # Secret categories - enable based on service requirements
+  database: false
+  redis: false
+  jwt: false
+  oauth: false
+  llm: false
+  email: false
+  jsearch: false
+  s3: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  # nvidia.com/gpu count. 0 (default) = CPU workload, no GPU resource emitted.
+  # Set >0 (e.g. 1) to request GPUs; rendered into both requests and limits.
+  gpu: 0
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+# Database settings (service-level)
+# Each service defines its OWN database for full isolation.
+database:
+  enabled: false
+  # Service's own database name (e.g., user_auth_db)
+  name: ""
+  # Schema within the database (e.g., user_auth_schema)
+  schema: ""
+  # Role names for this service
+  roles:
+    migrator: ""  # DDL role (e.g., user_auth_migrator)
+    app: ""       # DML role (e.g., user_auth_app)
+  # Connection settings (defaults to CNPG cluster)
+  host: ""
+  port: 5432
+  # PostgreSQL extensions to enable
+  extensions: []
+
+# Migration settings (service-level)
+migration:
+  enabled: true
+  alembicConfigPath: "alembic.ini"
+  timeoutSeconds: 300
+  lockTimeoutSeconds: 120
+
+# Redis settings (service-level)
+redis:
+  enabled: false
+
+# Kafka settings (service-level)
+kafka:
+  enabled: true
+  consumerGroup: ""
+
+# S3 settings (service-level)
+s3:
+  enabled: false
+  bucket: nohiki-attachments
+  region: us-east-1
+
+# Qdrant settings (service-level)
+qdrant:
+  enabled: false
+  # host: ""  # Inherited from global.qdrant.host
+  # grpcPort: ""  # Inherited from global.qdrant.grpcPort
+  # useTls: false  # Inherited from global.qdrant.useTls
+  # apiKeySecret: ""  # Set for prod deployments
+
+# Observability settings (service-level overrides)
+observability:
+  enabled: true
+  logLevel: INFO
+  logFormat: json
+
+# Scaling settings (service-level, KEDA)
+scaling:
+  enabled: false
+  type: ""  # http, kafka, prometheus, or multi
+  minReplicas: 0
+  maxReplicas: 10
+  cooldownPeriod: 300
+  pollingInterval: 15
+  scaleDownStabilization: 300
+  # HTTP scaling config (for type: http)
+  http:
+    targetPendingRequests: 100
+    additionalHosts: []
+    pathPrefixes: []
+  # Kafka scaling config (for type: kafka or multi)
+  kafka:
+    lagThreshold: "10"
+    authenticationRef: ""
+    topics: []  # [{name: "topic.name.v1", lagThreshold: "10"}]
+  # Prometheus scaling config (for type: prometheus or multi)
+  prometheus:
+    metricName: ""
+    query: ""
+    threshold: "10"
+    activationThreshold: "1"
+
+# Fallback HPA (when KEDA unavailable)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Sidecar containers (e.g., Gotenberg)
+sidecars: []
+
+# Init containers (e.g., wait-for-db)
+initContainers: []
+
+# Additional environment variables
+env: []
+extraEnv: []
+
+# LLM provider chain (rendered by nohiki-common.env.llm into {PREFIX}LLM__* env vars).
+# Subcharts opt in via `llm.enabled: true` and define `llm.provider.models`, optional
+# `llm.chains.<name>.models`, plus `llm.caching` / `llm.instrumentation` flags.
+#
+# Per-model `providerOrder` pins OpenRouter routing to a preferred upstream provider.
+# The factory sets `allow_fallbacks: true`, so OpenRouter still routes around brief
+# outages of the preferred provider; use this for cost/cache wins, not hard pinning.
+#
+# llm:
+#   enabled: true
+#   provider:
+#     models:
+#       - model: openrouter:deepseek/deepseek-v4-flash
+#         reasoningEffort: medium
+#         providerOrder: ["SiliconFlow"]   # cheapest cached deepseek inference
+#       - model: openrouter:google/gemini-3-flash-preview  # default OpenRouter routing
+#     temperature: "0.0"
+#     timeoutSeconds: "120"
+#   caching:
+#     enabled: "true"
+
+extraVolumes: []
+extraVolumeMounts: []
+
+# Pod-level settings
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+topologySpreadConstraints: []
+pdb: {}
+
+# NVIDIA device plugin DaemonSet (rendered by an application chart via the
+# "nohiki-common.nvidiaDevicePlugin" template). Production-gated GPU enablement
+# for the self-managed AKS GPU node pool: AKS installs the driver, this plugin
+# advertises nvidia.com/gpu as allocatable. Disabled by default. When enabled,
+# image.tag MUST be pinned by immutable digest and nodeSelector/tolerations MUST
+# match the GPU node pool label/taint contract (workload=nohiki-ml-gpu,
+# sku=gpu:NoSchedule).
+gpuDevicePlugin:
+  enabled: false
+  name: nvidia-device-plugin
+  image:
+    repository: nvcr.io/nvidia/k8s-device-plugin
+    tag: ""  # required when enabled: "<version>@sha256:<digest>"
+    pullPolicy: IfNotPresent
+  priorityClassName: system-node-critical
+  updateStrategy: RollingUpdate
+  nodeSelector:
+    workload: nohiki-ml-gpu
+  tolerations:
+    - key: sku
+      operator: Equal
+      value: gpu
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: 50m
+      memory: 30Mi
+    limits:
+      cpu: 100m
+      memory: 60Mi

@@ -1,0 +1,14 @@
+apiVersion: v2
+name: nohiki-common
+description: Shared library chart for Nohiki microservices platform
+type: library
+version: 0.1.1
+appVersion: "1.0.0"
+keywords:
+  - nohiki
+  - library
+  - microservices
+  - fastapi
+  - kafka
+maintainers:
+  - name: Nohiki Team
