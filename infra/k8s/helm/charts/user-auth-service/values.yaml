@@ -1,0 +1,92 @@
+enabled: true
+replicaCount: 1
+
+networkPolicy:
+  allowGatewayIngress: true
+  allowBffIngress: true
+
+envPrefix: "USER_AUTH_"
+
+image:
+  name: user-auth-service
+  tag: ""
+
+service:
+  name: user-auth-service
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  enabled: true
+  database: true
+  redis: true
+  jwt: true
+  oauth: true
+
+database:
+  enabled: true
+  schema: user_auth_schema
+
+redis:
+  enabled: true
+
+kafka:
+  enabled: true
+  consumerGroup: user-auth-service-consumer
+
+observability:
+  enabled: true
+
+scaling:
+  enabled: false
+  type: http
+  minReplicas: 1
+  maxReplicas: 5
+  http:
+    targetPendingRequests: 100
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+extraEnv:
+  - name: USER_AUTH_JWT__ISSUER
+    value: "http://localhost:8000"
+  - name: USER_AUTH_JWT__AUDIENCE
+    value: "nohiki-api"
+  - name: USER_AUTH_JWT__KEY_ID
+    value: "local-dev-key-1"
+  - name: USER_AUTH_JWT__PRIVATE_KEY_PATH
+    value: "/run/secrets/jwt/private_key"
+  - name: USER_AUTH_COOKIE__SECURE
+    value: '{{ ternary "false" "true" (eq .Values.global.environment "local") }}'
+  - name: USER_AUTH_OAUTH__GITHUB__ENABLED
+    value: "false"
+  - name: USER_AUTH_OAUTH__GOOGLE__ENABLED
+    value: "false"
