@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rustfs
+description: RustFS S3-compatible object storage (Apache-2.0 licensed MinIO replacement)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

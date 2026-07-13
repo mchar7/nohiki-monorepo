@@ -1,0 +1,46 @@
+image:
+  repository: rustfs/rustfs
+  tag: 1.0.0-beta.8@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
+  pullPolicy: IfNotPresent
+
+bucketInit:
+  image:
+    repository: amazon/aws-cli
+    tag: 2.35.21@sha256:238583846e731f31c9848dae26c5a560769ff35c4c5368a4cb6be5816683e485
+    pullPolicy: IfNotPresent
+
+replicas: 1
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: ""
+
+resources:
+  requests:
+    memory: 256Mi
+    cpu: 100m
+  limits:
+    memory: 512Mi
+    cpu: 500m
+
+auth:
+  rootUser: rustfs_admin
+  rootPassword: rustfs_secret
+
+buckets:
+  - nohiki-attachments
+  - nohiki-templates
+  - nohiki-tailored-docs
+  - nohiki-ml-artifacts
+  - nohiki-job-correlation
+
+service:
+  type: ClusterIP
+  apiPort: 9000
+  consolePort: 9001
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000

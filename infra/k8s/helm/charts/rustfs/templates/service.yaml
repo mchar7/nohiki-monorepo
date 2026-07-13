@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-rustfs
+  labels:
+    app.kubernetes.io/name: rustfs
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: object-storage
+    app.kubernetes.io/part-of: nohiki
+spec:
+  type: {{ .Values.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.service.apiPort | default 9000 }}
+      targetPort: api
+      protocol: TCP
+      name: api
+    - port: {{ .Values.service.consolePort | default 9001 }}
+      targetPort: console
+      protocol: TCP
+      name: console
+  selector:
+    app.kubernetes.io/name: rustfs
+    app.kubernetes.io/instance: {{ .Release.Name }}

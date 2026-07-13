@@ -1,0 +1,60 @@
+{{- $credentialsSecret := .Values.secret.existingSecret | default (printf "%s-rustfs-credentials" .Release.Name) }}
+{{- $bucketInitHash := sha256sum (printf "%s\n%s" .Release.Name (toYaml .Values.buckets)) | trunc 8 }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-rustfs-bucket-init-{{ $bucketInitHash }}
+  labels:
+    app.kubernetes.io/name: rustfs-bucket-init
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: object-storage
+    app.kubernetes.io/part-of: nohiki
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rustfs-bucket-init
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bucket-init
+          image: "{{ .Values.bucketInit.image.repository }}:{{ .Values.bucketInit.image.tag }}"
+          imagePullPolicy: {{ .Values.bucketInit.image.pullPolicy }}
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialsSecret }}
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialsSecret }}
+                  key: secret-key
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              ENDPOINT="http://{{ .Release.Name }}-rustfs:9000"
+              echo "Waiting for RustFS to be ready..."
+              until curl -sf "$ENDPOINT/health"; do
+                echo "RustFS not ready yet, waiting..."
+                sleep 5
+              done
+              ensure_bucket() {
+                local bucket="$1"
+                if aws --endpoint-url "$ENDPOINT" s3api head-bucket --bucket "$bucket" --region us-east-1 >/dev/null 2>&1; then
+                  echo "Bucket $bucket already exists"
+                  return 0
+                fi
+                aws --endpoint-url "$ENDPOINT" s3 mb "s3://$bucket" --region us-east-1
+                aws --endpoint-url "$ENDPOINT" s3api head-bucket --bucket "$bucket" --region us-east-1 >/dev/null
+              }
+              echo "RustFS is ready. Creating buckets..."
+              {{- range .Values.buckets }}
+              ensure_bucket {{ . | quote }}
+              {{- end }}
+              echo "All buckets created successfully."
