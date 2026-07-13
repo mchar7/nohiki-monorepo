@@ -1,0 +1,83 @@
+enabled: true
+replicaCount: 1
+
+envPrefix: "FRONTEND_"
+
+image:
+  name: frontend
+  tag: ""
+
+service:
+  name: frontend
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+networkPolicy:
+  enabled: true
+
+secrets:
+  enabled: false
+
+database:
+  enabled: false
+redis:
+  enabled: false
+kafka:
+  enabled: false
+s3:
+  enabled: false
+qdrant:
+  enabled: false
+observability:
+  enabled: false
+
+scaling:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 30
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 2
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+extraEnv:
+  - name: BFF_UPSTREAM
+    value: "http://{{ .Release.Name }}-bff-service.{{ .Release.Namespace }}.svc.cluster.local:8000"
+
+extraVolumeMounts:
+  - name: caddy-data
+    mountPath: /data
+  - name: caddy-config
+    mountPath: /config
+
+extraVolumes:
+  - name: caddy-data
+    emptyDir:
+      sizeLimit: 16Mi
+  - name: caddy-config
+    emptyDir:
+      sizeLimit: 4Mi
