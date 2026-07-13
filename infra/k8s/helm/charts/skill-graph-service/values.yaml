@@ -1,0 +1,102 @@
+enabled: true
+replicaCount: 1
+
+networkPolicy:
+  extraEgress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+
+envPrefix: "SKILL_GRAPH_"
+
+mlManifest:
+  enabled: true
+  configMapName: nohiki-ml-manifest
+  mountPath: /app/data/config/semantic_representation_manifest.json
+
+image:
+  name: skill-graph-service
+  tag: ""
+
+service:
+  name: skill-graph-service
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  enabled: true
+  database: true
+
+database:
+  enabled: true
+  schema: skill_graph_schema
+
+redis:
+  enabled: false
+
+kafka:
+  enabled: true
+  consumerGroup: skill-graph-service-consumer
+
+qdrant:
+  enabled: true
+
+observability:
+  enabled: true
+
+scaling:
+  enabled: false
+  type: kafka
+  minReplicas: 0
+  maxReplicas: 5
+  pollingInterval: 15
+  cooldownPeriod: 300
+  kafka:
+    lagThreshold: "10"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /readyz
+    # Readiness gate polls Qdrant until skill embeddings exist.
+    # Bootstrap seeding + async embedding can take several minutes.
+    # K8s readiness probe failures remove the pod from load balancing but do
+    # NOT restart it, so a high failureThreshold is safe and necessary here.
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 60
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+extraEnv:
+  - name: SKILL_GRAPH_READINESS_GATE__MIN_POINT_COUNT
+    value: "1000"
+  - name: SKILL_GRAPH_READINESS_GATE__POLL_INTERVAL_SECONDS
+    value: "10.0"
