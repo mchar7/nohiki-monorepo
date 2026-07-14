@@ -1,0 +1,71 @@
+enabled: true
+replicaCount: 1
+
+envPrefix: "USER_ENTITLEMENT_"
+
+image:
+  name: user-entitlement-service
+  tag: ""
+
+service:
+  name: user-entitlement-service
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+secrets:
+  enabled: true
+  database: true
+
+database:
+  enabled: true
+  schema: user_entitlement_schema
+
+redis:
+  enabled: false
+
+kafka:
+  enabled: true
+  consumerGroup: user-entitlement-service-consumer
+
+observability:
+  enabled: true
+
+scaling:
+  enabled: false
+  type: kafka
+  minReplicas: 0
+  maxReplicas: 5
+  pollingInterval: 15
+  cooldownPeriod: 300
+  kafka:
+    lagThreshold: "10"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  liveness:
+    enabled: true
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /readyz
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
