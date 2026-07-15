@@ -1,0 +1,1367 @@
+# Nohiki Docker Compose. Secrets live as files under ../shared/secrets/ (see
+# infra/shared/secrets/README.md); schema differentiation via DATABASE__SCHEMA.
+
+# YAML anchors
+
+x-llm-provider-endpoints:
+  NOHIKI_LLM_OPENAI_BASE_URL: "${NOHIKI_LLM_OPENAI_BASE_URL:?set NOHIKI_LLM_OPENAI_BASE_URL}"
+  NOHIKI_LLM_ANTHROPIC_BASE_URL: "${NOHIKI_LLM_ANTHROPIC_BASE_URL:-}"
+
+x-common-microservice: &common-microservice
+  networks: [nohiki-network]
+  restart: unless-stopped
+  stop_grace_period: 30s
+  healthcheck:
+    test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=2)\""]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 60s
+
+x-common-infrastructure: &common-infrastructure
+  networks: [nohiki-network]
+  restart: unless-stopped
+
+x-observability-env: &observability-env
+  OTEL_COLLECTOR_GRPC_ENDPOINT: http://nohiki-obs-otel-collector:4317
+  OTEL_EXPORTER_INSECURE: "true"
+  OTEL_ENABLED: "false"
+  PHOENIX_COLLECTOR_ENDPOINT: http://nohiki-obs-phoenix:4317
+  PHOENIX_ENABLED: "false"
+  PHOENIX_PROJECT_NAME: nohiki
+
+# Shared secret volume mounts
+x-vol-database: &vol-database nohiki-vol-secret-database:/run/secrets/database:ro
+x-vol-redis: &vol-redis nohiki-vol-secret-redis:/run/secrets/redis:ro
+x-vol-s3: &vol-s3 nohiki-vol-secret-s3:/run/secrets/s3:ro
+x-vol-jwt: &vol-jwt nohiki-vol-secret-jwt:/run/secrets/jwt:ro
+x-vol-oauth: &vol-oauth nohiki-vol-secret-oauth:/run/secrets/oauth:ro
+x-vol-jsearch: &vol-jsearch nohiki-vol-secret-jsearch:/run/secrets/jsearch:ro
+x-vol-llm: &vol-llm nohiki-vol-secret-llm:/run/secrets/llm:ro
+x-vol-email: &vol-email nohiki-vol-secret-email:/run/secrets/email:ro
+x-vol-qdrant: &vol-qdrant nohiki-vol-secret-qdrant:/run/secrets/qdrant:ro
+x-vol-s3-mlflow: &vol-s3-mlflow nohiki-vol-secret-s3-mlflow:/run/secrets/s3:ro
+
+x-depends-on-secrets: &depends-on-secrets
+  nohiki-infra-secrets-init: {condition: service_completed_successfully}
+
+services:
+  nohiki-infra-secrets-init:
+    image: docker.io/library/busybox:1.38.0@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d
+    network_mode: none
+    restart: "no"
+
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ../shared/secrets/database:/source/database:ro
+      - ../shared/secrets/redis:/source/redis:ro
+      - ../shared/secrets/s3-mlflow:/source/s3-mlflow:ro
+
+      - ../shared/secrets/s3:/source/s3:ro
+      - ../shared/secrets/jwt:/source/jwt:ro
+      - ../shared/secrets/oauth:/source/oauth:ro
+      - ../shared/secrets/jsearch:/source/jsearch:ro
+      - ../shared/secrets/llm:/source/llm:ro
+      - ../shared/secrets/email:/source/email:ro
+      - ../shared/secrets/qdrant:/source/qdrant:ro
+      - nohiki-vol-secret-database:/target/database
+      - nohiki-vol-secret-redis:/target/redis
+      - nohiki-vol-secret-s3:/target/s3
+      - nohiki-vol-secret-jwt:/target/jwt
+      - nohiki-vol-secret-oauth:/target/oauth
+      - nohiki-vol-secret-jsearch:/target/jsearch
+      - nohiki-vol-secret-llm:/target/llm
+      - nohiki-vol-secret-email:/target/email
+      - nohiki-vol-secret-qdrant:/target/qdrant
+      - nohiki-vol-secret-s3-mlflow:/target/s3-mlflow
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        for category in database redis s3 jwt oauth jsearch llm email qdrant s3-mlflow; do
+          chmod 0700 "/target/$${category}"
+          find "/target/$${category}" -mindepth 1 -delete
+          cp -R "/source/$${category}/." "/target/$${category}/"
+          find "/target/$${category}" -type d -exec chmod 0555 {} \;
+          find "/target/$${category}" -type f -exec chmod 0444 {} \;
+        done
+    healthcheck:
+      test: ["CMD", "test", "-r", "/target/database/dsn"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 1s
+
+  # Microservices (nohiki-svc-*)
+
+  nohiki-svc-user-auth:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/user-auth-service/Dockerfile}
+    image: user-auth-service:latest
+    volumes:
+      - *vol-database
+      - *vol-redis
+      - *vol-jwt
+      - *vol-oauth
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: user-auth-service
+      USER_AUTH_DATABASE__SCHEMA_NAME: user_auth_schema
+      USER_AUTH_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      USER_AUTH_KAFKA__CONSUMER_GROUP: user-auth-service-consumer
+      USER_AUTH_JWT__ISSUER: "${NOHIKI_PUBLIC_API_URL:-http://localhost:${NOHIKI_PORT_TRAEFIK_HTTP:-8000}}"
+      USER_AUTH_JWT__AUDIENCE: nohiki-api
+      USER_AUTH_JWT__KEY_ID: local-dev-key-1
+      USER_AUTH_JWT__PRIVATE_KEY_PATH: /run/secrets/jwt/private_key
+      USER_AUTH_COOKIE__SECURE: "false"
+      USER_AUTH_OAUTH__GITHUB__ENABLED: "false"
+      USER_AUTH_OAUTH__GOOGLE__ENABLED: "false"
+      USER_AUTH_OAUTH__CALLBACK_BASE_URL: "${NOHIKI_PUBLIC_API_URL:-http://localhost:${NOHIKI_PORT_TRAEFIK_HTTP:-8000}}"
+      USER_AUTH_OAUTH__SUCCESS_REDIRECT_URL: "${NOHIKI_FRONTEND_ORIGIN:-http://localhost:5173}/auth/callback"
+      USER_AUTH_OAUTH__ERROR_REDIRECT_URL: "${NOHIKI_FRONTEND_ORIGIN:-http://localhost:5173}/auth/callback"
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+    labels: ["traefik.enable=true"]
+
+  nohiki-svc-bff:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/bff-service/Dockerfile}
+    image: bff-service:latest
+    volumes: [*vol-database, *vol-redis, *vol-s3]
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: bff-service
+      BFF_DATABASE__SCHEMA_NAME: bff_schema
+      BFF_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      BFF_KAFKA__CONSUMER_GROUP: bff-service-consumer
+      BFF_JWT__JWKS_URL: http://nohiki-svc-user-auth:8000/.well-known/jwks.json
+      BFF_JWT__ISSUER: "${NOHIKI_PUBLIC_API_URL:-http://localhost:${NOHIKI_PORT_TRAEFIK_HTTP:-8000}}"
+      BFF_JWT__AUDIENCE: nohiki-api
+      BFF_S3__ENDPOINT: http://nohiki-infra-rustfs:9000
+      BFF_S3__PUBLIC_URL: "${NOHIKI_S3_PUBLIC_URL:-http://localhost:${NOHIKI_PORT_RUSTFS_API:-9002}}"
+      BFF_S3__BUCKET: nohiki-attachments
+      BFF_S3__REGION: us-east-1
+      BFF_AUTH_LISTINGS__SECRET: ${BFF_AUTH_LISTINGS__SECRET:-dev-test-secret-qa-only}
+      BFF_ORIGINS__CORS_ORIGINS: "${NOHIKI_FRONTEND_ORIGIN:-http://localhost:5173},http://localhost:3000"
+      BFF_ORIGINS__CSRF_ORIGINS: "${NOHIKI_FRONTEND_ORIGIN:-http://localhost:5173},http://localhost:3000"
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+      nohiki-svc-user-auth: {condition: service_healthy}
+      nohiki-infra-rustfs-init: {condition: service_completed_successfully}
+    labels: ["traefik.enable=true"]
+
+  nohiki-svc-user-upload:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/user-upload-service/Dockerfile}
+    image: user-upload-service:latest
+    volumes: [*vol-database, *vol-s3]
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: user-upload-service
+      USER_UPLOAD_DATABASE__SCHEMA_NAME: user_upload_schema
+      USER_UPLOAD_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      USER_UPLOAD_KAFKA__CONSUMER_GROUP: user-upload-service-consumer
+      USER_UPLOAD_S3__ENDPOINT: http://nohiki-infra-rustfs:9000
+      USER_UPLOAD_S3__BUCKET: nohiki-attachments
+      USER_UPLOAD_S3__REGION: us-east-1
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-rustfs-init: {condition: service_completed_successfully}
+
+  nohiki-svc-user-pref:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/user-pref-service/Dockerfile}
+    image: user-pref-service:latest
+    volumes:
+      - *vol-database
+      - *vol-redis
+      - ../../data/config/semantic_representation_manifest.json:/app/data/config/semantic_representation_manifest.json:ro
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: user-pref-service
+      USER_PREF_DATABASE__SCHEMA_NAME: user_pref_schema
+      USER_PREF_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      USER_PREF_KAFKA__CONSUMER_GROUP: user-pref-service-consumer
+      USER_PREF_REDIS__DSN: redis://nohiki-infra-valkey:6379
+      USER_PREF_MANIFEST_PATH: /app/data/config/semantic_representation_manifest.json
+      USER_PREF_QDRANT__HOST: nohiki-infra-qdrant
+      USER_PREF_QDRANT__GRPC_PORT: "6334"
+      USER_PREF_QDRANT__USE_TLS: "false"
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+      nohiki-infra-qdrant: {condition: service_healthy}
+
+  nohiki-svc-user-entitlement:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/user-entitlement-service/Dockerfile}
+    image: user-entitlement-service:latest
+    volumes: [*vol-database]
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: user-entitlement-service
+      USER_ENTITLEMENT_DATABASE__SCHEMA_NAME: user_entitlement_schema
+      USER_ENTITLEMENT_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      USER_ENTITLEMENT_KAFKA__CONSUMER_GROUP: user-entitlement-service-consumer
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+
+  nohiki-svc-job-query-composition:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/job-query-composition-service/Dockerfile}
+    image: job-query-composition-service:latest
+    volumes: [*vol-database, *vol-redis]
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: job-query-composition-service
+      JOB_QUERY_COMPOSITION_DATABASE__SCHEMA_NAME: job_query_schema
+      JOB_QUERY_COMPOSITION_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      JOB_QUERY_COMPOSITION_KAFKA__CONSUMER_GROUP: job-query-composition-service-consumer
+      JOB_QUERY_COMPOSITION_REDIS__DSN: redis://nohiki-infra-valkey:6379
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+
+  nohiki-svc-job-ingest-schedule:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/job-ingest-schedule-service/Dockerfile}
+    image: job-ingest-schedule-service:latest
+    volumes: [*vol-database, *vol-redis]
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: job-ingest-schedule-service
+      JOB_INGEST_SCHEDULE_DATABASE__SCHEMA_NAME: job_schedule_schema
+      JOB_INGEST_SCHEDULE_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      JOB_INGEST_SCHEDULE_KAFKA__CONSUMER_GROUP: job-ingest-schedule-service-consumer
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+
+  nohiki-svc-job-ingest-discovery:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/job-ingest-discovery-service/Dockerfile}
+    image: job-ingest-discovery-service:latest
+    volumes:
+      - *vol-database
+      - *vol-redis
+      - *vol-jsearch
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: job-ingest-discovery-service
+      JOB_INGEST_DISCOVERY_DATABASE__SCHEMA_NAME: job_ingest_discovery_schema
+      JOB_INGEST_DISCOVERY_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      JOB_INGEST_DISCOVERY_KAFKA__CONSUMER_GROUP: job-ingest-discovery-service-consumer
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+
+  nohiki-svc-job-ingest-enrichment:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/job-ingest-enrichment-service/Dockerfile}
+    image: job-ingest-enrichment-service:latest
+    volumes:
+      - *vol-database
+      - *vol-redis
+      - *vol-llm
+      - ../../data/config/semantic_representation_manifest.json:/app/data/config/semantic_representation_manifest.json:ro
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: job-ingest-enrichment-service
+      JOB_INGEST_ENRICHMENT_DATABASE__SCHEMA_NAME: job_ingest_enrichment_schema
+      JOB_INGEST_ENRICHMENT_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      JOB_INGEST_ENRICHMENT_KAFKA__CONSUMER_GROUP: job-ingest-enrichment-service-consumer
+      JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__MODEL: openai:gpt-5.6-luna
+      JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT: medium
+      JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__BASE_URL: "${NOHIKI_LLM_OPENAI_BASE_URL:?set NOHIKI_LLM_OPENAI_BASE_URL}"
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+
+  nohiki-svc-job-storage:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/job-storage-service/Dockerfile}
+    image: job-storage-service:latest
+    volumes:
+      - *vol-database
+      - ../../data/config/semantic_representation_manifest.json:/app/data/config/semantic_representation_manifest.json:ro
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: job-storage-service
+      JOB_STORAGE_DATABASE__SCHEMA_NAME: job_storage_schema
+      JOB_STORAGE_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      JOB_STORAGE_KAFKA__CONSUMER_GROUP: job-storage-service-consumer
+      JOB_STORAGE_BACKFILL__DEFAULT_MAX_LISTINGS: "500"
+      JOB_STORAGE_BACKFILL__DEFAULT_SINCE_DAYS: "30"
+      JOB_STORAGE_BACKFILL__BATCH_SIZE: "50"
+      JOB_STORAGE_QDRANT__HOST: nohiki-infra-qdrant
+      JOB_STORAGE_QDRANT__GRPC_PORT: "6334"
+      JOB_STORAGE_QDRANT__USE_TLS: "false"
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-qdrant: {condition: service_healthy}
+
+  nohiki-svc-skill-graph:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/skill-graph-service/Dockerfile}
+    image: skill-graph-service:latest
+    volumes:
+      - *vol-database
+      - *vol-llm
+      - ../../data/config/semantic_representation_manifest.json:/app/data/config/semantic_representation_manifest.json:ro
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: skill-graph-service
+      SKILL_GRAPH_DATABASE__SCHEMA_NAME: skill_graph_schema
+      SKILL_GRAPH_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      SKILL_GRAPH_KAFKA__CONSUMER_GROUP: skill-graph-service-consumer
+      SKILL_GRAPH_QDRANT__HOST: nohiki-infra-qdrant
+      SKILL_GRAPH_QDRANT__GRPC_PORT: "6334"
+      SKILL_GRAPH_QDRANT__USE_TLS: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=2)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-qdrant: {condition: service_healthy}
+
+  nohiki-svc-job-correlation:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/job-correlation-evaluation-service/Dockerfile}
+    image: job-correlation-evaluation-service:latest
+    volumes:
+      - *vol-database
+      - *vol-redis
+      - *vol-s3
+      - ../../data/config/semantic_representation_manifest.json:/app/data/config/semantic_representation_manifest.json:ro
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: job-correlation-evaluation-service
+      JOB_CORRELATION_EVAL_DATABASE__SCHEMA_NAME: job_correlation_schema
+      JOB_CORRELATION_EVAL_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      JOB_CORRELATION_EVAL_KAFKA__CONSUMER_GROUP: job-correlation-evaluation-service-consumer
+      JOB_CORRELATION_EVAL_REDIS__DSN: redis://nohiki-infra-valkey:6379
+      JOB_CORRELATION_EVAL_S3__ENDPOINT: http://nohiki-infra-rustfs:9000
+      JOB_CORRELATION_EVAL_S3__BUCKET: nohiki-ml-artifacts
+      JOB_CORRELATION_EVAL_S3__REGION: us-east-1
+      JOB_CORRELATION_EVAL_BACKFILL__ENABLED: "true"
+      JOB_CORRELATION_EVAL_BACKFILL__MAX_LISTINGS: "500"
+      JOB_CORRELATION_EVAL_BACKFILL__SINCE_DAYS: "30"
+      JOB_CORRELATION_EVAL_QDRANT__HOST: nohiki-infra-qdrant
+      JOB_CORRELATION_EVAL_QDRANT__GRPC_PORT: "6334"
+      JOB_CORRELATION_EVAL_QDRANT__USE_TLS: "false"
+      JOB_CORRELATION_EVAL_ML__PIPELINE__MIN_SCORE_THRESHOLD: "30"
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+      nohiki-infra-qdrant-init: {condition: service_completed_successfully}
+
+  nohiki-svc-doc-template:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/doc-template-service/Dockerfile}
+    image: doc-template-service:latest
+    volumes: [*vol-database, *vol-redis, *vol-s3]
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: doc-template-service
+      DOC_TEMPLATE_DATABASE__SCHEMA_NAME: doc_template_schema
+      DOC_TEMPLATE_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      DOC_TEMPLATE_KAFKA__CONSUMER_GROUP: doc-template-service-consumer
+      DOC_TEMPLATE_S3__ENDPOINT: http://nohiki-infra-rustfs:9000
+      DOC_TEMPLATE_S3__BUCKET: nohiki-templates
+      DOC_TEMPLATE_S3__REGION: us-east-1
+      DOC_TEMPLATE_GOTENBERG__BASE_URL: http://nohiki-infra-gotenberg:3000
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+      nohiki-infra-rustfs-init: {condition: service_completed_successfully}
+
+  nohiki-svc-doc-content:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/doc-content-service/Dockerfile}
+    image: doc-content-service:latest
+    volumes:
+      - *vol-s3
+      - *vol-llm
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: doc-content-service
+      DOC_CONTENT_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      DOC_CONTENT_KAFKA__CONSUMER_GROUP: doc-content-service-consumer
+      DOC_CONTENT_S3__ENDPOINT: http://nohiki-infra-rustfs:9000
+      DOC_CONTENT_S3__BUCKET: nohiki-tailored-docs
+      DOC_CONTENT_S3__REGION: us-east-1
+      DOC_CONTENT_LLM__PROVIDER__MODELS__0__MODEL: openai:gpt-5.6-sol
+      DOC_CONTENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT: high
+      DOC_CONTENT_LLM__PROVIDER__MODELS__0__BASE_URL: "${NOHIKI_LLM_OPENAI_BASE_URL:?set NOHIKI_LLM_OPENAI_BASE_URL}"
+      DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__MODEL: openai:gpt-5.6-sol
+      DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__REASONING_EFFORT: high
+      DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__BASE_URL: "${NOHIKI_LLM_OPENAI_BASE_URL:?set NOHIKI_LLM_OPENAI_BASE_URL}"
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-rustfs-init: {condition: service_completed_successfully}
+
+  nohiki-svc-doc-process:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/doc-process-service/Dockerfile}
+    image: doc-process-service:latest
+    volumes: [*vol-redis, *vol-s3]
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: doc-process-service
+      DOC_PROCESS_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      DOC_PROCESS_KAFKA__CONSUMER_GROUP: doc-process-service-consumer
+      DOC_PROCESS_S3__ENDPOINT: http://nohiki-infra-rustfs:9000
+      DOC_PROCESS_S3__BUCKET: nohiki-attachments
+      DOC_PROCESS_S3__REGION: us-east-1
+      DOC_PROCESS_DOCLING__BASE_URL: http://nohiki-infra-docling:5001
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+      nohiki-infra-rustfs-init: {condition: service_completed_successfully}
+      nohiki-infra-docling: {condition: service_healthy}
+
+  nohiki-svc-notification:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/notification-service/Dockerfile}
+    image: notification-service:latest
+    volumes:
+      - *vol-database
+      - *vol-redis
+      - *vol-email
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: notification-service
+      NOTIFICATION_DATABASE__SCHEMA_NAME: notification_schema
+      NOTIFICATION_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      NOTIFICATION_KAFKA__CONSUMER_GROUP: notification-service-consumer
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-infra-valkey: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+
+  nohiki-svc-ml-gateway:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/ml-gateway-service/Dockerfile}
+    image: ml-gateway-service:latest
+    volumes: [*vol-redis]
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: ml-gateway-service
+      ML_GATEWAY_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      ML_GATEWAY_KAFKA__CONSUMER_GROUP: ml-gateway-service-consumer
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+    labels: ["traefik.enable=false"]
+
+  nohiki-svc-ml-compute:
+    <<: *common-microservice
+    build: {context: ../../, dockerfile: backend/services/ml-compute-service/Dockerfile}
+    image: ml-compute-service:latest
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=2)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+    volumes:
+      - *vol-redis
+      - *vol-s3
+      - ../../data/config/semantic_representation_manifest.json:/app/data/config/semantic_representation_manifest.json:ro
+      - ml-model-cache:/home/app/.cache
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: ml-compute-service
+      ML_COMPUTE_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      ML_COMPUTE_KAFKA__CONSUMER_GROUP: ml-compute-service-consumer
+      ML_COMPUTE_KAFKA__CONSUMER__SESSION_TIMEOUT_MS: "120000"
+      ML_COMPUTE_KAFKA__CONSUMER__HEARTBEAT_INTERVAL_MS: "10000"
+      ML_COMPUTE_KAFKA__CONSUMER__MAX_POLL_INTERVAL_MS: "600000"
+      ML_COMPUTE_S3__ENDPOINT: http://nohiki-infra-rustfs:9000
+      ML_COMPUTE_S3__BUCKET: nohiki-ml-artifacts
+      ML_COMPUTE_S3__REGION: us-east-1
+      S3_ENDPOINT: http://nohiki-infra-rustfs:9000
+      S3_BUCKET: nohiki-ml-artifacts
+      S3_REGION: us-east-1
+      FASTEMBED_CACHE_PATH: /home/app/.cache/fastembed
+      HF_HOME: /home/app/.cache/huggingface
+      ML_COMPUTE_REDIS__DSN: redis://nohiki-infra-valkey:6379
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-valkey: {condition: service_healthy}
+      nohiki-infra-rustfs-init: {condition: service_completed_successfully}
+    labels: ["traefik.enable=false"]
+
+  # Jobs (nohiki-job-*)
+
+  nohiki-job-schedule-tick:
+    <<: *common-infrastructure
+    build: {context: ../../, dockerfile: backend/jobs/sys-tick-job/Dockerfile}
+    image: sys-tick-job:latest
+    entrypoint: ["supercronic", "-json", "-passthrough-logs", "/etc/crontab"]
+    volumes:
+      - ./crontabs/schedule-tick.crontab:/etc/crontab:ro
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: nohiki-cp-kafka:29092
+      SCHEDULE_TICK_SOURCE_SERVICE: sys-tick-compose
+      SCHEDULE_TICK_BATCH_LIMIT: "0"
+    depends_on:
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+
+  nohiki-job-snapshot-refresh:
+    <<: *common-infrastructure
+    build: {context: ../../, dockerfile: backend/jobs/snapshot-refresh-job/Dockerfile}
+    image: snapshot-refresh-job:latest
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: nohiki-cp-kafka:29092
+      REFRESH_TOPIC: job-listing.cmd.snapshot-refresh-requested.v1
+      REFRESH_REASON: "manual trigger"
+    depends_on:
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+    restart: "no"
+    profiles:
+      - tools
+
+  nohiki-job-skill-graph-seed:
+    <<: *common-infrastructure
+    build: {context: ../../, dockerfile: backend/services/skill-graph-service/Dockerfile}
+    image: skill-graph-service:latest
+    entrypoint: ["python", "-m", "skill_graph_service.seeding.cli"]
+    volumes:
+      - *vol-database
+      - ../../data/tabiya:/data/tabiya:ro
+      - ../../data/config/semantic_representation_manifest.json:/app/data/config/semantic_representation_manifest.json:ro
+    environment:
+      <<: *observability-env
+      ENVIRONMENT: development
+      SERVICE_NAME: bootstrap-skill-graph
+      SKILL_GRAPH_DATABASE__SCHEMA_NAME: skill_graph_schema
+      SKILL_GRAPH_DATABASE__MIGRATE_ON_STARTUP: "false"
+      SKILL_GRAPH_KAFKA__DSN: kafka://nohiki-cp-kafka:29092
+      SKILL_GRAPH_KAFKA__CONSUMER_GROUP: bootstrap-skill-graph
+      SKILL_GRAPH_QDRANT__HOST: nohiki-infra-qdrant
+      SKILL_GRAPH_QDRANT__GRPC_PORT: "6334"
+      SKILL_GRAPH_QDRANT__USE_TLS: "false"
+      TABIYA_SKILLS_CSV: /data/tabiya/skills.csv
+      TABIYA_SOURCE_VERSION: "1.1.1"
+      TABIYA_RELATIONSHIPS_CSV: /data/tabiya/skill_skill_relations.csv
+      TABIYA_OCCUPATION_SKILLS_CSV: /data/tabiya/occupation_skill_relations.csv
+      TABIYA_OCCUPATIONS_CSV: /data/tabiya/occupations.csv
+      TABIYA_SKILL_GROUPS_CSV: /data/tabiya/skillGroups.csv
+      TABIYA_SKILLS_HIERARCHY_CSV: /data/tabiya/skills_hierarchy.csv
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+      nohiki-cp-kafka-init: {condition: service_completed_successfully}
+      nohiki-infra-qdrant: {condition: service_healthy}
+    restart: "no"
+
+  # Infrastructure (nohiki-infra-*)
+
+  nohiki-infra-gotenberg:
+    <<: *common-infrastructure
+    image: docker.io/gotenberg/gotenberg:8.34.0@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923
+    hostname: nohiki-infra-gotenberg
+    # Keep Chromium warm between requests; cold-start latency on the screenshot
+    # endpoint causes concurrent requests to exceed Gotenberg's 30s context
+    # deadline, producing 503s.
+    command:
+      - "gotenberg"
+      - "--chromium-auto-start=true"
+      - "--chromium-restart-after=0"
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_GOTENBERG:-3000}:3000"  # operates on internal network, but this allows us to use it for things like `scripts/util/tailor`
+    networks:
+      nohiki-network:
+        aliases:
+          - gotenberg
+          - nohiki-infra-gotenberg
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  nohiki-infra-docling:
+    <<: *common-infrastructure
+    image: quay.io/docling-project/docling-serve-cpu:v1.26.0@sha256:7e07522e0240c1db3ff5b837ffa969c2ecd5a71664c0e0369f5a69fc169e30ba
+    hostname: nohiki-infra-docling
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_DOCLING:-5001}:5001"
+    networks:
+      nohiki-network:
+        aliases:
+          - docling
+          - docling-serve
+          - nohiki-infra-docling
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "false"
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: "true"
+      DOCLING_SERVE_ALLOW_CUSTOM_PICTURE_DESCRIPTION_CONFIG: "true"
+      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: "true"
+      UVICORN_WORKERS: "2"
+      # Telemetry
+      DOCLING_SERVE_OTEL_ENABLE_METRICS: "true"
+      DOCLING_SERVE_OTEL_ENABLE_TRACES: "true"
+      DOCLING_SERVE_OTEL_ENABLE_PROMETHEUS: "true"
+      DOCLING_SERVE_OTEL_SERVICE_NAME: "docling-serve"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://nohiki-obs-otel-collector:4317"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/readyz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  nohiki-infra-traefik:
+    <<: *common-infrastructure
+    image: public.ecr.aws/docker/library/traefik:v3.7.7@sha256:1cb3845d7a05e1473c9086351426597e911db49db382b6e4769f9b0744962ac8
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_TRAEFIK_HTTP:-8000}:80"
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_TRAEFIK_HTTPS:-8443}:443"
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_TRAEFIK_DASHBOARD:-8080}:8080"
+    volumes:
+      - ./traefik:/etc/traefik/dynamic_conf:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  nohiki-infra-postgres:
+    <<: *common-infrastructure
+    image: public.ecr.aws/docker/library/postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_POSTGRES:-5432}:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/database/password
+      POSTGRES_DB: nohiki_db
+      LANG: en_US.utf8
+      LC_ALL: en_US.utf8
+    command:
+      - postgres
+      # I/O concurrency for NVMe/SSD
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - maintenance_io_concurrency=10
+      # Parallelism settings
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - max_parallel_workers=8
+      - -c
+      - max_parallel_maintenance_workers=4
+      # WAL settings for logical replication (Debezium CDC)
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=16
+      - -c
+      - max_wal_senders=16
+      # Memory settings
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+    volumes:
+      - nohiki-vol-postgres:/var/lib/postgresql
+      - *vol-database
+    depends_on:
+      <<: *depends-on-secrets
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nohiki_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Idempotent bootstrap for both fresh and existing Postgres volumes.
+  nohiki-infra-postgres-init:
+    <<: *common-infrastructure
+    image: public.ecr.aws/docker/library/postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    volumes:
+      - *vol-database
+      - ./scripts/postgres-init:/bootstrap:ro
+      - nohiki-vol-postgres-service-secrets:/run/secrets/postgres-services
+    environment:
+      PGHOST: nohiki-infra-postgres
+      PGUSER: postgres
+      PGDATABASE: nohiki_db
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /run/secrets/postgres-services
+        for role in mlflow phoenix; do
+          password_file="/run/secrets/postgres-services/$${role}_password"
+          if [ ! -s "$${password_file}" ]; then
+            od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$${password_file}"
+          fi
+        done
+        chmod 0444 /run/secrets/postgres-services/*_password
+        export PGPASSWORD="$$(cat /run/secrets/database/password)"
+        export MLFLOW_DB_PASSWORD="$$(cat /run/secrets/postgres-services/mlflow_password)"
+        export PHOENIX_DB_PASSWORD="$$(cat /run/secrets/postgres-services/phoenix_password)"
+        psql --set=ON_ERROR_STOP=1 --file=/bootstrap/01-create-extra-databases.sql
+        PGPASSWORD="$${MLFLOW_DB_PASSWORD}" psql --username=mlflow --dbname=mlflow --command='SELECT 1' >/dev/null
+        PGPASSWORD="$${PHOENIX_DB_PASSWORD}" psql --username=phoenix --dbname=phoenix --command='SELECT 1' >/dev/null
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres: {condition: service_healthy}
+    restart: "no"
+
+  nohiki-infra-pgadmin:
+    <<: *common-infrastructure
+    image: docker.io/dpage/pgadmin4:9.16@sha256:40fa840c5bb7c8463957f1255b01283732c2d8c9396a956d180f8e6c296753b3
+    environment:
+      PGADMIN_DEFAULT_EMAIL: 'admin@admin.com'
+      # DEV ONLY: production overrides via SOPS-encrypted values; pgAdmin is gated by `dev` profile.
+      PGADMIN_DEFAULT_PASSWORD: 'admin'
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - nohiki-vol-pgadmin:/var/lib/pgadmin
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PGADMIN:-5050}:80"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/misc/ping', timeout=2)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      nohiki-infra-postgres:
+        condition: service_healthy
+    profiles:
+      - dev
+
+  # Confluent Platform (nohiki-cp-*)
+
+  nohiki-cp-kafka:
+    <<: *common-infrastructure
+    image: docker.io/confluentinc/cp-kafka:8.3.0@sha256:c2cedb691aec9963114fb0b4e45fa49a47bb374a89c241c4ecb68a5fc904e5e3
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@nohiki-cp-kafka:9093
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://nohiki-cp-kafka:29092,HOST://localhost:${NOHIKI_PORT_KAFKA:-29092}"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      CLUSTER_ID: GgXxHSpoTUGySgYUR5AZUw
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_GROUP_CONSUMER_SESSION_TIMEOUT_MS: 45000
+      KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: 5000
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_KAFKA:-29092}:9092"
+    volumes:
+      - nohiki-vol-kafka:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:29092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  nohiki-cp-kafka-init:
+    <<: *common-infrastructure
+    image: docker.io/confluentinc/cp-kafka:8.3.0@sha256:c2cedb691aec9963114fb0b4e45fa49a47bb374a89c241c4ecb68a5fc904e5e3
+    depends_on:
+      nohiki-cp-kafka: {condition: service_healthy}
+    volumes:
+      - ./scripts/kafka-init.sh:/kafka-init.sh:ro
+    environment:
+      BOOTSTRAP_SERVER: nohiki-cp-kafka:29092
+    entrypoint: ["bash", "/kafka-init.sh"]
+    restart: "no"
+
+  nohiki-cp-kafka-connect:
+    <<: *common-infrastructure
+    build: {context: ../k8s/kafka-connect, dockerfile: Dockerfile}
+    image: nohiki-kafka-connect:latest
+    volumes: [*vol-database, *vol-qdrant]
+    environment:
+      BOOTSTRAP_SERVERS: nohiki-cp-kafka:29092
+      GROUP_ID: nohiki-connect-cluster
+      CONFIG_STORAGE_TOPIC: _nohiki_connect_configs
+      OFFSET_STORAGE_TOPIC: _nohiki_connect_offsets
+      STATUS_STORAGE_TOPIC: _nohiki_connect_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      LOG_LEVEL: INFO
+      SCHEDULED_REBALANCE_MAX_DELAY_MS: "0"
+      # Commit offsets every 10s (Connect default 60s). Faster commits shrink the replay
+      # window on container restart and keep consumer lag visibly low in steady state.
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: "10000"
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_KAFKA_CONNECT:-8083}:8083"
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-cp-kafka-init:
+        condition: service_completed_successfully
+      nohiki-infra-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf 'http://localhost:8083/connectors?expand=status' | python3 -c 'import sys,json; d=json.load(sys.stdin); running=[k for k,v in d.items() if v.get(\"status\",{}).get(\"connector\",{}).get(\"state\")==\"RUNNING\"]; exit(0 if len(running)>0 and len(running)==len(d) else 1)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
+  nohiki-cp-kafka-ui:
+    <<: *common-infrastructure
+    image: public.ecr.aws/kafbat/kafka-ui:v1.5.0@sha256:7cda86a33344160309fdb65146332e4da65db81a945614f2fe32e210803f6fd1
+    environment:
+      KAFKA_CLUSTERS_0_NAME: nohiki-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: nohiki-cp-kafka:29092
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: nohiki-connect
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://nohiki-cp-kafka-connect:8083
+      DYNAMIC_CONFIG_ENABLED: true
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_KAFKA_UI:-8082}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      nohiki-cp-kafka:
+        condition: service_healthy
+      nohiki-cp-kafka-connect:
+        condition: service_healthy
+    profiles:
+      - dev
+
+  nohiki-infra-valkey:
+    <<: *common-infrastructure
+    image: docker.io/valkey/valkey:9.1.0-alpine@sha256:a35428eba9043cc0b79dbe54100f0c92784f2de00ad09b01182bfb1c5c83d1bd
+    hostname: nohiki-infra-valkey
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - nohiki-vol-valkey:/data
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_VALKEY:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  nohiki-infra-rustfs:
+    <<: *common-infrastructure
+    # No stable RustFS release exists as of 2026-07-11; beta.8 is the latest upstream release:
+    # https://github.com/rustfs/rustfs/releases/tag/1.0.0-beta.8
+    image: docker.io/rustfs/rustfs:1.0.0-beta.8@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
+    command: server /data --console-address ":9001"
+    env_file:
+      # RUSTFS_ROOT_USER / RUSTFS_ROOT_PASSWORD; generated by the setup in
+      # infra/shared/secrets/README.md, never tracked
+      - ../shared/secrets/s3/rustfs-root.env
+    volumes:
+      - nohiki-vol-rustfs:/data
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_RUSTFS_API:-9002}:9000"
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_RUSTFS_CONSOLE:-9003}:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/ -o /dev/null -w '%{http_code}' | grep -qE '^(200|403)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  nohiki-infra-rustfs-init:
+    <<: *common-infrastructure
+    image: docker.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    depends_on:
+      nohiki-infra-rustfs: {condition: service_healthy}
+    volumes:
+      - ./rustfs-policies:/policies:ro
+      - ./scripts/rustfs-init.sh:/rustfs-init.sh:ro
+    environment:
+      RUSTFS_HOST: nohiki-infra-rustfs
+      RUSTFS_PORT: "9000"
+      POLICIES_DIR: /policies
+    env_file:
+      - ../shared/secrets/s3/rustfs-root.env
+    entrypoint: ["sh", "/rustfs-init.sh"]
+    restart: "no"
+
+  nohiki-infra-qdrant:
+    <<: *common-infrastructure
+    image: ghcr.io/qdrant/qdrant/qdrant:v1.18.2-unprivileged@sha256:ee77466ae0d2d443300c5893ef09d9fc937c022fd4c15b0946ce1f243de09abd
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_QDRANT_REST:-6333}:6333"   # REST API
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_QDRANT_GRPC:-6334}:6334"   # gRPC API
+    volumes:
+      - nohiki-vol-qdrant:/qdrant/storage
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__SERVICE__HTTP_PORT=6333
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  nohiki-infra-qdrant-init:
+    <<: *common-infrastructure
+    build:
+      context: ../../
+      dockerfile: infra/shared/qdrant-init/Dockerfile
+    image: qdrant-init:latest
+    volumes:
+      - ../../data/config/semantic_representation_manifest.json:/config/semantic_representation_manifest.json:ro
+    environment:
+      QDRANT_URL: http://nohiki-infra-qdrant:6333
+      MANIFEST_PATH: /config/semantic_representation_manifest.json
+    command: ["init", "--manifest", "/config/semantic_representation_manifest.json", "--qdrant-url", "http://nohiki-infra-qdrant:6333", "--wait"]
+    depends_on:
+      nohiki-infra-qdrant: {condition: service_healthy}
+    restart: "no"
+
+  # ML infrastructure (nohiki-ml-*)
+
+  # nohiki-ml-tei-colbert:
+  #   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9-grpc
+  #   container_name: nohiki-ml-tei-colbert
+  #   network_mode: host
+  #   restart: unless-stopped
+  #   command:
+  #     - --model-id=mixedbread-ai/mxbai-edge-colbert-v0-17m
+  #     - --max-batch-tokens=16384
+  #     - --port=8090
+  #     - --otlp-endpoint=http://localhost:4317
+  #     - --otlp-service-name=nohiki-ml-tei-colbert
+  #     - --json-output
+  #   environment:
+  #     - HF_HOME=/data/huggingface
+  #     - HF_HUB_ENABLE_HF_TRANSFER=0
+  #   volumes:
+  #     - nohiki-vol-tei-models:/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/8090' || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 180s
+  #   profiles:
+  #     - ml
+
+  # nohiki-ml-tei-reranker:
+  #   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9-grpc
+  #   container_name: nohiki-ml-tei-reranker
+  #   network_mode: host
+  #   restart: unless-stopped
+  #   command:
+  #     - --model-id=BAAI/bge-reranker-base
+  #     - --port=8091
+  #     - --otlp-endpoint=http://localhost:4317
+  #     - --otlp-service-name=nohiki-ml-tei-reranker
+  #     - --json-output
+  #   environment:
+  #     - HF_HOME=/data/huggingface
+  #     - HF_HUB_ENABLE_HF_TRANSFER=0
+  #   volumes:
+  #     - nohiki-vol-tei-models:/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/8091' || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 180s
+  #   profiles:
+  #     - ml
+
+  # nohiki-ml-tei-qwen3-0.6b:
+  #   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9-grpc
+  #   container_name: nohiki-ml-tei-qwen3-0.6b
+  #   network_mode: host
+  #   restart: unless-stopped
+  #   command:
+  #     - --model-id=Qwen/Qwen3-Embedding-0.6B
+  #     - --port=8092
+  #     - --auto-truncate
+  #     - --otlp-endpoint=http://localhost:4317
+  #     - --otlp-service-name=nohiki-ml-tei-qwen3-0.6b
+  #     - --json-output
+  #   environment:
+  #     - HF_HOME=/data/huggingface
+  #     - HF_HUB_ENABLE_HF_TRANSFER=0
+  #   volumes:
+  #     - nohiki-vol-tei-models:/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/8092' || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 300s
+  #   profiles:
+  #     - ml-qwen3
+
+  # nohiki-ml-tei-qwen3-4b:
+  #   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9-grpc
+  #   container_name: nohiki-ml-tei-qwen3-4b
+  #   network_mode: host
+  #   restart: unless-stopped
+  #   command:
+  #     - --model-id=Qwen/Qwen3-Embedding-4B
+  #     - --port=8093
+  #     - --auto-truncate
+  #     - --otlp-endpoint=http://localhost:4317
+  #     - --otlp-service-name=nohiki-ml-tei-qwen3-4b
+  #     - --json-output
+  #   environment:
+  #     - HF_HOME=/data/huggingface
+  #     - HF_HUB_ENABLE_HF_TRANSFER=0
+  #   volumes:
+  #     - nohiki-vol-tei-models:/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/8093' || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 600s
+  #   profiles:
+  #     - ml-qwen3
+
+  # MLOps infrastructure (nohiki-mlops-*)
+
+  nohiki-mlops-mlflow:
+    <<: *common-infrastructure
+    image: ghcr.io/mlflow/mlflow:v3.14.0-full@sha256:73365f742d67ef9e59e50118010bf14ff825a157c8244051baea887b8587e772
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_MLFLOW:-5000}:5000"
+    volumes:
+      - nohiki-vol-postgres-service-secrets:/run/secrets/postgres-services:ro
+      - *vol-s3-mlflow
+    environment:
+      # RustFS artifact store (S3-compatible)
+      MLFLOW_ARTIFACTS_DESTINATION: s3://nohiki-mlflow-artifacts
+      MLFLOW_S3_ENDPOINT_URL: http://nohiki-infra-rustfs:9000
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export AWS_ACCESS_KEY_ID="$$(cat /run/secrets/s3/access_key)"
+        export AWS_SECRET_ACCESS_KEY="$$(cat /run/secrets/s3/secret_key)"
+        DB_PASSWORD="$$(python -c 'from pathlib import Path; from urllib.parse import quote; print(quote(Path("/run/secrets/postgres-services/mlflow_password").read_text(), safe=""))')"
+        exec mlflow server \
+          --host 0.0.0.0 \
+          --port 5000 \
+          --backend-store-uri "postgresql://mlflow:$${DB_PASSWORD}@nohiki-infra-postgres:5432/mlflow" \
+          --default-artifact-root s3://nohiki-mlflow-artifacts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=2)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres-init:
+        condition: service_completed_successfully
+      nohiki-infra-rustfs-init:
+        condition: service_completed_successfully
+    profiles:
+      - mlops
+
+  # Observability (nohiki-obs-*)
+
+  nohiki-obs-loki:
+    <<: *common-infrastructure
+    image: docker.io/grafana/loki:3.7.3@sha256:70b9f699fc9bb868b62f1cfd4f787dfa50242f1fd92e6089787d5d7daea75fe8
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_LOKI:-3100}:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    # Shellless image; readiness is checked by nohiki-obs-readiness.
+    volumes:
+      - ./observability/loki/local-config.yaml:/etc/loki/local-config.yaml:ro
+      - nohiki-vol-loki:/loki
+    profiles:
+      - observability
+
+  nohiki-obs-tempo:
+    <<: *common-infrastructure
+    image: docker.io/grafana/tempo:3.0.2@sha256:cda87c212d8c584dc0b89e337e7ed648a5100feb657e5d528480ee4fa03dbbe3
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_TEMPO:-3200}:3200"
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - nohiki-vol-tempo:/var/tempo
+    profiles:
+      - observability
+
+  nohiki-obs-mimir:
+    <<: *common-infrastructure
+    image: docker.io/grafana/mimir:3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d
+    command: ["-config.file=/etc/mimir/mimir.yaml", "-target=all"]
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_MIMIR:-9009}:9009"
+    volumes:
+      - ./observability/mimir/mimir.yaml:/etc/mimir/mimir.yaml:ro
+      - nohiki-vol-mimir:/data
+    profiles:
+      - observability
+
+  nohiki-obs-pyroscope:
+    <<: *common-infrastructure
+    image: docker.io/grafana/pyroscope:2.1.1@sha256:c8ad9891fc8562c794c946883c8324b7e48f4eda58d243387c7b6254f9f061fb
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PYROSCOPE:-4040}:4040"
+    command:
+      - "server"
+    environment:
+      - PYROSCOPE_LOG_LEVEL=debug
+    volumes:
+      - nohiki-vol-pyroscope:/var/lib/pyroscope
+    profiles:
+      - observability
+
+  nohiki-obs-otel-collector:
+    <<: *common-infrastructure
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.156.0@sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_OTEL_GRPC:-4317}:4317"
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_OTEL_HTTP:-4318}:4318"
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_OTEL_PROM:-8889}:8889"
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_OTEL_HEALTH:-13133}:13133"
+    volumes:
+      - ./observability/otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    profiles:
+      - observability
+
+  nohiki-obs-phoenix:
+    <<: *common-infrastructure
+    image: docker.io/arizephoenix/phoenix:17.26.0@sha256:adf850ae51707fc739abd0271fb57661fc1006c204d7eeeb62fa39f7fbc1c3a7
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PHOENIX_UI:-6006}:6006"
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PHOENIX_OTLP:-4320}:4317"
+    environment:
+      - PHOENIX_WORKING_DIR=/phoenix
+      - PHOENIX_ENABLE_AUTH=false
+    volumes:
+      - nohiki-vol-postgres-service-secrets:/run/secrets/postgres-services:ro
+      - nohiki-vol-phoenix:/phoenix
+    entrypoint: ["/usr/bin/python3.13", "-c"]
+    command:
+      - |
+        import os
+        from pathlib import Path
+        from urllib.parse import quote
+
+        password = quote(Path("/run/secrets/postgres-services/phoenix_password").read_text(), safe="")
+        os.environ["PHOENIX_SQL_DATABASE_URL"] = (
+            f"postgresql://phoenix:{password}@nohiki-infra-postgres:5432/phoenix"
+        )
+        os.execv(
+            "/usr/bin/python3.13",
+            ["python3.13", "-m", "phoenix.server.main", "serve"],
+        )
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6006/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      <<: *depends-on-secrets
+      nohiki-infra-postgres-init:
+        condition: service_completed_successfully
+    profiles:
+      - observability
+      - llm-observability
+
+  nohiki-obs-prometheus:
+    <<: *common-infrastructure
+    image: quay.io/prometheus/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PROMETHEUS:-9090}:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
+      - nohiki-vol-prometheus:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - nohiki-obs-otel-collector
+    profiles:
+      - observability
+
+  nohiki-obs-readiness:
+    <<: *common-infrastructure
+    image: docker.io/curlimages/curl:8.21.0@sha256:7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13
+    entrypoint: ["sleep"]
+    command: ["2147483647"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl --fail --silent --show-error --max-time 5 http://nohiki-obs-loki:3100/ready >/dev/null &&
+          curl --fail --silent --show-error --max-time 5 http://nohiki-obs-tempo:3200/ready >/dev/null &&
+          curl --fail --silent --show-error --max-time 5 http://nohiki-obs-mimir:9009/ready >/dev/null
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      nohiki-obs-loki: {condition: service_started}
+      nohiki-obs-tempo: {condition: service_started}
+      nohiki-obs-mimir: {condition: service_started}
+    profiles:
+      - observability
+
+  nohiki-obs-grafana:
+    <<: *common-infrastructure
+    image: docker.io/grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
+    ports:
+      - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_GRAFANA:-3001}:3000"
+    environment:
+      # DEV ONLY: production overrides via SOPS-encrypted values; Grafana is observability-only on local.
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_USERS_DEFAULT_THEME=dark
+      - GF_USERS_HOME_PAGE=dashboard
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_UID=nohiki-overview
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    volumes:
+      - ./observability/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      # Dashboard JSONs above are symlinks into infra/shared/dashboards (single source of truth); they resolve to /shared/dashboards in-container
+      - ../shared/dashboards:/shared/dashboards:ro
+      - nohiki-vol-grafana:/var/lib/grafana
+    depends_on:
+      nohiki-obs-prometheus: {condition: service_healthy}
+      nohiki-obs-readiness: {condition: service_healthy}
+      nohiki-obs-pyroscope: {condition: service_started}
+    profiles:
+      - observability
+
+# Networks
+
+networks:
+  nohiki-network:
+    driver: bridge
+
+# Volumes
+
+volumes:
+  nohiki-vol-postgres:
+  nohiki-vol-pgadmin:
+  nohiki-vol-valkey:
+  nohiki-vol-rustfs:
+  nohiki-vol-qdrant:
+  nohiki-vol-kafka:
+  nohiki-vol-loki:
+  nohiki-vol-prometheus:
+  nohiki-vol-grafana:
+  nohiki-vol-pyroscope:
+  nohiki-vol-tempo:
+  nohiki-vol-mimir:
+  nohiki-vol-postgres-service-secrets:
+  nohiki-vol-phoenix:
+  nohiki-vol-tei-models:
+  ml-model-cache:
+  nohiki-vol-secret-database:
+  nohiki-vol-secret-redis:
+  nohiki-vol-secret-s3:
+  nohiki-vol-secret-jwt:
+  nohiki-vol-secret-oauth:
+  nohiki-vol-secret-jsearch:
+  nohiki-vol-secret-llm:
+  nohiki-vol-secret-email:
+  nohiki-vol-secret-qdrant:
+  nohiki-vol-secret-s3-mlflow:
+
+# Secrets: nested dirs under ../shared/secrets/ mounted read-only to
+# /run/secrets/{category}/ per service (see infra/shared/secrets/README.md).

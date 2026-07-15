@@ -1,0 +1,14 @@
+apiVersion: 1
+datasources:
+  - name: Mimir
+    type: prometheus
+    uid: mimir
+    access: proxy
+    url: http://nohiki-obs-mimir:9009/prometheus
+    isDefault: false
+    jsonData:
+      httpMethod: POST
+      prometheusType: Mimir
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: nohiki

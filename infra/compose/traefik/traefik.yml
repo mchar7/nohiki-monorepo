@@ -1,0 +1,32 @@
+# Static configuration
+log:
+  level: INFO
+  format: common
+
+api:
+  dashboard: true
+  insecure: true # dev only - remove in production
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+ping:
+  entryPoint: web
+
+providers:
+  file:
+    directory: "/etc/traefik/dynamic_conf"
+    watch: true
+
+# Enable metrics for monitoring
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+
+# Add tracing for debugging (optional)
+# tracing:
+#   jaeger: {}

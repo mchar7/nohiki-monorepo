@@ -1,0 +1,47 @@
+http:
+  routers:
+    jwks:
+      rule: "Path(`/.well-known/jwks.json`)"
+      entryPoints:
+        - web
+      service: identity-service
+      priority: 1000
+
+    auth:
+      rule: "PathPrefix(`/api/v1/auth/`)"
+      entryPoints:
+        - web
+      service: identity-service
+      priority: 990
+
+    account:
+      rule: "PathPrefix(`/api/v1/account`)"
+      entryPoints:
+        - web
+      service: identity-service
+      priority: 950
+
+    api-ping:
+      rule: "Path(`/api/ping`)"
+      entryPoints:
+        - web
+      service: bff-service
+      priority: 980
+
+    api:
+      rule: "PathPrefix(`/api/`)"
+      entryPoints:
+        - web
+      service: bff-service
+      priority: 100
+
+  services:
+    identity-service:
+      loadBalancer:
+        servers:
+          - url: "http://nohiki-svc-user-auth:8000"
+
+    bff-service:
+      loadBalancer:
+        servers:
+          - url: "http://nohiki-svc-bff:8000"

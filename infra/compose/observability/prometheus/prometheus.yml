@@ -1,0 +1,52 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+remote_write:
+  - url: http://nohiki-obs-mimir:9009/api/v1/push
+    headers:
+      X-Scope-OrgID: nohiki
+
+rule_files:
+  - "/etc/prometheus/rules/*.yml"
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['nohiki-obs-otel-collector:8889']
+    scrape_interval: 10s
+    metrics_path: /metrics
+
+  - job_name: 'docling-serve'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['nohiki-infra-docling:5001']
+    metrics_path: /metrics
+
+  - job_name: 'nohiki-services'
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+        - 'nohiki-svc-user-auth:8000'
+        - 'nohiki-svc-user-pref:8000'
+        - 'nohiki-svc-user-upload:8000'
+        - 'nohiki-svc-user-entitlement:8000'
+        - 'nohiki-svc-job-storage:8000'
+        - 'nohiki-svc-job-correlation-evaluation:8000'
+        - 'nohiki-svc-job-ingest-discovery:8000'
+        - 'nohiki-svc-job-ingest-schedule:8000'
+        - 'nohiki-svc-job-ingest-enrichment:8000'
+        - 'nohiki-svc-job-query-composition:8000'
+        - 'nohiki-svc-ml-gateway:8000'
+        - 'nohiki-svc-ml-compute:8000'
+        - 'nohiki-svc-doc-tailoring:8000'
+        - 'nohiki-svc-doc-render:8000'
+        - 'nohiki-svc-doc-schema:8000'
+        - 'nohiki-svc-notification:8000'
+        - 'nohiki-svc-skill-graph:8000'
+        - 'nohiki-svc-bff:8000'
+    metrics_path: /metrics

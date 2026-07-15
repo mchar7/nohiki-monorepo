@@ -1,0 +1,132 @@
+# Override file: enable OTEL telemetry export for all services when observability profile is active.
+# Usage: COMPOSE_PROFILE=observability COMPOSE_OVERRIDE_FILE=docker-compose.observability.yml sh scripts/preflight.sh up -d
+#
+# Each service gets its OTEL endpoint via its settings prefix + OBSERVABILITY__OTEL_ENDPOINT,
+# which pydantic-settings resolves to observability.otel_endpoint (enabling OTel export).
+
+services:
+  nohiki-svc-user-auth:
+    environment:
+      USER_AUTH_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-bff:
+    environment:
+      BFF_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-user-upload:
+    environment:
+      USER_UPLOAD_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-user-pref:
+    environment:
+      USER_PREF_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-user-entitlement:
+    environment:
+      USER_ENTITLEMENT_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-job-query-composition:
+    environment:
+      JOB_QUERY_COMPOSITION_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-job-ingest-schedule:
+    environment:
+      JOB_INGEST_SCHEDULE_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-job-ingest-discovery:
+    environment:
+      JOB_INGEST_DISCOVERY_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-job-ingest-enrichment:
+    environment:
+      JOB_INGEST_ENRICHMENT_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-job-storage:
+    environment:
+      JOB_STORAGE_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-job-correlation:
+    environment:
+      JOB_CORRELATION_EVAL_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-doc-template:
+    environment:
+      DOC_TEMPLATE_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-notification:
+    environment:
+      NOTIFICATION_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-doc-content:
+    environment:
+      DOC_CONTENT_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-doc-process:
+    environment:
+      DOC_PROCESS_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-ml-gateway:
+    environment:
+      ML_GATEWAY_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-ml-compute:
+    environment:
+      ML_COMPUTE_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started
+
+  nohiki-svc-skill-graph:
+    environment:
+      SKILL_GRAPH_OBSERVABILITY__OTEL_ENDPOINT: http://nohiki-obs-otel-collector:4317
+    depends_on:
+      nohiki-obs-otel-collector:
+        condition: service_started

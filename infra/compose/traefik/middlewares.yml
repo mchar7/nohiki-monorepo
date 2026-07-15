@@ -1,0 +1,19 @@
+http:
+  middlewares:
+    rate-limit:
+      rateLimit:
+        burst: 100
+        average: 50
+        period: "1m"
+
+    security-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        frameDeny: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"

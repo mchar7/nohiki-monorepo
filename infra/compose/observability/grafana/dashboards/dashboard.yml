@@ -1,0 +1,17 @@
+apiVersion: 1
+
+providers:
+  - name: 'nohiki-dashboards'
+    orgId: 1
+    folder: 'Nohiki'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+    folderUid: nohiki
+
+# Set default home dashboard
+defaultDashboards:
+  - uid: nohiki-overview

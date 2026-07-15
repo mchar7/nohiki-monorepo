@@ -1,0 +1,107 @@
+groups:
+  - name: skill-canonicalization
+    rules:
+      - alert: HighSkillCanonicalizationFailureRate
+        expr: |
+          sum(rate(nohiki_skill_canonicalization_total{match_result="failed"}[5m]))
+          / sum(rate(nohiki_skill_canonicalization_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High skill canonicalization failure rate"
+          description: "More than 10% of skill canonicalization requests are failing ({{ $value | humanizePercentage }})"
+
+      - alert: SlowFeatureExtraction
+        expr: |
+          histogram_quantile(0.95, rate(nohiki_feature_extraction_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Feature extraction p95 latency > 500ms"
+          description: "95th percentile feature extraction latency is {{ $value | humanizeDuration }}"
+
+      - alert: FeatureExtractionHighErrorRate
+        expr: |
+          sum(rate(nohiki_feature_extraction_total{status="error"}[5m]))
+          / sum(rate(nohiki_feature_extraction_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High feature extraction error rate"
+          description: "More than 5% of feature extractions are failing ({{ $value | humanizePercentage }})"
+
+      - alert: SlowEmbeddingComputation
+        expr: |
+          histogram_quantile(0.95, rate(nohiki_embedding_computation_duration_seconds_bucket[5m])) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Embedding computation p95 latency > 2s"
+          description: "95th percentile embedding computation latency is {{ $value | humanizeDuration }} for {{ $labels.embedding_type }}"
+
+      - alert: SagaTimeout
+        expr: |
+          histogram_quantile(0.99, rate(nohiki_saga_duration_seconds_bucket[5m])) > 120
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Saga completion p99 > 2 minutes"
+          description: "99th percentile saga duration is {{ $value | humanizeDuration }} for {{ $labels.saga_type }}"
+
+      - alert: SagaHighFailureRate
+        expr: |
+          sum(rate(nohiki_saga_completion_total{status="error"}[5m])) by (saga_type)
+          / sum(rate(nohiki_saga_completion_total[5m])) by (saga_type) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High saga failure rate for {{ $labels.saga_type }}"
+          description: "More than 10% of {{ $labels.saga_type }} sagas are failing ({{ $value | humanizePercentage }})"
+
+      - alert: PipelineThroughputDrop
+        expr: |
+          sum(rate(nohiki_pipeline_throughput_total{pipeline_stage="enriched"}[5m]))
+          < sum(rate(nohiki_pipeline_throughput_total{pipeline_stage="accepted"}[5m])) * 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pipeline throughput drop detected"
+          description: "Less than 50% of accepted listings are being enriched. Possible bottleneck in enrichment pipeline."
+
+      - alert: SlowSkillCanonicalization
+        expr: |
+          histogram_quantile(0.95, rate(nohiki_skill_canonicalization_duration_seconds_bucket[5m])) > 10.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Skill canonicalization p95 latency > 10s"
+          description: "95th percentile skill canonicalization latency is {{ $value | humanizeDuration }}"
+
+      - alert: HighNeedsReviewRate
+        expr: |
+          sum(rate(nohiki_skill_canonicalization_total{match_result="needs_review"}[1h]))
+          / sum(rate(nohiki_skill_canonicalization_total[1h])) > 0.3
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "High percentage of skills need manual review"
+          description: "More than 30% of skills are flagged for manual review ({{ $value | humanizePercentage }}). Consider improving skill taxonomy."
+
+      - alert: NoSkillCanonicalizationActivity
+        expr: |
+          sum(rate(nohiki_skill_canonicalization_total[10m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No skill canonicalization activity"
+          description: "No skill canonicalization requests in the last 15 minutes. Pipeline may be stalled."

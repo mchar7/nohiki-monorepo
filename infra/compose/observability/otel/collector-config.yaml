@@ -1,0 +1,79 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    limit_mib: 256
+    spike_limit_mib: 64
+    check_interval: 1s
+
+  resource:
+    attributes:
+      - key: service.namespace
+        value: nohiki
+        action: upsert
+      - key: deployment.environment
+        value: local-dev
+        action: upsert
+
+  batch:
+    timeout: 1s
+    send_batch_size: 100
+
+exporters:
+  # Traces -> Tempo (OTLP gRPC)
+  otlp/tempo:
+    endpoint: nohiki-obs-tempo:4317
+    tls:
+      insecure: true
+
+  # Logs -> Loki (OTLP HTTP)
+  otlphttp/loki:
+    endpoint: http://nohiki-obs-loki:3100/otlp
+    tls:
+      insecure: true
+
+  # Metrics -> Mimir (Prometheus remote write)
+  prometheusremotewrite/mimir:
+    endpoint: http://nohiki-obs-mimir:9009/api/v1/push
+    headers:
+      X-Scope-OrgID: nohiki
+    tls:
+      insecure: true
+
+  # Prometheus scrape endpoint (for Prometheus to scrape OTel's own metrics)
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: nohiki
+    const_labels:
+      cluster: dev
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: debug
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/tempo]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/loki]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite/mimir, prometheus]

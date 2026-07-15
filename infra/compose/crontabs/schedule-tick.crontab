@@ -1,0 +1,2 @@
+# Publish schedule tick every minute (matches K8s CronJob schedule)
+* * * * * python -m sys_tick_job.publish_schedule_tick
