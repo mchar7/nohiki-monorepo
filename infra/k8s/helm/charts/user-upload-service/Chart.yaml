@@ -1,0 +1,10 @@
+apiVersion: v2
+name: user-upload-service
+description: File attachment storage and retrieval service
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+dependencies:
+  - name: nohiki-common
+    version: "0.1.x"
+    repository: "file://../nohiki-common"
