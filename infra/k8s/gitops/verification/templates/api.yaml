@@ -1,0 +1,7 @@
+{{- if eq .Values.stage "api" }}
+{{ tpl (.Files.Get "api/access.yaml") . }}
+---
+{{ tpl (.Files.Get "api/pvc.yaml") . }}
+---
+{{ tpl (.Files.Get "api/job.yaml") . }}
+{{- end }}

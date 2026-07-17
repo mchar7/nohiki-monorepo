@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nohiki-registry
+  namespace: nohiki-registry
+  labels:
+    app.kubernetes.io/name: nohiki-registry
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nohiki-registry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nohiki-registry
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: registry
+          image: registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REGISTRY_HTTP_ADDR
+              value: 0.0.0.0:5000
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "false"
+          ports:
+            - name: registry
+              containerPort: 5000
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+            - name: run
+              mountPath: /var/run
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: nohiki-registry
+        - name: run
+          emptyDir: {}

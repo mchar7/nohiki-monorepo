@@ -1,0 +1,6 @@
+stage: ""
+global:
+  nohikiImage:
+    registry: localhost:5000
+    pullPolicy: IfNotPresent
+  imageDigests: {}

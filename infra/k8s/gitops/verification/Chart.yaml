@@ -1,0 +1,4 @@
+apiVersion: v2
+name: nohiki-verification
+version: 0.1.0
+description: Ordered local API and browser verification Jobs

@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+patches:
+  - target:
+      kind: HelmRelease
+      name: nohiki
+    patch: |-
+      - op: replace
+        path: /spec/targetNamespace
+        value: nohiki-dev
+      - op: replace
+        path: /spec/storageNamespace
+        value: nohiki-dev
+      - op: replace
+        path: /spec/chart/spec/valuesFiles
+        value:
+          - infra/k8s/helm/values.yaml
+          - infra/k8s/helm/values.dev.yaml
+      - op: add
+        path: /spec/values
+        value:
+          global:
+            nohikiImage:
+              registry: ${image_registry}
+              owner: ${image_owner}
+              repositoryName: ${image_repository}
+            imageTag: ${image_tag}
+            eso:
+              azure:
+                keyVaultUrl: ${eso_vault_url}
+                clientId: ${eso_client_id}
+                tenantId: ${eso_tenant_id}

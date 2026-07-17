@@ -1,0 +1,5 @@
+{{- if eq .Values.stage "playwright" }}
+{{ tpl (.Files.Get "playwright/pvc.yaml") . }}
+---
+{{ tpl (.Files.Get "playwright/job.yaml") . }}
+{{- end }}

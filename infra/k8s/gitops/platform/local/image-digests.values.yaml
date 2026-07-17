@@ -1,0 +1,10 @@
+# Generated only by the guarded local image publication command.
+# The unpublished sentinel prevents mutable first-party image fallback.
+global:
+  imageTag: publish-required
+  nohikiImage:
+    registry: localhost:5000
+    owner: ""
+    repositoryName: ""
+    pullPolicy: IfNotPresent
+  imageDigests: {}

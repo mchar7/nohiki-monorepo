@@ -1,0 +1,96 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nohiki-api-verification-v1
+  namespace: nohiki-verification
+  labels:
+    app.kubernetes.io/name: nohiki-api-verification
+    nohiki.io/verification-stage: api
+  annotations:
+    verification.nohiki.dev/revision: "v1"
+    verification.nohiki.dev/runner-image-digest: {{ required "global.imageDigests.api-verification-runner is required" (index .Values.global.imageDigests "api-verification-runner") | quote }}
+    verification.nohiki.dev/gateway-url: "http://nohiki.localhost"
+    verification.nohiki.dev/suite-digest: "sha256:9cfcef8240c12c74e5ce3e3705156b59480fc584ed53cd5324ddfedd753e0601"
+    verification.nohiki.dev/remediation: "inspect /artifacts/api/result.json and Job logs; fix source or cluster, bump revision, reconcile"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nohiki-api-verification
+        nohiki.io/verification-stage: api
+    spec:
+      serviceAccountName: nohiki-verification
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      hostAliases:
+        - ip: 127.0.0.1
+          hostnames: [nohiki.localhost, s3.nohiki.localhost]
+      initContainers:
+        - name: gateway-proxy
+          image: {{ include "verification.image" (dict "root" . "name" "api-verification-runner") | quote }}
+          args: [proxy]
+          restartPolicy: Always
+          env:
+            - {name: NOHIKI_GATEWAY_UPSTREAM, value: http://nohiki-gateway.nohiki.svc.cluster.local:80}
+            - {name: NOHIKI_PROXY_LISTEN_HOST, value: 127.0.0.1}
+            - {name: NOHIKI_PROXY_LISTEN_PORT, value: "80"}
+            - {name: NOHIKI_PROXY_ALLOWED_HOSTS, value: "nohiki.localhost,s3.nohiki.localhost"}
+          startupProbe:
+            httpGet:
+              host: 127.0.0.1
+              port: 80
+              path: /api/ping
+              httpHeaders:
+                - {name: Host, value: nohiki.localhost}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              host: 127.0.0.1
+              port: 80
+              path: /api/ping
+              httpHeaders:
+                - {name: Host, value: nohiki.localhost}
+            periodSeconds: 2
+            failureThreshold: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities: {drop: [ALL], add: [NET_BIND_SERVICE]}
+      containers:
+        - name: api-verification
+          image: {{ include "verification.image" (dict "root" . "name" "api-verification-runner") | quote }}
+          args: [api]
+          env:
+            - {name: NOHIKI_TARGET, value: k8s}
+            - {name: NOHIKI_GATEWAY_URL, value: http://nohiki.localhost}
+            - {name: E2E_BASE_URL, value: http://nohiki.localhost}
+            - {name: E2E_ORIGIN, value: http://nohiki.localhost}
+            - {name: NOHIKI_S3_PUBLIC_URL, value: http://s3.nohiki.localhost}
+            - {name: K8S_NAMESPACE, value: nohiki}
+            - {name: K8S_RELEASE, value: nohiki}
+            - {name: KAFKA_BOOTSTRAP_SERVERS, value: nohiki-kafka-kafka-bootstrap.nohiki.svc.cluster.local:9092}
+          volumeMounts:
+            - {name: artifacts, mountPath: /artifacts}
+            - {name: tmp, mountPath: /tmp}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "2", memory: 2Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities: {drop: [ALL], add: []}
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim: {claimName: nohiki-api-verification-artifacts-v1}
+        - name: tmp
+          emptyDir: {}

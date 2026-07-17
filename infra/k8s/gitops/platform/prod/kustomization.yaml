@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+patches:
+  - target:
+      kind: HelmRelease
+      name: nohiki
+    patch: |-
+      - op: replace
+        path: /spec/targetNamespace
+        value: nohiki-prod
+      - op: replace
+        path: /spec/storageNamespace
+        value: nohiki-prod
+      - op: replace
+        path: /spec/chart/spec/sourceRef/name
+        value: gitops-release
+      - op: replace
+        path: /spec/chart/spec/valuesFiles
+        value:
+          - infra/k8s/helm/values.yaml
+          - infra/k8s/helm/values.prod.yaml
+          - infra/k8s/helm/values.prod.identity.yaml
+          - infra/k8s/helm/values.prod.network.yaml
+          - infra/k8s/helm/values.prod.digests.yaml

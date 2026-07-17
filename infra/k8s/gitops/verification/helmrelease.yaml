@@ -1,0 +1,30 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nohiki-health-verification
+  namespace: flux-system
+spec:
+  interval: 10m
+  timeout: 15m
+  targetNamespace: nohiki
+  releaseName: nohiki-health-verification
+  chart:
+    spec:
+      chart: ./infra/k8s/verification/health
+      reconcileStrategy: Revision
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 0
+  upgrade:
+    force: true
+    remediation:
+      retries: 0
+  valuesFrom:
+    - kind: ConfigMap
+      name: nohiki-image-digests
+      valuesKey: values.yaml
+      optional: false
