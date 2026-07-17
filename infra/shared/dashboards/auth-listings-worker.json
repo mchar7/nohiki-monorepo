@@ -1,0 +1,216 @@
+{
+  "id": null,
+  "uid": "auth-listings-worker",
+  "title": "Auth Listings Worker",
+  "description": "Edge Worker metrics for auth-page job listings. NOTE: Tempo metrics-generator span-metrics must be enabled with custom dimensions `cache_status` and `country`. Until that is configured, the per-dimension panels will be empty.",
+  "tags": ["nohiki", "edge", "auth-listings", "cloudflare"],
+  "style": "dark",
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"]
+  },
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Cache Hit Rate",
+      "description": "Requires span attribute `cache_status` to be promoted to a span-metrics dimension in the Tempo metrics-generator config.",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service_name=\"auth-listings-worker\",cache_status=\"hit\"}[5m])) / clamp_min(sum(rate(traces_spanmetrics_calls_total{service_name=\"auth-listings-worker\",cache_status=~\"hit|miss\"}[5m])), 1e-9)",
+          "legendFormat": "Hit Rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.8 }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "title": "Request Latency (p50 / p95 / p99)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(traces_spanmetrics_latency_bucket{service_name=\"auth-listings-worker\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{service_name=\"auth-listings-worker\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(traces_spanmetrics_latency_bucket{service_name=\"auth-listings-worker\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": false },
+          "unit": "s"
+        }
+      },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 0 }
+    },
+    {
+      "id": 3,
+      "title": "Worker Fallback Rate",
+      "description": "Rate of Worker requests whose root span is marked ERROR because the upstream BFF returned non-OK or the fetch failed. The Worker intentionally returns a 200 fallback body in these cases, so HTTP status alone is not a reliable signal.",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service_name=\"auth-listings-worker\",status_code=\"STATUS_CODE_ERROR\"}[5m])) / clamp_min(sum(rate(traces_spanmetrics_calls_total{service_name=\"auth-listings-worker\"}[5m])), 1e-9)",
+          "legendFormat": "Error Rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 0 }
+    },
+    {
+      "id": 4,
+      "title": "BFF 429 Rate (auth-listings route)",
+      "description": "Canonical BFF HTTP request counter filtered to 429 responses on the auth-listings endpoint.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(nohiki_http_server_request_count_total{exported_job=\"bff-service\",url_path=~\"/api/v1/auth-listings/?\",http_response_status_code=\"429\"}[5m]))",
+          "legendFormat": "429s/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never", "spanNulls": false },
+          "unit": "reqps"
+        }
+      },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 }
+    },
+    {
+      "id": 5,
+      "title": "Requests by Country",
+      "description": "Requires span attribute `country` to be promoted to a span-metrics dimension.",
+      "type": "table",
+      "targets": [
+        {
+          "expr": "sum by (country) (rate(traces_spanmetrics_calls_total{service_name=\"auth-listings-worker\"}[5m]))",
+          "legendFormat": "{{country}}",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "reqps"
+        }
+      },
+      "options": { "showHeader": true },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 }
+    },
+    {
+      "id": 6,
+      "title": "Worker Logs",
+      "type": "logs",
+      "targets": [
+        {
+          "expr": "{service_name=\"auth-listings-worker\"} | json",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 14 }
+    }
+  ],
+  "templating": { "list": [] },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  }
+}
