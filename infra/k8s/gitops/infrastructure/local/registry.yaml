@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nohiki-registry
+  labels:
+    app.kubernetes.io/name: local-registry
+    app.kubernetes.io/part-of: nohiki
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: local-registry
+  namespace: nohiki-registry
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: local-registry-data
+  namespace: nohiki-registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: local-registry
+  namespace: nohiki-registry
+  labels:
+    app.kubernetes.io/name: local-registry
+    app.kubernetes.io/part-of: nohiki
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: local-registry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: local-registry
+        app.kubernetes.io/part-of: nohiki
+    spec:
+      serviceAccountName: local-registry
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: registry
+          # Official Distribution 3.0.0 OCI index digest, verified against Docker Hub.
+          image: registry@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: registry
+              containerPort: 5000
+              hostPort: 5000
+              hostIP: 127.0.0.1
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: local-registry-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: local-registry
+  namespace: nohiki-registry
+  labels:
+    app.kubernetes.io/name: local-registry
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: local-registry
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: registry
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: local-registry
+  namespace: nohiki-registry
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: local-registry
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Kubernetes always permits node-originated traffic; this additionally keeps
+    # the ClusterIP usable only by workloads in the registry namespace.
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 5000
+          protocol: TCP
+  egress: []

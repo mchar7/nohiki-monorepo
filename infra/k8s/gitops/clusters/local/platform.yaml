@@ -1,0 +1,49 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: platform
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: runtime-secrets
+    - name: registry
+  interval: 10m
+  retryInterval: 2m
+  timeout: 20m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infra/k8s/gitops/platform/local
+  prune: true
+  wait: false
+  healthChecks:
+    - {apiVersion: helm.toolkit.fluxcd.io/v2, kind: HelmRelease, name: nohiki, namespace: flux-system}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-openai, namespace: nohiki}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-openrouter, namespace: nohiki}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-tls, namespace: nohiki}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-ca, namespace: nohiki}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-client-doc-content, namespace: nohiki}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-client-job-ingest-enrichment, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: Gateway, name: nohiki-gateway, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: Gateway, name: nohiki-model-egress, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-jwks-route, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-auth-route, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-account-route, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-ping-route, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-sse-route, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-api-route, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-s3-route, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-otel-traces-route, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-frontend-route, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-model-egress-healthz, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-model-egress-responses, namespace: nohiki}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-model-egress-completions, namespace: nohiki}
+  healthCheckExprs:
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      failed: status.conditions.exists(c, (c.type == 'Accepted' || c.type == 'Programmed') && c.status == 'False' && c.observedGeneration == metadata.generation)
+      current: status.conditions.exists(c, c.type == 'Accepted' && c.status == 'True' && c.observedGeneration == metadata.generation) && status.conditions.exists(c, c.type == 'Programmed' && c.status == 'True' && c.observedGeneration == metadata.generation)
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      failed: status.parents.exists(p, p.conditions.exists(c, (c.type == 'Accepted' || c.type == 'ResolvedRefs') && c.status == 'False' && c.observedGeneration == metadata.generation))
+      current: status.parents.size() > 0 && status.parents.all(p, p.conditions.exists(c, c.type == 'Accepted' && c.status == 'True' && c.observedGeneration == metadata.generation) && p.conditions.exists(c, c.type == 'ResolvedRefs' && c.status == 'True' && c.observedGeneration == metadata.generation))

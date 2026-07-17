@@ -1,0 +1,79 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: observability
+  namespace: flux-system
+spec:
+  suspend: true
+  dependsOn:
+    - name: platform
+  interval: 10m
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: gitops-release
+  path: ./infra/k8s/observability/overlays/prod
+  prune: true
+  wait: false
+  healthChecks:
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-collector-collector, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-kube-prometheus-sta-operator, namespace: nohiki-prod}
+    - {apiVersion: monitoring.coreos.com/v1, kind: Prometheus, name: nohiki-kube-prometheus-sta-prometheus, namespace: nohiki-prod}
+    - {apiVersion: monitoring.coreos.com/v1, kind: Alertmanager, name: nohiki-kube-prometheus-sta-alertmanager, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-kube-state-metrics, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: DaemonSet, name: nohiki-prometheus-node-exporter, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-grafana-operator, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: DaemonSet, name: loki-canary, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-loki-gateway, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: loki-read, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: loki-backend, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: loki-write, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-loki-chunks-cache, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-loki-results-cache, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-compactor, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-distributor, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-querier, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-query-frontend, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-tempo-ingester, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-tempo-memcached, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-distributor, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-gateway, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-overrides-exporter, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-querier, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-query-frontend, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-query-scheduler, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-ruler, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-alertmanager, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-compactor, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-ingester-zone-a, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-ingester-zone-b, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-ingester-zone-c, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-kafka, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-store-gateway-zone-a, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-store-gateway-zone-b, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-store-gateway-zone-c, namespace: nohiki-prod}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-pyroscope, namespace: nohiki-prod}
+    - {apiVersion: opentelemetry.io/v1beta1, kind: OpenTelemetryCollector, name: nohiki-collector, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: Grafana, name: nohiki-grafana, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaFolder, name: nohiki, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDatasource, name: mimir, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDatasource, name: tempo, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDatasource, name: loki, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDatasource, name: pyroscope, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: auth-listings-worker, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-overview, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-services, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-database, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-infrastructure, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-llm, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-providers, namespace: nohiki-prod}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-skill-canonicalization, namespace: nohiki-prod}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: grafana-admin-credentials, namespace: nohiki-prod}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: grafana-oauth-credentials, namespace: nohiki-prod}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: observability-storage-credentials, namespace: nohiki-prod}
+    # Production alone emits the cert-manager chain used by the collector receiver.
+    - {apiVersion: cert-manager.io/v1, kind: Issuer, name: otel-selfsigned, namespace: nohiki-prod}
+    - {apiVersion: cert-manager.io/v1, kind: Certificate, name: otel-ca, namespace: nohiki-prod}
+    - {apiVersion: cert-manager.io/v1, kind: Issuer, name: otel-ca, namespace: nohiki-prod}
+    - {apiVersion: cert-manager.io/v1, kind: Certificate, name: otel-receiver, namespace: nohiki-prod}

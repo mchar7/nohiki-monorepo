@@ -1,0 +1,27 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: api-verification
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: health-verification
+  interval: 1h
+  retryInterval: 5m
+  timeout: 65m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infra/k8s/gitops/verification/api
+  prune: false
+  force: false
+  wait: true
+  healthChecks:
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: nohiki-api-verification
+      namespace: flux-system
+    - apiVersion: batch/v1
+      kind: Job
+      name: nohiki-api-verification-v1
+      namespace: nohiki-verification

@@ -1,0 +1,15 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: gitops-release
+  namespace: flux-system
+spec:
+  # Distinct from the branch-tracking control source that native bootstrap owns
+  # (flux-system): the production stacks build from an immutable, commit-pinned
+  # release. The committed placeholder keeps the source NotReady until the
+  # activation change stamps the reviewed release SHA. The control source picks
+  # up that merged change and updates this commit in the cluster automatically.
+  interval: 5m
+  url: https://github.com/mchar7/nohiki-monorepo.git
+  ref:
+    commit: PROMOTION_REQUIRED

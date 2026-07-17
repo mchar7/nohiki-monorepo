@@ -1,0 +1,75 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: platform
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: infrastructure
+  interval: 10m
+  retryInterval: 2m
+  timeout: 20m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infra/k8s/gitops/platform/staging
+  prune: true
+  wait: false
+  healthChecks:
+    - {apiVersion: helm.toolkit.fluxcd.io/v2, kind: HelmRelease, name: nohiki, namespace: flux-system}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-anthropic, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-ca, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-openai, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-openrouter, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-tls, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: auth-listings-secret, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: kafka-sasl-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-email-api-keys, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-jsearch-api-keys, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-jwt-keys, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-oauth-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-redis-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-s3-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: qdrant-api-key, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: bff-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: doc-template-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: job-correlation-evaluation-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: job-ingest-discovery-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: job-ingest-enrichment-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: job-ingest-schedule-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: job-query-composition-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: job-storage-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: notification-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: skill-graph-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: user-auth-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: user-entitlement-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: user-pref-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: user-upload-service-db-credentials, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-client-doc-content, namespace: nohiki-staging}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: nohiki-model-egress-client-job-ingest-enrichment, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: Gateway, name: nohiki-gateway, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: Gateway, name: nohiki-model-egress, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-jwks-route, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-auth-route, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-account-route, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-ping-route, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-sse-route, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-api-route, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-frontend-route, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-model-egress-healthz, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-model-egress-responses, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-model-egress-completions, namespace: nohiki-staging}
+    - {apiVersion: gateway.networking.k8s.io/v1, kind: HTTPRoute, name: nohiki-model-egress-messages, namespace: nohiki-staging}
+  healthCheckExprs:
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      failed: status.conditions.exists(c, (c.type == 'Accepted' || c.type == 'Programmed') && c.status == 'False' && c.observedGeneration == metadata.generation)
+      current: status.conditions.exists(c, c.type == 'Accepted' && c.status == 'True' && c.observedGeneration == metadata.generation) && status.conditions.exists(c, c.type == 'Programmed' && c.status == 'True' && c.observedGeneration == metadata.generation)
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      failed: status.parents.exists(p, p.conditions.exists(c, (c.type == 'Accepted' || c.type == 'ResolvedRefs') && c.status == 'False' && c.observedGeneration == metadata.generation))
+      current: status.parents.size() > 0 && status.parents.all(p, p.conditions.exists(c, c.type == 'Accepted' && c.status == 'True' && c.observedGeneration == metadata.generation) && p.conditions.exists(c, c.type == 'ResolvedRefs' && c.status == 'True' && c.observedGeneration == metadata.generation))
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: gitops-runtime

@@ -1,0 +1,73 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: observability
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: platform
+  interval: 10m
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infra/k8s/observability/overlays/dev
+  prune: true
+  wait: false
+  healthChecks:
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-collector-collector, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-kube-prometheus-sta-operator, namespace: nohiki-dev}
+    - {apiVersion: monitoring.coreos.com/v1, kind: Prometheus, name: nohiki-kube-prometheus-sta-prometheus, namespace: nohiki-dev}
+    - {apiVersion: monitoring.coreos.com/v1, kind: Alertmanager, name: nohiki-kube-prometheus-sta-alertmanager, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-kube-state-metrics, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: DaemonSet, name: nohiki-prometheus-node-exporter, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-grafana-operator, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: DaemonSet, name: loki-canary, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-loki-gateway, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: loki-read, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: loki-backend, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: loki-write, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-loki-chunks-cache, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-loki-results-cache, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-compactor, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-distributor, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-querier, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-query-frontend, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-tempo-ingester, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-tempo-memcached, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-distributor, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-gateway, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-overrides-exporter, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-querier, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-query-frontend, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-query-scheduler, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-ruler, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-alertmanager, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-compactor, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-ingester-zone-a, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-ingester-zone-b, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-ingester-zone-c, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-kafka, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-store-gateway-zone-a, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-store-gateway-zone-b, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-mimir-store-gateway-zone-c, namespace: nohiki-dev}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-pyroscope, namespace: nohiki-dev}
+    - {apiVersion: opentelemetry.io/v1beta1, kind: OpenTelemetryCollector, name: nohiki-collector, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: Grafana, name: nohiki-grafana, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaFolder, name: nohiki, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDatasource, name: mimir, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDatasource, name: tempo, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDatasource, name: loki, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDatasource, name: pyroscope, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: auth-listings-worker, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-overview, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-services, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-database, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-infrastructure, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-llm, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-providers, namespace: nohiki-dev}
+    - {apiVersion: grafana.integreatly.org/v1beta1, kind: GrafanaDashboard, name: nohiki-skill-canonicalization, namespace: nohiki-dev}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: grafana-admin-credentials, namespace: nohiki-dev}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: grafana-oauth-credentials, namespace: nohiki-dev}
+    - {apiVersion: external-secrets.io/v1, kind: ExternalSecret, name: observability-storage-credentials, namespace: nohiki-dev}
