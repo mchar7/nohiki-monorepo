@@ -1,0 +1,8 @@
+# OpenTofu backend configuration (do not commit backend.tfvars).
+# Use a distinct key for every environment to prevent state collisions.
+subscription_id      = "<your-azure-subscription-id>"
+resource_group_name  = "<your-state-resource-group>"
+storage_account_name = "<your-state-storage-account>"
+container_name       = "tfstate"
+key                  = "nohiki/<environment>.tfstate"
+use_azuread_auth     = true
