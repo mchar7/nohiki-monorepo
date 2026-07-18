@@ -1,0 +1,97 @@
+{{/*
+Qdrant Collection Initialization Job.
+
+Creates collections on the Qdrant vector database according to the
+SemanticRepresentationManifest. Runs BEFORE services that depend on
+Qdrant start up.
+
+Docker Compose has `nohiki-infra-qdrant-init` as a service with
+depends_on: service_completed_successfully. The Kubernetes equivalent is a
+Helm hook at weight 0, ahead of migrations (weight 1) and bootstrap (weight 2).
+
+Image: infra/shared/qdrant-init (built via `just build-all`).
+Command: `qdrant-init init --manifest ... --qdrant-url ... --wait`
+  - `--wait` blocks until Qdrant is reachable, so the Job tolerates
+    Qdrant still starting up.
+  - Idempotent: the CLI upserts collection definitions, so re-running
+    is safe (e.g., on helm upgrade when the manifest changed).
+*/}}
+{{- if .Values.qdrant.enabled }}
+{{- $glob := .Values.global | default dict }}
+{{- $globImg := $glob.image | default dict }}
+{{- $imgTag := $glob.imageTag | default "latest" }}
+{{- $qdrantInit := .Values.qdrantInit | default dict }}
+{{- $qdrantInitImage := $qdrantInit.image | default dict }}
+{{- $imgRegistry := dig "registry" ($globImg.registry | default "") $qdrantInitImage }}
+{{- $imgOwner := dig "owner" ($globImg.owner | default "") $qdrantInitImage }}
+{{- $imgRepoName := dig "repositoryName" ($globImg.repositoryName | default "") $qdrantInitImage }}
+{{- $imgName := dig "name" "qdrant-init" $qdrantInitImage }}
+{{- $pullPolicy := dig "pullPolicy" ($globImg.pullPolicy | default "IfNotPresent") $qdrantInitImage }}
+{{- $imageRef := printf "%s:%s" $imgName $imgTag }}
+{{- if $imgRegistry }}
+  {{- $imageRef = printf "%s/%s:%s" $imgRegistry $imgName $imgTag }}
+{{- end }}
+{{- if and $imgRegistry $imgOwner $imgRepoName }}
+  {{- $imageRef = printf "%s/%s/%s/%s:%s" $imgRegistry $imgOwner $imgRepoName $imgName $imgTag }}
+{{- end }}
+{{- $qdrantValues := .Values.qdrant | default dict }}
+{{- $qdrantHost := $qdrantValues.fullnameOverride | default (printf "%s-qdrant" .Release.Name) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nohiki-qdrant-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: qdrant-init
+    app.kubernetes.io/name: nohiki-qdrant-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nohiki-qdrant-init
+        app.kubernetes.io/component: qdrant-init
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "nohiki-common.defaultPodSecurityContext" . | nindent 8 }}
+      containers:
+        - name: qdrant-init
+          image: {{ $imageRef | quote }}
+          imagePullPolicy: {{ $pullPolicy }}
+          # Dockerfile ENTRYPOINT is already `qdrant-init`; we only supply args.
+          args:
+            - "init"
+            - "--manifest"
+            - "/config/semantic_representation_manifest.json"
+            - "--qdrant-url"
+            - "http://{{ $qdrantHost }}:6333"
+            - "--wait"
+          securityContext:
+            {{- include "nohiki-common.defaultSecurityContext" . | nindent 12 }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: ml-manifest
+              mountPath: /config/semantic_representation_manifest.json
+              subPath: semantic_representation_manifest.json
+              readOnly: true
+      volumes:
+        - name: ml-manifest
+          configMap:
+            name: nohiki-ml-manifest
+{{- end }}

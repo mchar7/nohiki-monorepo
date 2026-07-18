@@ -1,0 +1,108 @@
+{{/*
+OpenTelemetry Collector - centralized telemetry pipeline.
+
+Receives OTLP from all services, processes, and exports to:
+- Jaeger (traces)
+- Loki (logs via OTLP)
+- Prometheus (metrics)
+
+Configuration matches Docker Compose observability stack for parity.
+*/}}
+{{- $obs := (.Values.global | default dict).observability | default dict }}
+{{- $otel := $obs.otel | default dict }}
+{{- if and $obs.enabled $otel.enabled }}
+{{- $collector := $otel.collector }}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ .Release.Name }}-otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/part-of: nohiki
+spec:
+  mode: {{ $collector.mode | default "deployment" }}
+  replicas: {{ $collector.replicas | default 1 }}
+  resources:
+    requests:
+      memory: {{ $collector.resources.requests.memory | default "128Mi" }}
+      cpu: {{ $collector.resources.requests.cpu | default "50m" }}
+    limits:
+      memory: {{ $collector.resources.limits.memory | default "256Mi" }}
+      cpu: {{ $collector.resources.limits.cpu | default "200m" }}
+  config:
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      memory_limiter:
+        limit_mib: 256
+        spike_limit_mib: 64
+        check_interval: 1s
+
+      resource:
+        attributes:
+          - key: service.namespace
+            value: nohiki
+            action: upsert
+          - key: deployment.environment
+            value: {{ .Values.global.environment | default "dev" }}
+            action: upsert
+
+      batch:
+        timeout: 1s
+        send_batch_size: 100
+
+    exporters:
+      # OTLP HTTP exporter for Jaeger (modern approach)
+      otlphttp/jaeger:
+        endpoint: http://{{ .Release.Name }}-jaeger-collector:4318
+        tls:
+          insecure: true
+
+      # OTLP HTTP exporter for Loki (using OTLP endpoint)
+      otlphttp/loki:
+        endpoint: http://{{ .Release.Name }}-loki:3100/otlp
+        tls:
+          insecure: true
+
+      # Prometheus exporter for metrics
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+        namespace: nohiki
+        const_labels:
+          cluster: {{ .Values.global.environment | default "dev" }}
+
+    service:
+      extensions: [health_check]
+      telemetry:
+        logs:
+          level: info
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [otlphttp/jaeger]
+
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [otlphttp/loki]
+
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [prometheus]
+{{- end }}

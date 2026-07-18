@@ -1,0 +1,664 @@
+# Production overrides: Azure AKS.
+# Secrets: provisioned via External Secrets Operator syncing from Azure Key Vault.
+# Infrastructure: PostgreSQL, Redis, Kafka, S3 are all Azure-managed services.
+# Scaling: KEDA enabled; HTTP services always-on, Kafka services scale-to-zero.
+
+global:
+  environment: prod
+  imageTag: sha-933dda3
+  modelEgress:
+    rateLimitsEnabled: true
+  # Standard NetworkPolicy cannot select Azure service FQDNs. Public endpoint
+  # operation therefore uses 0.0.0.0/0, but each rule is emitted only for a
+  # workload declaring that dependency and is restricted to its exact port.
+  # Replace individual cidrs lists with private endpoint CIDRs after rollout.
+  networkPolicy:
+    managedEgress:
+      database:
+        cidrs: [0.0.0.0/0]
+      kafka:
+        cidrs: [0.0.0.0/0]
+      redis:
+        cidrs: [0.0.0.0/0]
+      s3:
+        cidrs: [0.0.0.0/0]
+      qdrant:
+        cidrs: [0.0.0.0/0]
+
+  azure:
+    keyVaultName: nohiki-prod-kv
+    managedIdentityClientId: ""
+    tenantId: ""
+    cloudName: ""
+  eso:
+    # ESO operator+CRDs live in the foundation chart; this flag emits the
+    # chart-managed external-secrets-sa, nohiki-secret-store, and ExternalSecrets.
+    externalSecretsEnabled: true
+    azure:
+      keyVaultUrl: ""
+      clientId: ""
+      tenantId: ""
+    remoteRefs:
+      shared:
+        nohiki-redis-credentials: {dsn: redis-dsn}
+        nohiki-jwt-keys: {private_key: jwt-private-key}
+        nohiki-oauth-credentials: {github_client_id: oauth-github-client-id, github_client_secret: oauth-github-client-secret, google_client_id: oauth-google-client-id, google_client_secret: oauth-google-client-secret}
+        nohiki-email-api-keys: {resend_api_key: resend-api-key}
+        nohiki-jsearch-api-keys: {api_key: jsearch-api-key}
+        nohiki-s3-credentials: {access_key: s3-access-key, secret_key: s3-secret-key}
+        qdrant-api-key: {api-key: qdrant-api-key}
+        auth-listings-secret: {secret: auth-listings-secret}
+        kafka-sasl-credentials: {username: kafka-sasl-username, password: kafka-sasl-password, mechanism: kafka-sasl-mechanism}
+      modelEgress:
+        nohiki-model-egress-openai: {Authorization: model-egress-openai-authorization}
+        nohiki-model-egress-anthropic: {Authorization: model-egress-anthropic-authorization}
+        nohiki-model-egress-openrouter: {Authorization: model-egress-openrouter-authorization}
+        nohiki-model-egress-tls: {tls.crt: model-egress-tls-crt, tls.key: model-egress-tls-key}
+        nohiki-model-egress-ca: {ca.crt: model-egress-ca-crt}
+
+  database:
+    host: nohiki-prod-postgres.postgres.database.azure.com
+    port: 5432
+
+  redis:
+    host: nohiki-prod-redis.redis.cache.windows.net
+    port: 6380
+
+  kafka:
+    port: 9093
+    bootstrapServers: nohiki-prod-kafka.servicebus.windows.net:9093
+    dsn: "kafka://nohiki-prod-kafka.servicebus.windows.net:9093"
+    security:
+      protocol: SASL_SSL
+      sasl:
+        mechanism: PLAIN
+        secretName: kafka-sasl-credentials
+
+
+  s3:
+    provider: azure_blob
+    port: 443
+    endpoint: https://nohikiprod.blob.core.windows.net
+    region: eastus
+
+  qdrant:
+    host: nohiki-prod-qdrant.qdrant.cloud
+    grpcPort: "6334"
+    useTls: true
+    apiKeySecret: qdrant-api-key
+
+  observability:
+    enabled: true
+    prometheus:
+      enabled: true
+    otel:
+      enabled: false
+    otelEndpoint: https://nohiki-collector-collector.nohiki-prod.svc.cluster.local:4317
+    otelInsecure: "false"
+    otelEnabled: "true"
+    phoenixEndpoint: ""
+    phoenixEnabled: "false"
+    phoenixProjectName: nohiki
+    otelTls:
+      enabled: true
+      secretName: otel-receiver-tls
+      mountPath: /etc/otel/ca
+      certificatePath: /etc/otel/ca/ca.crt
+
+  scaling:
+    minReplicas: 1
+    maxReplicas: 20
+    cooldownPeriod: 300
+
+  ingress:
+    enabled: true
+    gatewayClass: kgateway
+    host: nohiki.com
+    tls:
+      enabled: true
+      secretName: nohiki-tls
+      secretProvisioned: false
+
+# Disable in-cluster infrastructure (Azure-managed in production)
+strimzi:
+  enabled: false
+kafkaCluster:
+  enabled: false
+
+# KEDA with Kafka SASL auth for Azure Event Hubs
+keda:
+  httpAddon:
+    enabled: true
+    interceptorReplicas: 3
+    waitTimeout: "30s"
+  kafka:
+    authEnabled: true
+    sasl:
+      enabled: true
+      secretName: kafka-sasl-credentials
+    tls:
+      enabled: true
+
+# HTTP-exposed services (always-on, HA, HTTP KEDA scaling)
+
+user-auth-service:
+  replicaCount: 2
+  networkPolicy:
+    allowGatewayIngress: true
+    allowBffIngress: true
+  scaling:
+    enabled: true
+    type: http
+    minReplicas: 2
+    maxReplicas: 10
+    http:
+      targetPendingRequests: 50
+  monitoring:
+    enabled: true
+  extraEnv:
+    - name: USER_AUTH_JWT__ISSUER
+      value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000"
+    - name: USER_AUTH_JWT__AUDIENCE
+      value: "nohiki-api"
+    - name: USER_AUTH_JWT__KEY_ID
+      value: "nohiki-auth-key-1"
+    - name: USER_AUTH_JWT__PRIVATE_KEY_PATH
+      value: "/run/secrets/jwt/private_key"
+    - name: USER_AUTH_COOKIE__SECURE
+      value: "true"
+    - name: USER_AUTH_OAUTH__GITHUB__ENABLED
+      value: "false"
+    - name: USER_AUTH_OAUTH__GOOGLE__ENABLED
+      value: "false"
+    - name: USER_AUTH_TRUSTED_PROXY_CIDRS
+      value: '["10.244.0.0/16"]'
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+bff-service:
+  replicaCount: 2
+  networkPolicy:
+    allowGatewayIngress: true
+    allowAuthEgress: true
+  scaling:
+    enabled: true
+    type: http
+    minReplicas: 2
+    maxReplicas: 10
+    http:
+      targetPendingRequests: 50
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  extraEnv:
+    - name: BFF_JWT__JWKS_URL
+      value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000/.well-known/jwks.json"
+    - name: BFF_JWT__ISSUER
+      value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000"
+    - name: BFF_JWT__AUDIENCE
+      value: "nohiki-api"
+    - name: BFF_ORIGINS__CORS_ORIGINS
+      value: "https://nohiki.com"
+    - name: BFF_ORIGINS__CSRF_ORIGINS
+      value: "https://nohiki.com"
+    - name: NOHIKI_TRUSTED_PROXY_CIDRS
+      value: "10.42.0.0/20"
+    - name: BFF_S3__PUBLIC_URL
+      value: "https://nohikiprod.blob.core.windows.net"
+    - name: BFF_AUTH_LISTINGS__SECRET
+      valueFrom:
+        secretKeyRef:
+          name: auth-listings-secret
+          key: secret
+  secrets:
+    s3: false
+  serviceAccount:
+    create: false
+    name: nohiki-storage
+  podLabels:
+    azure.workload.identity/use: "true"
+
+frontend:
+  replicaCount: 2
+  scaling:
+    enabled: false
+  monitoring:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# Kafka-driven services (scale-to-zero via KEDA Kafka consumer lag)
+
+user-pref-service:
+  qdrant:
+    enabled: true
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+user-upload-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  secrets:
+    s3: false
+  serviceAccount:
+    create: false
+    name: nohiki-storage
+  podLabels:
+    azure.workload.identity/use: "true"
+
+user-entitlement-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+job-ingest-discovery-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+job-ingest-schedule-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+job-query-composition-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+job-ingest-enrichment-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+job-storage-service:
+  scaling:
+    enabled: true
+    minReplicas: 1
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+job-correlation-evaluation-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  secrets:
+    s3: false
+  serviceAccount:
+    create: false
+    name: nohiki-storage
+  podLabels:
+    azure.workload.identity/use: "true"
+
+doc-template-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  secrets:
+    s3: false
+  serviceAccount:
+    create: false
+    name: nohiki-storage
+  podLabels:
+    azure.workload.identity/use: "true"
+
+doc-content-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  secrets:
+    s3: false
+  serviceAccount:
+    create: false
+    name: nohiki-storage
+  podLabels:
+    azure.workload.identity/use: "true"
+
+doc-process-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  secrets:
+    s3: false
+  serviceAccount:
+    create: false
+    name: nohiki-storage
+  podLabels:
+    azure.workload.identity/use: "true"
+
+ml-gateway-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+ml-compute-service:
+  # Accelerator = the single production switch. mode: cuda selects the CUDA-13.0
+  # image variant, one nvidia.com/gpu, the GPU node-pool selector+toleration, the
+  # NVIDIA device plugin, and the gpu compute backend, all derived by
+  # nohiki-common.accelerator.normalize. To run ml-compute on CPU in production,
+  # flip this ONE field to `cpu` (nothing else changes); local/staging omit it and
+  # stay CPU. Keep the Terraform GPU node pool in lockstep: cuda here requires
+  # aks_gpu_node_pool_enabled=true (its prod default), cpu allows it disabled.
+  accelerator:
+    mode: cuda
+  scaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 5
+  monitoring:
+    enabled: true
+  resources:
+    # CPU/memory envelope for the replica. The nvidia.com/gpu count is derived
+    # from accelerator.mode; never set resources.gpu by hand.
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  secrets:
+    s3: false
+  serviceAccount:
+    create: false
+    name: nohiki-storage
+  podLabels:
+    azure.workload.identity/use: "true"
+
+skill-graph-service:
+  networkPolicy:
+    extraEgress:
+      - to:
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+        ports:
+          - port: 443
+            protocol: TCP
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+notification-service:
+  scaling:
+    enabled: true
+  monitoring:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# CronJob
+scheduleTickPublisher:
+  enabled: true
+  schedule: "*/1 * * * *"
+
+# Observability stack (production: Azure native, HA replicas, secure)
+
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      remoteWrite:
+        - url: http://nohiki-mimir-nginx.nohiki-prod.svc:80/api/v1/push
+          headers:
+            X-Scope-OrgID: nohiki
+
+mimir-distributed:
+  minio:
+    enabled: false
+  mimir:
+    structuredConfig:
+      common:
+        storage:
+          backend: azure
+          azure:
+            account_name: nohikiprodobs
+            container_name: nohiki-prod-mimir
+      limits:
+        max_global_series_per_user: 5000000
+        ingestion_rate: 500000
+  distributor:
+    replicas: 3
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+  ingester:
+    replicas: 3
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+  querier:
+    replicas: 3
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  query_frontend:
+    replicas: 2
+  store_gateway:
+    replicas: 3
+  compactor:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  ruler:
+    replicas: 2
+
+tempo-distributed:
+  tempo:
+    structuredConfig:
+      storage:
+        trace:
+          backend: azure
+          azure:
+            storage_account_name: nohikiprodobs
+            container_name: nohiki-prod-tempo
+      metrics_generator:
+        storage:
+          remote_write:
+            - url: http://nohiki-mimir-nginx.nohiki-prod.svc:80/api/v1/push
+              headers:
+                X-Scope-OrgID: nohiki
+  distributor:
+    replicas: 3
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  ingester:
+    replicas: 3
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+  querier:
+    replicas: 3
+  query_frontend:
+    replicas: 2
+  compactor:
+    replicas: 1
+  metrics_generator:
+    replicas: 2
+
+loki:
+  loki:
+    storage:
+      type: azure
+      bucketNames:
+        chunks: nohiki-prod-loki-chunks
+        ruler: nohiki-prod-loki-ruler
+        admin: nohiki-prod-loki-admin
+      azure:
+        accountName: nohikiprodobs
+    commonConfig:
+      replication_factor: 3
+  write:
+    replicas: 3
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  read:
+    replicas: 3
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  backend:
+    replicas: 1
+
+pyroscope:
+  pyroscope:
+    structuredConfig:
+      storage:
+        backend: azure
+        azure:
+          storage_account_name: nohikiprodobs
+          container_name: nohiki-prod-pyroscope
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi

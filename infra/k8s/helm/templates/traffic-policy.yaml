@@ -1,0 +1,113 @@
+{{/*
+kgateway TrafficPolicy for rate limiting and security headers.
+Applied to HTTPRoute targets for API protection.
+*/}}
+{{- if $.Values.global.ingress.enabled }}
+{{- $trafficPolicy := .Values.global.ingress.trafficPolicy | default dict }}
+{{- $rateLimit := $trafficPolicy.rateLimit | default dict }}
+---
+# Rate limiting policy for API routes
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: {{ .Release.Name }}-rate-limit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-rate-limit
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-auth-route
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-account-route
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-api-route
+  rateLimit:
+    local:
+      tokenBucket:
+        maxTokens: {{ $rateLimit.burst | default 50 }}
+        tokensPerFill: {{ $rateLimit.average | default 100 }}
+        fillInterval: {{ $rateLimit.period | default "60s" }}
+---
+# Security headers policy for ordinary browser-facing routes (OTLP and SSE are intentionally excluded)
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: {{ .Release.Name }}-security-headers
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-security-headers
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-jwks-route
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-auth-route
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-account-route
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-ping-route
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-api-route
+    {{- if index .Values "frontend" "enabled" }}
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-frontend-route
+    {{- end }}
+  transformation:
+    response:
+      set:
+        - name: X-Content-Type-Options
+          value: "'nosniff'"
+        - name: X-Frame-Options
+          value: "'DENY'"
+        - name: X-XSS-Protection
+          value: "'1; mode=block'"
+        - name: Referrer-Policy
+          value: "'strict-origin-when-cross-origin'"
+        {{- if or (eq .Values.global.environment "staging") (eq .Values.global.environment "prod") }}
+        - name: Content-Security-Policy
+          value: "\"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https: wss:; frame-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'; upgrade-insecure-requests\""
+        - name: Permissions-Policy
+          value: "'camera=(), geolocation=(), microphone=(), payment=()'"
+        {{- end }}
+        {{- if eq .Values.global.environment "prod" }}
+        - name: Strict-Transport-Security
+          value: "'max-age=31536000; includeSubDomains'"
+        {{- end }}
+---
+# Preserve the application's native EventSource response without body filters.
+# Request/response headers, path, and upstream statuses pass through unchanged.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: {{ .Release.Name }}-sse-response
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-sse-response
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Release.Name }}-sse-route
+      sectionName: document-events
+  buffer:
+    disable: {}
+  compression:
+    responseCompression:
+      disable: {}
+{{- end }}

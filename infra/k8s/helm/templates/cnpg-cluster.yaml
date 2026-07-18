@@ -1,0 +1,104 @@
+{{- if .Values.cnpgCluster.enabled }}
+{{- $cfg := .Values.cnpgCluster }}
+{{- $glob := .Values.global | default dict }}
+{{- $globSecrets := $glob.secrets | default dict }}
+{{- $secretValues := .Values.secretValues | default dict }}
+{{- $db := $secretValues.database | default dict }}
+---
+# CloudNativePG PostgreSQL Cluster (Infrastructure Only)
+# Per-service databases are created via Database CRDs in each service's Helm chart.
+# This template only provides the shared cluster infrastructure.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $cfg.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: nohiki
+spec:
+  instances: {{ $cfg.instances }}
+  imageName: {{ $cfg.imageName | default "ghcr.io/cloudnative-pg/postgresql:18.3" }}
+
+  postgresql:
+    parameters:
+      wal_level: logical
+      max_replication_slots: "16"
+      max_wal_senders: "16"
+      shared_preload_libraries: ""
+      max_connections: {{ $cfg.maxConnections | default "200" | quote }}
+
+  bootstrap:
+    initdb:
+      database: postgres
+      owner: postgres
+
+  storage:
+    size: {{ $cfg.storage.size | default "5Gi" }}
+    {{- if $cfg.storage.storageClass }}
+    storageClass: {{ $cfg.storage.storageClass }}
+    {{- end }}
+
+  resources:
+    requests:
+      memory: {{ $cfg.resources.requests.memory | default "256Mi" }}
+      cpu: {{ $cfg.resources.requests.cpu | default "100m" }}
+    limits:
+      memory: {{ $cfg.resources.limits.memory | default "512Mi" }}
+      cpu: {{ $cfg.resources.limits.cpu | default "500m" }}
+
+  # Note: CNPG deprecated spec.monitoring.enablePodMonitor in v1.25 and will
+  # remove the field in v1.30. The operator-managed PodMonitor is replaced by
+  # a user-managed one below (see PodMonitor resource). Leaving the stanza
+  # unset means the operator will NOT create/reconcile a PodMonitor itself,
+  # giving us full ownership of scrape config.
+
+  {{- if $cfg.backup.enabled }}
+  backup:
+    barmanObjectStore:
+      destinationPath: {{ $cfg.backup.destinationPath }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ $globSecrets.s3SecretName | default "nohiki-s3-credentials" }}
+          key: access_key
+        secretAccessKey:
+          name: {{ $globSecrets.s3SecretName | default "nohiki-s3-credentials" }}
+          key: secret_key
+      endpointURL: {{ $cfg.backup.endpointURL }}
+    retentionPolicy: {{ $cfg.backup.retentionPolicy | default "7d" }}
+  {{- end }}
+
+  # Per-service roles managed via ESO-generated secrets
+  # App roles: DML access to service database
+  # Debezium roles: REPLICATION privilege for CDC
+  managed:
+    roles:
+      {{- range $svcName, $svcValues := $.Values }}
+      {{- if eq (include "nohiki.hasDatabaseEnabled" $svcValues) "true" }}
+      {{- $appRole := include "nohiki.dbAppRole" (dict "svcName" $svcName "svcValues" $svcValues) }}
+      {{- $debeziumRole := include "nohiki.dbDebeziumRole" (dict "svcName" $svcName "svcValues" $svcValues) }}
+      - name: {{ $appRole }}
+        ensure: present
+        login: true
+        superuser: false
+        createdb: false
+        createrole: false
+        inherit: true
+        replication: false
+        passwordSecret:
+          name: {{ $svcName }}-db-credentials
+      - name: {{ $debeziumRole }}
+        ensure: present
+        login: true
+        superuser: false
+        createdb: false
+        createrole: false
+        inherit: true
+        replication: true
+        passwordSecret:
+          name: {{ $svcName }}-debezium-credentials
+      {{- end }}
+      {{- end }}
+{{- end }}

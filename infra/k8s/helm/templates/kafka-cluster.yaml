@@ -1,0 +1,103 @@
+{{- if .Values.kafkaCluster.enabled }}
+{{- $cfg := .Values.kafkaCluster }}
+---
+# Strimzi Kafka cluster using KRaft mode (no Zookeeper)
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: {{ $cfg.name }}-pool
+  namespace: {{ .Release.Namespace }}
+  labels:
+    strimzi.io/cluster: {{ $cfg.name }}
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: messaging
+    app.kubernetes.io/part-of: nohiki
+spec:
+  replicas: {{ $cfg.replicas }}
+  roles:
+    - controller
+    - broker
+  storage:
+    type: {{ $cfg.storage.type }}
+    size: {{ $cfg.storage.size }}
+    deleteClaim: {{ $cfg.storage.deleteClaim }}
+  resources:
+    requests:
+      memory: {{ $cfg.resources.requests.memory }}
+      cpu: {{ $cfg.resources.requests.cpu }}
+    limits:
+      memory: {{ $cfg.resources.limits.memory }}
+      cpu: {{ $cfg.resources.limits.cpu }}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: {{ $cfg.name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    strimzi.io/kraft: enabled
+    strimzi.io/node-pools: enabled
+  labels:
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: messaging
+    app.kubernetes.io/part-of: nohiki
+spec:
+  kafka:
+    version: {{ $cfg.version | quote }}
+    listeners:
+      - name: plain
+        port: {{ $cfg.listeners.plain.port }}
+        type: internal
+        tls: false
+    config:
+      offsets.topic.replication.factor: {{ $cfg.config.offsetsTopicReplicationFactor }}
+      transaction.state.log.replication.factor: {{ $cfg.config.transactionStateLogReplicationFactor }}
+      transaction.state.log.min.isr: {{ $cfg.config.transactionStateLogMinIsr }}
+      default.replication.factor: {{ $cfg.config.defaultReplicationFactor }}
+      min.insync.replicas: {{ $cfg.config.minInsyncReplicas }}
+      auto.create.topics.enable: {{ $cfg.config.autoCreateTopicsEnable }}
+      num.partitions: {{ $cfg.config.numPartitions | default 3 }}
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: {{ $cfg.name }}-metrics
+          key: kafka-metrics-config.yml
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $cfg.name }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  kafka-metrics-config.yml: |
+    lowercaseOutputName: true
+    rules:
+      - pattern: kafka.server<type=(.+), name=(.+), clientId=(.+), topic=(.+), partition=(.*)><>Value
+        name: kafka_server_$1_$2
+        type: GAUGE
+        labels:
+          clientId: "$3"
+          topic: "$4"
+          partition: "$5"
+      - pattern: kafka.server<type=(.+), name=(.+), clientId=(.+), brokerHost=(.+), brokerPort=(.+)><>Value
+        name: kafka_server_$1_$2
+        type: GAUGE
+        labels:
+          clientId: "$3"
+          broker: "$4:$5"
+      - pattern: kafka.server<type=(.+), name=(.+)><>Value
+        name: kafka_server_$1_$2
+        type: GAUGE
+      - pattern: kafka.(\w+)<type=(.+), name=(.+)><>Value
+        name: kafka_$1_$2_$3
+        type: GAUGE
+{{- end }}

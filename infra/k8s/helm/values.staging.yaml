@@ -1,0 +1,318 @@
+# Staging overrides: Azure AKS, in-cluster infrastructure.
+# Unlike prod (which uses Azure-managed PostgreSQL/Redis/Event Hubs/Blob),
+# staging runs IN-CLUSTER Strimzi Kafka, Valkey, Qdrant, and RustFS (inherited
+# from values.yaml); do NOT add prod-style disables (strimzi.enabled: false,
+# etc.) here. PostgreSQL is the exception: staging consumes the OpenTofu
+# Azure Database for PostgreSQL, so CNPG is disabled below.
+#
+# Staging-specific overrides: per-service replica counts, ingress hostname,
+# and Azure Blob-backed observability storage for Mimir/Tempo/Loki/Pyroscope.
+
+global:
+  environment: staging
+  imageTag: sha-933dda3
+  modelEgress:
+    rateLimitsEnabled: true
+  eso:
+    externalSecretsEnabled: true
+    # azure.{keyVaultUrl,clientId,tenantId} arrive at runtime via the Flux
+    # HelmRelease; existingStoreName is intentionally absent so the platform
+    # chart creates external-secrets-sa and the nohiki-secret-store store.
+    remoteRefs:
+      shared:
+        nohiki-redis-credentials: {dsn: redis-dsn}
+        nohiki-jwt-keys: {private_key: jwt-private-key}
+        nohiki-oauth-credentials: {github_client_id: oauth-github-client-id, github_client_secret: oauth-github-client-secret, google_client_id: oauth-google-client-id, google_client_secret: oauth-google-client-secret}
+        nohiki-email-api-keys: {resend_api_key: resend-api-key}
+        nohiki-jsearch-api-keys: {api_key: jsearch-api-key}
+        nohiki-s3-credentials: {access_key: s3-access-key, secret_key: s3-secret-key}
+        qdrant-api-key: {api-key: qdrant-api-key}
+        auth-listings-secret: {secret: auth-listings-secret}
+        kafka-sasl-credentials: {username: kafka-sasl-username, password: kafka-sasl-password, mechanism: kafka-sasl-mechanism}
+      modelEgress:
+        nohiki-model-egress-openai: {Authorization: model-egress-openai-authorization}
+        nohiki-model-egress-anthropic: {Authorization: model-egress-anthropic-authorization}
+        nohiki-model-egress-openrouter: {Authorization: model-egress-openrouter-authorization}
+        nohiki-model-egress-tls: {tls.crt: model-egress-tls-crt, tls.key: model-egress-tls-key}
+        nohiki-model-egress-ca: {ca.crt: model-egress-ca-crt}
+
+  observability:
+    enabled: true
+    prometheus:
+      enabled: true
+    otel:
+      enabled: false
+    logLevel: INFO
+
+  scaling:
+    minReplicas: 1
+    maxReplicas: 5
+    cooldownPeriod: 180
+
+  ingress:
+    gatewayClass: kgateway
+    host: staging.nohiki.com
+    tls:
+      enabled: true
+      secretName: staging-nohiki-tls
+      secretProvisioned: false
+
+# Staging consumes the OpenTofu-provisioned Azure Database for PostgreSQL, so the
+# in-cluster CloudNativePG Cluster is disabled here. The CNPG operator is still
+# installed cluster-wide by the foundation chart but has no Cluster to reconcile.
+cnpgCluster:
+  enabled: false
+
+# HTTP-exposed services (always-on, HA)
+
+user-auth-service:
+  replicaCount: 2
+  scaling:
+    minReplicas: 1
+    maxReplicas: 5
+  # Helm replaces lists; keep the complete service environment when overriding.
+  extraEnv:
+    - name: USER_AUTH_JWT__ISSUER
+      value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000"
+    - name: USER_AUTH_JWT__AUDIENCE
+      value: "nohiki-api"
+    - name: USER_AUTH_JWT__KEY_ID
+      value: "nohiki-auth-key-1"
+    - name: USER_AUTH_JWT__PRIVATE_KEY_PATH
+      value: "/run/secrets/jwt/private_key"
+    - name: USER_AUTH_COOKIE__SECURE
+      value: "true"
+    - name: USER_AUTH_OAUTH__GITHUB__ENABLED
+      value: "false"
+    - name: USER_AUTH_OAUTH__GOOGLE__ENABLED
+      value: "false"
+
+bff-service:
+  replicaCount: 2
+  scaling:
+    minReplicas: 1
+    maxReplicas: 5
+  # Helm merges lists by replacement, not append. This list must include
+  # every env var from charts/bff-service/values.yaml:extraEnv plus
+  # staging-specific additions, otherwise the chart defaults are dropped.
+  extraEnv:
+    - name: BFF_JWT__JWKS_URL
+      value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000/.well-known/jwks.json"
+    - name: BFF_JWT__ISSUER
+      value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000"
+    - name: BFF_JWT__AUDIENCE
+      value: "nohiki-api"
+    - name: BFF_ORIGINS__CORS_ORIGINS
+      value: "https://staging.nohiki.com"
+    - name: BFF_ORIGINS__CSRF_ORIGINS
+      value: "https://staging.nohiki.com"
+    - name: NOHIKI_TRUSTED_PROXY_CIDRS
+      value: "10.42.0.0/20"
+    - name: BFF_AUTH_LISTINGS__SECRET
+      valueFrom:
+        secretKeyRef:
+          name: auth-listings-secret
+          key: secret
+
+frontend:
+  replicaCount: 2
+  scaling:
+    minReplicas: 1
+    maxReplicas: 5
+
+# User domain services (Kafka-driven)
+
+user-pref-service:
+  replicaCount: 1
+  qdrant:
+    enabled: true
+  scaling:
+    minReplicas: 1
+    maxReplicas: 5
+
+user-upload-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 3
+
+user-entitlement-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 1
+    maxReplicas: 3
+
+# Job domain services (Kafka-driven, mostly scale-to-zero)
+
+job-storage-service:
+  replicaCount: 2
+  scaling:
+    minReplicas: 1
+    maxReplicas: 5
+
+job-ingest-discovery-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 5
+
+job-ingest-schedule-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 3
+
+job-ingest-enrichment-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 5
+
+job-query-composition-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 3
+
+job-correlation-evaluation-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 5
+
+# ML services (Kafka-driven)
+
+ml-gateway-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 3
+
+ml-compute-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 1
+    maxReplicas: 5
+
+# Doc domain services (Kafka-driven)
+
+doc-template-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 1
+    maxReplicas: 3
+
+doc-content-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 5
+
+doc-process-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 3
+
+# Skill + notification (Kafka-driven)
+
+skill-graph-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 3
+
+notification-service:
+  replicaCount: 1
+  scaling:
+    minReplicas: 0
+    maxReplicas: 3
+
+# Observability stack (staging: Azure Blob storage, lower replicas than prod)
+
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      remoteWrite:
+        - url: http://nohiki-mimir-nginx.nohiki-staging.svc:80/api/v1/push
+          headers:
+            X-Scope-OrgID: nohiki
+
+mimir-distributed:
+  mimir:
+    structuredConfig:
+      common:
+        storage:
+          backend: azure
+          azure:
+            account_name: nohikistagingobs
+            container_name: nohiki-staging-mimir
+  distributor:
+    replicas: 2
+  ingester:
+    replicas: 2
+  querier:
+    replicas: 2
+  query_frontend:
+    replicas: 1
+  store_gateway:
+    replicas: 2
+  compactor:
+    replicas: 1
+  ruler:
+    replicas: 1
+
+tempo-distributed:
+  tempo:
+    structuredConfig:
+      storage:
+        trace:
+          backend: azure
+          azure:
+            storage_account_name: nohikistagingobs
+            container_name: nohiki-staging-tempo
+      metrics_generator:
+        storage:
+          remote_write:
+            - url: http://nohiki-mimir-nginx.nohiki-staging.svc:80/api/v1/push
+              headers:
+                X-Scope-OrgID: nohiki
+  distributor:
+    replicas: 2
+  ingester:
+    replicas: 2
+  querier:
+    replicas: 2
+  query_frontend:
+    replicas: 1
+  compactor:
+    replicas: 1
+  metrics_generator:
+    replicas: 1
+
+loki:
+  loki:
+    storage:
+      type: azure
+      bucketNames:
+        chunks: nohiki-staging-loki-chunks
+        ruler: nohiki-staging-loki-ruler
+        admin: nohiki-staging-loki-admin
+      azure:
+        accountName: nohikistagingobs
+  write:
+    replicas: 2
+  read:
+    replicas: 2
+  backend:
+    replicas: 1
+
+pyroscope:
+  pyroscope:
+    structuredConfig:
+      storage:
+        backend: azure
+        azure:
+          storage_account_name: nohikistagingobs
+          container_name: nohiki-staging-pyroscope
+  replicas: 1

@@ -1,0 +1,1225 @@
+# Global configuration shared by all services
+global:
+  environment: dev
+  imageTag: latest
+  terminationGracePeriodSeconds: 30
+  imageDigests: {}
+
+  # First-party container image coordinates: the single canonical default
+  # surface. Environment overlays inherit these and MUST NOT redeclare them;
+  # override per fork/registry with `--set global.nohikiImage.*` or a release
+  # input. Local deploys override to an empty registry (localhost) in
+  # values.local.yaml.
+  nohikiImage:
+    registry: ghcr.io
+    owner: mchar7
+    repositoryName: nohiki-monorepo
+    pullPolicy: IfNotPresent
+
+  labels:
+    appGroup: nohiki
+
+  acme:
+    email: admin@nohiki.com
+
+  # Azure configuration (empty = local k3s dev)
+  azure:
+    keyVaultName: ""
+    managedIdentityClientId: ""
+    tenantId: ""
+    cloudName: ""
+
+  # External Secrets (managed ClusterSecretStore + ExternalSecrets).
+  # The ESO operator and CRDs are owned by the foundation chart; this chart owns
+  # only the ClusterSecretStore and ExternalSecrets, gated per environment.
+  eso:
+    # Managed environments create the ClusterSecretStore and ExternalSecrets.
+    # Local sets localStoreName and uses the Flux-owned namespaced SecretStore.
+    externalSecretsEnabled: false
+    # global.eso.azure.{keyVaultUrl,clientId,tenantId} are supplied per cluster at
+    # runtime by the Flux HelmRelease; leave empty here.
+    azure:
+      keyVaultUrl: ""
+    readinessImage:
+      repository: docker.io/alpine/k8s
+      tag: 1.35.0@sha256:18bc02c1e0df04451f4f9194eb7b7341c1165da5495459b52f85f72fb9545032
+
+  # Kubernetes Secrets names (when not using Azure Key Vault)
+  secrets:
+    # Emit inline Secret manifests from this chart. Local GitOps sets this false
+    # so a pre-reconcile bootstrap owns those Secrets; ESO/Key Vault environments
+    # skip inline Secrets regardless.
+    inlineSecretsEnabled: true
+    databaseSecretName: nohiki-database-credentials
+    redisSecretName: nohiki-redis-credentials
+    kafkaSecretName: nohiki-kafka-credentials
+    jwtSecretName: nohiki-jwt-keys
+    oauthSecretName: nohiki-oauth-credentials
+    llmSecretName: nohiki-llm-runtime
+    emailSecretName: nohiki-email-api-keys
+    jsearchSecretName: nohiki-jsearch-api-keys
+    s3SecretName: nohiki-s3-credentials
+
+  # Agentgateway-owned model egress; its Secrets are supplied by the environment.
+  modelEgress:
+    # Kubernetes model traffic always traverses the in-cluster gateway.
+    listenerPort: 8443
+    certificateSecretName: ""
+    caSecretName: ""
+    caMountPath: /etc/nohiki/model-egress
+    controlPlane:
+      namespace: nohiki-foundation
+      port: 9978
+      podLabels:
+        agentgateway: agentgateway
+        app.kubernetes.io/name: agentgateway
+        app.kubernetes.io/instance: nohiki-foundation
+    # Managed environments enable bounded local limits per data-plane replica.
+    rateLimitsEnabled: false
+    providerCredentials: [anthropic, openai, openrouter]
+    clients:
+      - name: doc-content-service
+        secretName: nohiki-model-egress-client-doc-content
+        secretKey: doc-content
+        allowedRoutes: [responses]
+      - name: job-ingest-enrichment-service
+        secretName: nohiki-model-egress-client-job-ingest-enrichment
+        secretKey: job-ingest-enrichment
+        allowedRoutes: [responses]
+
+    # Provider DNS/CDN addresses are dynamic. Standard NetworkPolicy cannot select
+    # FQDNs, so only the gateway receives public HTTPS egress; private, loopback,
+    # link-local, and carrier-grade NAT ranges remain unreachable.
+    destinations:
+      - cidr: 0.0.0.0/0
+        except:
+          - 10.0.0.0/8
+          - 100.64.0.0/10
+          - 127.0.0.0/8
+          - 169.254.0.0/16
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+        port: 443
+    backends:
+      - name: responses
+        enabled: true
+        routePath: /v1/responses
+        requestTimeout: 180s
+        connectTimeout: 10s
+        clientAuth: {header: Authorization, prefix: Bearer}
+        secretSelector:
+          matchLabels:
+            nohiki.io/model-egress-route-responses: "true"
+        retry:
+          enabled: false
+          attempts: 2
+          backoff: 250ms
+          codes: [500, 502, 503, 504]
+          precondition: 'request.headers["idempotency-key"] != ""'
+        requestRateLimit: {requests: 2, unit: Seconds, burst: 4}
+        tokenRateLimit: {tokens: 120000, unit: Minutes, burst: 20000}
+        health: &modelEgressHealth
+          unhealthyCondition: response.code >= 500 || response.code == 429
+          consecutiveFailures: 3
+          duration: 30s
+          restoreHealth: 50
+        groups:
+          - providers:
+              - name: openrouter-responses
+                type: custom
+                credentialName: openrouter
+                enabled: false
+                host: openrouter.ai
+                port: 443
+                formats: [{type: Responses, path: /api/v1/responses}]
+                tls:
+                  sni: openrouter.ai
+                  verifySubjectAltNames: [openrouter.ai]
+              - name: openai-responses
+                type: openai
+                credentialName: openai
+                host: api.openai.com
+                port: 443
+                path: /v1/responses
+                tls:
+                  sni: api.openai.com
+                  verifySubjectAltNames: [api.openai.com]
+      - name: completions
+        enabled: true
+        routePath: /v1/chat/completions
+        requestTimeout: 180s
+        connectTimeout: 10s
+        clientAuth: {header: Authorization, prefix: Bearer}
+        secretSelector:
+          matchLabels:
+            nohiki.io/model-egress-route-completions: "true"
+        retry:
+          enabled: false
+          precondition: 'request.headers["idempotency-key"] != ""'
+        requestRateLimit: {requests: 1, unit: Seconds, burst: 2}
+        tokenRateLimit: {tokens: 60000, unit: Minutes, burst: 10000}
+        health: *modelEgressHealth
+        groups:
+          - providers:
+              - name: openrouter-completions
+                type: custom
+                credentialName: openrouter
+                host: openrouter.ai
+                port: 443
+                formats: [{type: Completions, path: /api/v1/chat/completions}]
+                tls:
+                  sni: openrouter.ai
+                  verifySubjectAltNames: [openrouter.ai]
+              - name: openai-completions
+                type: openai
+                credentialName: openai
+                enabled: false
+                path: /v1/chat/completions
+                tls:
+                  sni: api.openai.com
+                  verifySubjectAltNames: [api.openai.com]
+      - name: messages
+        enabled: true
+        routePath: /v1/messages
+        requestTimeout: 180s
+        connectTimeout: 10s
+        clientAuth: {header: x-api-key}
+        secretSelector:
+          matchLabels:
+            nohiki.io/model-egress-route-messages: "true"
+        retry:
+          enabled: false
+          precondition: 'request.headers["idempotency-key"] != ""'
+        requestRateLimit: {requests: 1, unit: Seconds, burst: 2}
+        tokenRateLimit: {tokens: 60000, unit: Minutes, burst: 10000}
+        health: *modelEgressHealth
+        groups:
+          - providers:
+              - name: anthropic-messages
+                type: anthropic
+                credentialName: anthropic
+                path: /v1/messages
+                authHeader: x-api-key
+                tls:
+                  sni: api.anthropic.com
+                  verifySubjectAltNames: [api.anthropic.com]
+
+  # Database configuration (CloudNativePG)
+  database:
+    host: nohiki-pg-rw
+    port: 5432
+
+  # Redis/Valkey configuration
+  redis:
+    host: nohiki-valkey-master
+    port: 6379
+
+  # Kafka configuration (Strimzi, DSN format: kafka://host:port)
+  kafka:
+    version: 4.3.0
+    bootstrapServers: nohiki-kafka-kafka-bootstrap:9092
+    dsn: "kafka://nohiki-kafka-kafka-bootstrap:9092"
+
+  # S3 configuration (RustFS in-cluster or Azure Blob in production)
+  # region: RustFS ignores this but some S3 clients require it; use "local" for in-cluster.
+  s3:
+    endpoint: http://nohiki-rustfs:9000
+    region: local
+
+  # Qdrant configuration
+  qdrant:
+    host: nohiki-qdrant
+    grpcPort: "6334"
+    useTls: false
+    # apiKeySecret: ""  # Set in prod values
+
+  # Observability configuration - SECURE DEFAULTS
+  observability:
+    enabled: true
+    prometheus:
+      enabled: true
+    otel:
+      enabled: false
+    tls:
+      internal:
+        enabled: false
+        insecureSkipVerify: false
+      storage:
+        scheme: https
+        insecureSkipVerify: false
+      exporters:
+        insecureSkipVerify: false
+
+    storage:
+      backend: s3
+      s3:
+        endpoint: ""
+        region: us-east-1
+        forcePathStyle: true
+      azure:
+        accountName: ""
+        containerPrefix: nohiki
+        useWorkloadIdentity: true
+
+    secrets:
+      storage: observability-storage-credentials
+      grafanaAdmin: grafana-admin-credentials
+
+    grafana:
+      enabled: true
+      auth:
+        anonymous:
+          enabled: false
+          orgRole: Viewer
+        disableLoginForm: false
+
+    retention:
+      metrics: 7d
+      traces: 3d
+      logs: 7d
+      profiles: 3d
+
+    resourceProfile: standard
+
+    otelEndpoint: http://otel-collector:4317
+    otelInsecure: "true"
+    otelEnabled: "false"
+    phoenixEndpoint: ""
+    phoenixEnabled: "false"
+    phoenixProjectName: nohiki
+
+  scaling:
+    minReplicas: 0
+    maxReplicas: 10
+    cooldownPeriod: 300
+
+  ingress:
+    enabled: true
+    # Gateway API implementation (kgateway chosen via benchmarks - 25x less memory, 20x faster)
+    gatewayClass: kgateway
+    host: nohiki.localhost
+    s3:
+      enabled: false
+      host: ""
+      service: ""
+      port: 9000
+    otel:
+      enabled: false
+      host: ""
+      collectorService: otel-collector
+      collectorPort: 4318
+      path: /v1/traces
+    tls:
+      enabled: false
+      secretName: ""  # TLS secret name for production
+    trafficPolicy:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: "60s"
+
+# Service defaults. Database names derive from the service name unless overridden.
+
+# User domain services
+user-auth-service:
+  enabled: true
+  database:
+    enabled: true
+
+user-pref-service:
+  enabled: true
+  database:
+    enabled: true
+
+user-upload-service:
+  enabled: true
+  database:
+    enabled: true
+
+user-entitlement-service:
+  enabled: true
+  database:
+    enabled: true
+
+# Job domain services
+job-ingest-discovery-service:
+  enabled: true
+  database:
+    enabled: true
+    schema: job_ingest_discovery_schema
+
+job-ingest-schedule-service:
+  enabled: true
+  database:
+    enabled: true
+    schema: job_schedule_schema
+
+job-query-composition-service:
+  enabled: true
+  database:
+    enabled: true
+
+job-ingest-enrichment-service:
+  enabled: true
+  database:
+    enabled: true
+
+job-storage-service:
+  enabled: true
+  database:
+    enabled: true
+
+job-correlation-evaluation-service:
+  enabled: true
+  database:
+    enabled: true
+  debezium:
+    mode: wal
+    resourcePrefix: job_correlation
+
+# Doc domain services
+doc-template-service:
+  enabled: true
+  database:
+    enabled: true
+
+doc-content-service:
+  enabled: true
+
+doc-process-service:
+  enabled: true
+
+# ML services
+ml-gateway-service:
+  enabled: true
+
+ml-compute-service:
+  enabled: true
+
+# Skill service
+skill-graph-service:
+  enabled: true
+  database:
+    enabled: true
+
+# Infrastructure services
+bff-service:
+  enabled: true
+  database:
+    enabled: true
+
+notification-service:
+  enabled: true
+  database:
+    enabled: true
+
+frontend:
+  enabled: true
+  image:
+    name: frontend
+
+# Strimzi KafkaConnect cluster + KafkaConnector CRDs
+kafkaConnect:
+  enabled: false
+  name: nohiki-connect
+  replicas: 2
+  bootstrapServers: nohiki-kafka-kafka-bootstrap:9092
+  # v1 API requires these explicitly (not optional like v1beta2)
+  groupId: nohiki-connect-cluster
+  configStorageTopic: nohiki-connect-configs
+  offsetStorageTopic: nohiki-connect-offsets
+  statusStorageTopic: nohiki-connect-status
+  # Commit offsets every 10s (default 60s). Faster commits shrink the replay window
+  # on Connect pod restart/rebalance and let consumers see lower lag during steady state.
+  offsetFlushIntervalMs: 10000
+  # Image for custom Kafka Connect build with Debezium + Qdrant plugins
+  # MUST be configured per environment (same registry as service images)
+  image:
+    registry: ""  # REQUIRED: Set per environment
+    repository: ""  # REQUIRED: Set per environment (e.g., nohiki-kafka-connect)
+    tag: latest
+    pullSecret: ""  # Set if using private registry
+  build:
+    enabled: true
+    debeziumVersion: "3.6.0.Final"
+    debeziumSha512: "6a59c35e657b824e9a37008586bde707f684fc7549ac5e0a59facaa41acb24d8adb85eaa93917be811794c0f05ef9056ad1efe339f082ee2f25ae9b67c91d788"
+    qdrantKafkaVersion: "1.3.3"
+    qdrantKafkaSha512: "d33addecfcbaf27845686d6a0928d8c595ab975d2c71310c33ab5a4847d4e1b9a9a9dd9ddbd51328ccd7fd40f7b72fbc657decd87487dc56a8fa04b2cb82ee3b"
+  # Observability: JMX Prometheus exporter for Kafka Connect
+  metricsConfig:
+    type: jmxPrometheusExporter
+    valueFrom:
+      configMapKeyRef:
+        name: nohiki-connect-metrics
+        key: connect-metrics-config.yml
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 200m
+    limits:
+      memory: 1Gi
+      cpu: 1000m
+  # Debezium outbox connector settings
+  debezium:
+    snapshotMode: when_needed
+    snapshotLockingMode: none
+    # Heartbeat every 10s (default 60s). The outbox publication is low-volume, so without
+    # frequent heartbeats Postgres cannot advance the replication slot's confirmed_flush_lsn
+    # and WAL accumulates on disk. 10s keeps the slot moving without meaningful overhead.
+    heartbeatIntervalMs: 10000
+    # Snapshot in 2048-row batches (Debezium default 10240). Lower batch size caps peak
+    # heap usage on Connect pods during initial snapshot at the cost of slightly slower
+    # backfill. Outbox snapshots are rare, so bounded memory is preferable.
+    snapshotFetchSize: 2048
+    pollIntervalMs: 100
+    maxBatchSize: 2048
+    maxQueueSize: 8192
+    topicReplicationFactor: 1
+    topicPartitions: 3
+  # Qdrant sink connector settings
+  qdrant:
+    enabled: true
+    grpcUrl: "http://nohiki-qdrant:6334"
+    tasksMax: 3
+    topic: "ml.fct.embedding-completed-json.v1"
+
+# System schedule tick publisher (Kubernetes CronJob)
+scheduleTickPublisher:
+  enabled: true
+  schedule: "*/1 * * * *"
+  batchLimit: 0
+  sourceService: "sys-tick-cronjob"
+  image:
+    repository: "sys-tick-job"
+    tag: ""
+    pullPolicy: IfNotPresent
+
+# Database migration hook Job (runs before install/upgrade)
+dbMigration:
+  enabled: false
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  image:
+    repository: bff-service
+    tag: ""
+    pullPolicy: IfNotPresent
+
+# Secret values - populated at deploy time via environments/<env>/secrets.yaml (age-encrypted).
+# Never commit plaintext secrets. See environments/local/secrets.yaml.dec for structure.
+secretValues: {}
+
+# ML manifest JSON content - injected at deploy time by Helmfile readFile gotmpl.
+# Never set this manually; populated automatically from data/config/semantic_representation_manifest.json.
+mlManifestContent: ""
+
+# KEDA Configuration
+keda:
+  httpAddon:
+    enabled: true
+    interceptorReplicas: 2
+    waitTimeout: "30s"
+  kafka:
+    authEnabled: false
+    sasl:
+      enabled: false
+      secretName: kafka-sasl-credentials
+    tls:
+      enabled: false
+      secretName: kafka-tls-credentials
+
+# Infrastructure dependencies are enabled by environment overlays.
+
+# CloudNativePG PostgreSQL Cluster Configuration
+# Note: Per-service databases are created via Database CRDs in each service's chart.
+# This cluster configuration only defines the shared PostgreSQL cluster infrastructure.
+cnpgCluster:
+  enabled: false
+  name: nohiki-pg
+  instances: 1
+  imageName: "ghcr.io/cloudnative-pg/postgresql:18.3"
+  storage:
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+  # Observability: PodMonitor for Prometheus Operator scraping
+  monitoring:
+    enabled: true
+    podMonitorLabels:
+      release: prometheus  # Match Prometheus Operator selector
+  backup:
+    enabled: false
+    destinationPath: ""
+    endpointURL: ""
+    retentionPolicy: "7d"
+
+# Valkey Configuration (Redis-compatible, Bitnami chart)
+valkey:
+  enabled: false
+  fullnameOverride: nohiki-valkey
+  architecture: standalone
+  auth:
+    enabled: false
+  # Observability: Prometheus metrics exporter sidecar
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+  master:
+    persistence:
+      size: 1Gi
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 50m
+      limits:
+        memory: 256Mi
+        cpu: 200m
+
+# Strimzi Kafka Operator
+strimzi:
+  enabled: false
+  watchAnyNamespace: false
+  watchNamespaces: []
+
+# Strimzi Kafka Cluster (custom resource, deployed via templates)
+kafkaCluster:
+  enabled: false
+  name: nohiki-kafka
+  version: 4.3.0
+  replicas: 1
+  listeners:
+    plain:
+      port: 9092
+  storage:
+    type: persistent-claim
+    size: 2Gi
+    deleteClaim: true
+  config:
+    offsetsTopicReplicationFactor: 1
+    transactionStateLogReplicationFactor: 1
+    transactionStateLogMinIsr: 1
+    defaultReplicationFactor: 1
+    minInsyncReplicas: 1
+    autoCreateTopicsEnable: true
+    numPartitions: 3
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 200m
+    limits:
+      memory: 1Gi
+      cpu: 500m
+
+# RustFS (S3-compatible object storage, Apache-2.0 licensed MinIO replacement)
+# Official Helm chart: https://github.com/rustfs/rustfs/tree/main/helm
+# Mode: distributed (HA, 4 pods x 4 PVCs) for production; standalone for local.
+rustfs:
+  enabled: false
+  fullnameOverride: nohiki-rustfs
+
+  # Mode selection (distributed = HA production, standalone = local dev)
+  # Production: distributed with 4 replicas (default)
+  # Local: Override in values.local.yaml with mode.standalone.enabled: true
+  mode:
+    distributed:
+      enabled: true
+    standalone:
+      enabled: false
+
+  # Replica count (only applies to distributed mode)
+  # 4 = default (4 pods x 4 PVCs each = 16 PVCs total)
+  # 16 = alternative (16 pods x 1 PVC each)
+  replicaCount: 4
+
+  # Image configuration
+  image:
+    repository: rustfs/rustfs
+    tag: 1.0.0-beta.8@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
+    pullPolicy: IfNotPresent
+
+  bucketInit:
+    image:
+      repository: amazon/aws-cli
+      tag: 2.35.21@sha256:238583846e731f31c9848dae26c5a560769ff35c4c5368a4cb6be5816683e485
+      pullPolicy: IfNotPresent
+
+  # Credentials - use existingSecret in production, inline for local dev
+  secret:
+    existingSecret: ""  # Set to secret name in production
+    rustfs:
+      access_key: ""
+      secret_key: ""  # Override in values.local.yaml or use existingSecret
+
+  # RustFS configuration
+  config:
+    rustfs:
+      address: ":9000"
+      console_address: ":9001"
+      console_enable: "true"
+      log_level: "info"
+      obs_environment: "production"
+      region: "local"  # RustFS region (arbitrary string, not AWS-specific)
+      # Observability: Prometheus metrics endpoint
+      prometheus_auth_type: "public"  # Expose /minio/v2/metrics/cluster without auth
+
+  # Gateway API (preferred over deprecated Ingress)
+  # Ingress nginx retiring March 2026: https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/
+  ingress:
+    enabled: false  # Disable legacy Ingress
+  gatewayApi:
+    enabled: true
+    gatewayClass: kgateway  # Using kgateway (25x less memory, 20x faster than nginx)
+    hostname: ""  # Set per environment (e.g., s3.nohiki.com)
+    existingGateway:
+      name: nohiki-gateway  # Share gateway with other services
+      namespace: ""  # Same namespace if empty
+
+  # Storage configuration
+  storageclass:
+    name: ""  # Empty = use cluster default StorageClass
+    dataStorageSize: 10Gi
+    logStorageSize: 1Gi
+
+  # Pod Disruption Budget (HA)
+  pdb:
+    create: true
+    maxUnavailable: 1
+
+  # Pod anti-affinity (spread across nodes for HA)
+  affinity:
+    podAntiAffinity:
+      enabled: true
+      topologyKey: "kubernetes.io/hostname"
+
+  # Security context
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+
+  # Resources (production defaults)
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 1Gi
+      cpu: 500m
+
+  # Service configuration
+  service:
+    type: ClusterIP  # Use Gateway API for external access
+    endpoint:
+      port: 9000
+    console:
+      port: 9001
+
+# Qdrant (vector database)
+# Metrics: Qdrant exposes /metrics endpoint on HTTP port by default
+qdrant:
+  enabled: false
+  fullnameOverride: nohiki-qdrant
+  replicaCount: 1
+  image:
+    tag: v1.18.2@sha256:75eab8c4ba42096724fdcfde8b4de0b5713d529dde32f285a1f86fdcb2c9e50c
+  service:
+    ports:
+      - name: http
+        port: 6333
+        targetPort: 6333
+        protocol: TCP
+        checksEnabled: false
+      - name: grpc
+        port: 6334
+        targetPort: 6334
+        protocol: TCP
+        checksEnabled: true
+      - name: p2p
+        port: 6335
+        targetPort: 6335
+        protocol: TCP
+        checksEnabled: false
+  persistence:
+    size: 2Gi
+  # Observability: ServiceMonitor for Prometheus Operator
+  metrics:
+    serviceMonitor:
+      enabled: false
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+# Qdrant collection initialization (first-party image built from
+# infra/shared/qdrant-init). Creates collections on Qdrant at deploy time
+# according to the SemanticRepresentationManifest. Runs as a Helm
+# post-install/post-upgrade hook at weight 0 (before skill-graph bootstrap
+# at weight 2). Follows the same image override pattern as services: set
+# registry/owner/repositoryName under qdrantInit.image to override globals.
+qdrantInit:
+  enabled: true
+  image:
+    name: qdrant-init
+
+# Docling Serve (document conversion API)
+docling-serve:
+  enabled: false
+
+# Gotenberg (PDF generation via HTML/Office documents)
+gotenberg:
+  enabled: false
+  fullnameOverride: nohiki-gotenberg
+  replicaCount: 1
+  image:
+    tag: "8@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923"
+  chromium:
+    maxQueueSize: 30
+    restartAfter: 0
+  libreOffice:
+    restartAfter: 10
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 1Gi
+      cpu: 500m
+
+# Observability operators. CRD instances are reconciled separately by the GitOps engine.
+
+kube-prometheus-stack:
+  enabled: true
+  grafana:
+    enabled: false
+  kube-state-metrics:
+    image:
+      tag: v2.18.0
+      sha: sha256:1545919b72e3ae035454fc054131e8d0f14b42ef6fc5b2ad5c751cafa6b2130e
+  prometheus-node-exporter:
+    image:
+      tag: v1.10.2
+      digest: sha256:337ff1d356b68d39cef853e8c6345de11ce7556bb34cda8bd205bcf2ed30b565
+  prometheusOperator:
+    image:
+      tag: v0.92.1
+      sha: 7d9247d2351480fc74587e24681578f815f387bafb2ee7b86a852a94c4cd3774
+    admissionWebhooks:
+      patch:
+        image:
+          tag: 1.8.4
+          sha: 76a2170cd0c9a7758c4ac8ac5bbe9b6f73e869a15ffb77d9f684664f7d7b96b1
+    prometheusConfigReloader:
+      image:
+        tag: v0.92.1
+        sha: 74550ba3e8bf93f47bc574231090d340ae9c01d25cd11ff74799e65f9fdb9a48
+
+  prometheus:
+    prometheusSpec:
+      # Discover every ServiceMonitor in the release namespace without coupling
+      # dependency charts to the parent release label.
+      serviceMonitorSelectorNilUsesHelmValues: false
+      serviceMonitorSelector: {}
+      image:
+        repository: prometheus/prometheus
+        tag: v3.13.1
+        sha: 3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+      remoteWrite:
+        - url: ""
+          headers:
+            X-Scope-OrgID: nohiki
+          writeRelabelConfigs:
+            - sourceLabels: [__name__]
+              regex: "go_.*"
+              action: drop
+      retention: 24h
+      retentionSize: 5GB
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 20Gi
+
+  alertmanager:
+    enabled: true
+    alertmanagerSpec:
+      image:
+        repository: prometheus/alertmanager
+        tag: v0.31.1
+        sha: 88b605de9aba0410775c1eb3438f951115054e0d307f23f274a4c705f51630c1
+      retention: 120h
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+
+grafana-operator:
+  enabled: true
+  image:
+    tag: v5.24.0@sha256:e72d11ac579a000fe0ddcc0c3341a5103a1c93a28fbc394dc7c7009ed071d1a7
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+mimir-distributed:
+  enabled: true
+  image:
+    repository: docker.io/grafana/mimir
+    tag: 3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d
+  memcached:
+    image:
+      repository: docker.io/memcached
+      tag: 1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7
+  memcachedExporter:
+    image:
+      repository: docker.io/prom/memcached-exporter
+      tag: v0.15.5@sha256:92a6ad5a3d3e2dffc75efd4e18d1470fa5703dd79b6bace53fe11312b634578e
+  rollout_operator:
+    image:
+      tag: v0.38.0@sha256:0050002aaf07a867a3a3c2aa029dc29ff2e12eb8608f1f47e4c1d307bbdfea39
+  kafka:
+    image:
+      tag: 4.1.0@sha256:9a9d16e608944f8f7d30c75c5a5fec0d59f44893f27536b4f0cd6f19ae09164d
+  gateway:
+    nginx:
+      image:
+        registry: docker.io
+        repository: nginxinc/nginx-unprivileged
+        tag: 1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+  minio:
+    image:
+      tag: RELEASE.2024-12-18T13-15-44Z@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3
+    mcImage:
+      tag: RELEASE.2024-11-21T17-21-54Z@sha256:993e8c454a7ec632923f7e3e61adf1d473261da6354cefd641aedd33a2cfe112
+  global:
+    extraEnvFrom:
+      - secretRef:
+          name: observability-storage-credentials
+  mimir:
+    structuredConfig:
+      multitenancy_enabled: true
+      common:
+        storage:
+          backend: s3
+          s3:
+            endpoint: ""
+            region: us-east-1
+            bucket_name: nohiki-mimir
+            insecure: false
+      blocks_storage:
+        backend: s3
+        s3:
+          bucket_name: nohiki-mimir-blocks
+      alertmanager_storage:
+        backend: s3
+        s3:
+          bucket_name: nohiki-mimir-alertmanager
+      ruler_storage:
+        backend: s3
+        s3:
+          bucket_name: nohiki-mimir-ruler
+      limits:
+        max_global_series_per_user: 1000000
+        ingestion_rate: 100000
+        ingestion_burst_size: 200000
+  distributor:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  ingester:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+  querier:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  query_frontend:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+  store_gateway:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+  compactor:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+  ruler:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+
+tempo-distributed:
+  enabled: true
+  memcached:
+    image:
+      registry: docker.io
+      repository: memcached
+      tag: 1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7
+  gateway:
+    image:
+      registry: docker.io
+      repository: nginxinc/nginx-unprivileged
+      tag: 1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+  global:
+    image:
+      registry: docker.io
+    extraEnvFrom:
+      - secretRef:
+          name: observability-storage-credentials
+  tempo:
+    image:
+      repository: grafana/tempo
+      registry: docker.io
+      tag: 2.9.3@sha256:0d355cc7d9d23f93641a999fd9432084acf647f7731c732ed80f7b9a122ec85b
+    structuredConfig:
+      multitenancy_enabled: true
+      storage:
+        trace:
+          backend: s3
+          s3:
+            endpoint: ""
+            bucket: nohiki-tempo
+            insecure: false
+      metrics_generator:
+        storage:
+          path: /var/tempo/wal
+          remote_write:
+            - url: ""
+              headers:
+                X-Scope-OrgID: nohiki
+        processor:
+          span_metrics:
+            dimensions:
+              - service.name
+              - service.namespace
+              - http.method
+              - http.status_code
+              - cache_status
+              - country
+  distributor:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  ingester:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+  querier:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  query_frontend:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+  compactor:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+  metrics_generator:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+
+loki:
+  enabled: true
+  global:
+    imageRegistry: docker.io
+  sidecar:
+    image:
+      registry: docker.io
+      repository: kiwigrid/k8s-sidecar
+      tag: 1.30.9@sha256:8c06e1ba643a4625de14b2db65c356f5db6b1482a25fce4754380a2936207338
+  chunksCache:
+    image:
+      repository: docker.io/memcached
+      tag: 1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7
+  resultsCache:
+    image:
+      repository: docker.io/memcached
+      tag: 1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7
+  memcached:
+    image:
+      repository: docker.io/memcached
+      tag: 1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7
+  memcachedExporter:
+    image:
+      repository: docker.io/prom/memcached-exporter
+      tag: v0.15.5@sha256:92a6ad5a3d3e2dffc75efd4e18d1470fa5703dd79b6bace53fe11312b634578e
+  gateway:
+    image:
+      registry: docker.io
+      repository: nginxinc/nginx-unprivileged
+      tag: 1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+  lokiCanary:
+    image:
+      registry: docker.io
+      repository: grafana/loki-canary
+      tag: 3.6.12@sha256:1e9bfcff38679ecf9de4e3492050c81b6c64e64421ac13d9a4f936b7d1836179
+  test:
+    enabled: false
+  deploymentMode: SimpleScalable
+  loki:
+    image:
+      registry: docker.io
+      repository: grafana/loki
+      tag: 3.6.12@sha256:2483b71b28b15dee230f85512cae2b20c4b5f6e98a6eabe686cbccfa5ea3ba4a
+    auth_enabled: true
+    commonConfig:
+      replication_factor: 1
+    storage:
+      type: s3
+      s3:
+        endpoint: ""
+        bucketnames: nohiki-loki-chunks
+        region: us-east-1
+        insecure: false
+        s3ForcePathStyle: true
+    schemaConfig:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: s3
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+  write:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  read:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  backend:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+
+pyroscope:
+  enabled: true
+  alloy:
+    global:
+      image:
+        registry: ""
+    image:
+      registry: docker.io
+      repository: grafana/alloy
+      tag: v1.12.2
+      digest: sha256:f94b1c82957accb77cd11385fd5e3600758ef1b1ab79557c97319ad28590735a
+    configReloader:
+      image:
+        registry: quay.io
+        repository: prometheus-operator/prometheus-config-reloader
+        tag: v0.81.0
+        digest: sha256:959d47672fbff2776a04ec62b8afcec89e8c036af84dc5fade50019dab212746
+  pyroscope:
+    image:
+      repository: docker.io/grafana/pyroscope
+      tag: 2.1.1@sha256:c8ad9891fc8562c794c946883c8324b7e48f4eda58d243387c7b6254f9f061fb
+    extraArgs:
+      config.expand-env: "true"
+    structuredConfig:
+      storage:
+        backend: s3
+        s3:
+          endpoint: ""
+          bucket_name: nohiki-pyroscope
+          insecure: false
+    extraEnvFrom:
+      - secretRef:
+          name: observability-storage-credentials
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+
+opentelemetry-operator:
+  # CRDs and operator lifecycle are owned by helm-foundation.
+  enabled: false
+  manager:
+    image:
+      tag: 0.154.0@sha256:263699ffea0c418530b43d95dcd49a125533325a222ffac675cbbf0d63ef035b
+    featureGatesMap:
+      operator.collector.usedefaulttelemetryshape: false
+    metrics:
+      secure: true
+    serviceMonitor:
+      enabled: true
+      extraLabels:
+        release: prometheus
+      metricsEndpoints:
+        - port: metrics
+          scheme: https
+          bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+          tlsConfig:
+            insecureSkipVerify: true
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+  testFramework:
+    image:
+      repository: busybox
+      tag: sha256-9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
+  admissionWebhooks:
+    certManager:
+      enabled: true

@@ -1,0 +1,31 @@
+{{- if .Values.keda.kafka.authEnabled }}
+# Kafka TriggerAuthentication for KEDA scalers
+# Used when Kafka requires SASL/TLS authentication (production deployments).
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ .Release.Name }}-kafka-auth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: nohiki-kafka-auth
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  secretTargetRef:
+    {{- if .Values.keda.kafka.sasl.enabled }}
+    - parameter: sasl
+      name: {{ .Values.keda.kafka.sasl.secretName }}
+      key: mechanism
+    - parameter: username
+      name: {{ .Values.keda.kafka.sasl.secretName }}
+      key: username
+    - parameter: password
+      name: {{ .Values.keda.kafka.sasl.secretName }}
+      key: password
+    {{- end }}
+    {{- if and .Values.keda.kafka.tls.enabled .Values.keda.kafka.tls.secretName }}
+    - parameter: tls
+      name: {{ .Values.keda.kafka.tls.secretName }}
+      key: tls
+    {{- end }}
+{{- end }}

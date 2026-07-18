@@ -1,0 +1,271 @@
+{{/*
+HTTPRoute resources for Nohiki API routing.
+
+Routes:
+- /api/v1/auth/* -> user-auth-service (authentication endpoints)
+- /api/documents/{request_id}/events -> bff-service (authenticated SSE)
+- /api/v1/account/* -> user-auth-service (account management)
+- /.well-known/jwks.json -> user-auth-service (JWKS endpoint)
+- /api/ping -> bff-service (health check)
+- /api/* -> bff-service (all other API requests)
+- s3.nohiki.localhost/* -> in-cluster RustFS (local only)
+- /* -> frontend (SPA fallback)
+*/}}
+{{- if $.Values.global.ingress.enabled }}
+{{- $authSvc := printf "%s-user-auth-service" .Release.Name }}
+{{- $bffSvc := printf "%s-bff-service" .Release.Name }}
+{{- $frontendSvc := printf "%s-frontend" .Release.Name }}
+{{- $gatewayRef := printf "%s-gateway" .Release.Name }}
+{{- $ingress := .Values.global.ingress | default dict }}
+{{- $ingressOtel := $ingress.otel | default dict }}
+{{- $ingressHost := $ingress.host | default "" }}
+{{- $s3Ingress := $ingress.s3 | default dict }}
+---
+# JWKS endpoint - highest priority, exact path match
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-jwks-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-jwks-route
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayRef }}
+      namespace: {{ .Release.Namespace }}
+  {{- if $ingressHost }}
+  hostnames:
+    - {{ $ingressHost | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /.well-known/jwks.json
+      backendRefs:
+        - name: {{ $authSvc }}
+          port: 8000
+---
+# Auth service routes
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-auth-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-auth-route
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayRef }}
+      namespace: {{ .Release.Namespace }}
+  {{- if $ingressHost }}
+  hostnames:
+    - {{ $ingressHost | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1/auth
+      backendRefs:
+        - name: {{ $authSvc }}
+          port: 8000
+---
+# Account management routes (part of auth service)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-account-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-account-route
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayRef }}
+      namespace: {{ .Release.Namespace }}
+  {{- if $ingressHost }}
+  hostnames:
+    - {{ $ingressHost | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1/account
+      backendRefs:
+        - name: {{ $authSvc }}
+          port: 8000
+---
+# BFF ping endpoint (health check)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-ping-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-ping-route
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayRef }}
+      namespace: {{ .Release.Namespace }}
+  {{- if $ingressHost }}
+  hostnames:
+    - {{ $ingressHost | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /api/ping
+      backendRefs:
+        - name: {{ $bffSvc }}
+          port: 8000
+---
+# Public per-request SSE endpoint; BFF serves this exact path and enforces authentication.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-sse-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-sse-route
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayRef }}
+      namespace: {{ .Release.Namespace }}
+  {{- if $ingressHost }}
+  hostnames:
+    - {{ $ingressHost | quote }}
+  {{- end }}
+  rules:
+    - name: document-events
+      matches:
+        - path:
+            type: RegularExpression
+            value: ^/api/documents/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/events$
+          method: GET
+      timeouts:
+        request: "0s"
+        backendRequest: "0s"
+      backendRefs:
+        - name: {{ $bffSvc }}
+          port: 8000
+---
+# BFF catch-all API route (less specific than the per-request SSE regex)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-api-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-api-route
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayRef }}
+      namespace: {{ .Release.Namespace }}
+  {{- if $ingressHost }}
+  hostnames:
+    - {{ $ingressHost | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: {{ $bffSvc }}
+          port: 8000
+{{- if $s3Ingress.enabled | default false }}
+---
+# Local browser-facing S3 route. Preserve the request path and Host for SigV4.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-s3-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-s3-route
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayRef }}
+      namespace: {{ .Release.Namespace }}
+      sectionName: s3-http
+  hostnames:
+    - {{ required "global.ingress.s3.host is required when the local S3 route is enabled" $s3Ingress.host | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ $s3Ingress.service | default (printf "%s-rustfs" .Release.Name) }}
+          port: {{ $s3Ingress.port | default 9000 }}
+{{- end }}
+{{- if $ingressOtel.enabled }}
+---
+# OTel OTLP/HTTP ingest for edge workers (local/k3s)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-otel-traces-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-otel-traces-route
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayRef }}
+      namespace: {{ .Release.Namespace }}
+  hostnames:
+    - {{ ($ingressOtel.host | default $ingress.host) | quote }}
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: {{ ($ingressOtel.path | default "/v1/traces") | quote }}
+          method: POST
+      backendRefs:
+        - name: {{ $ingressOtel.collectorService | default "otel-collector" }}
+          port: {{ $ingressOtel.collectorPort | default 4318 }}
+{{- end }}
+{{- if index .Values "frontend" "enabled" }}
+---
+# Frontend SPA route (catch-all, lowest priority)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-frontend-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-frontend-route
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayRef }}
+      namespace: {{ .Release.Namespace }}
+  {{- if $ingressHost }}
+  hostnames:
+    - {{ $ingressHost | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ $frontendSvc }}
+          port: 80
+{{- end }}
+{{- end }}

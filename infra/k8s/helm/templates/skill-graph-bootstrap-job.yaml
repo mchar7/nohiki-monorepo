@@ -1,0 +1,138 @@
+{{/*
+Skill Graph Bootstrap Job - one-shot seeder that loads the Tabiya ESCO
+dataset into the skill graph database and publishes SkillGraphSeeded to
+Kafka, which triggers embedding generation + Qdrant population via the
+normal event pipeline.
+
+Gating:
+- Only runs when skill-graph-service is enabled AND bootstrap.enabled is set
+- Disabled by default: the image no longer bundles /data/tabiya (the dataset
+  is gitignored; compose mounts it at runtime), so this Job needs the helm
+  redesign's dataset strategy (fetch initContainer or LFS) before enabling
+- Runs once after migrations complete (Helm hook weight 2)
+- Idempotent: the seeder upserts rows and publishes a version-tagged event;
+  re-running is safe
+*/}}
+{{- $svcName := "skill-graph-service" }}
+{{- $svcValues := index .Values $svcName }}
+{{- if $svcValues }}
+{{- if $svcValues.enabled }}
+{{- $glob := .Values.global | default dict }}
+{{- $globImg := $glob.image | default dict }}
+{{- $imgTag := $glob.imageTag | default "latest" }}
+{{- $svcImage := dig "image" dict $svcValues }}
+{{- $imgRegistry := dig "registry" ($globImg.registry | default "") $svcImage }}
+{{- $imgOwner := dig "owner" ($globImg.owner | default "") $svcImage }}
+{{- $imgRepoName := dig "repositoryName" ($globImg.repositoryName | default "") $svcImage }}
+{{- $imgName := dig "name" $svcName $svcImage }}
+{{- $imageRef := printf "%s:%s" $imgName $imgTag }}
+{{- if $imgRegistry }}
+  {{- $imageRef = printf "%s/%s:%s" $imgRegistry $imgName $imgTag }}
+{{- end }}
+{{- if and $imgRegistry $imgOwner $imgRepoName }}
+  {{- $imageRef = printf "%s/%s/%s/%s:%s" $imgRegistry $imgOwner $imgRepoName $imgName $imgTag }}
+{{- end }}
+{{- $pullPolicy := dig "image" "pullPolicy" "IfNotPresent" $svcValues }}
+{{- $bootstrap := dig "bootstrap" dict $svcValues }}
+{{- $bootstrapEnabled := dig "enabled" false $bootstrap }}
+{{- if $bootstrapEnabled }}
+{{- $kafkaBrokers := printf "kafka://%s-kafka-kafka-bootstrap:9092" .Release.Name }}
+{{- $qdrantValues := .Values.qdrant | default dict }}
+{{- $qdrantHost := $qdrantValues.fullnameOverride | default (printf "%s-qdrant" .Release.Name) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $svcName }}-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: {{ $svcName }}
+    app.kubernetes.io/name: {{ $svcName }}-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: {{ dig "bootstrap" "ttlSecondsAfterFinished" 3600 $svcValues }}
+  backoffLimit: {{ dig "bootstrap" "backoffLimit" 3 $svcValues }}
+  activeDeadlineSeconds: {{ dig "bootstrap" "activeDeadlineSeconds" 1800 $svcValues }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $svcName }}-bootstrap
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- include "nohiki-common.defaultPodSecurityContext" . | nindent 8 }}
+      containers:
+        - name: bootstrap
+          image: {{ $imageRef | quote }}
+          imagePullPolicy: {{ $pullPolicy }}
+          command: ["python", "-m", "skill_graph_service.seeding.cli"]
+          workingDir: /app
+          securityContext:
+            {{- include "nohiki-common.defaultSecurityContext" . | nindent 12 }}
+          env:
+            - name: ENVIRONMENT
+              value: {{ $glob.environment | default "production" | quote }}
+            - name: SERVICE_NAME
+              value: "bootstrap-skill-graph"
+            - name: SKILL_GRAPH_DATABASE__DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $svcName }}-db-credentials
+                  key: dsn
+            - name: SKILL_GRAPH_DATABASE__SCHEMA_NAME
+              value: {{ dig "database" "schema" "skill_graph_schema" $svcValues | quote }}
+            - name: SKILL_GRAPH_DATABASE__MIGRATE_ON_STARTUP
+              value: "false"
+            - name: SKILL_GRAPH_KAFKA__DSN
+              value: {{ $kafkaBrokers | quote }}
+            - name: SKILL_GRAPH_KAFKA__CONSUMER_GROUP
+              value: "bootstrap-skill-graph"
+            - name: SKILL_GRAPH_QDRANT__HOST
+              value: {{ $qdrantHost | quote }}
+            - name: SKILL_GRAPH_QDRANT__GRPC_PORT
+              value: "6334"
+            - name: SKILL_GRAPH_QDRANT__USE_TLS
+              value: "false"
+            - name: TABIYA_SKILLS_CSV
+              value: /data/tabiya/skills.csv
+            - name: TABIYA_RELATIONSHIPS_CSV
+              value: /data/tabiya/skill_skill_relations.csv
+            - name: TABIYA_OCCUPATION_SKILLS_CSV
+              value: /data/tabiya/occupation_skill_relations.csv
+            - name: TABIYA_OCCUPATIONS_CSV
+              value: /data/tabiya/occupations.csv
+            - name: TABIYA_SKILL_GROUPS_CSV
+              value: /data/tabiya/skillGroups.csv
+            - name: TABIYA_SKILLS_HIERARCHY_CSV
+              value: /data/tabiya/skills_hierarchy.csv
+            - name: TABIYA_SOURCE_VERSION
+              value: {{ dig "bootstrap" "tabiyaVersion" "1.1.1" $svcValues | quote }}
+          resources:
+            requests:
+              cpu: {{ dig "bootstrap" "resources" "requests" "cpu" "200m" $svcValues }}
+              memory: {{ dig "bootstrap" "resources" "requests" "memory" "512Mi" $svcValues }}
+            limits:
+              cpu: {{ dig "bootstrap" "resources" "limits" "cpu" "1000m" $svcValues }}
+              memory: {{ dig "bootstrap" "resources" "limits" "memory" "1Gi" $svcValues }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: ml-manifest
+              mountPath: /app/data/config/semantic_representation_manifest.json
+              subPath: semantic_representation_manifest.json
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: ml-manifest
+          configMap:
+            name: nohiki-ml-manifest
+{{- end }}
+{{- end }}
+{{- end }}

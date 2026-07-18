@@ -1,0 +1,526 @@
+# Local k3s deployment overrides
+# All infrastructure (PostgreSQL, Valkey, Kafka, RustFS, Qdrant) runs IN-CLUSTER.
+# No external Docker Compose dependencies.
+
+x-local-rustfs-endpoint: &localRustfsEndpoint nohiki-rustfs:9000
+x-local-rustfs-url: &localRustfsUrl http://nohiki-rustfs:9000
+# Single source of truth for the local image registry endpoint. `just k8s-push-images`
+# reads this exact value, so pushed tags and reconciler-rendered pulls cannot drift.
+x-local-registry: &localRegistry localhost:5000
+
+global:
+  environment: local
+  imageTag: dev
+  # Provider source material is Flux/SOPS-owned; Helm leaves all runtime Secrets
+  # to the local bootstrap and secret reconciliation chain.
+  secrets:
+    inlineSecretsEnabled: false
+    llmSecretName: nohiki-llm-runtime
+  eso:
+    localStoreName: nohiki-local-secret-store
+  modelEgress:
+    disabledBackends: [messages]
+    providerCredentials: [openai, openrouter]
+  nohikiImage:
+    registry: *localRegistry
+    owner: ""
+    repositoryName: ""
+    pullPolicy: IfNotPresent
+
+  # Database configuration (CloudNativePG in-cluster)
+  database:
+    host: nohiki-pg-rw
+    port: 5432
+
+  # Redis/Valkey configuration (in-cluster)
+  redis:
+    host: nohiki-valkey-primary
+    port: 6379
+
+  # Kafka configuration (Strimzi in-cluster)
+  kafka:
+    version: "4.3.0"
+    bootstrapServers: nohiki-kafka-kafka-bootstrap:9092
+    dsn: "kafka://nohiki-kafka-kafka-bootstrap:9092"
+    security:
+      protocol: PLAINTEXT
+
+  # S3 configuration (RustFS in-cluster)
+  s3:
+    endpoint: *localRustfsUrl
+    region: local
+
+  # Qdrant configuration (in-cluster)
+  qdrant:
+    host: nohiki-qdrant
+    grpcPort: "6334"
+
+  observability:
+    enabled: true
+    prometheus:
+      enabled: true
+    otel:
+      enabled: false
+      collector:
+        mode: deployment
+        replicas: 1
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 50m
+          limits:
+            memory: 256Mi
+            cpu: 200m
+    otelEndpoint: http://nohiki-tempo-distributor:4317
+    otelInsecure: "true"
+    otelEnabled: "false"
+    phoenixEndpoint: ""
+    phoenixEnabled: "false"
+    phoenixProjectName: nohiki
+
+  scaling:
+    minReplicas: 1
+    maxReplicas: 1
+    cooldownPeriod: 300
+
+  ingress:
+    enabled: true
+    host: nohiki.localhost
+    trafficPolicy:
+      rateLimit:
+        average: 2000
+        burst: 2000
+        period: 60s
+    s3:
+      enabled: true
+      host: s3.nohiki.localhost
+      service: nohiki-rustfs
+      port: 9000
+    otel:
+      enabled: true
+      host: nohiki.localhost
+      collectorService: nohiki-tempo-distributor
+      collectorPort: 4318
+      path: /v1/traces
+
+
+# Enable in-cluster infrastructure
+cnpgCluster:
+  enabled: true
+  name: nohiki-pg
+  instances: 1
+  maxConnections: "500"
+  database: nohiki_db
+  username: nohiki
+  storage:
+    size: 2Gi
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+valkey:
+  enabled: true
+  fullnameOverride: nohiki-valkey
+  architecture: standalone
+  auth:
+    enabled: false
+  image:
+    tag: sha256-1b8a4dcc5739c12e14beedd65cc13b44ef07480e6648ad5628c3aef0951c3574@sha256:1b8a4dcc5739c12e14beedd65cc13b44ef07480e6648ad5628c3aef0951c3574
+  metrics:
+    image:
+      tag: sha256-826966816fe3cec63edfb19d97424df415a5045189fba850862e20332ee201c1@sha256:826966816fe3cec63edfb19d97424df415a5045189fba850862e20332ee201c1
+  master:
+    persistence:
+      size: 1Gi
+
+strimzi:
+  enabled: true
+  watchAnyNamespace: false
+
+kafkaCluster:
+  enabled: true
+  name: nohiki-kafka
+  version: "4.3.0"
+  replicas: 1
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 300m
+    limits:
+      memory: 2Gi
+      cpu: 1000m
+  storage:
+    type: persistent-claim
+    size: 2Gi
+    deleteClaim: true
+
+rustfs:
+  enabled: true
+  # Local: standalone mode (1 pod, 1 PVC) - NOT HA
+  mode:
+    distributed:
+      enabled: false
+    standalone:
+      enabled: true
+  replicaCount: 1
+  image:
+    repository: rustfs/rustfs
+    tag: 1.0.0-beta.8@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
+    pullPolicy: IfNotPresent
+  secret:
+    existingSecret: nohiki-rustfs-credentials
+    rustfs:
+      # set in values.secrets.yaml (untracked)
+      access_key: ""
+      secret_key: ""
+  buckets:
+    - nohiki-attachments
+    - nohiki-templates
+    - nohiki-tailored-docs
+    - nohiki-ml-artifacts
+    - nohiki-job-correlation
+    - nohiki-tempo
+    - nohiki-loki-chunks
+    - nohiki-loki-ruler
+    - nohiki-loki-admin
+    - nohiki-mimir
+    - nohiki-mimir-blocks
+    - nohiki-mimir-alertmanager
+    - nohiki-mimir-ruler
+    - nohiki-pyroscope
+  config:
+    rustfs:
+      log_level: "debug"
+      obs_environment: "local"
+  # Disable Gateway API for local (use port-forward or NodePort)
+  gatewayApi:
+    enabled: false
+  ingress:
+    enabled: false
+  # Smaller storage for local
+  storageclass:
+    name: local-path
+    dataStorageSize: 2Gi
+    logStorageSize: 256Mi
+  # No PDB for single replica
+  pdb:
+    create: false
+  # No anti-affinity for local
+  affinity:
+    podAntiAffinity:
+      enabled: false
+
+qdrant:
+  enabled: true
+  fullnameOverride: nohiki-qdrant
+  replicaCount: 1
+  persistence:
+    size: 1Gi
+
+qdrantInit:
+  enabled: true
+  image:
+    registry: *localRegistry
+    pullPolicy: Always
+
+keda:
+  httpAddon:
+    enabled: false
+
+# First-party services and their DB-migration jobs share the one registry anchor; Always re-pulls the mutable dev tag.
+x-local-first-party-image: &localFirstPartyImage
+  registry: *localRegistry
+  pullPolicy: Always
+
+user-auth-service:
+  enabled: true
+  image: *localFirstPartyImage
+  secrets:
+    oauth: false
+
+user-pref-service:
+  enabled: true
+  image: *localFirstPartyImage
+  qdrant:
+    enabled: true
+
+user-upload-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+user-entitlement-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+job-ingest-discovery-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+job-ingest-schedule-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+job-query-composition-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+job-ingest-enrichment-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+job-storage-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+job-correlation-evaluation-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+doc-template-service:
+  enabled: true
+  image: *localFirstPartyImage
+  extraEnv:
+    - name: DOC_TEMPLATE_GOTENBERG__BASE_URL
+      value: "http://nohiki-gotenberg:3000"
+
+doc-content-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+doc-process-service:
+  enabled: true
+  image: *localFirstPartyImage
+  extraEnv:
+    - name: DOC_PROCESS_DOCLING__BASE_URL
+      value: "http://nohiki-docling:5001"
+
+docling-serve:
+  enabled: true
+
+ml-gateway-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+ml-compute-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+skill-graph-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+bff-service:
+  enabled: true
+  image: *localFirstPartyImage
+  extraEnv:
+    - name: BFF_JWT__JWKS_URL
+      value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000/.well-known/jwks.json"
+    - name: BFF_JWT__ISSUER
+      value: "http://{{ .Release.Name }}-user-auth-service.{{ .Release.Namespace }}.svc.cluster.local:8000"
+    - name: BFF_JWT__AUDIENCE
+      value: "nohiki-api"
+    - name: BFF_ORIGINS__CORS_ORIGINS
+      value: "http://nohiki.localhost:8080"
+    - name: BFF_ORIGINS__CSRF_ORIGINS
+      value: "http://nohiki.localhost:8080"
+    - name: NOHIKI_TRUSTED_PROXY_CIDRS
+      value: "10.244.0.0/16"
+    - name: BFF_S3__PUBLIC_URL
+      value: "http://s3.nohiki.localhost:8080"
+    - name: BFF_AUTH_LISTINGS__SECRET
+      valueFrom:
+        secretKeyRef:
+          name: auth-listings-secret
+          key: secret
+
+notification-service:
+  enabled: true
+  image: *localFirstPartyImage
+
+frontend:
+  enabled: true
+
+scheduleTickPublisher:
+  enabled: true
+  image:
+    repository: "sys-tick-job"
+    pullPolicy: Always
+
+# Local observability uses RustFS and minimal replicas.
+
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      remoteWrite:
+        - url: http://nohiki-mimir-nginx.nohiki.svc:80/api/v1/push
+          headers:
+            X-Scope-OrgID: nohiki
+      retention: 12h
+      retentionSize: 2GB
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            resources:
+              requests:
+                storage: 5Gi
+
+mimir-distributed:
+  minio:
+    enabled: false
+  mimir:
+    structuredConfig:
+      common:
+        storage:
+          s3:
+            endpoint: *localRustfsEndpoint
+            insecure: true
+            access_key_id: ${AWS_ACCESS_KEY_ID}
+            secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+      blocks_storage:
+        backend: s3
+        s3:
+          bucket_name: nohiki-mimir-blocks
+          endpoint: *localRustfsEndpoint
+          insecure: true
+          access_key_id: ${AWS_ACCESS_KEY_ID}
+          secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+      alertmanager_storage:
+        backend: s3
+        s3:
+          bucket_name: nohiki-mimir-alertmanager
+          endpoint: *localRustfsEndpoint
+          insecure: true
+          access_key_id: ${AWS_ACCESS_KEY_ID}
+          secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+      ruler_storage:
+        backend: s3
+        s3:
+          bucket_name: nohiki-mimir-ruler
+          endpoint: *localRustfsEndpoint
+          insecure: true
+          access_key_id: ${AWS_ACCESS_KEY_ID}
+          secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+  distributor:
+    replicas: 1
+  ingester:
+    replicas: 1
+  querier:
+    replicas: 1
+  query_frontend:
+    replicas: 1
+  store_gateway:
+    replicas: 1
+  compactor:
+    replicas: 1
+  ruler:
+    replicas: 1
+
+tempo-distributed:
+  traces:
+    otlp:
+      http:
+        enabled: true
+      grpc:
+        enabled: true
+  tempo:
+    structuredConfig:
+      storage:
+        trace:
+          s3:
+            endpoint: *localRustfsEndpoint
+            insecure: true
+      metrics_generator:
+        processor:
+          span_metrics:
+            dimensions:
+              - service.name
+              - service.namespace
+              - http.method
+              - http.status_code
+              - cache_status
+              - country
+        storage:
+          remote_write:
+            - url: http://nohiki-mimir-nginx.nohiki.svc:80/api/v1/push
+              headers:
+                X-Scope-OrgID: nohiki
+  distributor:
+    replicas: 1
+  ingester:
+    replicas: 1
+  querier:
+    replicas: 1
+  query_frontend:
+    replicas: 1
+  compactor:
+    replicas: 1
+  metrics_generator:
+    replicas: 1
+
+loki:
+  loki:
+    storage:
+      bucketNames:
+        chunks: nohiki-loki-chunks
+        ruler: nohiki-loki-ruler
+        admin: nohiki-loki-admin
+      s3:
+        endpoint: *localRustfsUrl
+        insecure: true
+        region: local
+        s3ForcePathStyle: true
+  write:
+    replicas: 1
+    extraEnvFrom:
+      - secretRef:
+          name: observability-storage-credentials
+  read:
+    replicas: 1
+    extraEnvFrom:
+      - secretRef:
+          name: observability-storage-credentials
+  backend:
+    replicas: 1
+    extraEnvFrom:
+      - secretRef:
+          name: observability-storage-credentials
+
+pyroscope:
+  enabled: true
+  minio:
+    enabled: false
+  pyroscope:
+    structuredConfig:
+      storage:
+        backend: s3
+        s3:
+          endpoint: *localRustfsEndpoint
+          bucket_name: nohiki-pyroscope
+          insecure: true
+          access_key_id: ${AWS_ACCESS_KEY_ID}
+          secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+    extraEnvFrom:
+      - secretRef:
+          name: observability-storage-credentials
+  replicas: 1
+  # Local override: base values.yaml pins alloy as tag+digest ("v1.12.2@sha256:...").
+  # The grafana/alloy chart copies image.tag verbatim into the app.kubernetes.io/version
+  # label, and "@sha256:" is not a valid label value, aborting the release apply.
+  # Locally we pull by tag (registry reachable), so drop the digest here.
+  alloy:
+    image:
+      tag: v1.12.2
+
+opentelemetry-operator:
+  enabled: false

@@ -1,0 +1,57 @@
+================================================================================
+  _   _       _     _ _    _
+ | \ | | ___ | |__ (_) | _(_)
+ |  \| |/ _ \| '_ \| | |/ / |
+ | |\  | (_) | | | | |   <| |
+ |_| \_|\___/|_| |_|_|_|\_\_|
+
+  Job Application Automation Platform
+================================================================================
+
+{{- if .Release.IsInstall }}
+Nohiki has been successfully deployed!
+{{- else }}
+Nohiki has been successfully upgraded!
+{{- end }}
+
+DEPLOYMENT INFO
+---------------
+  Release:     {{ .Release.Name }}
+  Namespace:   {{ .Release.Namespace }}
+  Environment: {{ .Values.global.environment }}
+  Image Tag:   {{ .Values.global.imageTag | default "latest" }}
+
+SERVICES
+--------
+  User Domain:
+    user-auth-service, user-pref-service, user-upload-service, user-entitlement-service
+  Job Domain:
+    job-ingest-discovery-service, job-ingest-enrichment-service, job-ingest-schedule-service
+    job-query-composition-service, job-storage-service, job-correlation-evaluation-service
+  Document Domain:
+    doc-template-service, doc-content-service, doc-process-service
+  ML:
+    ml-gateway-service, ml-compute-service
+  Other:
+    bff-service, notification-service, skill-graph-service, frontend
+
+ACCESS
+------
+{{- $ingress := .Values.global.ingress | default dict }}
+{{- if $ingress.enabled }}
+  Application URL: https://{{ $ingress.host }}
+{{- else }}
+  Ingress is disabled. Access services via port-forward:
+    kubectl port-forward svc/{{ .Release.Name }}-frontend 8080:80 -n {{ .Release.Namespace }}
+{{- end }}
+
+USEFUL COMMANDS
+---------------
+  kubectl get deployments -n {{ .Release.Namespace }}
+  kubectl get pods -n {{ .Release.Namespace }}
+  kubectl logs -f -l app.kubernetes.io/name=<service> -n {{ .Release.Namespace }}
+
+INFRASTRUCTURE
+--------------
+  PostgreSQL, Redis, Kafka (KRaft), RustFS (S3), Qdrant
+================================================================================

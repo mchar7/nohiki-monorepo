@@ -1,0 +1,76 @@
+{{/*
+Kafka Connect JMX Prometheus Exporter Configuration.
+
+Exposes Kafka Connect metrics in Prometheus format for scraping.
+*/}}
+{{- if .Values.kafkaConnect.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nohiki-connect-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: kafka-connect
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/part-of: nohiki
+data:
+  connect-metrics-config.yml: |
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    rules:
+      # Connector-level metrics
+      - pattern: "kafka.connect<type=connector-metrics, connector=(.+)><>(.+): (.+)"
+        name: kafka_connect_connector_$2
+        type: GAUGE
+        labels:
+          connector: "$1"
+
+      # Task-level metrics
+      - pattern: "kafka.connect<type=connector-task-metrics, connector=(.+), task=(\\d+)><>(.+): (.+)"
+        name: kafka_connect_connector_task_$3
+        type: GAUGE
+        labels:
+          connector: "$1"
+          task: "$2"
+
+      # Source task metrics
+      - pattern: "kafka.connect<type=source-task-metrics, connector=(.+), task=(\\d+)><>(.+): (.+)"
+        name: kafka_connect_source_task_$3
+        type: GAUGE
+        labels:
+          connector: "$1"
+          task: "$2"
+
+      # Sink task metrics
+      - pattern: "kafka.connect<type=sink-task-metrics, connector=(.+), task=(\\d+)><>(.+): (.+)"
+        name: kafka_connect_sink_task_$3
+        type: GAUGE
+        labels:
+          connector: "$1"
+          task: "$2"
+
+      # Worker metrics
+      - pattern: "kafka.connect<type=connect-worker-metrics><>(.+): (.+)"
+        name: kafka_connect_worker_$1
+        type: GAUGE
+
+      # Worker rebalance metrics
+      - pattern: "kafka.connect<type=connect-worker-rebalance-metrics><>(.+): (.+)"
+        name: kafka_connect_worker_rebalance_$1
+        type: GAUGE
+
+      # Coordinator metrics
+      - pattern: "kafka.connect<type=connect-coordinator-metrics><>(.+): (.+)"
+        name: kafka_connect_coordinator_$1
+        type: GAUGE
+
+      # Error metrics
+      - pattern: "kafka.connect<type=task-error-metrics, connector=(.+), task=(\\d+)><>(.+): (.+)"
+        name: kafka_connect_task_error_$3
+        type: GAUGE
+        labels:
+          connector: "$1"
+          task: "$2"
+{{- end }}

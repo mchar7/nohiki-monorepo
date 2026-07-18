@@ -1,0 +1,245 @@
+{{/*
+ServiceMonitor CRDs for Prometheus Operator service scraping.
+
+Creates ServiceMonitors for all Nohiki microservices that expose /metrics endpoints.
+Requires Prometheus Operator to be installed (part of kube-prometheus-stack).
+*/}}
+{{- $obs := (.Values.global | default dict).observability | default dict }}
+{{- $obsProm := $obs.prometheus | default dict }}
+{{- $obsOtel := $obs.otel | default dict }}
+{{- if and $obs.enabled $obsProm.enabled }}
+{{- $glob := .Values.global | default dict }}
+
+{{- range $svcName, $svcValues := .Values }}
+{{- if and (kindIs "map" $svcValues) (dig "enabled" false $svcValues) }}
+{{- $isService := or (hasSuffix "-service" $svcName) (eq $svcName "frontend") }}
+{{- if $isService }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $svcName }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ $svcName }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: {{ $svcName }}
+    app.kubernetes.io/part-of: nohiki
+    release: {{ $.Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $svcName }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  namespaceSelector:
+    matchNames:
+      - {{ $.Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+{{- end }}
+{{- end }}
+{{- end }}
+
+# ServiceMonitor for agentgateway-generated data-plane Services. The selector and
+# named metrics port match the vendored agentgateway 1.3.1 monitoring template.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: agentgateway-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: agentgateway-proxy
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: model-egress
+    app.kubernetes.io/part-of: nohiki
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-class-name: agentgateway
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+
+# ServiceMonitor for OpenTelemetry Collector (Prometheus exporter endpoint)
+{{- if $obsOtel.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/part-of: nohiki
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: prometheus
+      path: /metrics
+      interval: 10s
+{{- end }}
+
+# ServiceMonitor for Kafka Connect
+{{- if .Values.kafkaConnect.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kafka-connect
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: kafka-connect
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: messaging
+    app.kubernetes.io/part-of: nohiki
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/cluster: {{ .Values.kafkaConnect.name }}
+      strimzi.io/kind: KafkaConnect
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: tcp-prometheus
+      path: /metrics
+      interval: 15s
+{{- end }}
+
+# ServiceMonitor for Docling Serve (document conversion)
+{{- if (index .Values "docling-serve" "enabled") }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: docling-serve
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: docling-serve
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: document-conversion
+    app.kubernetes.io/part-of: nohiki
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: docling-serve
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+{{- end }}
+
+# ServiceMonitor for the Valkey metrics sidecar. The dependency monitor is
+# disabled because dependency values cannot interpolate the parent release name.
+{{- if .Values.valkey.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-valkey
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: nohiki
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: valkey
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: metrics
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+{{- end }}
+
+# ServiceMonitor for Qdrant metrics. The dependency monitor is disabled for the
+# same parent-release selector reason.
+{{- if .Values.qdrant.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-qdrant
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: nohiki
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: cluster-discovery
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      scheme: http
+      honorLabels: true
+      interval: 30s
+      scrapeTimeout: 10s
+{{- end }}
+
+# ServiceMonitor for RustFS (S3-compatible storage)
+{{- if .Values.rustfs.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rustfs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: rustfs
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: storage
+    app.kubernetes.io/part-of: nohiki
+    release: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustfs
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: api
+      path: /minio/v2/metrics/cluster
+      interval: 30s
+{{- end }}
+
+{{- end }}

@@ -1,0 +1,22 @@
+{{- if .Values.kafkaCluster.enabled }}
+{{- $cfg := .Values.kafkaCluster }}
+{{- range $topic := $cfg.topics }}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: {{ $topic }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    strimzi.io/cluster: {{ $cfg.name }}
+    app.kubernetes.io/name: kafka
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/component: messaging
+    app.kubernetes.io/part-of: nohiki
+spec:
+  topicName: {{ $topic }}
+  partitions: {{ $cfg.config.numPartitions }}
+  replicas: {{ $cfg.config.defaultReplicationFactor }}
+{{- end }}
+{{- end }}

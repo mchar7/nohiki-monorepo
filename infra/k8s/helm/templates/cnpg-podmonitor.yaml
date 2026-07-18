@@ -1,0 +1,54 @@
+{{/*
+PodMonitor for the CloudNativePG cluster.
+
+CNPG deprecated spec.monitoring.enablePodMonitor in v1.25 and will remove it
+in v1.30 (https://cloudnative-pg.io/docs/1.27/monitoring/). We own the
+PodMonitor ourselves rather than letting the operator manage it.
+
+Name note: CNPG v1.27.1 has a reconciliation bug where the operator deletes
+any PodMonitor sharing the cluster's name when enablePodMonitor is absent
+(cloudnative-pg#8978, fixed in v1.28+). We sidestep by suffixing with
+"-metrics" so the name is guaranteed distinct even on older operator
+versions.
+
+Gating: rendered only when the CNPG cluster is enabled AND cluster
+monitoring is requested AND Prometheus Operator CRDs are available.
+*/}}
+{{- if .Values.cnpgCluster.enabled }}
+{{- $cfg := .Values.cnpgCluster }}
+{{- $monitoring := $cfg.monitoring | default dict }}
+{{- if $monitoring.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $cfg.name }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: nohiki
+    {{- /* Propagate user-supplied selector labels (e.g. `release: prometheus`) */}}
+    {{- range $k, $v := dig "monitoring" "podMonitorLabels" (dict) $cfg }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: {{ $cfg.name }}
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ dig "monitoring" "interval" "30s" $cfg }}
+      {{- if dig "monitoring" "tls" "enabled" false $cfg }}
+      scheme: https
+      tlsConfig:
+        ca:
+          secret:
+            name: {{ $cfg.name }}-ca
+            key: ca.crt
+        serverName: {{ $cfg.name }}-rw
+      {{- end }}
+{{- end }}
+{{- end }}

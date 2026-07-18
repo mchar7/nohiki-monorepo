@@ -1,0 +1,123 @@
+{{/*
+Strimzi KafkaConnect - Kafka Connect cluster with Debezium + Qdrant plugins.
+
+Uses FileConfigProvider for secure secret injection from mounted volumes.
+Connectors are managed via separate KafkaConnector CRDs (strimzi-kafka-connectors.yaml).
+*/}}
+{{- if .Values.kafkaConnect.enabled }}
+{{- $cfg := .Values.kafkaConnect }}
+{{- $glob := .Values.global | default dict }}
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnect
+metadata:
+  name: {{ $cfg.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: kafka-connect
+  annotations:
+    strimzi.io/use-connector-resources: "true"
+spec:
+  replicas: {{ $cfg.replicas | default 2 }}
+  bootstrapServers: {{ $cfg.bootstrapServers }}
+  version: {{ $glob.kafka.version | default "4.3.0" }}
+
+  config:
+    group.id: {{ $cfg.groupId }}
+    config.storage.topic: {{ $cfg.configStorageTopic }}
+    offset.storage.topic: {{ $cfg.offsetStorageTopic }}
+    status.storage.topic: {{ $cfg.statusStorageTopic }}
+    config.storage.replication.factor: 1
+    offset.storage.replication.factor: 1
+    status.storage.replication.factor: 1
+    config.providers: file
+    config.providers.file.class: org.apache.kafka.common.config.provider.FileConfigProvider
+    connector.client.config.override.policy: None
+    # Only offset.flush.interval.ms is exposed as a tunable here because it is the
+    # single Connect-cluster-level setting we actively tune per environment (10s in
+    # local/dev for fast restart recovery, defaults sufficient elsewhere). Other
+    # cluster settings stay hardcoded; per-connector tunables (heartbeat, snapshot
+    # fetch size, batch sizes) live on the KafkaConnector CRDs in
+    # strimzi-kafka-connectors.yaml.
+    offset.flush.interval.ms: {{ $cfg.offsetFlushIntervalMs | default 10000 }}
+
+  {{- if $cfg.build.enabled }}
+  build:
+    output:
+      type: docker
+      image: {{ $cfg.image.registry }}/{{ $cfg.image.repository }}:{{ $cfg.image.tag }}
+      {{- if $cfg.image.pullSecret }}
+      pushSecret: {{ $cfg.image.pullSecret }}
+      {{- end }}
+    plugins:
+      - name: debezium-postgres
+        artifacts:
+          - type: tgz
+            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/{{ $cfg.build.debeziumVersion }}/debezium-connector-postgres-{{ $cfg.build.debeziumVersion }}-plugin.tar.gz
+            sha512sum: {{ required "kafkaConnect.build.debeziumSha512 is required" $cfg.build.debeziumSha512 | quote }}
+      - name: qdrant-sink
+        artifacts:
+          - type: zip
+            url: https://github.com/qdrant/qdrant-kafka/releases/download/v{{ $cfg.build.qdrantKafkaVersion }}/qdrant-kafka-{{ $cfg.build.qdrantKafkaVersion }}.zip
+            sha512sum: {{ required "kafkaConnect.build.qdrantKafkaSha512 is required" $cfg.build.qdrantKafkaSha512 | quote }}
+  {{- end }}
+
+  template:
+    pod:
+      metadata:
+        labels:
+          app.kubernetes.io/name: kafka-connect
+          app.kubernetes.io/component: kafka-connect
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      volumes:
+        {{- range $svcName, $svcValues := $.Values }}
+        {{- if kindIs "map" $svcValues }}
+        {{- $database := dig "database" dict $svcValues }}
+        {{- if and (kindIs "map" $database) (dig "enabled" false $database) }}
+        - name: {{ $svcName }}-debezium-creds
+          secret:
+            secretName: {{ $svcName }}-debezium-credentials
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- if $cfg.qdrant.enabled }}
+        - name: qdrant-creds
+          secret:
+            secretName: qdrant-credentials
+        {{- end }}
+    connectContainer:
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: false
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        {{- range $svcName, $svcValues := $.Values }}
+        {{- if kindIs "map" $svcValues }}
+        {{- $database := dig "database" dict $svcValues }}
+        {{- if and (kindIs "map" $database) (dig "enabled" false $database) }}
+        - name: {{ $svcName }}-debezium-creds
+          mountPath: /mnt/secrets/{{ $svcName }}-debezium
+          readOnly: true
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- if $cfg.qdrant.enabled }}
+        - name: qdrant-creds
+          mountPath: /mnt/secrets/qdrant
+          readOnly: true
+        {{- end }}
+
+  resources:
+    requests:
+      memory: {{ $cfg.resources.requests.memory | default "512Mi" }}
+      cpu: {{ $cfg.resources.requests.cpu | default "200m" }}
+    limits:
+      memory: {{ $cfg.resources.limits.memory | default "1Gi" }}
+      cpu: {{ $cfg.resources.limits.cpu | default "1000m" }}
+{{- end }}

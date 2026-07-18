@@ -1,0 +1,18 @@
+{{/*
+ML Semantic Representation Manifest ConfigMap.
+Content is injected at deploy-time via Helmfile readFile gotmpl - the canonical
+source remains data/config/semantic_representation_manifest.json.
+Gated on .Values.mlManifestContent being non-empty (set by Helmfile).
+*/}}
+{{- if .Values.mlManifestContent }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nohiki-ml-manifest
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "nohiki.labels" . | nindent 4 }}
+data:
+  semantic_representation_manifest.json: |-
+    {{- .Values.mlManifestContent | trim | nindent 4 }}
+{{- end }}

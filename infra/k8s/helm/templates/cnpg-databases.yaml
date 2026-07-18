@@ -1,0 +1,31 @@
+{{/*
+CNPG Database CRDs - creates per-service databases in the CNPG cluster.
+
+Each service with database.enabled: true gets a dedicated database owned by its app role.
+The Debezium role is granted access for CDC replication.
+*/}}
+{{- if .Values.cnpgCluster.enabled }}
+{{- $cfg := .Values.cnpgCluster }}
+{{- range $svcName, $svcValues := .Values }}
+{{- if eq (include "nohiki.hasDatabaseEnabled" $svcValues) "true" }}
+{{- $dbName := include "nohiki.dbName" (dict "svcName" $svcName "svcValues" $svcValues) }}
+{{- $dbResourceName := include "nohiki.dbResourceName" (dict "svcName" $svcName "svcValues" $svcValues) }}
+{{- $appRole := include "nohiki.dbAppRole" (dict "svcName" $svcName "svcValues" $svcValues) }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: {{ $dbResourceName }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/component: {{ $svcName }}
+spec:
+  name: {{ $dbName }}
+  owner: {{ $appRole }}
+  cluster:
+    name: {{ $cfg.name }}
+{{- end }}
+{{- end }}
+{{- end }}

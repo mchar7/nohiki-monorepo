@@ -1,0 +1,146 @@
+{{/*
+Strimzi KafkaConnector CRDs - Debezium outbox and logical-message sources.
+
+Database-enabled services default to an outbox connector. Services that explicitly
+select Debezium WAL mode get a dedicated logical-message connector whose SMT drops
+every table-row record from the minimal publication.
+
+NOTE: Keep connector config in sync with infra/k8s/kafka-connect/connectors/
+      (manual diff). Future work: generate one source from the other.
+*/}}
+{{- if .Values.kafkaConnect.enabled }}
+{{- $kc := .Values.kafkaConnect }}
+{{- $deb := $kc.debezium | default dict }}
+{{- $glob := .Values.global | default dict }}
+{{- $globDb := $glob.database | default dict }}
+{{- $dbHost := $globDb.host | default "nohiki-pg-rw" }}
+{{- $dbPort := $globDb.port | default 5432 }}
+
+{{- range $svcName, $svcValues := .Values }}
+{{- if and (ne $svcName "job-ingest-schedule-service") (eq (include "nohiki.hasDatabaseEnabled" $svcValues) "true") }}
+{{- $dbName := include "nohiki.dbName" (dict "svcName" $svcName "svcValues" $svcValues) }}
+{{- $dbSchema := include "nohiki.dbSchema" (dict "svcName" $svcName "svcValues" $svcValues) }}
+{{- $prefix := include "nohiki.dbPrefix" $svcName }}
+{{- $connectorMode := dig "debezium" "mode" "outbox" $svcValues }}
+{{- $resourcePrefix := dig "debezium" "resourcePrefix" $prefix $svcValues }}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: {{ $svcName }}-{{ if eq $connectorMode "wal" }}wal{{ else }}outbox{{ end }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    strimzi.io/cluster: {{ $kc.name }}
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/component: {{ $svcName }}
+spec:
+  class: io.debezium.connector.postgresql.PostgresConnector
+  tasksMax: 1
+  config:
+    database.hostname: {{ $dbHost }}
+    database.port: "{{ $dbPort }}"
+    database.dbname: {{ $dbName }}
+    database.user: "${file:/mnt/secrets/{{ $svcName }}-debezium/username}"
+    database.password: "${file:/mnt/secrets/{{ $svcName }}-debezium/password}"
+
+    topic.prefix: {{ if eq $connectorMode "wal" }}{{ $resourcePrefix }}_wal{{ else }}{{ $prefix }}{{ end }}
+    schema.include.list: {{ $dbSchema }}
+    table.include.list: {{ $dbSchema }}.{{ if eq $connectorMode "wal" }}processed_events{{ else }}outbox{{ end }}
+
+    plugin.name: pgoutput
+    slot.name: {{ if eq $connectorMode "wal" }}{{ $resourcePrefix }}_wal_slot{{ else }}{{ $prefix }}_outbox_slot{{ end }}
+    publication.name: {{ if eq $connectorMode "wal" }}{{ $resourcePrefix }}_wal_pub{{ else }}{{ $prefix }}_outbox_pub{{ end }}
+{{ if eq $connectorMode "wal" }}
+    publication.autocreate.mode: filtered
+{{ end }}
+{{ if eq $connectorMode "wal" }}
+    message.prefix.include.list: ".*"
+{{ end }}
+
+    snapshot.mode: {{ $deb.snapshotMode | default "when_needed" }}
+    snapshot.locking.mode: {{ $deb.snapshotLockingMode | default "none" }}
+    # Smaller snapshot batches (default 10240) cap peak heap on Connect pods during
+    # initial snapshots; publication tables are tiny so the speed cost is negligible.
+    snapshot.fetch.size: "{{ $deb.snapshotFetchSize | default 2048 }}"
+    tombstones.on.delete: "false"
+
+{{ if eq $connectorMode "wal" }}
+    transforms: walRoute
+    transforms.walRoute.type: ai.nohiki.kafka.connect.transforms.NohikiWalRouterSmt
+{{ else }}
+    transforms: outbox
+    transforms.outbox.type: io.debezium.transforms.outbox.EventRouter
+    transforms.outbox.table.field.event.id: id
+    transforms.outbox.table.field.event.key: aggregateid
+    transforms.outbox.table.field.event.type: type
+    transforms.outbox.table.field.event.payload: payload
+    transforms.outbox.table.fields.additional.placement: "tracingspancontext:header:tracingspancontext,aggregatetype:header:aggregatetype"
+    transforms.outbox.route.by.field: type
+    transforms.outbox.route.topic.replacement: "${routedByValue}"
+    transforms.outbox.table.expand.json.payload: "false"
+{{ end }}
+
+    key.converter: org.apache.kafka.connect.storage.StringConverter
+    value.converter: io.debezium.converters.BinaryDataConverter
+    value.converter.delegate.converter.type: org.apache.kafka.connect.json.JsonConverter
+    value.converter.delegate.converter.type.schemas.enable: "false"
+
+    topic.creation.enable: "true"
+    topic.creation.default.replication.factor: "{{ $deb.topicReplicationFactor | default 1 }}"
+    topic.creation.default.partitions: "{{ $deb.topicPartitions | default 3 }}"
+
+    heartbeat.interval.ms: "{{ $deb.heartbeatIntervalMs | default 10000 }}"
+    poll.interval.ms: "{{ $deb.pollIntervalMs | default 100 }}"
+    # Bounded heap usage during snapshot; see snapshot.fetch.size rationale above.
+    max.batch.size: "{{ $deb.maxBatchSize | default 2048 }}"
+    max.queue.size: "{{ $deb.maxQueueSize | default 8192 }}"
+
+    errors.tolerance: all
+    errors.log.enable: "true"
+    errors.log.include.messages: "false"
+    errors.deadletterqueue.topic.name: {{ $resourcePrefix }}.dlq.{{ $connectorMode }}.v1
+    errors.deadletterqueue.topic.replication.factor: "{{ $deb.topicReplicationFactor | default 1 }}"
+    errors.deadletterqueue.context.headers.enable: "true"
+{{- end }}
+{{- end }}
+
+{{- if $kc.qdrant.enabled }}
+{{- $qdrant := $kc.qdrant }}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: qdrant-embedding-sink
+  namespace: {{ .Release.Namespace }}
+  labels:
+    strimzi.io/cluster: {{ $kc.name }}
+    app.kubernetes.io/part-of: nohiki
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: qdrant-sink
+spec:
+  class: io.qdrant.kafka.QdrantSinkConnector
+  tasksMax: {{ $qdrant.tasksMax | default 3 }}
+  config:
+    topics: {{ $qdrant.topic }}
+
+    key.converter: org.apache.kafka.connect.storage.StringConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter.schemas.enable: "false"
+
+    qdrant.grpc.url: {{ $qdrant.grpcUrl }}
+    qdrant.collection.field: collection_name
+    {{- if $qdrant.apiKeyFromSecret }}
+    qdrant.api.key: "${file:/mnt/secrets/qdrant/api-key}"
+    {{- end }}
+
+    errors.tolerance: all
+    errors.log.enable: "true"
+    errors.log.include.messages: "false"
+    errors.deadletterqueue.topic.name: ml.dlq.qdrant-sink-errors.v1
+    errors.deadletterqueue.topic.replication.factor: "{{ $deb.topicReplicationFactor | default 1 }}"
+    errors.deadletterqueue.context.headers.enable: "true"
+
+    consumer.override.auto.offset.reset: earliest
+{{- end }}
+{{- end }}

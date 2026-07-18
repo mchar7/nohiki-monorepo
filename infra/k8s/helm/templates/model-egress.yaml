@@ -1,0 +1,371 @@
+{{- $modelEgress := .Values.global.modelEgress | default dict -}}
+{{- $gatewayName := printf "%s-model-egress" .Release.Name -}}
+{{- $serviceHost := printf "%s.%s.svc.cluster.local" $gatewayName .Release.Namespace -}}
+{{- $listenerPort := $modelEgress.listenerPort | default 8443 -}}
+{{- $certificateSecretName := $modelEgress.certificateSecretName | default (printf "%s-tls" $gatewayName) -}}
+{{- $controlPlane := $modelEgress.controlPlane | default dict -}}
+{{- $disabledBackends := $modelEgress.disabledBackends | default list -}}
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: {{ $gatewayName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: model-egress
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  service:
+    spec:
+      type: ClusterIP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ $gatewayName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: model-egress
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  gatewayClassName: agentgateway
+  infrastructure:
+    parametersRef:
+      group: agentgateway.dev
+      kind: AgentgatewayParameters
+      name: {{ $gatewayName }}
+  listeners:
+    - name: model-https
+      hostname: {{ $serviceHost }}
+      protocol: HTTPS
+      port: {{ $listenerPort }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: {{ $certificateSecretName }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $gatewayName }}-healthz
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: model-egress
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $gatewayName }}
+      sectionName: model-https
+  hostnames:
+    - {{ $serviceHost }}
+  rules:
+    - name: healthz
+      matches:
+        - path:
+            type: Exact
+            value: /healthz
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ $gatewayName }}-healthz-direct-response
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $gatewayName }}-healthz
+  traffic:
+    directResponse:
+      status: 200
+      body: "ok"
+{{- range $backend := $modelEgress.backends }}
+{{- if and (ne $backend.enabled false) (not (has $backend.name $disabledBackends)) }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: {{ printf "%s-%s" $gatewayName $backend.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: model-egress
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  ai:
+    groups:
+      {{- range $group := $backend.groups }}
+      - providers:
+          {{- range $provider := $group.providers }}
+          {{- if ne $provider.enabled false }}
+          - name: {{ $provider.name }}
+            {{- if $provider.host }}
+            host: {{ $provider.host | quote }}
+            port: {{ required (printf "modelEgress provider %s requires port with host" $provider.name) $provider.port }}
+            {{- end }}
+            {{- if eq $provider.type "openai" }}
+            openai: {}
+            {{- else if eq $provider.type "anthropic" }}
+            anthropic: {}
+            {{- else if eq $provider.type "custom" }}
+            custom:
+              formats:
+                {{- range $format := $provider.formats }}
+                - type: {{ $format.type }}
+                  path: {{ $format.path | quote }}
+                {{- end }}
+            {{- else }}
+            {{- fail (printf "unsupported modelEgress provider type %q" $provider.type) }}
+            {{- end }}
+            {{- with $provider.path }}
+            path: {{ . | quote }}
+            {{- end }}
+            policies:
+              auth:
+                secretRef:
+                  name: {{ $provider.authSecretName | default (printf "%s-%s" $gatewayName (required (printf "modelEgress provider %s requires credentialName" $provider.name) $provider.credentialName)) }}
+                {{- with $provider.authHeader }}
+                location:
+                  header:
+                    name: {{ . | quote }}
+                {{- end }}
+              tls:
+                sni: {{ required (printf "modelEgress provider %s requires tls.sni" $provider.name) $provider.tls.sni | quote }}
+                verifySubjectAltNames:
+                  {{- range $san := $provider.tls.verifySubjectAltNames }}
+                  - {{ $san | quote }}
+                  {{- end }}
+                {{- with $provider.tls.caConfigMapName }}
+                caCertificateRefs:
+                  - name: {{ . }}
+                {{- end }}
+              http:
+                requestTimeout: {{ $backend.requestTimeout | default "180s" }}
+              tcp:
+                connectTimeout: {{ $backend.connectTimeout | default "10s" }}
+          {{- end }}
+          {{- end }}
+      {{- end }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ printf "%s-%s" $gatewayName $backend.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: model-egress
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $gatewayName }}
+      sectionName: model-https
+  hostnames:
+    - {{ $serviceHost }}
+  rules:
+    - name: {{ $backend.name }}
+      matches:
+        - path:
+            type: Exact
+            value: {{ $backend.routePath | quote }}
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: {{ printf "%s-%s" $gatewayName $backend.name }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ printf "%s-%s-client-auth" $gatewayName $backend.name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ printf "%s-%s" $gatewayName $backend.name }}
+  traffic:
+    apiKeyAuthentication:
+      mode: Strict
+      secretSelector:
+        matchLabels:
+          {{- toYaml (required (printf "modelEgress backend %s secretSelector.matchLabels is required" $backend.name) $backend.secretSelector.matchLabels) | nindent 10 }}
+      location:
+        header:
+          name: {{ $backend.clientAuth.header | default "Authorization" | quote }}
+          {{- with $backend.clientAuth.prefix }}
+          prefix: {{ . | quote }}
+          {{- end }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ printf "%s-%s-traffic" $gatewayName $backend.name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ printf "%s-%s" $gatewayName $backend.name }}
+  traffic:
+    timeouts:
+      request: {{ $backend.requestTimeout | default "180s" }}
+    {{- if ($backend.retry.enabled | default false) }}
+    retry:
+      attempts: {{ $backend.retry.attempts | default 2 }}
+      backoff: {{ $backend.retry.backoff | default "250ms" }}
+      codes:
+        {{- toYaml ($backend.retry.codes | default (list 500 502 503 504)) | nindent 8 }}
+      precondition: {{ required (printf "modelEgress backend %s retries require a precondition" $backend.name) $backend.retry.precondition | quote }}
+    {{- end }}
+    {{- if ($modelEgress.rateLimitsEnabled | default false) }}
+    rateLimit:
+      local:
+        - requests: {{ required (printf "modelEgress backend %s request rate limit requires requests" $backend.name) $backend.requestRateLimit.requests }}
+          unit: {{ $backend.requestRateLimit.unit | default "Seconds" }}
+          burst: {{ required (printf "modelEgress backend %s request rate limit requires burst" $backend.name) $backend.requestRateLimit.burst }}
+        - tokens: {{ required (printf "modelEgress backend %s token rate limit requires tokens" $backend.name) $backend.tokenRateLimit.tokens }}
+          unit: {{ $backend.tokenRateLimit.unit | default "Minutes" }}
+          burst: {{ required (printf "modelEgress backend %s token rate limit requires burst" $backend.name) $backend.tokenRateLimit.burst }}
+    {{- end }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ printf "%s-%s-health" $gatewayName $backend.name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  targetRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: {{ printf "%s-%s" $gatewayName $backend.name }}
+  backend:
+    health:
+      unhealthyCondition: {{ $backend.health.unhealthyCondition | default "response.code >= 500 || response.code == 429" | quote }}
+      eviction:
+        consecutiveFailures: {{ $backend.health.consecutiveFailures | default 3 }}
+        duration: {{ $backend.health.duration | default "30s" }}
+        restoreHealth: {{ $backend.health.restoreHealth | default 50 }}
+{{- end }}
+{{- end }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ $gatewayName }}-telemetry
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $gatewayName }}
+  frontend:
+    accessLog:
+      {{- if hasPrefix "prod" (.Values.global.environment | default "dev") }}
+      {}
+      {{- else }}
+      otlp:
+        backendRef:
+          group: ""
+          kind: Service
+          name: nohiki-collector-collector
+          port: 4317
+        protocol: GRPC
+      {{- end }}
+    metrics:
+      attributes:
+        add:
+          - name: nohiki_component
+            expression: '"model-egress"'
+    {{- if not (hasPrefix "prod" (.Values.global.environment | default "dev")) }}
+    tracing:
+      backendRef:
+        group: ""
+        kind: Service
+        name: nohiki-collector-collector
+        port: 4317
+      protocol: GRPC
+      clientSampling: "true"
+      randomSampling: "0.1"
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $gatewayName }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: {{ $gatewayName }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- range $client := $modelEgress.clients }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $client.name }}
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+        {{- end }}
+      ports:
+        - port: {{ $listenerPort }}
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+              operator.prometheus.io/name: {{ .Release.Name }}-kube-prometheus-stack-prometheus
+      ports:
+        - port: 15020
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $controlPlane.namespace | default "nohiki-foundation" }}
+          podSelector:
+            matchLabels:
+              {{- toYaml ($controlPlane.podLabels | default (dict "agentgateway" "agentgateway")) | nindent 14 }}
+      ports:
+        - port: {{ $controlPlane.port | default 9978 }}
+          protocol: TCP
+    {{- if not (hasPrefix "prod" (.Values.global.environment | default "dev")) }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Namespace }}.nohiki-collector
+      ports:
+        - port: 4317
+          protocol: TCP
+    {{- end }}
+    {{- range $destination := $modelEgress.destinations }}
+    - to:
+        - ipBlock:
+            cidr: {{ $destination.cidr | quote }}
+            {{- with $destination.except }}
+            except:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        - port: {{ $destination.port | default 443 }}
+          protocol: TCP
+    {{- end }}

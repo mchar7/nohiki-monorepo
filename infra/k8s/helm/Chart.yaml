@@ -1,0 +1,194 @@
+apiVersion: v2
+name: nohiki
+description: Nohiki Job Application Platform - Umbrella Chart
+type: application
+version: 0.2.0
+appVersion: "1.0.0"
+
+dependencies:
+  # Shared library chart (required for transitive dependency resolution)
+  - name: nohiki-common
+    version: "0.1.x"
+    repository: "file://./charts/nohiki-common"
+
+  # User domain services
+  - name: user-auth-service
+    version: "0.1.x"
+    repository: "file://./charts/user-auth-service"
+    condition: user-auth-service.enabled
+
+  - name: user-pref-service
+    version: "0.1.x"
+    repository: "file://./charts/user-pref-service"
+    condition: user-pref-service.enabled
+
+  - name: user-upload-service
+    version: "0.1.x"
+    repository: "file://./charts/user-upload-service"
+    condition: user-upload-service.enabled
+
+  - name: user-entitlement-service
+    version: "0.1.x"
+    repository: "file://./charts/user-entitlement-service"
+    condition: user-entitlement-service.enabled
+
+  # Job domain services
+  - name: job-ingest-discovery-service
+    version: "0.1.x"
+    repository: "file://./charts/job-ingest-discovery-service"
+    condition: job-ingest-discovery-service.enabled
+
+  - name: job-ingest-schedule-service
+    version: "0.1.x"
+    repository: "file://./charts/job-ingest-schedule-service"
+    condition: job-ingest-schedule-service.enabled
+
+  - name: job-query-composition-service
+    version: "0.1.x"
+    repository: "file://./charts/job-query-composition-service"
+    condition: job-query-composition-service.enabled
+
+  - name: job-ingest-enrichment-service
+    version: "0.1.x"
+    repository: "file://./charts/job-ingest-enrichment-service"
+    condition: job-ingest-enrichment-service.enabled
+
+  - name: job-storage-service
+    version: "0.1.x"
+    repository: "file://./charts/job-storage-service"
+    condition: job-storage-service.enabled
+
+  - name: job-correlation-evaluation-service
+    version: "0.1.x"
+    repository: "file://./charts/job-correlation-evaluation-service"
+    condition: job-correlation-evaluation-service.enabled
+
+  # Doc domain services
+  - name: doc-template-service
+    version: "0.1.x"
+    repository: "file://./charts/doc-template-service"
+    condition: doc-template-service.enabled
+
+  - name: doc-content-service
+    version: "0.1.x"
+    repository: "file://./charts/doc-content-service"
+    condition: doc-content-service.enabled
+
+  - name: doc-process-service
+    version: "0.1.x"
+    repository: "file://./charts/doc-process-service"
+    condition: doc-process-service.enabled
+
+  # ML services
+  - name: ml-gateway-service
+    version: "0.1.x"
+    repository: "file://./charts/ml-gateway-service"
+    condition: ml-gateway-service.enabled
+
+  - name: ml-compute-service
+    version: "0.1.x"
+    repository: "file://./charts/ml-compute-service"
+    condition: ml-compute-service.enabled
+
+  # Skill service
+  - name: skill-graph-service
+    version: "0.1.x"
+    repository: "file://./charts/skill-graph-service"
+    condition: skill-graph-service.enabled
+
+  # Infrastructure services
+  - name: bff-service
+    version: "0.1.x"
+    repository: "file://./charts/bff-service"
+    condition: bff-service.enabled
+
+  - name: nohiki-frontend
+    alias: frontend
+    version: "0.1.x"
+    repository: "file://./charts/nohiki-frontend"
+    condition: frontend.enabled
+
+  - name: notification-service
+    version: "0.1.x"
+    repository: "file://./charts/notification-service"
+    condition: notification-service.enabled
+
+  # Infrastructure: Strimzi Kafka Operator
+  - name: strimzi-kafka-operator
+    version: "1.1.0"
+    repository: "https://strimzi.io/charts/"
+    condition: strimzi.enabled
+    alias: strimzi
+
+  # Infrastructure: Docling Serve (document conversion)
+  - name: docling-serve
+    version: "0.1.x"
+    repository: "file://./charts/docling-serve"
+    condition: docling-serve.enabled
+
+  # Infrastructure: RustFS object storage
+  - name: rustfs
+    version: "0.1.x"
+    repository: "file://./charts/rustfs"
+    condition: rustfs.enabled
+
+  # Infrastructure: Valkey cache
+  - name: valkey
+    version: "6.1.16"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: valkey.enabled
+
+  # Infrastructure: Qdrant vector database (official community chart)
+  - name: qdrant
+    version: "1.18.2"
+    repository: "https://qdrant.github.io/qdrant-helm"
+    condition: qdrant.enabled
+
+  # Infrastructure: Gotenberg (PDF generation)
+  - name: gotenberg
+    version: "1.x.x"
+    repository: "https://maikumori.github.io/helm-charts"
+    condition: gotenberg.enabled
+    alias: gotenberg
+
+  # Observability: kube-prometheus-stack (Prometheus + Alertmanager + ServiceMonitors)
+  - name: kube-prometheus-stack
+    version: "87.15.0"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: kube-prometheus-stack.enabled
+
+  # Observability: Grafana Operator (CRD-based Grafana management)
+  - name: grafana-operator
+    version: "v5.24.x"
+    repository: "oci://ghcr.io/grafana/helm-charts"
+    condition: grafana-operator.enabled
+
+  # Observability: Mimir (distributed long-term metrics storage)
+  - name: mimir-distributed
+    version: "6.1.0"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: mimir-distributed.enabled
+
+  # Observability: Tempo (distributed traces)
+  - name: tempo-distributed
+    version: "1.61.3"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: tempo-distributed.enabled
+
+  # Observability: Loki (log aggregation, SimpleScalable mode)
+  - name: loki
+    version: "7.0.0"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: loki.enabled
+
+  # Observability: Pyroscope (continuous profiling)
+  - name: pyroscope
+    version: "2.1.0"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: pyroscope.enabled
+
+  # Observability: OpenTelemetry Operator (manages OTel Collector CRDs)
+  - name: opentelemetry-operator
+    version: "0.119.0"
+    repository: "https://open-telemetry.github.io/opentelemetry-helm-charts"
+    condition: opentelemetry-operator.enabled
