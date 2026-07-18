@@ -1,0 +1,24 @@
+global:
+  database:
+    host: nohiki-prod-postgres.postgres.database.azure.com
+    port: 5432
+  redis:
+    host: nohiki-prod-redis.redis.cache.windows.net
+    port: 6380
+  s3:
+    endpoint: https://nohikiprod.blob.core.windows.net
+    port: 443
+  kafka:
+    bootstrapServers: nohiki-prod-eventhubs.servicebus.windows.net:9093
+    dsn: kafka://nohiki-prod-eventhubs.servicebus.windows.net:9093
+    port: 9093
+  networkPolicy:
+    managedEgress:
+      database:
+        cidrs: [10.42.16.4/32]
+      redis:
+        cidrs: [10.42.16.5/32]
+      s3:
+        cidrs: [10.42.16.6/32]
+      kafka:
+        cidrs: [10.42.16.7/32]

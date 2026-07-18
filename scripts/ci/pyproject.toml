@@ -1,0 +1,30 @@
+[project]
+name = "ci-checks"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "CI/CD hygiene checks with parallel execution and live TUI"
+requires-python = ">=3.14"
+dependencies = [
+    "typer>=0.21.0",
+    "rich>=14.3.0",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+ci-checks = "ci_checks.app:app"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
+
+[tool.ty.environment]
+root = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-n auto --dist=worksteal"
+markers = [
+    "requires_docker: tests that build and run real container images",
+]

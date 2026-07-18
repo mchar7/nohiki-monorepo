@@ -1,0 +1,222 @@
+"""Change-gate engine: pure evaluation of a diff against the gating policy.
+
+No subprocess, filesystem writes, or environment access: every function is
+a deterministic mapping from inputs to a decision, so the whole engine is
+unit-testable without git or GitHub.
+"""
+
+import json
+from dataclasses import dataclass, field
+
+from ci_checks.core.change_rules import (
+    API_EXPORT_SERVICES,
+    FLAG_NAMES,
+    GLOBAL_TRIGGERS,
+    SURFACE_RULES,
+    TEST_SCOPES,
+)
+from ci_checks.core.packages import (
+    REPO_ROOT,
+    Package,
+    PackageType,
+    Scope,
+    build_reverse_dependency_index,
+    expand_to_dependents,
+)
+
+_SCOPE_TO_TYPE: dict[Scope, PackageType] = {
+    Scope.SERVICES: PackageType.SERVICE,
+    Scope.LIBS: PackageType.LIB,
+    Scope.JOBS: PackageType.JOB,
+    Scope.SCRIPTS: PackageType.SCRIPTS,
+    Scope.OTHER: PackageType.OTHER,
+}
+
+_BACKEND_TYPES: frozenset[PackageType] = frozenset({PackageType.SERVICE, PackageType.LIB, PackageType.JOB})
+
+
+@dataclass(slots=True)
+class GateDecision:
+    """Computed lane activation for one diff."""
+
+    full: bool = False
+    reasons: list[str] = field(default_factory=list)
+    flags: set[str] = field(default_factory=set)
+    affected: set[str] = field(default_factory=set)
+    unmatched: list[str] = field(default_factory=list)
+
+    def force_full(self, reason: str) -> None:
+        """Switch to a full run, recording why."""
+        self.full = True
+        self.reasons.append(reason)
+
+    def flag_value(self, flag: str) -> bool:
+        """Effective value of a lane flag (full run activates everything)."""
+        return self.full or flag in self.flags
+
+
+def _matches_global(path: str) -> bool:
+    import fnmatch
+
+    return any(path == pattern or fnmatch.fnmatch(path, pattern) for pattern in GLOBAL_TRIGGERS)
+
+
+def _package_rel_paths(packages: dict[str, Package]) -> dict[str, str]:
+    return {name: pkg.path.relative_to(REPO_ROOT).as_posix() for name, pkg in packages.items()}
+
+
+def _owning_package(path: str, rel_paths: dict[str, str]) -> str | None:
+    for name, rel in rel_paths.items():
+        if path == rel or path.startswith(f"{rel}/"):
+            return name
+    return None
+
+
+def evaluate(changed: set[str], packages: dict[str, Package]) -> GateDecision:
+    """Classify changed files into lane flags and affected packages.
+
+    Args:
+        changed: Repo-relative posix paths from the diff. Deleted paths are
+            valid inputs; nothing here touches the filesystem.
+        packages: Workspace packages with dependency metadata populated.
+
+    Returns:
+        The gate decision. ``full`` is set when any file hits a global
+        trigger or is understood by no rule (fail-closed).
+    """
+    decision = GateDecision()
+    rel_paths = _package_rel_paths(packages)
+    seeds: set[str] = set()
+
+    for path in sorted(changed):
+        if _matches_global(path):
+            decision.force_full(f"global trigger: {path}")
+            continue
+
+        matched = False
+        for rule in SURFACE_RULES:
+            if rule.matches(path):
+                matched = True
+                decision.flags.update(rule.flags)
+                seeds.update(rule.packages)
+
+        if (owner := _owning_package(path, rel_paths)) is not None:
+            matched = True
+            seeds.add(owner)
+        if path.endswith(".py"):
+            # Every changed Python file lints, workspace-owned or standalone;
+            # unmatched standalone files still fall through to the full run.
+            decision.flags.add("lint_python")
+
+        if not matched:
+            decision.unmatched.append(path)
+            decision.force_full(f"unmatched file: {path}")
+
+    decision.affected = expand_to_dependents(seeds, build_reverse_dependency_index(packages))
+    _derive_package_flags(decision, packages)
+    return decision
+
+
+def _derive_package_flags(decision: GateDecision, packages: dict[str, Package]) -> None:
+    """Set lane flags implied by the affected-package set."""
+    if not decision.affected:
+        return
+    # lint_python stays file-driven (.py suffix in evaluate): dependents of
+    # a changed lib have no changed source of their own to lint.
+    decision.flags |= {"python_any", "hygiene"}
+    if any(packages[name].pkg_type in _BACKEND_TYPES for name in decision.affected if name in packages):
+        decision.flags.add("typecheck_backend")
+    if decision.affected & API_EXPORT_SERVICES:
+        decision.flags.add("generated_artifacts")
+
+
+def tests_matrix(decision: GateDecision, packages: dict[str, Package]) -> dict[str, list[dict[str, str]]]:
+    """Build the python-tests strategy matrix for the decision.
+
+    Args:
+        decision: Evaluated gate decision.
+        packages: Workspace packages keyed by name.
+
+    Returns:
+        A GitHub Actions matrix object: full runs carry every scope with
+        the ``ALL`` sentinel; scoped runs carry only scopes whose affected
+        set contains testable packages, as a sorted CSV.
+    """
+    include: list[dict[str, str]] = []
+    for scope in TEST_SCOPES:
+        if decision.full:
+            include.append({"scope": scope.value, "packages": "ALL"})
+            continue
+        scope_type = _SCOPE_TO_TYPE[scope]
+        names = sorted(
+            name
+            for name in decision.affected
+            if name in packages and packages[name].pkg_type == scope_type and packages[name].has_tests
+        )
+        if names:
+            include.append({"scope": scope.value, "packages": ",".join(names)})
+    return {"include": include}
+
+
+def render_outputs(
+    decision: GateDecision,
+    matrix: dict[str, list[dict[str, str]]],
+    event: str,
+) -> dict[str, str]:
+    """Render the decision as $GITHUB_OUTPUT key/value pairs.
+
+    Args:
+        decision: Evaluated gate decision.
+        matrix: Result of :func:`tests_matrix` for the same decision.
+        event: GitHub event name (drives ``commitlint_expected``).
+
+    Returns:
+        Ordered mapping of output names to lowercase string values.
+    """
+    outputs: dict[str, str] = {"full": str(decision.full).lower()}
+    for flag in FLAG_NAMES:
+        outputs[flag] = str(decision.flag_value(flag)).lower()
+    outputs["python_any"] = str(decision.full or bool(matrix["include"])).lower()
+    outputs["tests_matrix"] = json.dumps(matrix, separators=(",", ":"))
+    outputs["commitlint_expected"] = str(event == "pull_request").lower()
+    return outputs
+
+
+def render_summary(
+    decision: GateDecision,
+    outputs: dict[str, str],
+    event: str,
+    base_ref: str,
+    head_ref: str,
+) -> str:
+    """Render the human-readable verdict for $GITHUB_STEP_SUMMARY.
+
+    Args:
+        decision: Evaluated gate decision.
+        outputs: Result of :func:`render_outputs`.
+        event: GitHub event name.
+        base_ref: Diff base commit.
+        head_ref: Diff head commit.
+
+    Returns:
+        Markdown text with the verdict, reasons, lane table, and the
+        affected-package list for scoped runs.
+    """
+    lines = [
+        "## Change gate",
+        "",
+        f"- Event: `{event}`",
+        f"- Diff: `{base_ref}...{head_ref}`",
+        f"- Verdict: {'**full run**' if decision.full else 'scoped run'}",
+    ]
+    if decision.reasons:
+        lines.append("- Reasons:")
+        lines.extend(f"  - {reason}" for reason in decision.reasons)
+    lines += ["", "| Lane | Run |", "|---|---|"]
+    lines.extend(f"| {flag} | {outputs[flag]} |" for flag in FLAG_NAMES)
+    if not decision.full and decision.affected:
+        lines += [
+            "",
+            f"Affected packages ({len(decision.affected)}): {', '.join(sorted(decision.affected))}",
+        ]
+    return "\n".join(lines) + "\n"
