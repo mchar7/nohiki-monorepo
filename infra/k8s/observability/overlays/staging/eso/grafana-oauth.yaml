@@ -1,0 +1,22 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: grafana-oauth-credentials
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: nohiki-secret-store
+  target:
+    name: grafana-oauth-credentials
+    creationPolicy: Owner
+  data:
+    - secretKey: OAUTH_CLIENT_ID
+      remoteRef:
+        key: grafana-oauth-client-id
+    - secretKey: OAUTH_CLIENT_SECRET
+      remoteRef:
+        key: grafana-oauth-client-secret
+    - secretKey: TENANT_ID
+      remoteRef:
+        key: azure-tenant-id

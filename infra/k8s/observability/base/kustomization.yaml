@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # Grafana Operator CRDs
+  - grafana/instance.yaml
+  - grafana/folders/nohiki.yaml
+  - grafana/datasources/mimir.yaml
+  - grafana/datasources/tempo.yaml
+  - grafana/datasources/loki.yaml
+  - grafana/datasources/pyroscope.yaml
+  # Dashboard CRDs (auto-generated from shared/dashboards/)
+  - grafana/dashboards/auth-listings-worker.yaml
+  - grafana/dashboards/nohiki-overview.yaml
+  - grafana/dashboards/nohiki-services.yaml
+  - grafana/dashboards/nohiki-database.yaml
+  - grafana/dashboards/nohiki-infrastructure.yaml
+  - grafana/dashboards/nohiki-llm.yaml
+  - grafana/dashboards/nohiki-providers.yaml
+  - grafana/dashboards/nohiki-skill-canonicalization.yaml
+  # OTel Collector
+  - otel/collector.yaml
+  - otel/networkpolicy.yaml
+  # ESO
+  - eso/grafana-credentials.yaml
+  - eso/storage-credentials.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: nohiki-observability
+      app.kubernetes.io/managed-by: kustomize

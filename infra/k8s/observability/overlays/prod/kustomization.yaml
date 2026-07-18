@@ -1,0 +1,134 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nohiki-prod
+
+resources:
+  - ../../base
+  - otel-receiver-pki.yaml
+  - eso/grafana-oauth.yaml
+
+patches:
+  # Grafana: OIDC + production resources + root_url
+  - target:
+      kind: Grafana
+      name: nohiki-grafana
+    patch: |
+      - op: add
+        path: /spec/config/server/root_url
+        value: "https://grafana.nohiki.io"
+      - op: add
+        path: /spec/config/auth.generic_oauth
+        value:
+          enabled: "true"
+          name: Azure AD
+          allow_sign_up: "true"
+          client_id: "$__env{OAUTH_CLIENT_ID}"
+          client_secret: "$__env{OAUTH_CLIENT_SECRET}"
+          scopes: "openid profile email"
+          auth_url: "https://login.microsoftonline.com/$__env{TENANT_ID}/oauth2/v2.0/authorize"
+          token_url: "https://login.microsoftonline.com/$__env{TENANT_ID}/oauth2/v2.0/token"
+          api_url: "https://graph.microsoft.com/oidc/userinfo"
+          role_attribute_path: "contains(groups[*], 'grafana-admins') && 'Admin' || 'Viewer'"
+      - op: add
+        path: /spec/deployment/spec/template/spec/containers/0/envFrom
+        value:
+          - secretRef:
+              name: grafana-oauth-credentials
+      - op: replace
+        path: /spec/deployment/spec/replicas
+        value: 3
+      - op: replace
+        path: /spec/deployment/spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+
+  # DataSources: Production namespace URLs
+  - target:
+      kind: GrafanaDatasource
+      name: mimir
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-mimir-nginx.nohiki-prod.svc:80/prometheus"
+
+  - target:
+      kind: GrafanaDatasource
+      name: tempo
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-tempo-query-frontend.nohiki-prod.svc:3100"
+
+  - target:
+      kind: GrafanaDatasource
+      name: loki
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-loki-gateway.nohiki-prod.svc:80"
+
+  - target:
+      kind: GrafanaDatasource
+      name: pyroscope
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-pyroscope.nohiki-prod.svc:4040"
+
+  # OTel Collector: Production config
+  - target:
+      kind: OpenTelemetryCollector
+      name: nohiki-collector
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: replace
+        path: /spec/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+      - op: add
+        path: /spec/volumes
+        value:
+          - name: receiver-tls
+            secret:
+              secretName: otel-receiver-tls
+      - op: add
+        path: /spec/volumeMounts
+        value:
+          - name: receiver-tls
+            mountPath: /etc/otel/tls
+            readOnly: true
+      - op: add
+        path: /spec/config/receivers/otlp/protocols/grpc/tls
+        value:
+          cert_file: /etc/otel/tls/tls.crt
+          key_file: /etc/otel/tls/tls.key
+      - op: add
+        path: /spec/config/receivers/otlp/protocols/http/tls
+        value:
+          cert_file: /etc/otel/tls/tls.crt
+          key_file: /etc/otel/tls/tls.key
+      - op: replace
+        path: /spec/config/processors/resource/attributes/0/value
+        value: "production"
+      - op: replace
+        path: /spec/config/exporters/prometheusremotewrite/endpoint
+        value: "http://nohiki-mimir-nginx.nohiki-prod.svc:80/api/v1/push"
+      - op: replace
+        path: /spec/config/exporters/otlp~1tempo/endpoint
+        value: "nohiki-tempo-distributor.nohiki-prod.svc:4317"
+      - op: replace
+        path: /spec/config/exporters/otlphttp~1loki/endpoint
+        value: "http://nohiki-loki-gateway.nohiki-prod.svc:80/otlp"

@@ -1,0 +1,88 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nohiki-dev
+
+resources:
+  - ../../base
+  - eso/grafana-oauth.yaml
+
+patches:
+  # Grafana: OIDC auth, dev root_url. Dev runs a single small AKS node, so the
+  # base single-replica deployment is kept (no replica override).
+  - target:
+      kind: Grafana
+      name: nohiki-grafana
+    patch: |
+      - op: add
+        path: /spec/config/server/root_url
+        value: "https://grafana.dev.nohiki.io"
+      - op: add
+        path: /spec/config/auth.generic_oauth
+        value:
+          enabled: "true"
+          name: Azure AD
+          allow_sign_up: "true"
+          client_id: "$__env{OAUTH_CLIENT_ID}"
+          client_secret: "$__env{OAUTH_CLIENT_SECRET}"
+          scopes: "openid profile email"
+          auth_url: "https://login.microsoftonline.com/$__env{TENANT_ID}/oauth2/v2.0/authorize"
+          token_url: "https://login.microsoftonline.com/$__env{TENANT_ID}/oauth2/v2.0/token"
+          api_url: "https://graph.microsoft.com/oidc/userinfo"
+          role_attribute_path: "contains(groups[*], 'grafana-admins') && 'Admin' || 'Viewer'"
+      - op: add
+        path: /spec/deployment/spec/template/spec/containers/0/envFrom
+        value:
+          - secretRef:
+              name: grafana-oauth-credentials
+
+  # DataSources: Dev namespace URLs (TLS defaults are already secure)
+  - target:
+      kind: GrafanaDatasource
+      name: mimir
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-mimir-nginx.nohiki-dev.svc:80/prometheus"
+
+  - target:
+      kind: GrafanaDatasource
+      name: tempo
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-tempo-query-frontend.nohiki-dev.svc:3100"
+
+  - target:
+      kind: GrafanaDatasource
+      name: loki
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-loki-gateway.nohiki-dev.svc:80"
+
+  - target:
+      kind: GrafanaDatasource
+      name: pyroscope
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-pyroscope.nohiki-dev.svc:4040"
+
+  # OTel Collector: Dev endpoints
+  - target:
+      kind: OpenTelemetryCollector
+      name: nohiki-collector
+    patch: |
+      - op: replace
+        path: /spec/config/processors/resource/attributes/0/value
+        value: "dev"
+      - op: replace
+        path: /spec/config/exporters/prometheusremotewrite/endpoint
+        value: "http://nohiki-mimir-nginx.nohiki-dev.svc:80/api/v1/push"
+      - op: replace
+        path: /spec/config/exporters/otlp~1tempo/endpoint
+        value: "nohiki-tempo-distributor.nohiki-dev.svc:4317"
+      - op: replace
+        path: /spec/config/exporters/otlphttp~1loki/endpoint
+        value: "http://nohiki-loki-gateway.nohiki-dev.svc:80/otlp"

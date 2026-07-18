@@ -1,0 +1,47 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: otel-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: otel-ca
+spec:
+  isCA: true
+  commonName: nohiki-prod-otel-ca
+  secretName: otel-ca
+  issuerRef:
+    group: cert-manager.io
+    kind: Issuer
+    name: otel-selfsigned
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: otel-ca
+spec:
+  ca:
+    secretName: otel-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: otel-receiver
+spec:
+  secretName: otel-receiver-tls
+  issuerRef:
+    group: cert-manager.io
+    kind: Issuer
+    name: otel-ca
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+  dnsNames:
+    - nohiki-collector-collector
+    - nohiki-collector-collector.nohiki-prod
+    - nohiki-collector-collector.nohiki-prod.svc
+    - nohiki-collector-collector.nohiki-prod.svc.cluster.local

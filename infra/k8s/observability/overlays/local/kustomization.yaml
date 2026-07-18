@@ -1,0 +1,117 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nohiki
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      group: external-secrets.io
+      version: v1
+      kind: ExternalSecret
+      name: observability-storage-credentials
+    patch: |
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: observability-storage-credentials
+      $patch: delete
+  - target:
+      group: external-secrets.io
+      version: v1
+      kind: ExternalSecret
+      name: grafana-admin-credentials
+    patch: |
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: grafana-admin-credentials
+      $patch: delete
+  # Grafana: Enable anonymous auth for local dev
+  - target:
+      kind: Grafana
+      name: nohiki-grafana
+    patch: |
+      - op: add
+        path: /spec/config/auth.anonymous
+        value:
+          enabled: "true"
+          org_name: Main Org.
+          org_role: Viewer
+      - op: add
+        path: /spec/config/server/root_url
+        value: "http://localhost:3000"
+
+  # DataSources: Local service URLs + insecure TLS
+  - target:
+      kind: GrafanaDatasource
+      name: mimir
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-mimir-nginx.nohiki.svc:80/prometheus"
+      - op: replace
+        path: /spec/datasource/jsonData/tlsSkipVerify
+        value: true
+
+  - target:
+      kind: GrafanaDatasource
+      name: tempo
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-tempo-query-frontend.nohiki.svc:3100"
+      - op: replace
+        path: /spec/datasource/jsonData/tlsSkipVerify
+        value: true
+
+  - target:
+      kind: GrafanaDatasource
+      name: loki
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-loki-gateway.nohiki.svc:80"
+      - op: replace
+        path: /spec/datasource/jsonData/tlsSkipVerify
+        value: true
+
+  - target:
+      kind: GrafanaDatasource
+      name: pyroscope
+    patch: |
+      - op: replace
+        path: /spec/datasource/url
+        value: "http://nohiki-pyroscope.nohiki.svc:4040"
+      - op: replace
+        path: /spec/datasource/jsonData/tlsSkipVerify
+        value: true
+
+  # OTel Collector: Local endpoints, insecure TLS
+  - target:
+      kind: OpenTelemetryCollector
+      name: nohiki-collector
+    patch: |
+      - op: replace
+        path: /spec/config/processors/resource/attributes/0/value
+        value: "local"
+      - op: replace
+        path: /spec/config/exporters/prometheusremotewrite/endpoint
+        value: "http://nohiki-mimir-nginx.nohiki.svc:80/api/v1/push"
+      - op: replace
+        path: /spec/config/exporters/prometheusremotewrite/tls/insecure
+        value: true
+      - op: replace
+        path: /spec/config/exporters/otlp~1tempo/endpoint
+        value: "nohiki-tempo-distributor.nohiki.svc:4317"
+      - op: replace
+        path: /spec/config/exporters/otlp~1tempo/tls/insecure
+        value: true
+      - op: replace
+        path: /spec/config/exporters/otlphttp~1loki/endpoint
+        value: "http://nohiki-loki-gateway.nohiki.svc:80/otlp"
+      - op: replace
+        path: /spec/config/exporters/otlphttp~1loki/tls/insecure
+        value: true

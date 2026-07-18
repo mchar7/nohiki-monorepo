@@ -1,0 +1,25 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: loki
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: nohiki
+  datasource:
+    name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: ""
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+      maxLines: 1000
+      derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: '"trace_id":"([a-f0-9]+)"'
+          name: TraceID
+          url: "$${__value.raw}"
+      tlsSkipVerify: false
+    secureJsonData:
+      httpHeaderValue1: nohiki

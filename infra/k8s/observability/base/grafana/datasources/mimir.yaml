@@ -1,0 +1,24 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: mimir
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: nohiki
+  datasource:
+    name: Mimir
+    type: prometheus
+    uid: mimir
+    access: proxy
+    isDefault: true
+    url: ""
+    jsonData:
+      httpMethod: POST
+      manageAlerts: true
+      prometheusType: Mimir
+      prometheusVersion: "2.9.0"
+      httpHeaderName1: X-Scope-OrgID
+      tlsSkipVerify: false
+    secureJsonData:
+      httpHeaderValue1: nohiki
