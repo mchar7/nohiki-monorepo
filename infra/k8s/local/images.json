@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "images": [
+    {"name":"user-auth-service","context":".","dockerfile":"backend/services/user-auth-service/Dockerfile","local":true},
+    {"name":"user-pref-service","context":".","dockerfile":"backend/services/user-pref-service/Dockerfile","local":true},
+    {"name":"user-upload-service","context":".","dockerfile":"backend/services/user-upload-service/Dockerfile","local":true},
+    {"name":"user-entitlement-service","context":".","dockerfile":"backend/services/user-entitlement-service/Dockerfile","local":true},
+    {"name":"job-storage-service","context":".","dockerfile":"backend/services/job-storage-service/Dockerfile","local":true},
+    {"name":"job-ingest-discovery-service","context":".","dockerfile":"backend/services/job-ingest-discovery-service/Dockerfile","local":true},
+    {"name":"job-ingest-schedule-service","context":".","dockerfile":"backend/services/job-ingest-schedule-service/Dockerfile","local":true},
+    {"name":"job-ingest-enrichment-service","context":".","dockerfile":"backend/services/job-ingest-enrichment-service/Dockerfile","local":true},
+    {"name":"job-query-composition-service","context":".","dockerfile":"backend/services/job-query-composition-service/Dockerfile","local":true},
+    {"name":"job-correlation-evaluation-service","context":".","dockerfile":"backend/services/job-correlation-evaluation-service/Dockerfile","local":true},
+    {"name":"skill-graph-service","context":".","dockerfile":"backend/services/skill-graph-service/Dockerfile","local":true},
+    {"name":"doc-template-service","context":".","dockerfile":"backend/services/doc-template-service/Dockerfile","local":true},
+    {"name":"doc-content-service","context":".","dockerfile":"backend/services/doc-content-service/Dockerfile","local":true},
+    {"name":"doc-process-service","context":".","dockerfile":"backend/services/doc-process-service/Dockerfile","local":true},
+    {"name":"notification-service","context":".","dockerfile":"backend/services/notification-service/Dockerfile","local":true},
+    {"name":"bff-service","context":".","dockerfile":"backend/services/bff-service/Dockerfile","local":true},
+    {"name":"ml-gateway-service","context":".","dockerfile":"backend/services/ml-gateway-service/Dockerfile","local":true},
+    {"name":"ml-compute-service","context":".","dockerfile":"backend/services/ml-compute-service/Dockerfile","local":true},
+    {"name":"ml-compute-service-gpu","context":".","dockerfile":"backend/services/ml-compute-service/Dockerfile","buildArgs":{"ML_COMPUTE_BUILDER":"sync-gpu"},"local":false},
+    {"name":"sys-tick-job","context":".","dockerfile":"backend/jobs/sys-tick-job/Dockerfile","local":true},
+    {"name":"snapshot-refresh-job","context":".","dockerfile":"backend/jobs/snapshot-refresh-job/Dockerfile","local":true},
+    {"name":"qdrant-init","context":".","dockerfile":"infra/shared/qdrant-init/Dockerfile","local":true},
+    {"name":"kafka-connect","context":"infra/k8s/kafka-connect","dockerfile":"Dockerfile","local":false},
+    {"name":"frontend","context":".","dockerfile":"typescript/apps/frontend/Dockerfile","local":true},
+    {"name":"api-verification-runner","context":".","dockerfile":"tests/Dockerfile.api-runner","local":true},
+    {"name":"playwright-verification-runner","context":".","dockerfile":"typescript/apps/frontend/Dockerfile.playwright-runner","local":true},
+    {"name":"health-runner","context":".","dockerfile":"scripts/util/health_check/Dockerfile","local":true}
+  ]
+}

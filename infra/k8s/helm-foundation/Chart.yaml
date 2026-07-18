@@ -1,0 +1,68 @@
+apiVersion: v2
+name: nohiki-foundation
+description: >-
+  Declarative cluster foundation for Nohiki. Owns cert-manager, kgateway,
+  agentgateway, CloudNativePG, External Secrets, and OpenTelemetry operators
+  and their CRDs. Flux applies the pinned Gateway API standard CRDs in a
+  dedicated pre-foundation Kustomization before it reconciles this chart.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+annotations:
+  # Provenance for the vendored Gateway API standard CRDs applied by Flux from
+  # infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml. The sha256 is the
+  # checksum of the official v1.6.0 standard-install.yaml release asset.
+  nohiki.io/gateway-api-version: v1.6.0
+  nohiki.io/gateway-bundle-integrity: a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d
+
+
+dependencies:
+  # cert-manager and its CRDs have one owner in every cluster. Managed AKS
+  # overlays additionally configure the Azure DNS workload identity and issuer.
+  - name: cert-manager
+    version: v1.21.0
+    repository: oci://quay.io/jetstack/charts
+    condition: cert-manager.enabled
+
+  # kgateway CRDs, applied before the controller (kind ordering: CRD before Deployment).
+  - name: kgateway-crds
+    version: v2.3.6
+    repository: oci://cr.kgateway.dev/kgateway-dev/charts
+
+  # kgateway controller (Gateway API implementation).
+  - name: kgateway
+    version: v2.3.6
+    repository: oci://cr.kgateway.dev/kgateway-dev/charts
+
+  # agentgateway CRDs, applied before its model-egress controller.
+  - name: agentgateway-crds
+    version: v1.3.1
+    repository: oci://cr.agentgateway.dev/charts
+
+  # agentgateway controller (Gateway API implementation for model egress).
+  - name: agentgateway
+    version: v1.3.1
+    repository: oci://cr.agentgateway.dev/charts
+
+  # CloudNativePG operator, moved out of the platform umbrella. Watches all
+  # namespaces so the Cluster resource owned by the platform chart is reconciled.
+  - name: cloudnative-pg
+    version: 0.29.0
+    repository: https://cloudnative-pg.github.io/charts
+
+  # External Secrets Operator + CRDs, moved out of the platform umbrella so the
+  # foundation owns a single operator/CRD install everywhere (default kind
+  # ordering applies the CRDs before the controller that consumes them). The
+  # platform chart owns only the ClusterSecretStore and ExternalSecrets.
+  - name: external-secrets
+    alias: external-secrets
+    version: 2.7.0
+    repository: https://charts.external-secrets.io
+    condition: external-secrets.enabled
+
+  # OpenTelemetry Operator + templated CRDs. Foundation ownership guarantees
+  # the CRDs exist before the platform and observability stacks reconcile.
+  - name: opentelemetry-operator
+    version: "0.119.0"
+    repository: "https://open-telemetry.github.io/opentelemetry-helm-charts"
+    condition: opentelemetry-operator.enabled

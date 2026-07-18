@@ -1,0 +1,81 @@
+{{- $migrationInventory := .Files.Get "files/migration-heads.json" | fromJson -}}
+{{- $digest := required "global.imageDigests.health-runner is required" (index .Values.global.imageDigests "health-runner") -}}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) -}}{{ fail "health-runner digest must be sha256" }}{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nohiki-health-verification
+  labels:
+    app.kubernetes.io/name: nohiki-health-verification
+    app.kubernetes.io/component: verification
+    nohiki.io/verification-stage: health
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nohiki-health-verification
+        nohiki.io/verification-stage: health
+    spec:
+      serviceAccountName: nohiki-health-verification
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: health
+          image: {{ printf "%s/health-runner:%s@%s" .Values.global.nohikiImage.registry .Values.global.imageTag $digest | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ceu"]
+          args:
+            - |
+              health-check inventory --target k8s --json
+              python -m health_check.verify_migrations \
+                --inventory /opt/health/migration-heads.json \
+                --evidence /evidence/migration-heads.json
+              health-check run --target k8s --no-progress --output-mode boring
+          env:
+            - {name: K8S_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: K8S_LOCAL_MODE, value: "false"}
+{{- range $entry := $migrationInventory.entries }}
+            - name: {{ printf "MIGRATION_DATABASE_URL_%s" ($entry.service | upper | replace "-" "_") }}
+              valueFrom:
+                secretKeyRef: {name: {{ printf "%s-db-credentials" $entry.service }}, key: uri}
+{{- end }}
+            - {name: E2E_BASE_URL, value: "http://bff-service:8000"}
+            - {name: KAFKA_BOOTSTRAP_SERVERS, value: "nohiki-kafka-bootstrap:9092"}
+            - {name: VALKEY_URL, value: "redis://valkey:6379"}
+            - {name: PROMETHEUS_URL, value: "http://prometheus-operated:9090"}
+            - {name: GRAFANA_URL, value: "http://grafana-service:3000"}
+            - {name: LOKI_URL, value: "http://loki-gateway:80"}
+            - {name: TEMPO_URL, value: "http://tempo:3200"}
+            - {name: MIMIR_URL, value: "http://mimir-nginx:8080"}
+            - {name: PYROSCOPE_URL, value: "http://pyroscope:4040"}
+            - {name: OTEL_COLLECTOR_URL, value: "http://nohiki-collector-collector:8888"}
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {cpu: 500m, memory: 384Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - {name: evidence, mountPath: /evidence}
+            - {name: migration-inventory, mountPath: /opt/health, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: evidence
+          emptyDir: {}
+        - name: migration-inventory
+          configMap:
+            name: nohiki-migration-heads
+            items:
+              - {key: migration-heads.json, path: migration-heads.json}
+        - name: tmp
+          emptyDir: {}

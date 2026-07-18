@@ -1,0 +1,26 @@
+{{- if .Values.managedClusterIssuer.enabled }}
+{{- $issuer := .Values.managedClusterIssuer }}
+{{- $azure := $issuer.azureDNS }}
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ required "managedClusterIssuer.name is required" $issuer.name | quote }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: nohiki-foundation
+spec:
+  acme:
+    server: {{ required "managedClusterIssuer.server is required" $issuer.server | quote }}
+    privateKeySecretRef:
+      name: {{ printf "%s-private-key" $issuer.name | quote }}
+    solvers:
+      - dns01:
+          azureDNS:
+            environment: AzurePublicCloud
+            hostedZoneName: {{ required "managedClusterIssuer.azureDNS.hostedZoneName is required" $azure.hostedZoneName | quote }}
+            resourceGroupName: {{ required "managedClusterIssuer.azureDNS.resourceGroupName is required" $azure.resourceGroupName | quote }}
+            subscriptionID: {{ required "managedClusterIssuer.azureDNS.subscriptionID is required" $azure.subscriptionID | quote }}
+            tenantID: {{ required "managedClusterIssuer.azureDNS.tenantID is required" $azure.tenantID | quote }}
+            managedIdentity:
+              clientID: {{ required "managedClusterIssuer.azureDNS.clientID is required" $azure.clientID | quote }}
+{{- end }}

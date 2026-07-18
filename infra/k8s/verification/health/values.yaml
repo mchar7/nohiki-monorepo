@@ -1,0 +1,5 @@
+global:
+  imageTag: immutable
+  nohikiImage:
+    registry: localhost:5000
+  imageDigests: {}

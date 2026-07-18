@@ -1,0 +1,21 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: nohiki-platform-chart
+  namespace: flux-system
+spec:
+  interval: 30s
+  provider: generic
+  url: oci://__REGISTRY__/nohiki/charts/nohiki
+  insecure: true
+  ref:
+    digest: __DIGEST__
+  secretRef:
+    name: nohiki-oci-registry-auth
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    secretRef:
+      name: nohiki-oci-cosign-public-key

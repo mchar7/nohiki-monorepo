@@ -1,0 +1,6 @@
+apiVersion: v2
+name: nohiki-health-verification
+description: Read-only post-observability k3s health verification
+version: 0.1.0
+appVersion: "0.1.0"
+type: application

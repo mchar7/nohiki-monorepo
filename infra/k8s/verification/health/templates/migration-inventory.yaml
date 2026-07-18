@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nohiki-migration-heads
+  labels:
+    app.kubernetes.io/name: nohiki-health-verification
+    app.kubernetes.io/component: verification
+data:
+  migration-heads.json: |-
+{{ .Files.Get "files/migration-heads.json" | indent 4 }}

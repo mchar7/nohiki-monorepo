@@ -1,0 +1,195 @@
+# cert-manager and its CRDs are installed by the foundation release in every
+# environment. Managed AKS overlays supply the non-secret Azure identity inputs.
+cert-manager:
+  enabled: true
+  crds:
+    enabled: true
+    keep: true
+  serviceAccount:
+    create: true
+  podLabels: {}
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  webhook:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+  cainjector:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+managedClusterIssuer:
+  enabled: false
+  name: ""
+  server: https://acme-v02.api.letsencrypt.org/directory
+  azureDNS:
+    clientID: ""
+    subscriptionID: ""
+    tenantID: ""
+    resourceGroupName: ""
+    hostedZoneName: ""
+
+# Nohiki declarative foundation values.
+#
+# The foundation chart is environment-agnostic: it installs the same pinned
+# cluster infrastructure everywhere. Environment differences (which clusters,
+# HEAD vs an immutable revision) live in the Flux source and HelmRelease that
+# render this chart, not here. The gateway controllers use conservative
+# production defaults below. The operators watch all namespaces so they
+# reconcile the custom resources owned by the platform and observability stacks.
+
+# Provenance for the Gateway API standard CRDs vendored at
+# infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml and applied by the
+# dedicated pre-foundation Flux Kustomization. The sha256 below is the official
+# kubernetes-sigs/gateway-api release asset checksum.
+gatewayApi:
+  version: v1.6.0
+  sha256: a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d
+
+# kgateway control plane. The chart creates its default `kgateway` GatewayClass
+# at runtime and installs the controller in the foundation release namespace.
+kgateway:
+  controller:
+    service:
+      type: ClusterIP
+    prometheusAnnotations: false
+    serviceMonitor:
+      enabled: false
+    podSecurityContext:
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  waypoint:
+    enabled: false
+
+# agentgateway control plane for model egress. The stable controller creates its
+# default `agentgateway` GatewayClass at runtime; inference-extension CRDs and
+# monitoring resources remain outside this foundation chart's ownership.
+agentgateway:
+  podAnnotations:
+    prometheus.io/scrape: "false"
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  controller:
+    service:
+      type: ClusterIP
+  inferenceExtension:
+    enabled: false
+  monitoring:
+    enabled: false
+
+# External Secrets Operator (ESO). Owned here so a single operator and CRD set
+# is installed in every environment; the platform chart owns only the
+# ClusterSecretStore and ExternalSecrets that this operator reconciles.
+external-secrets:
+  enabled: true
+  installCRDs: true
+  crds:
+    createClusterExternalSecret: false
+    createClusterSecretStore: true
+    createSecretStore: true
+    createClusterGenerator: false
+    createClusterPushSecret: false
+    createPushSecret: false
+    conversion:
+      enabled: false
+    unsafeServeV1Beta1: false
+  processClusterExternalSecret: false
+  processClusterPushSecret: false
+  processPushSecret: false
+  processClusterGenerator: false
+  processClusterStore: true
+  processSecretStore: true
+  image:
+    repository: ghcr.io/external-secrets/external-secrets
+    tag: "v2.7.0@sha256:6615aaea8ff44924d9d7dbc99982a130c82913f7583e212fa3aeebc6dc21fbf9"
+  rbac:
+    create: true
+  webhook:
+    port: 9443
+    image:
+      repository: ghcr.io/external-secrets/external-secrets
+      tag: "v2.7.0@sha256:6615aaea8ff44924d9d7dbc99982a130c82913f7583e212fa3aeebc6dc21fbf9"
+  certController:
+    requeueInterval: "5m"
+    image:
+      repository: ghcr.io/external-secrets/external-secrets
+      tag: "v2.7.0@sha256:6615aaea8ff44924d9d7dbc99982a130c82913f7583e212fa3aeebc6dc21fbf9"
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 10m
+    limits:
+      memory: 128Mi
+      cpu: 100m
+
+# OpenTelemetry Operator. The upstream chart renders its CRDs from conf/crds
+# when crds.create is true; keeping them here makes foundation their sole owner.
+opentelemetry-operator:
+  enabled: true
+  crds:
+    create: true
+  manager:
+    image:
+      tag: 0.154.0@sha256:263699ffea0c418530b43d95dcd49a125533325a222ffac675cbbf0d63ef035b
+    featureGatesMap:
+      operator.collector.usedefaulttelemetryshape: false
+    metrics:
+      secure: true
+    serviceMonitor:
+      enabled: false
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+  testFramework:
+    image:
+      repository: busybox
+      tag: sha256-9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
+  admissionWebhooks:
+    certManager:
+      enabled: false
+    autoGenerateCert:
+      enabled: true

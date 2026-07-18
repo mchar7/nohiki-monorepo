@@ -1,0 +1,32 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nohiki-foundation
+  namespace: flux-system
+spec:
+  chart: null
+  chartRef:
+    apiVersion: source.toolkit.fluxcd.io/v1
+    kind: OCIRepository
+    name: nohiki-foundation-chart
+    namespace: flux-system
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nohiki
+  namespace: flux-system
+spec:
+  chart: null
+  chartRef:
+    apiVersion: source.toolkit.fluxcd.io/v1
+    kind: OCIRepository
+    name: nohiki-platform-chart
+    namespace: flux-system
+  valuesFrom:
+    - kind: ConfigMap
+      name: nohiki-oci-local-values
+      valuesKey: values.yaml
+    - kind: ConfigMap
+      name: nohiki-image-digests
+      valuesKey: values.yaml

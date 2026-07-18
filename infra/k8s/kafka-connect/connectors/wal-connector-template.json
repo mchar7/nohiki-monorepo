@@ -1,0 +1,53 @@
+{
+  "_comment": "Template for dedicated logical-message WAL connectors. SERVICE_NAME, DB_PREFIX, and RESOURCE_PREFIX are substituted at registration time.",
+  "_sync_warning": "Keep in sync with infra/k8s/helm/templates/strimzi-kafka-connectors.yaml.",
+  "name": "SERVICE_NAME-wal",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": "1",
+
+    "database.hostname": "DATABASE_HOST",
+    "database.port": "DATABASE_PORT",
+    "database.user": "DATABASE_USER",
+    "database.password": "DATABASE_PASSWORD",
+    "database.dbname": "DATABASE_NAME",
+    "topic.prefix": "RESOURCE_PREFIX_wal",
+
+    "plugin.name": "pgoutput",
+    "slot.name": "RESOURCE_PREFIX_wal_slot",
+    "publication.name": "RESOURCE_PREFIX_wal_pub",
+
+    "publication.autocreate.mode": "filtered",
+    "schema.include.list": "SCHEMA_NAME",
+    "table.include.list": "SCHEMA_NAME.processed_events",
+    "message.prefix.include.list": ".*",
+    "tombstones.on.delete": "false",
+    "snapshot.mode": "when_needed",
+    "snapshot.locking.mode": "none",
+    "snapshot.fetch.size": "2048",
+
+    "transforms": "walRoute",
+    "transforms.walRoute.type": "ai.nohiki.kafka.connect.transforms.NohikiWalRouterSmt",
+
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.debezium.converters.BinaryDataConverter",
+    "value.converter.delegate.converter.type": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.delegate.converter.type.schemas.enable": "false",
+
+    "topic.creation.enable": "true",
+    "topic.creation.default.replication.factor": "1",
+    "topic.creation.default.partitions": "3",
+
+    "heartbeat.interval.ms": "10000",
+    "poll.interval.ms": "100",
+    "max.batch.size": "2048",
+    "max.queue.size": "8192",
+
+    "errors.tolerance": "all",
+    "errors.log.enable": "true",
+    "errors.log.include.messages": "false",
+    "errors.deadletterqueue.topic.name": "RESOURCE_PREFIX.dlq.wal.v1",
+    "errors.deadletterqueue.topic.replication.factor": "1",
+    "errors.deadletterqueue.context.headers.enable": "true"
+  }
+}

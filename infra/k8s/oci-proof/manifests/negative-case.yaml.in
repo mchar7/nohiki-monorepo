@@ -1,0 +1,42 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: nohiki-foundation-negative-__CASE__
+  namespace: flux-system
+spec:
+  interval: 30s
+  provider: generic
+  url: oci://__REGISTRY__/nohiki/charts/nohiki-foundation
+  insecure: true
+  ref:
+    digest: __DIGEST__
+  secretRef:
+    name: __AUTH_SECRET__
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    secretRef:
+      name: nohiki-oci-cosign-public-key
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nohiki-foundation-negative-__CASE__
+  namespace: flux-system
+spec:
+  interval: 30s
+  timeout: 5m
+  releaseName: nohiki-foundation-negative-__CASE__
+  targetNamespace: nohiki-proof-negative-__CASE__
+  storageNamespace: nohiki-proof-negative-__CASE__
+  chartRef:
+    apiVersion: source.toolkit.fluxcd.io/v1
+    kind: OCIRepository
+    name: nohiki-foundation-negative-__CASE__
+    namespace: flux-system
+  install:
+    createNamespace: true
+    remediation:
+      retries: 0

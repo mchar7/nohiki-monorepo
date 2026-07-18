@@ -1,0 +1,26 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 30s
+  ref:
+    branch: __GIT_BRANCH__
+  timeout: 60s
+  url: __GIT_URL__
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 30s
+  path: ./infra/k8s/oci-proof/generated/cluster
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  timeout: 65m
+  wait: true

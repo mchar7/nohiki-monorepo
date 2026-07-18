@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nohiki-registry
+  namespace: nohiki-registry
+spec:
+  template:
+    spec:
+      containers:
+        - name: registry
+          env:
+            - name: REGISTRY_AUTH
+              value: htpasswd
+            - name: REGISTRY_AUTH_HTPASSWD_REALM
+              value: Nohiki OCI proof
+            - name: REGISTRY_AUTH_HTPASSWD_PATH
+              value: /auth/htpasswd
+          readinessProbe:
+            httpGet: null
+            tcpSocket:
+              port: registry
+          livenessProbe:
+            httpGet: null
+            tcpSocket:
+              port: registry
+          volumeMounts:
+            - name: auth
+              mountPath: /auth
+              readOnly: true
+      volumes:
+        - name: auth
+          secret:
+            secretName: nohiki-registry-auth
+            defaultMode: 0440
