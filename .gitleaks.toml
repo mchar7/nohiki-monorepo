@@ -1,0 +1,30 @@
+# Gitleaks configuration for Nohiki Monorepo
+# https://github.com/gitleaks/gitleaks
+#
+# NOTE: gitleaks protect --staged automatically skips gitignored files.
+# Do NOT duplicate gitignore patterns here.
+
+title = "Nohiki Gitleaks Config"
+
+[extend]
+useDefault = true
+
+# ADDITIONAL RULES: Project-specific API key patterns
+
+[[rules]]
+id = "openrouter-api-key"
+description = "OpenRouter API Key"
+regex = '''sk-or-v1-[a-zA-Z0-9]{64}'''
+keywords = ["sk-or-v1"]
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API Key"
+regex = '''sk-ant-api[a-zA-Z0-9\-_]{90,}'''
+keywords = ["sk-ant-api"]
+
+# ALLOWLIST: Exact public release digest only
+[allowlist]
+regexes = [
+    '''^a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d$''',
+]

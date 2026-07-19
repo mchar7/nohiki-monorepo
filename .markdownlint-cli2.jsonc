@@ -1,0 +1,12 @@
+{
+  // Do not add "globs" here. markdownlint-cli2 merges config globs with CLI
+  // args, which causes the lefthook pre-commit hook to lint ALL .md files
+  // instead of only staged ones. Lefthook handles file discovery via
+  // {staged_files}. For manual linting, pass globs on the command line:
+  //   pnpm exec markdownlint-cli2 "**/*.md"
+  "gitignore": true,
+  "ignores": [
+    ".local/**",
+    "scripts/util/tailor/samples/**",
+  ]
+}

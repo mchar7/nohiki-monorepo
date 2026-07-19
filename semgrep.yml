@@ -1,0 +1,45 @@
+# Nohiki Architecture Rules
+# Only rules NOT covered by ruff, ty, or other established tools
+# Note: Protobuf _pb2 rules disabled - no legacy imports exist in codebase
+
+rules:
+  # NOHIKI-SPECIFIC: Async Discipline (time.sleep in async context)
+  - id: sync-sleep-in-async
+    patterns:
+      - pattern: time.sleep(...)
+      - pattern-inside: |
+          async def $FUNC(...):
+              ...
+    message: "Use asyncio.sleep() instead of time.sleep() in async functions."
+    languages: [python]
+    severity: ERROR
+    paths:
+      include:
+        - backend/
+
+  # NOHIKI-SPECIFIC: Kafka DB session middleware wiring
+  - id: kafka-with-db-session-requires-session-factory
+    patterns:
+      - pattern-inside: |
+          async def lifespan(...):
+              ...
+      - pattern: start_event_consumer()
+      - pattern-not-inside: |
+          async def lifespan(...):
+              ...
+              kafka_client.set_db_session_factory(...)
+              ...
+              start_event_consumer()
+              ...
+    message: "Services that start Kafka consumers and use @kafka_client.with_db_session handlers must call kafka_client.set_db_session_factory(...) before start_event_consumer()."
+    languages: [python]
+    severity: ERROR
+    paths:
+      include:
+        - '**/backend/services/**/src/**/main.py'
+      exclude:
+        - '**/backend/services/ml-compute-service/**'
+        - '**/backend/services/ml-gateway-service/**'
+        - '**/backend/services/job-ingest-discovery-service/**'
+        - '**/backend/services/doc-content-service/**'
+        - '**/backend/services/doc-process-service/**'

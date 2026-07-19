@@ -1,0 +1,252 @@
+# Nohiki Monorepo Git Hooks Configuration
+# Docs: https://github.com/evilmartians/lefthook
+#
+# Pre-commit: Fast checks on staged files (~5-15s)
+# Pre-push: Thorough checks before pushing (~30-60s)
+#
+# Hooks run on every commit and push. Bypass mechanisms are not honored.
+# When a hook fails on a file unrelated to the current change, fix the
+# unrelated issue as part of the same branch before merging.
+
+min_version: 2.1.10
+
+output:
+  - meta
+  - summary
+  - success
+  - failure
+  - execution_info
+  - skips
+
+colors: true
+
+# COMMIT MESSAGE VALIDATION
+# Enforces conventional commit format (feat:, fix:, docs:, etc.)
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}
+
+# PRE-COMMIT: Fast checks on staged files (~5-15s)
+# All commands run in parallel, auto-fix where possible
+pre-commit:
+  parallel: true
+  skip:
+    - merge
+    - rebase
+
+  commands:
+    # Python: lint and format the exact staged inventory in ARG_MAX-safe chunks.
+    # Covers all repo Python (backend/, scripts/, tests/, benchmarks/, infra/).
+    # The workspace pyproject.toml is the canonical ruff config; subdir
+    # pyprojects extend it, so a single `uv run ruff` from repo root works.
+    python-check-format:
+      glob: "*.py"
+      exclude:
+        - "**/alembic/**"
+        - "**/nohiki-domain-models/**"
+      run: |
+        set -eu
+        paths=$(mktemp "${TMPDIR:-/tmp}/nohiki-python-staged.XXXXXX")
+        cleanup() {
+          rm -f -- "$paths"
+        }
+        trap cleanup EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        git diff --cached --name-only --diff-filter=ACMR -z -- \
+          ':(glob)*.py' \
+          ':(glob)**/*.py' \
+          ':(exclude,glob)**/alembic/**' \
+          ':(exclude,glob)**/nohiki-domain-models/**' > "$paths"
+        xargs -0 -r uv run --no-sync ruff check --fix -- < "$paths"
+        xargs -0 -r uv run --no-sync ruff format -- < "$paths"
+      stage_fixed: true
+
+    # Frontend: Biome lint/format with auto-fix
+    frontend-lint:
+      glob: "*.{ts,tsx,js,jsx,css}"
+      exclude:
+        - "**/api/generated/**"
+        - "**/node_modules/**"
+      root: typescript/apps/frontend/
+      run: |
+        if [ -n "{staged_files}" ]; then
+          pnpm exec biome check --write {staged_files}
+        fi
+      stage_fixed: true
+
+    # Proto: buf lint
+    proto-lint:
+      glob: "*.proto"
+      root: proto/
+      run: |
+        if command -v buf &>/dev/null; then
+          buf lint
+        elif command -v nix &>/dev/null; then
+          nix run nixpkgs#buf -- lint
+        else
+          echo "ERROR: buf not found. Install it or activate the dev shell (direnv allow)."
+          exit 1
+        fi
+
+    # Markdown: markdownlint with auto-fix
+    # Rules and ignores configured in .markdownlint-cli2.jsonc
+    # IMPORTANT: .markdownlint-cli2.jsonc must NOT contain "globs" (see
+    # comment in that file). File discovery is solely via {staged_files}.
+    markdown-lint:
+      glob: "*.md"
+      exclude:
+        - "**/node_modules/**"
+      run: |
+        if [ -n "{staged_files}" ]; then
+          pnpm exec markdownlint-cli2 --fix {staged_files}
+        fi
+      stage_fixed: true
+
+    # i18n: Validate translation keys (only on frontend src/locale changes)
+    i18n-check:
+      glob:
+        - "typescript/apps/frontend/src/**/*.{ts,tsx}"
+        - "typescript/apps/frontend/public/locales/**"
+      root: typescript/apps/frontend/
+      run: pnpm run i18n:check
+
+    # Secrets: gitleaks - detect secrets in staged files
+    # https://github.com/gitleaks/gitleaks
+    # Config in .gitleaks.toml
+    secrets-check:
+      run: |
+        if command -v gitleaks &>/dev/null; then
+          gitleaks protect --staged --no-banner --redact
+        elif command -v nix &>/dev/null; then
+          nix run nixpkgs#gitleaks -- protect --staged --no-banner --redact
+        else
+          echo "ERROR: gitleaks not found. Install it (https://github.com/gitleaks/gitleaks) or activate the dev shell (direnv allow)."
+          exit 1
+        fi
+
+    # Workflows: actionlint (shellcheck on embedded run blocks)
+    actions-lint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: |
+        if command -v actionlint &>/dev/null; then
+          actionlint
+        elif command -v nix &>/dev/null; then
+          nix run nixpkgs#actionlint
+        else
+          echo "ERROR: actionlint not found. Install it or activate the dev shell (direnv allow)."
+          exit 1
+        fi
+
+    # Dockerfiles: hadolint (rules in .hadolint.yaml)
+    docker-lint:
+      glob: "**/Dockerfile"
+      run: |
+        if command -v hadolint &>/dev/null; then
+          git ls-files -z '*Dockerfile' | xargs -0 -r hadolint
+        elif command -v nix &>/dev/null; then
+          git ls-files -z '*Dockerfile' | xargs -0 -r nix run nixpkgs#hadolint --
+        else
+          echo "ERROR: hadolint not found. Install it or activate the dev shell (direnv allow)."
+          exit 1
+        fi
+
+# PRE-PUSH: Thorough checks before pushing (~30-60s)
+# Phased execution: typecheck -> tests -> hygiene
+pre-push:
+  jobs:
+    # Phase 1: Type Checking (parallel)
+    - group:
+        parallel: true
+        jobs:
+          - name: python-typecheck
+            glob: "backend/**/*.py"
+            run: uv run --no-sync ty check backend/ --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+
+          - name: frontend-typecheck
+            glob:
+              - "typescript/apps/frontend/**/*.{ts,tsx}"
+              - "typescript/apps/frontend/package.json"
+              - "typescript/apps/frontend/tsconfig*.json"
+              - "typescript/apps/frontend/vite.config.*"
+            run: cd typescript/apps/frontend && pnpm type-check
+
+    # Phase 2: Unit Tests (parallel, runs after typecheck)
+    # Uses package-aware runner to avoid pytest plugin collisions
+    # Skips: integration, e2e, requires_docker markers
+    - group:
+        parallel: true
+        jobs:
+          - name: python-tests
+            glob: "backend/**/*.py"
+            run: uv run --no-sync ci-checks tests affected --mode push --ci
+            env:
+              OTEL_SDK_DISABLED: "true"
+              UV_NO_SYNC: "1"
+
+          - name: frontend-tests
+            glob:
+              - "typescript/apps/frontend/src/**/*.{ts,tsx}"
+              - "typescript/apps/frontend/package.json"
+              - "typescript/apps/frontend/vitest.config.*"
+              - "typescript/apps/frontend/vite.config.*"
+            run: cd typescript/apps/frontend && pnpm test --run --maxWorkers=25%
+
+    # Phase 3: Code Hygiene (parallel, runs after tests)
+    - group:
+        parallel: true
+        jobs:
+          - name: deadcode
+            glob: "backend/**/*.py"
+            run: uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
+
+          - name: deptry
+            glob: "backend/**/*.py"
+            run: uv run --no-sync ci-checks deptry --scope all --ci
+
+          - name: semgrep
+            glob: "backend/**/*.py"
+            run: env -u LD_LIBRARY_PATH uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --error --no-git-ignore backend/
+
+          - name: build-backend
+            glob: "**/pyproject.toml"
+            run: uv run --no-sync ci-checks build-backend --scope all --ci --strict
+
+    # Phase 4: Generated API artifacts
+    - name: api-schema-freshness
+      # Shared libs are included because exported schemas flow through them.
+      glob:
+        - "backend/services/bff-service/**/*.py"
+        - "backend/services/user-auth-service/**/*.py"
+        - "backend/libs/**/*.py"
+        - "scripts/util/export-openapi.py"
+        - "docs/api/nohiki.openapi.json"
+        - "typescript/apps/frontend/src/api/schema.d.ts"
+        - "uv.lock"
+        - "pnpm-lock.yaml"
+      run: just api-schema-check
+
+    - name: image-matrix-parity
+      glob:
+        - "Justfile"
+        - ".github/workflows/build-push.yml"
+      run: just image-matrix-check
+
+    # Phase 5: Proto Breaking Changes
+    - name: proto-breaking
+      glob: "proto/**/*.proto"
+      run: |
+        if git ls-tree --name-only main proto/ 2>/dev/null | grep -q .; then
+          if command -v buf &>/dev/null; then
+            cd proto && buf breaking --against '../.git#branch=main,subdir=proto'
+          elif command -v nix &>/dev/null; then
+            cd proto && nix run nixpkgs#buf -- breaking --against '../.git#branch=main,subdir=proto'
+          else
+            echo "ERROR: buf not found. Install it or activate the dev shell (direnv allow)."
+            exit 1
+          fi
+        else
+          echo "Skipping: proto/ not yet committed to main branch"
+        fi

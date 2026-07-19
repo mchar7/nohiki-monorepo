@@ -1,0 +1,2 @@
+# apt pins on debian-slim churn weekly; images pin bases, uv pins python deps
+ignored: [DL3008]
