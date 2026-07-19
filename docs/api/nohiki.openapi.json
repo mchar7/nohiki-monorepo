@@ -1,0 +1,5929 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Nohiki API",
+    "description": "Nohiki Platform API - combined identity and BFF endpoints",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/.well-known/jwks.json": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Get Jwks",
+        "description": "Public JWKS endpoint for JWT verification.\n\nReturns the public key(s) needed to verify RS256-signed JWTs.\nCaching is enabled for 1 hour.",
+        "operationId": "get_jwks__well_known_jwks_json_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Jwks  Well Known Jwks Json Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Register",
+        "description": "Register a new user account.\n\nOn success:\n- Creates user in database\n- Publishes user.created event\n- Sets __Host-nohiki_at (access token) cookie\n- Sets __Host-nohiki_rt (refresh token) cookie\n- Returns user metadata (does NOT return tokens in body)",
+        "operationId": "register_api_v1_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Login",
+        "description": "Authenticate user and set auth cookies.\n\nOn success:\n- Sets __Host-nohiki_at (access token) cookie\n- Sets __Host-nohiki_rt (refresh token) cookie\n- Returns user metadata (tokens are NOT in response body)",
+        "operationId": "login_api_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Refresh Token",
+        "description": "Refresh the access token using the refresh token cookie.\n\nThis endpoint:\n- Validates the refresh token from cookie\n- Rotates the refresh token (old token becomes invalid)\n- Sets new __Host-nohiki_at and __Host-nohiki_rt cookies\n\nIf the same refresh token is used twice (reuse detection),\nthe entire session family is revoked for security.",
+        "operationId": "refresh_token_api_v1_auth_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Refresh Token Api V1 Auth Refresh Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Logout",
+        "description": "Logout the user.\n\nThis endpoint:\n- Revokes the session (all tokens in session family)\n- Clears auth cookies",
+        "operationId": "logout_api_v1_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Logout Api V1 Auth Logout Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/providers": {
+      "get": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "List available OAuth providers",
+        "description": "Get list of enabled OAuth providers.",
+        "operationId": "get_providers_api_v1_auth_oauth_providers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthProvidersResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/{provider}/authorize": {
+      "get": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "Start OAuth authorization flow",
+        "description": "Redirect to OAuth provider's authorization page.",
+        "operationId": "authorize_api_v1_auth_oauth__provider__authorize_get",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/OAuthProvider"
+            }
+          },
+          {
+            "name": "returnUrl",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 2048,
+              "default": "/",
+              "title": "Returnurl"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/{provider}/callback": {
+      "get": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "Handle OAuth callback",
+        "description": "Handle OAuth provider callback and create session.",
+        "operationId": "callback_api_v1_auth_oauth__provider__callback_get",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/OAuthProvider"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/account": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Get Account",
+        "description": "Get current user's account information.",
+        "operationId": "get_account_api_v1_account_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Delete Account",
+        "description": "Delete current user's account, revoke all tokens, and clear cookies.",
+        "operationId": "delete_account_api_v1_account_delete",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Update Account",
+        "description": "Update current user's account information.",
+        "operationId": "update_account_api_v1_account_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/account/oauth-identities": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Get Oauth Identities",
+        "description": "Get all OAuth identities linked to current account.",
+        "operationId": "get_oauth_identities_api_v1_account_oauth_identities_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthIdentitiesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/account/oauth/{provider}": {
+      "delete": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Unlink Oauth Provider",
+        "description": "Unlink an OAuth provider from current account.",
+        "operationId": "unlink_oauth_provider_api_v1_account_oauth__provider__delete",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/OAuthProvider"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ping": {
+      "get": {
+        "tags": [
+          "system",
+          "ping"
+        ],
+        "summary": "Ping",
+        "description": "Return ok status for frontend connectivity checks.",
+        "operationId": "ping_api_ping_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Ping Api Ping Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/session": {
+      "get": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Get Session",
+        "description": "Get current session info from JWT claims.\n\nThis endpoint returns user metadata from the access token.\nUsed by the frontend to check authentication status.",
+        "operationId": "get_session_api_v1_session_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "List Profiles",
+        "description": "List all job target profiles for the current user.",
+        "operationId": "list_profiles_api_v1_profiles_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_ProfileResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Create Profile",
+        "description": "Create a new job target profile.\n\nReturns 202 Accepted with request_id for async completion tracking.",
+        "operationId": "create_profile_api_v1_profiles_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/{pref_id}": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Get Profile",
+        "description": "Get a specific job target profile.",
+        "operationId": "get_profile_api_v1_profiles__pref_id__get",
+        "parameters": [
+          {
+            "name": "pref_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Pref Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Update Profile",
+        "description": "Update a job target profile.\n\nReturns 202 Accepted with request_id for async completion tracking.",
+        "operationId": "update_profile_api_v1_profiles__pref_id__patch",
+        "parameters": [
+          {
+            "name": "pref_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Pref Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Delete Profile",
+        "description": "Delete a job target profile.\n\nReturns 202 Accepted with request_id for async completion tracking.",
+        "operationId": "delete_profile_api_v1_profiles__pref_id__delete",
+        "parameters": [
+          {
+            "name": "pref_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Pref Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/{pref_id}/attachments/{upload_id}": {
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Associate Attachment",
+        "description": "Associate an attachment with a profile.",
+        "operationId": "associate_attachment_api_v1_profiles__pref_id__attachments__upload_id__post",
+        "parameters": [
+          {
+            "name": "pref_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Pref Id"
+            }
+          },
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Disassociate Attachment",
+        "description": "Disassociate an attachment from a profile.",
+        "operationId": "disassociate_attachment_api_v1_profiles__pref_id__attachments__upload_id__delete",
+        "parameters": [
+          {
+            "name": "pref_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Pref Id"
+            }
+          },
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/settings/feature-importance": {
+      "put": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Set Default Feature Importance",
+        "description": "Set user-level default feature importance preferences.\n\nThese defaults apply to all search preferences unless overridden\nat the individual search preference level.",
+        "operationId": "set_default_feature_importance_api_v1_profiles_settings_feature_importance_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeatureImportanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/{pref_id}/feature-importance": {
+      "put": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Set Pref Feature Importance",
+        "description": "Override feature importance for a specific search preference.\n\nThese settings override the user-level defaults for this search preference only.",
+        "operationId": "set_pref_feature_importance_api_v1_profiles__pref_id__feature_importance_put",
+        "parameters": [
+          {
+            "name": "pref_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Pref Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeatureImportanceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/{pref_id}/resolved-importance": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Get Resolved Feature Importance",
+        "description": "Get the resolved (merged) feature importance for a search preference.\n\nResolution order:\n1. SearchPref.feature_importance (if set)\n2. UserPrefSettings.default_feature_importance (if set)\n3. Neutral defaults (50 for all fields)\n\nReturns the resolved values and the source of the preference.",
+        "operationId": "get_resolved_feature_importance_api_v1_profiles__pref_id__resolved_importance_get",
+        "parameters": [
+          {
+            "name": "pref_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Pref Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolvedFeatureImportanceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attachments": {
+      "get": {
+        "tags": [
+          "attachments"
+        ],
+        "summary": "List Attachments",
+        "description": "List all attachments for the current user from projection.",
+        "operationId": "list_attachments_api_v1_attachments_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "description": "Page number (1-indexed)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (1-indexed)"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Items per page",
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "Items per page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_AttachmentResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attachments/initiate": {
+      "post": {
+        "tags": [
+          "attachments"
+        ],
+        "summary": "Initiate Upload",
+        "description": "Generate a provider-specific direct-upload URL.\n\nThe client uploads to object storage, then calls ``complete_upload`` to\nvalidate and register the attachment.",
+        "operationId": "initiate_upload_api_v1_attachments_initiate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiateUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InitiateUploadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attachments/{upload_id}/complete": {
+      "post": {
+        "tags": [
+          "attachments"
+        ],
+        "summary": "Complete Upload",
+        "description": "Validate an object-store upload and register the attachment.\n\nThe BFF reads the uploaded object through the internal storage endpoint,\ncomputes SHA-256, and publishes ``USER_UPLOAD_CREATE_REQUESTED``. No\ncontent hash is accepted from the client.",
+        "operationId": "complete_upload_api_v1_attachments__upload_id__complete_post",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Complete Upload Api V1 Attachments  Upload Id  Complete Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attachments/{upload_id}": {
+      "get": {
+        "tags": [
+          "attachments"
+        ],
+        "summary": "Get Attachment",
+        "description": "Get attachment metadata from projection by ID.",
+        "operationId": "get_attachment_api_v1_attachments__upload_id__get",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "attachments"
+        ],
+        "summary": "Delete Attachment",
+        "description": "Delete an attachment by publishing a Kafka delete command (CQRS async).",
+        "operationId": "delete_attachment_api_v1_attachments__upload_id__delete",
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Upload Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Delete Attachment Api V1 Attachments  Upload Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schema-families": {
+      "get": {
+        "tags": [
+          "schemas"
+        ],
+        "summary": "List Schema Families",
+        "description": "List all schema families from projection DB.",
+        "operationId": "list_schema_families_api_v1_schema_families_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "description": "Page number (1-indexed)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (1-indexed)"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Items per page",
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "Items per page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_SchemaFamilyResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schema-families/{family_id}": {
+      "get": {
+        "tags": [
+          "schemas"
+        ],
+        "summary": "Get Schema Family",
+        "description": "Get a specific schema family with its latest version.",
+        "operationId": "get_schema_family_api_v1_schema_families__family_id__get",
+        "parameters": [
+          {
+            "name": "family_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Family Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaFamilyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schema-families/{family_id}/versions": {
+      "get": {
+        "tags": [
+          "schemas"
+        ],
+        "summary": "List Schema Versions",
+        "description": "List all versions of a schema family.",
+        "operationId": "list_schema_versions_api_v1_schema_families__family_id__versions_get",
+        "parameters": [
+          {
+            "name": "family_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Family Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SchemaVersionResponse"
+                  },
+                  "title": "Response List Schema Versions Api V1 Schema Families  Family Id  Versions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schema-families/{family_id}/versions/{version}": {
+      "get": {
+        "tags": [
+          "schemas"
+        ],
+        "summary": "Get Schema Version",
+        "description": "Get a specific version of a schema.",
+        "operationId": "get_schema_version_api_v1_schema_families__family_id__versions__version__get",
+        "parameters": [
+          {
+            "name": "family_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Family Id"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchemaVersionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-families": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "List Template Families",
+        "description": "List template families with their latest versions.",
+        "operationId": "list_template_families_api_v1_template_families_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "description": "Page number (1-indexed)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (1-indexed)"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Items per page",
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "Items per page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_TemplateFamilyResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Create Template Family",
+        "description": "Create a new template family.\n\nPublishes TemplateCreateRequested command event to Kafka.\nReturns 202 Accepted with request_id for async tracking.",
+        "operationId": "create_template_family_api_v1_template_families_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-families/families/{namespace}/{name}": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Get Template Family",
+        "description": "Get a specific template family by namespace and name.",
+        "operationId": "get_template_family_api_v1_template_families_families__namespace___name__get",
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateFamilyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-families/{template_id}": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Get Template By Id",
+        "description": "Get a specific template by ID.",
+        "operationId": "get_template_by_id_api_v1_template_families__template_id__get",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Template Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-families/by-name/{namespace}/{name}/versions": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "List Template Versions",
+        "description": "List all versions of a template by namespace and name.",
+        "operationId": "list_template_versions_api_v1_template_families_by_name__namespace___name__versions_get",
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TemplateResponse"
+                  },
+                  "title": "Response List Template Versions Api V1 Template Families By Name  Namespace   Name  Versions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-families/by-name/{namespace}/{name}/{version}": {
+      "get": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Get Template By Name Version",
+        "description": "Get a specific template by namespace, name, and version.",
+        "operationId": "get_template_by_name_version_api_v1_template_families_by_name__namespace___name___version__get",
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Namespace"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-families/validate": {
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Validate Template",
+        "description": "Validate template content for syntax errors and structural issues.\n\nPerforms the following checks:\n- Jinja2 block tag matching (if/endif, for/endfor, etc.)\n- Jinja2 expression syntax ({{ }})\n- Basic HTML structure (doctype, html, head, body tags)",
+        "operationId": "validate_template_api_v1_template_families_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateValidationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateValidationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-families/{family_id}/versions": {
+      "post": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Add Template Version",
+        "description": "Add a new version to an existing template family.\n\nPublishes TemplateVersionAddRequested command event to Kafka.\nReturns 202 Accepted with request_id for async tracking.",
+        "operationId": "add_template_version_api_v1_template_families__family_id__versions_post",
+        "parameters": [
+          {
+            "name": "family_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Family Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateVersionAddRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-families/{family_id}": {
+      "delete": {
+        "tags": [
+          "templates"
+        ],
+        "summary": "Delete Template Family",
+        "description": "Delete a template family and all its versions.\n\nPublishes TemplateDeleteRequested command event to Kafka.\nReturns 202 Accepted with request_id for async tracking.",
+        "operationId": "delete_template_family_api_v1_template_families__family_id__delete",
+        "parameters": [
+          {
+            "name": "family_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Family Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/{request_id}/events": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Stream Document Events",
+        "description": "Stream durable status events for one authenticated user's request.",
+        "operationId": "stream_document_events_api_documents__request_id__events_get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/generate": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Generate Document",
+        "description": "Initiate async document generation.\n\nPublishes RenderRequested command event to doc-template-service.\nReturns 202 Accepted with request_id. Use /documents/{request_id}/status\nor /documents/{request_id}/events (SSE) to track progress.",
+        "operationId": "generate_document_api_v1_documents_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateDocumentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerateDocumentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/generate-tailored": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Generate Tailored Document",
+        "description": "Generate tailored content and then render it through Kafka ECST.",
+        "operationId": "generate_tailored_document_api_v1_documents_generate_tailored_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateTailoredDocumentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerateDocumentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/{request_id}/status": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Get Document Status",
+        "description": "Get the status of a document generation request.\n\nJoins with template_projections to surface the template name alongside\noutput_format and created_at from the document_generation_status row.",
+        "operationId": "get_document_status_api_v1_documents__request_id__status_get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "List Documents",
+        "description": "List recent document generation requests for the current user.\n\nTemplate names are resolved via a single batch query to avoid N+1 lookups.",
+        "operationId": "list_documents_api_v1_documents_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "description": "Page number (1-indexed)",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number (1-indexed)"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Items per page",
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "Items per page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_DocumentStatusResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/correlations/{correlation_id}/feedback": {
+      "post": {
+        "tags": [
+          "correlations"
+        ],
+        "summary": "Record Feedback",
+        "description": "Record user feedback on a correlation.\n\nFeedback types:\n- **viewed**: User viewed the job listing\n- **saved**: User saved the job for later\n- **applied**: User applied to the job (strongest positive signal)\n- **dismissed**: User dismissed the job (negative signal)\n- **liked**: User explicitly liked the match\n- **disliked**: User explicitly disliked the match\n\nReturns 202 Accepted with request_id for async completion tracking.",
+        "operationId": "record_feedback_api_v1_correlations__correlation_id__feedback_post",
+        "parameters": [
+          {
+            "name": "correlation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Correlation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordFeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/correlations/{correlation_id}/score-feedback": {
+      "post": {
+        "tags": [
+          "correlations"
+        ],
+        "summary": "Submit Score Feedback",
+        "description": "Submit asymmetric score feedback on a correlation.\n\nFeedback types:\n- **GOOD**: Score accurately reflects match quality\n- **TOO_HIGH**: Score overstates the match (should be lower)\n- **TOO_LOW**: Score understates the match (should be higher)\n\nThis feedback is used to improve the L2R model and identify low-quality listings.\n\nReturns 202 Accepted with request_id for async completion tracking.",
+        "operationId": "submit_score_feedback_api_v1_correlations__correlation_id__score_feedback_post",
+        "parameters": [
+          {
+            "name": "correlation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Correlation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoreFeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/correlations/{correlation_id}/adjust-score": {
+      "post": {
+        "tags": [
+          "correlations"
+        ],
+        "summary": "Submit Score Adjustment",
+        "description": "Submit a manual score adjustment with reasoning.\n\nProvides richer signal than asymmetric feedback by specifying the exact\nscore the user believes is correct along with their reasoning.\n\nScore range: 0.0 (completely irrelevant) to 1.0 (perfect match)\n\nReturns 202 Accepted with request_id for async completion tracking.",
+        "operationId": "submit_score_adjustment_api_v1_correlations__correlation_id__adjust_score_post",
+        "parameters": [
+          {
+            "name": "correlation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Correlation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoreAdjustmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAcceptedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/listings": {
+      "get": {
+        "tags": [
+          "listings"
+        ],
+        "summary": "List Job Listings",
+        "description": "List listings with user-owned correlation filters applied before pagination.",
+        "operationId": "list_job_listings_api_v1_listings_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "name": "company",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Company"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "name": "has_salary",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Has Salary"
+            }
+          },
+          {
+            "name": "show_dismissed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Show Dismissed"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "posted_at",
+                "company_name",
+                "title",
+                "match_score"
+              ],
+              "type": "string",
+              "default": "posted_at",
+              "title": "Sort"
+            }
+          },
+          {
+            "name": "dir",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string",
+              "default": "desc",
+              "title": "Dir"
+            }
+          },
+          {
+            "name": "work_arrangement",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Work Arrangement"
+            }
+          },
+          {
+            "name": "seniority",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Seniority"
+            }
+          },
+          {
+            "name": "date_range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "24h",
+                    "7d",
+                    "30d"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date Range"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_JobListingResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/listings/correlations/mine": {
+      "get": {
+        "tags": [
+          "listings"
+        ],
+        "summary": "List My Correlations",
+        "description": "List job correlations for the current user.",
+        "operationId": "list_my_correlations_api_v1_listings_correlations_mine_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "pref_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pref Id"
+            }
+          },
+          {
+            "name": "min_score",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 0,
+              "default": 0,
+              "title": "Min Score"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_JobCorrelationResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/listings/{listing_id}": {
+      "get": {
+        "tags": [
+          "listings"
+        ],
+        "summary": "Get Job Listing",
+        "description": "Get a specific job listing by ID.",
+        "operationId": "get_job_listing_api_v1_listings__listing_id__get",
+        "parameters": [
+          {
+            "name": "listing_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Listing Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobListingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/listings/correlations/{correlation_id}": {
+      "get": {
+        "tags": [
+          "listings"
+        ],
+        "summary": "Get Correlation",
+        "description": "Get a specific job correlation by ID.",
+        "operationId": "get_correlation_api_v1_listings_correlations__correlation_id__get",
+        "parameters": [
+          {
+            "name": "correlation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Correlation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCorrelationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/search": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Search Skills",
+        "description": "Search canonical skills by name.\n\nUses PostgreSQL ILIKE for prefix matching on normalized_text and display_name.\nResults are ordered by popularity (job_count + profile_count).\nResults are cached in Redis for 5 minutes.",
+        "operationId": "search_skills_api_v1_skills_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 100,
+              "description": "Search query",
+              "title": "Q"
+            },
+            "description": "Search query"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by category",
+              "title": "Category"
+            },
+            "description": "Filter by category"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/batch": {
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Get Skills By Ids",
+        "description": "Get multiple skills by their IDs.\n\nUsed to resolve skill IDs to names for display purposes.\nResults are cached in Redis for 10 minutes.",
+        "operationId": "get_skills_by_ids_api_v1_skills_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillBatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{skill_id}": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Get Skill",
+        "description": "Get a single skill by ID.",
+        "operationId": "get_skill_api_v1_skills__skill_id__get",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Skill Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSearchResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills/categories/list": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "List Skill Categories",
+        "description": "List all skill categories.\n\nResults are cached in Redis for 30 minutes.",
+        "operationId": "list_skill_categories_api_v1_skills_categories_list_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response List Skill Categories Api V1 Skills Categories List Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth-listings/": {
+      "get": {
+        "tags": [
+          "auth-listings"
+        ],
+        "summary": "Get Auth Listings",
+        "description": "Serve weighted, diversity-filtered job listings for the auth page.\n\nArgs:\n    db: Async database session.\n    settings: Application settings.\n    country: ISO 3166-1 alpha-3 country code (3 uppercase letters).\n    _lat: Latitude (accepted for forward compatibility, unused in v1).\n    _lon: Longitude (accepted for forward compatibility, unused in v1).\n    lang: Language preference for weighting.\n\nReturns:\n    Geo-targeted, diversity-filtered job listings.",
+        "operationId": "get_auth_listings_api_v1_auth_listings__get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Z]{3}$",
+              "title": "Country"
+            }
+          },
+          {
+            "name": "lat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lat"
+            }
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lon"
+            }
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lang"
+            }
+          },
+          {
+            "name": "X-Auth-Listings-Secret",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Auth-Listings-Secret"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthListingsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateUserRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email",
+            "description": "Valid email address"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "format": "password",
+            "title": "Password",
+            "description": "Strong password",
+            "writeOnly": true
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Display Name",
+            "description": "Display name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email",
+          "password",
+          "display_name"
+        ],
+        "title": "CreateUserRequest",
+        "description": "Request data for creating a user."
+      },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email",
+            "description": "Account email address"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "format": "password",
+            "title": "Password",
+            "description": "Account password",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "description": "Request data for user login."
+      },
+      "LoginResponse": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "email"
+        ],
+        "title": "LoginResponse",
+        "description": "Response data for successful login (cookie-based auth).\n\nNote: Tokens are set via HttpOnly cookies, NOT returned in response body.\nThis response only contains user metadata."
+      },
+      "OAuthIdentitiesResponse": {
+        "properties": {
+          "identities": {
+            "items": {
+              "$ref": "#/components/schemas/OAuthIdentityResponse"
+            },
+            "type": "array",
+            "title": "Identities",
+            "description": "Linked OAuth identities"
+          },
+          "has_password": {
+            "type": "boolean",
+            "title": "Has Password",
+            "description": "Whether account has a password set"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identities",
+          "has_password"
+        ],
+        "title": "OAuthIdentitiesResponse",
+        "description": "Response for GET /account/oauth-identities."
+      },
+      "OAuthIdentityResponse": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/OAuthProvider",
+            "description": "OAuth provider"
+          },
+          "provider_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Username",
+            "description": "Username at provider"
+          },
+          "provider_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Email",
+            "description": "Email at provider"
+          },
+          "linked_at": {
+            "type": "string",
+            "title": "Linked At",
+            "description": "ISO 8601 datetime when linked"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "provider_username",
+          "provider_email",
+          "linked_at"
+        ],
+        "title": "OAuthIdentityResponse",
+        "description": "A linked OAuth identity."
+      },
+      "OAuthProvider": {
+        "type": "string",
+        "enum": [
+          "github",
+          "google"
+        ],
+        "title": "OAuthProvider",
+        "description": "Supported OAuth providers. Frontend uses this enum for type safety."
+      },
+      "OAuthProviderInfo": {
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/OAuthProvider",
+            "description": "Provider identifier"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Display name"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "Whether provider is enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "enabled"
+        ],
+        "title": "OAuthProviderInfo",
+        "description": "Information about an OAuth provider."
+      },
+      "OAuthProvidersResponse": {
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/OAuthProviderInfo"
+            },
+            "type": "array",
+            "title": "Providers",
+            "description": "List of available OAuth providers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "providers"
+        ],
+        "title": "OAuthProvidersResponse",
+        "description": "Response for GET /oauth/providers."
+      },
+      "UpdateUserRequest": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email",
+            "description": "Valid email address"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Display Name",
+            "description": "Display name"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name",
+            "description": "First name"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name",
+            "description": "Last name"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 8,
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password",
+            "description": "New password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "UpdateUserRequest",
+        "description": "Request data for updating a user."
+      },
+      "UserCreateResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "message"
+        ],
+        "title": "UserCreateResponse",
+        "description": "Response data for user creation."
+      },
+      "UserResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "title": "Email"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "first_name",
+          "last_name",
+          "display_name",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UserResponse",
+        "description": "Response data for user operations."
+      },
+      "AccessScope": {
+        "type": "string",
+        "enum": [
+          "PUBLIC",
+          "PRIVATE",
+          "SYSTEM"
+        ],
+        "description": "ACCESS SCOPE: Who can view a resource"
+      },
+      "AttachmentResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size"
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "filename",
+          "content_type",
+          "file_size"
+        ],
+        "title": "AttachmentResponse",
+        "description": "Attachment metadata from the BFF projection."
+      },
+      "AuthListingItem": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "company_name": {
+            "type": "string",
+            "title": "Company Name"
+          },
+          "location_raw": {
+            "type": "string",
+            "title": "Location Raw"
+          },
+          "work_arrangement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Arrangement"
+          },
+          "required_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Skills"
+          },
+          "posted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Posted At"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "company_name",
+          "location_raw",
+          "work_arrangement",
+          "required_skills",
+          "posted_at",
+          "language"
+        ],
+        "title": "AuthListingItem",
+        "description": "A single job listing item in the auth-listings API response.\n\nContains only the fields needed for decorative card display.\nIntentionally excludes id, listing_url, description, and weight\nto prevent information leakage on an unauthenticated endpoint.\n\n``location_raw`` mirrors the underlying NOT NULL projection column;\nlistings without a parsable location surface as the empty string,\nnot ``None``."
+      },
+      "AuthListingsResponse": {
+        "properties": {
+          "listings": {
+            "items": {
+              "$ref": "#/components/schemas/AuthListingItem"
+            },
+            "type": "array",
+            "title": "Listings"
+          },
+          "country": {
+            "type": "string",
+            "title": "Country"
+          }
+        },
+        "type": "object",
+        "required": [
+          "listings",
+          "country"
+        ],
+        "title": "AuthListingsResponse",
+        "description": "Response model for the auth-listings endpoint.\n\nArgs:\n    listings: Weighted, diversity-filtered job listings for card display.\n    country: ISO 3166-1 alpha-3 country code used for geo-targeting."
+      },
+      "CommandAcceptedResponse": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id",
+            "description": "UUID for tracking command completion"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Command acceptance status",
+            "default": "accepted"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "title": "CommandAcceptedResponse",
+        "description": "Response indicating an async command has been accepted for processing.\n\nReturned by endpoints that publish Kafka commands rather than\nreturning results synchronously."
+      },
+      "CompleteUploadRequest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Content Type"
+          },
+          "file_size": {
+            "type": "integer",
+            "maximum": 10485760.0,
+            "exclusiveMinimum": 0.0,
+            "title": "File Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "content_type",
+          "file_size"
+        ],
+        "title": "CompleteUploadRequest",
+        "description": "Metadata sent by the client after uploading to object storage.\n\nThe BFF re-derives the storage key, validates the stored object, and\ncomputes its content hash; no hash is accepted from the client."
+      },
+      "CorrelationStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "EVALUATED",
+          "VIEWED",
+          "SAVED",
+          "APPLIED",
+          "DISMISSED",
+          "EXPIRED"
+        ],
+        "description": "CORRELATION STATUS: User's interaction state with a job correlation"
+      },
+      "CurrencyCode": {
+        "type": "string",
+        "enum": [
+          "USD",
+          "EUR",
+          "GBP",
+          "CAD",
+          "AUD",
+          "CHF",
+          "NZD",
+          "SGD",
+          "INR",
+          "AED",
+          "ILS"
+        ],
+        "description": "CURRENCY CODE: ISO 4217 (supported currencies) Aligned with supported CountryCode values for currency inference"
+      },
+      "DocumentStatusResponse": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "template_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Name"
+          },
+          "output_format": {
+            "type": "string",
+            "title": "Output Format",
+            "default": "pdf"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "status"
+        ],
+        "title": "DocumentStatusResponse",
+        "description": "Response for document generation status."
+      },
+      "ExperiencePreferenceRequest": {
+        "properties": {
+          "experience_years": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Experience Years",
+            "description": "Years of experience (required)"
+          },
+          "seniority_levels": {
+            "items": {
+              "$ref": "#/components/schemas/SeniorityLevel"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Seniority Levels",
+            "description": "At least one preferred seniority level required"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "experience_years",
+          "seniority_levels"
+        ],
+        "title": "ExperiencePreferenceRequest",
+        "description": "Request to set experience preference."
+      },
+      "ExperiencePreferenceResponse": {
+        "properties": {
+          "experience_years": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Experience Years"
+          },
+          "seniority_levels": {
+            "items": {
+              "$ref": "#/components/schemas/SeniorityLevel"
+            },
+            "type": "array",
+            "title": "Seniority Levels"
+          }
+        },
+        "type": "object",
+        "title": "ExperiencePreferenceResponse",
+        "description": "Experience preference response."
+      },
+      "FeatureImportanceRequest": {
+        "properties": {
+          "skill_match_importance": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill Match Importance"
+          },
+          "location_importance": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location Importance"
+          },
+          "work_arrangement_importance": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Arrangement Importance"
+          },
+          "experience_importance": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Experience Importance"
+          },
+          "salary_importance": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Salary Importance"
+          },
+          "recency_importance": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recency Importance"
+          }
+        },
+        "type": "object",
+        "title": "FeatureImportanceRequest",
+        "description": "Request to set feature importance preferences."
+      },
+      "FeedbackType": {
+        "type": "string",
+        "enum": [
+          "VIEWED",
+          "SAVED",
+          "APPLIED",
+          "DISMISSED",
+          "LIKED",
+          "DISLIKED"
+        ],
+        "description": "FEEDBACK TYPE: Type of user feedback on a correlation"
+      },
+      "FitFactorContributionResponse": {
+        "properties": {
+          "factor": {
+            "$ref": "#/components/schemas/FitFactorName"
+          },
+          "compatibility_score": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Compatibility Score"
+          },
+          "importance": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Importance"
+          },
+          "contribution_points": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": -100.0,
+            "title": "Contribution Points"
+          }
+        },
+        "type": "object",
+        "required": [
+          "factor",
+          "compatibility_score",
+          "importance",
+          "contribution_points"
+        ],
+        "title": "FitFactorContributionResponse",
+        "description": "One factor's compatibility and signed effect on the ranking index."
+      },
+      "FitFactorName": {
+        "type": "string",
+        "enum": [
+          "ROLE_RELEVANCE",
+          "SKILLS",
+          "LOCATION",
+          "WORK_ARRANGEMENT",
+          "EXPERIENCE",
+          "SALARY",
+          "RECENCY"
+        ],
+        "title": "FitFactorName",
+        "description": "Stable human-facing fit ranking factors."
+      },
+      "FitRankingBreakdownResponse": {
+        "properties": {
+          "method_version": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Method Version"
+          },
+          "factors": {
+            "items": {
+              "$ref": "#/components/schemas/FitFactorContributionResponse"
+            },
+            "type": "array",
+            "maxItems": 7,
+            "minItems": 1,
+            "title": "Factors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "method_version",
+          "factors"
+        ],
+        "title": "FitRankingBreakdownResponse",
+        "description": "Versioned deterministic fit ranking explanation."
+      },
+      "GenerateDocumentRequest": {
+        "properties": {
+          "template_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Template Version Id"
+          },
+          "data": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Data"
+          },
+          "output_format": {
+            "type": "string",
+            "pattern": "^(pdf|html|png)$",
+            "title": "Output Format",
+            "default": "pdf"
+          }
+        },
+        "type": "object",
+        "required": [
+          "template_version_id",
+          "data"
+        ],
+        "title": "GenerateDocumentRequest",
+        "description": "Request to generate a document."
+      },
+      "GenerateDocumentResponse": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "accepted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "title": "GenerateDocumentResponse",
+        "description": "Response for document generation initiation."
+      },
+      "GenerateTailoredDocumentRequest": {
+        "properties": {
+          "job_correlation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Correlation Id"
+          },
+          "template_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Template Id"
+          },
+          "output_format": {
+            "type": "string",
+            "pattern": "^(pdf|html|png)$",
+            "title": "Output Format",
+            "default": "pdf"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_correlation_id",
+          "template_id"
+        ],
+        "title": "GenerateTailoredDocumentRequest",
+        "description": "Request tailored content generation for an owned job match."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "InitiateUploadRequest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Content Type"
+          },
+          "file_size": {
+            "type": "integer",
+            "maximum": 10485760.0,
+            "exclusiveMinimum": 0.0,
+            "title": "File Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "content_type",
+          "file_size"
+        ],
+        "title": "InitiateUploadRequest",
+        "description": "Request to initiate a file upload."
+      },
+      "InitiateUploadResponse": {
+        "properties": {
+          "upload_id": {
+            "type": "string",
+            "title": "Upload Id"
+          },
+          "upload_url": {
+            "type": "string",
+            "title": "Upload Url"
+          },
+          "upload_headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Upload Headers"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In",
+            "default": 3600
+          }
+        },
+        "type": "object",
+        "required": [
+          "upload_id",
+          "upload_url",
+          "upload_headers"
+        ],
+        "title": "InitiateUploadResponse",
+        "description": "Response with a provider-specific direct-upload URL."
+      },
+      "JobCorrelationResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "pref_id": {
+            "type": "string",
+            "title": "Pref Id"
+          },
+          "listing_id": {
+            "type": "string",
+            "title": "Listing Id"
+          },
+          "fit_score": {
+            "type": "integer",
+            "title": "Fit Score"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CorrelationStatus"
+          },
+          "score_breakdown": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Score Breakdown"
+          },
+          "fit_ranking_breakdown": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FitRankingBreakdownResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "listing_title": {
+            "type": "string",
+            "title": "Listing Title"
+          },
+          "listing_company": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Company"
+          },
+          "listing_url": {
+            "type": "string",
+            "title": "Listing Url"
+          },
+          "listing_location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Location"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "pref_id",
+          "listing_id",
+          "fit_score",
+          "status",
+          "score_breakdown",
+          "listing_title",
+          "listing_company",
+          "listing_url",
+          "listing_location",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "JobCorrelationResponse",
+        "description": "Response for a single job correlation/match."
+      },
+      "JobListingResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "listing_url": {
+            "type": "string",
+            "title": "Listing Url"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "company_name": {
+            "type": "string",
+            "title": "Company Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "location_raw": {
+            "type": "string",
+            "title": "Location Raw"
+          },
+          "work_arrangement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Arrangement"
+          },
+          "seniority_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seniority Level"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "required_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Skills"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "discovered_at": {
+            "type": "string",
+            "title": "Discovered At"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "salary_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Salary Min"
+          },
+          "salary_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Salary Max"
+          },
+          "salary_currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Salary Currency"
+          },
+          "salary_frequency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Salary Frequency"
+          },
+          "company_logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Company Logo Url"
+          },
+          "experience_years_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Experience Years Min"
+          },
+          "experience_years_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Experience Years Max"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "listing_url",
+          "source",
+          "title",
+          "company_name",
+          "description",
+          "location_raw",
+          "work_arrangement",
+          "seniority_level",
+          "language",
+          "required_skills",
+          "posted_at",
+          "discovered_at",
+          "created_at"
+        ],
+        "title": "JobListingResponse",
+        "description": "Response for a single job listing."
+      },
+      "MonetaryAmountRequest": {
+        "properties": {
+          "minor_units": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Minor Units",
+            "description": "Amount in minor units (e.g., cents)"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/CurrencyCode",
+            "description": "Currency code (required)"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "minor_units",
+          "currency"
+        ],
+        "title": "MonetaryAmountRequest",
+        "description": "Monetary amount with currency in minor units (cents)."
+      },
+      "MonetaryAmountResponse": {
+        "properties": {
+          "minor_units": {
+            "type": "integer",
+            "title": "Minor Units"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/CurrencyCode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minor_units",
+          "currency"
+        ],
+        "title": "MonetaryAmountResponse",
+        "description": "Monetary amount response."
+      },
+      "PaginatedResponse_AttachmentResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Total number of items matching the query"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page",
+            "description": "Current page number"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page Size",
+            "description": "Items per page"
+          },
+          "total_pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Pages",
+            "description": "Total number of pages"
+          },
+          "has_next": {
+            "type": "boolean",
+            "title": "Has Next",
+            "description": "Whether a next page exists"
+          },
+          "has_prev": {
+            "type": "boolean",
+            "title": "Has Prev",
+            "description": "Whether a previous page exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "total_pages",
+          "has_next",
+          "has_prev"
+        ],
+        "title": "PaginatedResponse[AttachmentResponse]"
+      },
+      "PaginatedResponse_DocumentStatusResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentStatusResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Total number of items matching the query"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page",
+            "description": "Current page number"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page Size",
+            "description": "Items per page"
+          },
+          "total_pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Pages",
+            "description": "Total number of pages"
+          },
+          "has_next": {
+            "type": "boolean",
+            "title": "Has Next",
+            "description": "Whether a next page exists"
+          },
+          "has_prev": {
+            "type": "boolean",
+            "title": "Has Prev",
+            "description": "Whether a previous page exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "total_pages",
+          "has_next",
+          "has_prev"
+        ],
+        "title": "PaginatedResponse[DocumentStatusResponse]"
+      },
+      "PaginatedResponse_JobCorrelationResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JobCorrelationResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Total number of items matching the query"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page",
+            "description": "Current page number"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page Size",
+            "description": "Items per page"
+          },
+          "total_pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Pages",
+            "description": "Total number of pages"
+          },
+          "has_next": {
+            "type": "boolean",
+            "title": "Has Next",
+            "description": "Whether a next page exists"
+          },
+          "has_prev": {
+            "type": "boolean",
+            "title": "Has Prev",
+            "description": "Whether a previous page exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "total_pages",
+          "has_next",
+          "has_prev"
+        ],
+        "title": "PaginatedResponse[JobCorrelationResponse]"
+      },
+      "PaginatedResponse_JobListingResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/JobListingResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Total number of items matching the query"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page",
+            "description": "Current page number"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page Size",
+            "description": "Items per page"
+          },
+          "total_pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Pages",
+            "description": "Total number of pages"
+          },
+          "has_next": {
+            "type": "boolean",
+            "title": "Has Next",
+            "description": "Whether a next page exists"
+          },
+          "has_prev": {
+            "type": "boolean",
+            "title": "Has Prev",
+            "description": "Whether a previous page exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "total_pages",
+          "has_next",
+          "has_prev"
+        ],
+        "title": "PaginatedResponse[JobListingResponse]"
+      },
+      "PaginatedResponse_ProfileResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Total number of items matching the query"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page",
+            "description": "Current page number"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page Size",
+            "description": "Items per page"
+          },
+          "total_pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Pages",
+            "description": "Total number of pages"
+          },
+          "has_next": {
+            "type": "boolean",
+            "title": "Has Next",
+            "description": "Whether a next page exists"
+          },
+          "has_prev": {
+            "type": "boolean",
+            "title": "Has Prev",
+            "description": "Whether a previous page exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "total_pages",
+          "has_next",
+          "has_prev"
+        ],
+        "title": "PaginatedResponse[ProfileResponse]"
+      },
+      "PaginatedResponse_SchemaFamilyResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SchemaFamilyResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Total number of items matching the query"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page",
+            "description": "Current page number"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page Size",
+            "description": "Items per page"
+          },
+          "total_pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Pages",
+            "description": "Total number of pages"
+          },
+          "has_next": {
+            "type": "boolean",
+            "title": "Has Next",
+            "description": "Whether a next page exists"
+          },
+          "has_prev": {
+            "type": "boolean",
+            "title": "Has Prev",
+            "description": "Whether a previous page exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "total_pages",
+          "has_next",
+          "has_prev"
+        ],
+        "title": "PaginatedResponse[SchemaFamilyResponse]"
+      },
+      "PaginatedResponse_TemplateFamilyResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateFamilyResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Total number of items matching the query"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page",
+            "description": "Current page number"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page Size",
+            "description": "Items per page"
+          },
+          "total_pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total Pages",
+            "description": "Total number of pages"
+          },
+          "has_next": {
+            "type": "boolean",
+            "title": "Has Next",
+            "description": "Whether a next page exists"
+          },
+          "has_prev": {
+            "type": "boolean",
+            "title": "Has Prev",
+            "description": "Whether a previous page exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size",
+          "total_pages",
+          "has_next",
+          "has_prev"
+        ],
+        "title": "PaginatedResponse[TemplateFamilyResponse]"
+      },
+      "PaymentFrequency": {
+        "type": "string",
+        "enum": [
+          "HOURLY",
+          "DAILY",
+          "WEEKLY",
+          "BIWEEKLY",
+          "MONTHLY",
+          "ANNUALLY"
+        ],
+        "description": "PAYMENT FREQUENCY: Compensation frequency"
+      },
+      "ProfileCreate": {
+        "properties": {
+          "pref_name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Pref Name"
+          },
+          "search_keywords": {
+            "items": {
+              "type": "string",
+              "maxLength": 100,
+              "minLength": 2
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Search Keywords",
+            "description": "At least one search keyword required"
+          },
+          "disallowed_keywords": {
+            "items": {
+              "type": "string",
+              "maxLength": 100,
+              "minLength": 2
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Disallowed Keywords"
+          },
+          "user_skills": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "User Skills",
+            "description": "Canonical skill IDs from user profile"
+          },
+          "work_arrangements": {
+            "items": {
+              "$ref": "#/components/schemas/WorkArrangement"
+            },
+            "type": "array",
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Work Arrangements",
+            "description": "At least one work arrangement required"
+          },
+          "notification_threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Notification Threshold",
+            "default": 0.7
+          },
+          "auto_tailor_threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Tailor Threshold"
+          },
+          "open_to_relocation": {
+            "type": "boolean",
+            "title": "Open To Relocation",
+            "default": false
+          },
+          "salary_preference": {
+            "$ref": "#/components/schemas/SalaryPreferenceRequest",
+            "description": "Salary preference required for ML scoring"
+          },
+          "experience_preference": {
+            "$ref": "#/components/schemas/ExperiencePreferenceRequest",
+            "description": "Experience preference required for ML scoring"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pref_name",
+          "search_keywords",
+          "work_arrangements",
+          "salary_preference",
+          "experience_preference"
+        ],
+        "title": "ProfileCreate",
+        "description": "Request to create a job target profile."
+      },
+      "ProfileResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "pref_name": {
+            "type": "string",
+            "title": "Pref Name"
+          },
+          "search_keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Search Keywords"
+          },
+          "disallowed_keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disallowed Keywords"
+          },
+          "work_arrangements": {
+            "items": {
+              "$ref": "#/components/schemas/WorkArrangement"
+            },
+            "type": "array",
+            "title": "Work Arrangements"
+          },
+          "user_skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "User Skills",
+            "description": "Canonical skill IDs from user profile"
+          },
+          "notification_threshold": {
+            "type": "number",
+            "title": "Notification Threshold"
+          },
+          "auto_tailor_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Tailor Threshold"
+          },
+          "open_to_relocation": {
+            "type": "boolean",
+            "title": "Open To Relocation"
+          },
+          "salary_preference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SalaryPreferenceResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "experience_preference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExperiencePreferenceResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "pref_name",
+          "search_keywords",
+          "disallowed_keywords",
+          "work_arrangements",
+          "notification_threshold",
+          "auto_tailor_threshold",
+          "open_to_relocation"
+        ],
+        "title": "ProfileResponse",
+        "description": "Response for a single profile."
+      },
+      "ProfileUpdate": {
+        "properties": {
+          "pref_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pref Name"
+          },
+          "search_keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 100,
+                  "minLength": 2
+                },
+                "type": "array",
+                "maxItems": 20,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Search Keywords"
+          },
+          "disallowed_keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 100,
+                  "minLength": 2
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disallowed Keywords"
+          },
+          "user_skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array",
+                "maxItems": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Skills"
+          },
+          "work_arrangements": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/WorkArrangement"
+                },
+                "type": "array",
+                "maxItems": 5,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Arrangements"
+          },
+          "notification_threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Threshold"
+          },
+          "auto_tailor_threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Tailor Threshold"
+          },
+          "open_to_relocation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open To Relocation"
+          },
+          "salary_preference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SalaryPreferenceRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "experience_preference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExperiencePreferenceRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProfileUpdate",
+        "description": "Request to update a job target profile."
+      },
+      "RecordFeedbackRequest": {
+        "properties": {
+          "feedback_type": {
+            "$ref": "#/components/schemas/FeedbackType"
+          }
+        },
+        "type": "object",
+        "required": [
+          "feedback_type"
+        ],
+        "title": "RecordFeedbackRequest",
+        "description": "Request to record user feedback on a correlation."
+      },
+      "ResolvedFeatureImportanceResponse": {
+        "properties": {
+          "skill_match_importance": {
+            "type": "integer",
+            "title": "Skill Match Importance"
+          },
+          "location_importance": {
+            "type": "integer",
+            "title": "Location Importance"
+          },
+          "work_arrangement_importance": {
+            "type": "integer",
+            "title": "Work Arrangement Importance"
+          },
+          "experience_importance": {
+            "type": "integer",
+            "title": "Experience Importance"
+          },
+          "salary_importance": {
+            "type": "integer",
+            "title": "Salary Importance"
+          },
+          "recency_importance": {
+            "type": "integer",
+            "title": "Recency Importance"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skill_match_importance",
+          "location_importance",
+          "work_arrangement_importance",
+          "experience_importance",
+          "salary_importance",
+          "recency_importance",
+          "source"
+        ],
+        "title": "ResolvedFeatureImportanceResponse",
+        "description": "Response with resolved (merged) preferences and source."
+      },
+      "SalaryPreferenceRequest": {
+        "properties": {
+          "min_salary": {
+            "$ref": "#/components/schemas/MonetaryAmountRequest",
+            "description": "Minimum acceptable annual salary (required)"
+          },
+          "target_salary": {
+            "$ref": "#/components/schemas/MonetaryAmountRequest",
+            "description": "Target/ideal annual salary (required)"
+          },
+          "preferred_frequency": {
+            "$ref": "#/components/schemas/PaymentFrequency",
+            "description": "Preferred payment frequency",
+            "default": "ANNUALLY"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "min_salary",
+          "target_salary"
+        ],
+        "title": "SalaryPreferenceRequest",
+        "description": "Request to set salary preference."
+      },
+      "SalaryPreferenceResponse": {
+        "properties": {
+          "min_salary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MonetaryAmountResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_salary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MonetaryAmountResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preferred_frequency": {
+            "$ref": "#/components/schemas/PaymentFrequency",
+            "default": "ANNUALLY"
+          }
+        },
+        "type": "object",
+        "title": "SalaryPreferenceResponse",
+        "description": "Salary preference response."
+      },
+      "SchemaFamilyResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "latest_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SchemaVersionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "latest_version"
+        ],
+        "title": "SchemaFamilyResponse",
+        "description": "Response for a schema family."
+      },
+      "SchemaVersionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "family_id": {
+            "type": "string",
+            "title": "Family Id"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "json_schema": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Json Schema"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "family_id",
+          "version",
+          "json_schema"
+        ],
+        "title": "SchemaVersionResponse",
+        "description": "Response for a schema version."
+      },
+      "ScoreAdjustmentRequest": {
+        "properties": {
+          "adjusted_score": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Adjusted Score",
+            "description": "Corrected score value (0.0 = irrelevant, 1.0 = perfect match)",
+            "examples": [
+              0.35,
+              0.72,
+              0.85
+            ]
+          },
+          "reasoning": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 10,
+            "title": "Reasoning",
+            "description": "Brief explanation for the adjustment",
+            "examples": [
+              "Skills don't match the listed requirements",
+              "Location is actually acceptable"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "adjusted_score",
+          "reasoning"
+        ],
+        "title": "ScoreAdjustmentRequest",
+        "description": "Request to submit a manual score adjustment with reasoning."
+      },
+      "ScoreFeedbackRequest": {
+        "properties": {
+          "feedback_type": {
+            "$ref": "#/components/schemas/ScoreFeedbackType",
+            "description": "Feedback type: GOOD (accurate), TOO_HIGH (overstated), TOO_LOW (understated)"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "feedback_type"
+        ],
+        "title": "ScoreFeedbackRequest",
+        "description": "Request to submit asymmetric score feedback on a correlation."
+      },
+      "ScoreFeedbackType": {
+        "type": "string",
+        "enum": [
+          "GOOD",
+          "TOO_HIGH",
+          "TOO_LOW"
+        ],
+        "description": "SCORE FEEDBACK TYPE: Asymmetric feedback indicating score accuracy"
+      },
+      "SeniorityLevel": {
+        "type": "string",
+        "enum": [
+          "INTERN",
+          "ENTRY",
+          "MID",
+          "SENIOR",
+          "STAFF",
+          "MANAGER",
+          "DIRECTOR",
+          "VP",
+          "EXECUTIVE"
+        ],
+        "description": "SENIORITY LEVEL: Career stage/experience tier"
+      },
+      "SessionResponse": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roles"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Permissions"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "roles",
+          "permissions"
+        ],
+        "title": "SessionResponse",
+        "description": "Response for session endpoint."
+      },
+      "SkillBatchRequest": {
+        "properties": {
+          "skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Skill Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skill_ids"
+        ],
+        "title": "SkillBatchRequest",
+        "description": "Request to get skills by IDs."
+      },
+      "SkillBatchResponse": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSearchResult"
+            },
+            "type": "array",
+            "title": "Skills"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skills"
+        ],
+        "title": "SkillBatchResponse",
+        "description": "Response for batch skill lookup."
+      },
+      "SkillSearchResponse": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSearchResult"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skills",
+          "total",
+          "query"
+        ],
+        "title": "SkillSearchResponse",
+        "description": "Response for skill search."
+      },
+      "SkillSearchResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "SkillSearchResult",
+        "description": "Single skill in search results."
+      },
+      "TemplateCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Display Name"
+          },
+          "namespace": {
+            "type": "string",
+            "maxLength": 50,
+            "title": "Namespace",
+            "default": "default"
+          },
+          "template_content": {
+            "type": "string",
+            "maxLength": 1048576,
+            "minLength": 10,
+            "title": "Template Content"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "schema_compatibility": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Compatibility"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "display_name",
+          "template_content"
+        ],
+        "title": "TemplateCreateRequest",
+        "description": "Request to create a new template family."
+      },
+      "TemplateFamilyResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "latest_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplateResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "namespace",
+          "name",
+          "display_name"
+        ],
+        "title": "TemplateFamilyResponse",
+        "description": "Response for a template family with its latest version."
+      },
+      "TemplateResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Template version identifier"
+          },
+          "namespace": {
+            "type": "string",
+            "title": "Namespace",
+            "description": "Template namespace (e.g., 'resume', 'cover_letter')"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Template name within namespace"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "User-facing template name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Semantic version string (e.g., '1.0.0')"
+          },
+          "template_content": {
+            "type": "string",
+            "title": "Template Content",
+            "description": "Jinja2 HTML template content"
+          },
+          "content_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Schema",
+            "description": "JSON schema for template variables"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "access_scope": {
+            "$ref": "#/components/schemas/AccessScope",
+            "description": "Access control: PUBLIC, PRIVATE, or SYSTEM"
+          },
+          "owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Id",
+            "description": "Owner user ID for PRIVATE templates"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "description": "Whether this version is active",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "namespace",
+          "name",
+          "display_name",
+          "version",
+          "template_content",
+          "access_scope"
+        ],
+        "title": "TemplateResponse",
+        "description": "Response for a template version in single-table design.\n\nIn single-table design, each row represents a template version.\nThe \"family\" is identified by (namespace, name) combination."
+      },
+      "TemplateValidationIssue": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Location of the issue (e.g., 'line 5')"
+          },
+          "keyword": {
+            "type": "string",
+            "title": "Keyword",
+            "description": "Issue type identifier"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Human-readable description of the issue"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "keyword",
+          "message"
+        ],
+        "title": "TemplateValidationIssue",
+        "description": "A single validation issue found in a template."
+      },
+      "TemplateValidationRequest": {
+        "properties": {
+          "template": {
+            "type": "string",
+            "maxLength": 1048576,
+            "title": "Template",
+            "description": "Template HTML/Jinja2 content to validate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "template"
+        ],
+        "title": "TemplateValidationRequest",
+        "description": "Request to validate template content."
+      },
+      "TemplateValidationResponse": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid",
+            "description": "Whether the template passed validation"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateValidationIssue"
+            },
+            "type": "array",
+            "title": "Issues",
+            "description": "List of validation issues found"
+          }
+        },
+        "type": "object",
+        "required": [
+          "valid"
+        ],
+        "title": "TemplateValidationResponse",
+        "description": "Response containing validation results."
+      },
+      "TemplateVersionAddRequest": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "title": "Version"
+          },
+          "template_content": {
+            "type": "string",
+            "maxLength": 1048576,
+            "minLength": 10,
+            "title": "Template Content"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "schema_compatibility": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Compatibility"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "template_content"
+        ],
+        "title": "TemplateVersionAddRequest",
+        "description": "Request to add a new version to a template family."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WorkArrangement": {
+        "type": "string",
+        "enum": [
+          "ON_SITE",
+          "HYBRID",
+          "REMOTE"
+        ],
+        "description": "WORK ARRANGEMENT: How/where work is performed"
+      }
+    },
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-nohiki_at",
+        "description": "JWT access token in HTTP-only cookie"
+      }
+    }
+  },
+  "tags": []
+}
