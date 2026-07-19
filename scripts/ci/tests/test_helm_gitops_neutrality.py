@@ -1,0 +1,171 @@
+"""Render-level GitOps neutrality contract for the platform Helm chart.
+
+The chart is reconciled by a pull-based GitOps engine that drives Helm
+install and upgrade, so ordering must ride native ``helm.sh/hook`` weights
+instead of engine-specific sync waves. These render tests pin the migration
+Job hooks, forbid every ``argocd.argoproj.io`` annotation in the rendered
+manifests, guard the retained qdrant, skill-graph, and Secret hooks, and check
+that the local, dev, and staging value sets render.
+"""
+
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+from test_image_digest_gitops import _digest_values
+
+_ROOT = Path(__file__).resolve().parents[3]
+_CHART = _ROOT / "infra" / "k8s" / "helm"
+_FIXTURES = Path(__file__).parent / "fixtures"
+_ARGO_PREFIX = "argocd.argoproj.io"
+
+_MIGRATION_HOOK_TOKENS = {
+    "helm.sh/hook": frozenset({"post-install", "post-upgrade"}),
+    "helm.sh/hook-delete-policy": frozenset({"before-hook-creation"}),
+}
+_MIGRATION_HOOK_WEIGHT = "1"
+_QDRANT_HOOK = {
+    "helm.sh/hook": "post-install,post-upgrade",
+    "helm.sh/hook-weight": "0",
+    "helm.sh/hook-delete-policy": "before-hook-creation",
+}
+_BOOTSTRAP_HOOK = {
+    "helm.sh/hook": "post-install,post-upgrade",
+    "helm.sh/hook-weight": "2",
+    "helm.sh/hook-delete-policy": "before-hook-creation",
+}
+_SECRET_HOOK = {
+    "helm.sh/hook": "pre-install,pre-upgrade",
+    "helm.sh/hook-weight": "-10",
+}
+
+
+def _template(values_file: str, tmp_path: Path | None = None, *extra_args: str) -> str:
+    command = [
+        "helm",
+        "template",
+        "nohiki",
+        ".",
+        "--values",
+        "values.yaml",
+        "--values",
+        values_file,
+        "--namespace",
+        "nohiki-prod" if values_file == "values.prod.yaml" else "nohiki",
+    ]
+    if values_file == "values.prod.yaml":
+        assert tmp_path is not None
+        command += [
+            "--values",
+            str(_FIXTURES / "values.prod.identity.yaml"),
+            "--values",
+            str(_FIXTURES / "values.prod.network.yaml"),
+            "--values",
+            str(_digest_values(tmp_path)),
+        ]
+    if values_file in {"values.dev.yaml", "values.staging.yaml", "values.prod.yaml"}:
+        command += [
+            "--set-string",
+            "global.eso.azure.keyVaultUrl=https://nohiki-test-kv.vault.azure.net",
+            "--set-string",
+            "global.eso.azure.clientId=00000000-0000-4000-8000-000000000000",
+            "--set-string",
+            "global.eso.azure.tenantId=11111111-1111-4111-8111-111111111111",
+        ]
+    command += extra_args
+    result = subprocess.run(command, cwd=_CHART, capture_output=True, text=True, check=True)
+    return result.stdout
+
+
+def _documents(stdout: str) -> list[dict[str, object]]:
+    return [document for document in yaml.safe_load_all(stdout) if isinstance(document, dict)]
+
+
+def _jobs_by_suffix(documents: list[dict[str, object]], suffix: str) -> list[dict[str, object]]:
+    return [
+        document
+        for document in documents
+        if document.get("kind") == "Job" and document["metadata"]["name"].endswith(suffix)
+    ]
+
+
+def _annotations(document: dict[str, object]) -> dict[str, str]:
+    return document.get("metadata", {}).get("annotations", {})
+
+
+def _annotation_tokens(value: str) -> frozenset[str]:
+    return frozenset(token.strip() for token in value.split(",") if token.strip())
+
+
+def test_migration_jobs_order_through_helm_hooks_without_argo() -> None:
+    documents = _documents(_template("values.local.yaml"))
+    jobs = _jobs_by_suffix(documents, "-db-migrate")
+    assert jobs, "no per-service migration Jobs rendered from the local values"
+    for job in jobs:
+        annotations = _annotations(job)
+        for key, expected_tokens in _MIGRATION_HOOK_TOKENS.items():
+            actual_tokens = _annotation_tokens(annotations.get(key, ""))
+            assert actual_tokens == expected_tokens, (
+                job["metadata"]["name"],
+                key,
+                actual_tokens,
+            )
+        assert annotations.get("helm.sh/hook-weight") == _MIGRATION_HOOK_WEIGHT
+        assert set(annotations) == {*_MIGRATION_HOOK_TOKENS, "helm.sh/hook-weight"}
+        assert not any(key.startswith(_ARGO_PREFIX) for key in annotations)
+
+
+@pytest.mark.parametrize("values_file", ["values.local.yaml", "values.dev.yaml", "values.staging.yaml"])
+def test_rendered_manifests_carry_no_argo_annotations(values_file: str) -> None:
+    assert _ARGO_PREFIX not in _template(values_file)
+
+
+def test_production_render_carries_no_argo_annotations(tmp_path: Path) -> None:
+    assert _ARGO_PREFIX not in _template("values.prod.yaml", tmp_path)
+
+
+def test_qdrant_and_skill_bootstrap_jobs_keep_helm_hooks() -> None:
+    documents = _documents(
+        _template(
+            "values.local.yaml",
+            None,
+            "--set",
+            "skill-graph-service.enabled=true",
+            "--set",
+            "skill-graph-service.bootstrap.enabled=true",
+        )
+    )
+    qdrant = _jobs_by_suffix(documents, "-qdrant-init")
+    assert len(qdrant) == 1, "expected exactly one qdrant-init hook Job"
+    assert _annotations(qdrant[0]) == _QDRANT_HOOK
+
+    bootstrap = _jobs_by_suffix(documents, "-bootstrap")
+    assert len(bootstrap) == 1, "expected the skill-graph bootstrap hook Job when enabled"
+    assert _annotations(bootstrap[0]) == _BOOTSTRAP_HOOK
+
+
+def test_managed_secret_hooks_survive_neutrality() -> None:
+    documents = _documents(
+        _template(
+            "values.local.yaml",
+            None,
+            "--set",
+            "global.secrets.inlineSecretsEnabled=true",
+        )
+    )
+    hooked = [
+        document
+        for document in documents
+        if document.get("kind") == "Secret" and "helm.sh/hook" in _annotations(document)
+    ]
+    assert hooked, "inline Secret template rendered no pre-hook Secrets"
+    for secret in hooked:
+        assert _annotations(secret) == _SECRET_HOOK, secret["metadata"]["name"]
+
+
+@pytest.mark.parametrize("values_file", ["values.local.yaml", "values.dev.yaml", "values.staging.yaml"])
+def test_nonproduction_value_sets_render(values_file: str) -> None:
+    documents = _documents(_template(values_file))
+    kinds = {document.get("kind") for document in documents}
+    assert {"Deployment", "Job"} <= kinds, sorted(kinds)
