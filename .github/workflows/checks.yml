@@ -78,7 +78,7 @@ jobs:
       - name: Compute change gate
         id: gate
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          BASE: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
           HEAD: ${{ github.sha }}
           EVENT: ${{ github.event_name }}
         run: |

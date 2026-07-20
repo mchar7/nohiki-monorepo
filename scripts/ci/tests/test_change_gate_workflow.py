@@ -32,6 +32,10 @@ def test_changes_job_computes_gate_from_full_history() -> None:
     assert checkout["with"] == {"fetch-depth": 0}
 
     gate = next(step for step in steps if step.get("name") == "Compute change gate")
+    env = cast("dict[str, str]", gate["env"])
+    assert (
+        env["BASE"] == "${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}"
+    )
     command = cast("str", gate["run"])
     assert "ci-checks gate" in command
     assert '--github-output "$GITHUB_OUTPUT"' in command
