@@ -801,7 +801,7 @@ def test_verify_invokes_every_declared_gate_and_managed_proxy_cleanup(
         "--api-job nohiki-api-verification-v1",
         "--playwright-job nohiki-playwright-verification-v1",
         "image_foundation.py status",
-        "image_foundation.py prove-pulls",
+        "image_foundation.py verify-pulls",
         "gateway_proxy.py stop",
     )
     for gate in required:
