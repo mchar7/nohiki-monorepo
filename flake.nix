@@ -160,7 +160,7 @@
           source .venv/bin/activate
 
           if [ -f "uv.lock" ]; then
-            uv sync --all-packages --all-extras --no-extra cuda --locked --quiet
+            uv sync --all-packages --all-extras --no-extra cuda --group deadcode --locked --quiet
           fi
         '';
 

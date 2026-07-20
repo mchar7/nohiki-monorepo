@@ -400,10 +400,21 @@ def harness(tmp_path: Path) -> dict[str, object]:
     repository = tmp_path / "repo"
     repository.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
-    subprocess.run(["git", "config", "user.name", "Test Owner"], cwd=repository, check=True)
+    # --file pins the write to the scratch repo even if repository discovery escapes
+    config_file = repository / ".git" / "config"
     subprocess.run(
-        ["git", "config", "user.email", "owner@example.invalid"],
-        cwd=repository,
+        ["git", "config", "--file", str(config_file), "user.name", "Test Owner"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "--file",
+            str(config_file),
+            "user.email",
+            "owner@example.invalid",
+        ],
         check=True,
     )
     (repository / "tracked.txt").write_text("checkpoint fixture\n", encoding="utf-8")

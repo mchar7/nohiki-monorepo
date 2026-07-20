@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
+import sys
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -11,6 +14,8 @@ import pytest
 import yaml
 from ci_checks.checks import deadcode as deadcode_check
 from ci_checks.checks.deadcode import (
+    DeadCodeFinding,
+    DeadCodeResult,
     DeadCodeScanOptions,
     SeverityLevel,
     _build_skylos_cmd,
@@ -19,8 +24,10 @@ from ci_checks.checks.deadcode import (
 from ci_checks.core.packages import Package, PackageType
 
 _ROOT = Path(__file__).resolve().parents[3]
+_CI_PROJECT = tomllib.loads((_ROOT / "scripts" / "ci" / "pyproject.toml").read_text(encoding="utf-8"))
 _LEFTHOOK_CONFIG = yaml.safe_load((_ROOT / "lefthook.yml").read_text(encoding="utf-8"))
 _SEMGREP_OVERRIDES = (_ROOT / "semgrep-overrides.txt").read_text(encoding="utf-8").splitlines()
+_DEADCODE_SWEEP = yaml.safe_load((_ROOT / ".github" / "workflows" / "deadcode-sweep.yml").read_text(encoding="utf-8"))
 
 
 def _run_git(repo: Path, *args: str) -> None:
@@ -112,12 +119,72 @@ def test_deadcode_inputs_ignore_local_caches_and_generated_outputs(
     assert clean_inputs == local_inputs == ["package/src/live.py"]
     assert _collect_scan_paths([], include_tests=False, repo_root=tmp_path) == []
 
+    generated_root = tmp_path / "backend" / "libs" / "nohiki-domain-models"
+    generated_src = generated_root / "src"
+    generated_src.mkdir(parents=True)
+    (generated_src / "models.py").write_text("class GeneratedModel:\n    pass\n", encoding="utf-8")
+    _run_git(tmp_path, "add", "backend/libs/nohiki-domain-models/src/models.py")
+    generated = Package(name="nohiki-domain-models", path=generated_root, pkg_type=PackageType.LIB)
+    assert _collect_scan_paths([generated], include_tests=False, repo_root=tmp_path) == []
 
-def test_deadcode_command_disables_scanner_cache() -> None:
-    """A scan verdict must derive only from the explicit tracked inventory."""
-    command = _build_skylos_cmd(["package/src/live.py"], _options())
 
-    assert "--no-cache" in command
+def test_deadcode_command_uses_locked_skylos_offline_whole_graph() -> None:
+    """The scanner must use the workspace lock, stay offline, and verify the whole graph."""
+    command = _build_skylos_cmd(
+        ["package/src/live.py"],
+        _options(),
+    )
+
+    assert command[:3] == [sys.executable, "-m", "skylos.cli"]
+    assert len(deadcode_dependencies := _CI_PROJECT["dependency-groups"]["deadcode"]) == 1
+    assert re.fullmatch(r"skylos==\d+\.\d+\.\d+", deadcode_dependencies[0])
+    assert "uvx" not in command
+    assert "--cache" not in command
+    # name-only baseline fingerprints suppress globally; the clean corpus needs no baseline
+    assert "--baseline" not in command
+    assert "--no-upload" in command
+    assert "--diff" not in command
+    assert "--no-grep-verify" not in command
+
+
+def test_deadcode_baseline_gate_passes_known_findings_and_fails_new_findings() -> None:
+    """Skylos baseline filtering must feed fail-on-findings without reinterpretation."""
+    baselined = DeadCodeResult(name="package", passed=True)
+    new = DeadCodeResult(
+        name="package",
+        passed=False,
+        findings=[
+            DeadCodeFinding(
+                name="new_dead_function",
+                file="package/src/live.py",
+                line=1,
+                kind="function",
+                confidence=100,
+                message="unused",
+            )
+        ],
+    )
+
+    assert deadcode_check.render_results([baselined], fail_on_findings=True)
+    assert not deadcode_check.render_results([new], fail_on_findings=True)
+
+
+def test_weekly_deadcode_sweep_keeps_full_grep_verification() -> None:
+    """The scheduled safety net must retain the expensive full-corpus verifier."""
+    jobs = cast("Mapping[str, object]", cast("Mapping[str, object]", _DEADCODE_SWEEP)["jobs"])
+    sweep = cast("Mapping[str, object]", jobs["sweep"])
+    steps = cast("list[Mapping[str, object]]", sweep["steps"])
+    scan = next(step for step in steps if step.get("id") == "scan")
+    command = cast("str", scan["run"])
+
+    assert "--scope all" in command
+    assert "--baseline" not in command
+    assert "--no-grep-verify" not in command
+
+    assert not any(step.get("name") == "Cache Skylos analysis" for step in steps)
+
+    install = next(step for step in steps if step.get("name") == "Install workspace (all packages + extras)")
+    assert "--group deadcode" in cast("str", install["run"])
 
 
 def test_deadcode_gate_disables_history_provenance() -> None:
