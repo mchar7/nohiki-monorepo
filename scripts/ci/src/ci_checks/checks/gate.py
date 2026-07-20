@@ -6,6 +6,7 @@ This module only runs git, writes $GITHUB_OUTPUT / $GITHUB_STEP_SUMMARY,
 and prints the verdict.
 """
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Annotated
@@ -20,6 +21,7 @@ from ci_checks.core.change_gate import (
     render_summary,
     tests_matrix,
 )
+from ci_checks.core.display import GATE_LABELS
 from ci_checks.core.packages import REPO_ROOT, Scope, load_packages_with_deps
 
 
@@ -56,6 +58,11 @@ def _append(path: Path | None, text: str) -> None:
             handle.write(text)
 
 
+def _label_output(outputs: dict[str, str]) -> str:
+    labels = [{"name": name, "color": color, "active": outputs[flag]} for flag, (name, color) in GATE_LABELS.items()]
+    return json.dumps(labels, separators=(",", ":"))
+
+
 COMMENT_MARKER = "<!-- nohiki-change-gate -->"
 
 
@@ -69,23 +76,32 @@ def gate_cmd(
         Path | None,
         typer.Option("--comment-file", help="Write a marker-prefixed PR comment body"),
     ] = None,
+    repository: Annotated[
+        str | None,
+        typer.Option(
+            "--repository",
+            envvar="GITHUB_REPOSITORY",
+            help="GitHub owner/repo for changed-file links",
+        ),
+    ] = None,
 ) -> None:
     """Compute lane activation for the current diff and emit workflow outputs.
 
     Args:
-        event: GitHub event name; only pull_request and push can be scoped.
+        event: GitHub event name; anything but pull_request forces full.
         base_ref: Base commit for the three-dot diff.
         head_ref: Head commit for the three-dot diff.
         github_output: Optional $GITHUB_OUTPUT path to append key=value lines.
         summary: Optional $GITHUB_STEP_SUMMARY path for the verdict table.
         comment_file: Optional path receiving the marker-prefixed verdict
             body for a sticky PR comment.
+        repository: Optional GitHub ``owner/repo`` for changed-file links.
     """
     console = Console()
     packages = load_packages_with_deps(Scope.ALL)
     decision = GateDecision()
 
-    if event not in {"pull_request", "push"}:
+    if event != "pull_request":
         decision.force_full(f"event {event!r} always runs everything")
     elif not base_ref or set(base_ref) == {"0"}:
         decision.force_full("missing or null base ref")
@@ -99,8 +115,20 @@ def gate_cmd(
 
     matrix = tests_matrix(decision, packages)
     outputs = render_outputs(decision, matrix, event)
-    _append(github_output, "".join(f"{key}={value}\n" for key, value in outputs.items()))
-    text = render_summary(decision, outputs, event, base_ref, head_ref)
+    emitted_outputs = outputs | {"labels": _label_output(outputs)}
+    _append(
+        github_output,
+        "".join(f"{key}={value}\n" for key, value in emitted_outputs.items()),
+    )
+    text = render_summary(
+        decision,
+        outputs,
+        event,
+        base_ref,
+        head_ref,
+        repository=repository,
+        head_sha=head_ref if repository is not None else None,
+    )
     _append(summary, text)
     if comment_file is not None:
         comment_file.write_text(f"{COMMENT_MARKER}\n{text}", encoding="utf-8")
