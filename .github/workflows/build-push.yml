@@ -114,7 +114,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Check out publication source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.validate-event.outputs.source_sha }}
           fetch-depth: 2
@@ -184,7 +184,7 @@ jobs:
     timeout-minutes: ${{ matrix.timeout_minutes || 20 }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.event-validation.outputs.source_sha }}
           persist-credentials: false
@@ -307,7 +307,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.event-validation.outputs.source_sha }}
           persist-credentials: false
@@ -342,7 +342,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout successful Checks source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.event-validation.outputs.source_sha }}
           persist-credentials: false
