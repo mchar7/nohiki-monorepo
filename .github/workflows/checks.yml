@@ -361,6 +361,12 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+
 
       - name: Install workspace (all packages + extras)
         run: |
@@ -408,6 +414,13 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        if: needs.changes.outputs.typecheck_backend == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+
 
       - name: Resolve pnpm store path
         if: needs.changes.outputs.typecheck_frontend == 'true'
@@ -482,6 +495,12 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+
 
       - name: Resolve pnpm store path
         if: matrix.scope == 'scripts'
@@ -575,6 +594,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
@@ -597,17 +618,23 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-deadcode-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
 
       - name: Install workspace (all packages + extras)
         run: |
           # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
           nix develop .#ci --command bash -euc '
             export UV_PYTHON="$(command -v python)"
-            uv sync --all-packages --all-extras --no-extra cuda --frozen
+            uv sync --all-packages --all-extras --no-extra cuda --group deadcode --frozen
           '
-
       - name: Check dead code
-        run: nix develop .#ci --command uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
+        run: >
+          nix develop .#ci --command uv run --no-sync ci-checks deadcode
+          --scope all --ci --fail --no-provenance
 
       - name: Check dependencies
         run: nix develop .#ci --command uv run --no-sync ci-checks deptry --scope all --ci
@@ -652,6 +679,12 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+
 
       - name: Resolve pnpm store path
         id: pnpm-store

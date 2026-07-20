@@ -11,6 +11,7 @@ import asyncio
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -189,7 +190,10 @@ def _collect_scan_paths(
         Sorted unique repository-relative Python file paths.
     """
     roots: set[str] = set()
+    generated_src = repo_root / "backend" / "libs" / "nohiki-domain-models" / "src"
     for pkg in packages:
+        if pkg.src_dir.resolve() == generated_src.resolve():
+            continue
         roots.add(_relative_path(pkg.src_dir, repo_root=repo_root))
         if include_tests and pkg.has_tests:
             roots.add(_relative_path(pkg.tests_dir, repo_root=repo_root))
@@ -208,7 +212,7 @@ def _collect_scan_paths(
 
 
 def _build_skylos_cmd(scan_paths: list[str], options: DeadCodeScanOptions) -> list[str]:
-    """Construct the uvx Skylos command for repo-root dead-code scanning.
+    """Construct the locked Skylos command for repo-root dead-code scanning.
 
     Args:
         scan_paths: Scope paths to analyze.
@@ -218,22 +222,19 @@ def _build_skylos_cmd(scan_paths: list[str], options: DeadCodeScanOptions) -> li
         Command list suitable for asyncio.create_subprocess_exec.
     """
     cmd = [
-        "uvx",
-        # pin tool AND interpreter: fresh environments otherwise resolve
-        # different versions and flip gate verdicts
-        "--python",
-        "3.14",
-        "skylos==4.28.0",
+        sys.executable,
+        "-m",
+        "skylos.cli",
         *scan_paths,
         "--json",
         "--category",
         "dead_code",
         f"--confidence={options.confidence}",
+        # sovereign CI: no third-party upload surface, ever
+        "--no-upload",
         # false-positive whitelist lives in [tool.skylos.whitelist]
         "--config-file",
         str(REPO_ROOT / "pyproject.toml"),
-        "--no-upload",
-        "--no-cache",
     ]
 
     if options.trace:
@@ -314,7 +315,7 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
         Per-package grouped scan results.
     """
     env = sanitized_python_env(extra={"OTEL_SDK_DISABLED": "true", "SKYLOS_GREP_BUDGET": "120"})
-    if shutil.which("rg", path=env.get("PATH")) is None:
+    if not options.no_grep_verify and shutil.which("rg", path=env.get("PATH")) is None:
         return [
             DeadCodeResult(
                 name="scanner-preflight",
