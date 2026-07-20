@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import typer
+from ci_checks.checks import gate as checks_gate
 from ci_checks.checks import tests as checks_tests
 from ci_checks.checks.gate import gate_cmd
 from ci_checks.core import packages as packages_module
@@ -154,6 +155,61 @@ def test_evaluate_alembic_change_seeds_ci_checks() -> None:
     assert "ci-checks" in evaluate(changed, packages).affected
 
 
+@pytest.mark.parametrize(
+    ("path", "full", "affected", "present", "absent"),
+    [
+        (
+            "scripts/ci/src/ci_checks/checks/freshness.py",
+            "false",
+            {"ci-checks"},
+            {"python_any"},
+            set(),
+        ),
+        (
+            "scripts/ci/src/ci_checks/core/change_gate.py",
+            "true",
+            set(),
+            set(),
+            set(),
+        ),
+        (
+            "infra/k8s/helm/values.prod.digests.yaml",
+            "false",
+            {"ci-checks"},
+            {"python_any"},
+            {"hygiene", "typecheck_backend"},
+        ),
+        (
+            "backend/libs/nohiki-test-utils/src/nohiki_test_utils/utils/docker.py",
+            "false",
+            {"nohiki-test-utils"},
+            {"hygiene", "typecheck_backend"},
+            set(),
+        ),
+    ],
+)
+def test_evaluate_precision_for_ci_engine_contract_seeds_and_python_sources(
+    path: str,
+    full: str,
+    affected: set[str],
+    present: set[str],
+    absent: set[str],
+) -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+
+    decision = evaluate({path}, packages)
+
+    assert str(decision.full).lower() == full
+    assert affected <= decision.affected
+    assert present <= decision.flags
+    assert decision.flags.isdisjoint(absent)
+    if affected:
+        matrix_packages = {
+            name for entry in build_tests_matrix(decision, packages)["include"] for name in entry["packages"].split(",")
+        }
+        assert affected <= matrix_packages
+
+
 def test_dependency_loader_reads_runtime_extras_and_pep735_groups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -254,23 +310,52 @@ def test_render_summary_contains_range_verdict_and_every_flag() -> None:
 
 
 @pytest.mark.parametrize(
-    ("event", "extra_args"),
-    [("push", []), ("pull_request", ["--base-ref", "0000000000"])],
+    ("event", "base_ref", "expected_full", "expected_diff_calls"),
+    [
+        ("push", "base123", "false", 1),
+        ("pull_request", "base123", "false", 1),
+        ("push", "0" * 40, "true", 0),
+        ("workflow_dispatch", "base123", "true", 0),
+    ],
 )
-def test_gate_cli_writes_full_outputs(tmp_path: Path, event: str, extra_args: list[str]) -> None:
+def test_gate_cli_scopes_only_supported_events_with_usable_base(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    event: str,
+    base_ref: str,
+    expected_full: str,
+    expected_diff_calls: int,
+) -> None:
     app = typer.Typer()
     app.command("gate")(gate_cmd)
     output = tmp_path / "github-output"
+    calls: list[tuple[str, str]] = []
 
-    result = CliRunner().invoke(app, ["--event", event, "--github-output", str(output), *extra_args])
+    def diff_files(base: str, head: str) -> set[str]:
+        calls.append((base, head))
+        return {"docs/guide.md"}
+
+    monkeypatch.setattr(checks_gate, "_diff_files", diff_files)
+    monkeypatch.setattr(checks_gate, "load_packages_with_deps", lambda _scope: _synthetic_packages())
+
+    result = CliRunner().invoke(
+        app,
+        ["--event", event, "--base-ref", base_ref, "--github-output", str(output)],
+    )
 
     assert result.exit_code == 0, result.output
     parsed = dict(line.split("=", maxsplit=1) for line in output.read_text().splitlines())
-    assert parsed["full"] == "true"
-    assert all(parsed[flag] == "true" for flag in FLAG_NAMES)
-    assert json.loads(parsed["tests_matrix"])["include"] == [
-        {"scope": scope.value, "packages": "ALL"} for scope in TEST_SCOPES
-    ]
+    assert parsed["full"] == expected_full
+    assert len(calls) == expected_diff_calls
+    if expected_full == "true":
+        assert all(parsed[flag] == "true" for flag in FLAG_NAMES)
+        assert json.loads(parsed["tests_matrix"])["include"] == [
+            {"scope": scope.value, "packages": "ALL"} for scope in TEST_SCOPES
+        ]
+    else:
+        assert parsed["lint_markdown"] == "true"
+        assert parsed["hygiene"] == "false"
+        assert json.loads(parsed["tests_matrix"]) == {"include": []}
 
 
 def test_get_changed_files_raises_on_staged_git_failure(
