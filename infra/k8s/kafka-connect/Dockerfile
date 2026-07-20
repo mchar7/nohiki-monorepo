@@ -20,7 +20,7 @@ RUN gradle --no-daemon --console=plain test shadowJar
 # -----------------------------------------------------------------------------
 # Stage 2: Kafka Connect runtime with CDC + sink + custom SMT plugins
 # -----------------------------------------------------------------------------
-FROM quay.io/debezium/connect:3.6.0.Final@sha256:e6e1e7c8ad928169bb76ab7a4145b3caa67286ce99fe1a174d15c75118e6e700
+FROM quay.io/debezium/connect:3.6.0.Final@sha256:6f3fe6407bae8f2a7714b9fc174d545d52d81044b4f4add1565854f020943d47
 
 # Connector registration checks PostgreSQL replication slots with psql.
 USER 0
