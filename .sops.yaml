@@ -1,4 +1,4 @@
 creation_rules:
   - path_regex: infra/k8s/gitops/secrets/local/.*\.sops\.yaml$
     encrypted_regex: ^(data|stringData)$
-    age: age1uag52a2g8m8txdr4g8gtp9nl0j84mz4p6zvj8vevfv5wvn679c9ss6luu7
+    age: age1pjeuafmyuxxv8qsytrp53s8vtae6pfdea9vc9elz03l9zhfdt9ysfv6rpp
