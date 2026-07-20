@@ -92,10 +92,13 @@ class SurfaceRule:
 
 
 SURFACE_RULES: tuple[SurfaceRule, ...] = (
-    SurfaceRule(("*.md", "**/*.md", ".markdownlint-cli2.jsonc"), flags=("lint_markdown",)),
+    SurfaceRule(
+        ("*.md", "**/*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore"),
+        flags=("lint_markdown",),
+    ),
     SurfaceRule(
         ("proto/*", "proto/**/*"),
-        flags=("lint_proto", "proto_breaking"),
+        flags=("lint_proto", "proto_breaking", "typecheck_backend"),
         # Regenerated dataclasses land in nohiki-domain-models; rerun its dependents.
         packages=("nohiki-domain-models",),
     ),
@@ -154,7 +157,6 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
             ".windsurf/**",
             "docs/*",
             "docs/**/*",
-            ".markdownlintignore",
         ),
     ),
 )

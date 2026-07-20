@@ -29,7 +29,7 @@ def test_changes_job_computes_gate_from_full_history() -> None:
 
     steps = _steps(changes)
     checkout = next(step for step in steps if "uses" in step)
-    assert checkout["with"] == {"fetch-depth": 0}
+    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
 
     gate = next(step for step in steps if step.get("name") == "Compute change gate")
     env = cast("dict[str, str]", gate["env"])
@@ -43,12 +43,20 @@ def test_changes_job_computes_gate_from_full_history() -> None:
     assert "--comment-file gate-comment.md" in command
 
 
+def test_hadolint_enumerates_canonical_and_suffixed_dockerfiles() -> None:
+    lint_steps = _steps(_jobs()["lint"])
+    hadolint = next(step for step in lint_steps if step.get("name") == "Lint Dockerfiles (hadolint)")
+
+    command = cast("str", hadolint["run"])
+    assert "'*Dockerfile'" in command
+    assert "'*Dockerfile.*'" in command
+
+
 def test_changes_job_publishes_verdict_and_labels_on_prs() -> None:
     changes = _jobs()["changes"]
     permissions = cast("dict[str, str]", changes["permissions"])
     assert permissions == {
         "contents": "read",
-        "actions": "write",
         "pull-requests": "write",
         "issues": "write",
     }

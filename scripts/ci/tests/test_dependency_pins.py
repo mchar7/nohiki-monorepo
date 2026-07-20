@@ -15,6 +15,7 @@ import yaml
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPENDABOT = _ROOT / ".github" / "dependabot.yml"
 _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
+_WORKFLOWS = _ROOT / ".github" / "workflows"
 _FLAKE = _ROOT / "flake.nix"
 _JUSTFILE = _ROOT / "Justfile"
 _ROOT_PROJECT = _ROOT / "pyproject.toml"
@@ -31,6 +32,10 @@ _IMAGE = re.compile(
     r"(?:FROM |--from=)(?P<ref>(?P<repository>[^:@\s]+(?:/[^:@\s]+)*):"
     r"(?P<version>[^@\s]+)@sha256:(?P<digest>[0-9a-f]{64}))"
 )
+_ACTION_USE = re.compile(
+    r"^\s*(?:-\s*)?uses:\s*(?P<action>[^@\s]+/[^@\s]+)@(?P<revision>[0-9a-f]{40})"
+    r"\s+#\s+(?P<version>v\d+(?:\.\d+)*)\s*$"
+)
 
 
 @cache
@@ -43,6 +48,38 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     value = yaml.safe_load(_read_text(path))
     assert isinstance(value, dict), path
     return value
+
+
+def test_all_workflow_actions_are_sha_pinned_with_version_comments() -> None:
+    failures: list[str] = []
+    uses_count = 0
+    workflow_paths = sorted((*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")))
+    assert workflow_paths, "no workflow files discovered"
+
+    for path in workflow_paths:
+        for line_number, line in enumerate(_read_text(path).splitlines(), start=1):
+            if not re.match(r"^\s*(?:-\s*)?uses:", line):
+                continue
+            uses_count += 1
+            if _ACTION_USE.fullmatch(line) is None:
+                failures.append(f"{path.relative_to(_ROOT)}:{line_number}: {line.strip()}")
+
+    assert uses_count, "no workflow action references discovered"
+    assert not failures, "workflow actions must use full SHA pins with version comments:\n" + "\n".join(failures)
+
+
+def test_workflow_checkouts_do_not_persist_credentials() -> None:
+    workflow_paths = sorted((*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")))
+    missing = [
+        f"{path.relative_to(_ROOT)}:{job_name}"
+        for path in workflow_paths
+        for job_name, job in _load_yaml(path)["jobs"].items()
+        for step in job.get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+        and step.get("with", {}).get("persist-credentials") is not False
+    ]
+
+    assert not missing, f"checkout credentials persisted in read-only jobs: {missing}"
 
 
 @cache
@@ -264,17 +301,17 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
 
 def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     workflow = _load_yaml(_CHECKS)
-    hosted_toolchain_steps = [
-        step
-        for job in workflow["jobs"].values()
-        for step in job["steps"]
-        if step.get("name") == "Install pnpm"
-        or (
-            isinstance(step.get("uses"), str)
-            and step["uses"].split("@", 1)[0] in {"pnpm/action-setup", "actions/setup-node", "astral-sh/setup-uv"}
-        )
-    ]
-    assert not hosted_toolchain_steps, hosted_toolchain_steps
+    changes_steps = workflow["jobs"]["changes"]["steps"]
+    commitlint_steps = workflow["jobs"]["commitlint"]["steps"]
+    assert not any(step.get("name") == "Install Nix" for step in (*changes_steps, *commitlint_steps))
+
+    setup_uv = next(step for step in changes_steps if step.get("name") == "Set up uv and Python")
+    setup_pnpm = next(step for step in commitlint_steps if step.get("name") == "Install pnpm")
+    setup_node = next(step for step in commitlint_steps if step.get("name") == "Set up Node")
+    assert str(setup_uv["uses"]).startswith("astral-sh/setup-uv@")
+    assert str(setup_pnpm["uses"]).startswith("pnpm/action-setup@")
+    assert str(setup_node["uses"]).startswith("actions/setup-node@")
+    assert "with" not in setup_pnpm
 
     package = json.loads(_read_text(_PACKAGE))
     pnpm_version = package["packageManager"].removeprefix("pnpm@")
@@ -296,6 +333,19 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     node_floor = package["engines"]["node"].removeprefix(">=")
     assert re.fullmatch(r"\d+\.\d+\.\d+", node_floor), package["engines"]["node"]
     assert f"nodejs = pkgs.nodejs_{node_floor.split('.', 1)[0]};" in _read_text(_FLAKE)
+    assert setup_node["with"] == {
+        "node-version": node_floor.split(".", 1)[0],
+        "cache": "pnpm",
+    }
+    uv_version = re.search(r'uvPackage.*?version = "([^"]+)";', _read_text(_FLAKE), re.DOTALL)
+    assert uv_version
+    python_version = _images(_SCAFFOLD_DOCKERFILE, "public.ecr.aws/docker/library/python")[0]["version"]
+    assert setup_uv["with"] == {
+        "version": uv_version[1],
+        "python-version": python_version.removesuffix("-slim"),
+        "enable-cache": True,
+        "cache-dependency-glob": "uv.lock",
+    }
 
 
 def test_kafka_connect_build_and_remote_connector_pins_are_consistent() -> None:

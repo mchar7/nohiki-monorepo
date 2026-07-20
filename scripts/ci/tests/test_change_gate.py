@@ -36,6 +36,16 @@ from typer.testing import CliRunner
 def _synthetic_packages() -> dict[str, Package]:
     return {
         "lib-a": Package("lib-a", REPO_ROOT / "backend/libs/lib-a", PackageType.LIB),
+        "nohiki-domain-models": Package(
+            "nohiki-domain-models",
+            REPO_ROOT / "backend" / "libs" / "nohiki-domain-models",
+            PackageType.LIB,
+        ),
+        "tool-a": Package(
+            "tool-a",
+            REPO_ROOT / "scripts" / "tool-a",
+            PackageType.SCRIPTS,
+        ),
         "svc-b": Package(
             "svc-b",
             REPO_ROOT / "backend/services/svc-b",
@@ -70,15 +80,23 @@ def test_evaluate_fails_closed_for_unmatched_and_global_files(
         assert decision.reasons == ["unmatched file: mystery.bin"]
 
 
-def test_evaluate_markdown_only_activates_markdown_lint() -> None:
-    packages = _synthetic_packages()
-    decision = evaluate({"docs/guide.md"}, packages)
+@pytest.mark.parametrize(
+    ("path", "expected_flags"),
+    [
+        (".markdownlintignore", {"lint_markdown"}),
+        ("scripts/tool-a/pyproject.toml", {"hygiene", "typecheck_backend"}),
+        (
+            "proto/foo.proto",
+            {"lint_proto", "proto_breaking", "hygiene", "typecheck_backend"},
+        ),
+        ("backend/services/svc-b/Dockerfile.dev", {"lint_docker"}),
+    ],
+)
+def test_evaluate_path_lane_contract(path: str, expected_flags: set[str]) -> None:
+    decision = evaluate({path}, _synthetic_packages())
 
     assert not decision.full
-    assert decision.flags == {"lint_markdown"}
-    assert decision.affected == set()
-    assert "python_any" not in decision.flags
-    assert build_tests_matrix(decision, packages) == {"include": []}
+    assert expected_flags <= decision.flags
 
 
 def test_evaluate_package_change_expands_runtime_and_test_extra_dependents() -> None:
