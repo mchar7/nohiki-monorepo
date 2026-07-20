@@ -640,7 +640,7 @@ services:
 
   nohiki-infra-docling:
     <<: *common-infrastructure
-    image: quay.io/docling-project/docling-serve-cpu:v1.26.0@sha256:7e07522e0240c1db3ff5b837ffa969c2ecd5a71664c0e0369f5a69fc169e30ba
+    image: quay.io/docling-project/docling-serve-cpu:v1.27.0@sha256:a70cd391c5d9e7ad23e8d76adffa5e5f03c536b4d1ea007f512c94e0b435ba45
     hostname: nohiki-infra-docling
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_DOCLING:-5001}:5001"
@@ -905,7 +905,7 @@ services:
 
   nohiki-infra-valkey:
     <<: *common-infrastructure
-    image: docker.io/valkey/valkey:9.1.0-alpine@sha256:a35428eba9043cc0b79dbe54100f0c92784f2de00ad09b01182bfb1c5c83d1bd
+    image: docker.io/valkey/valkey:9.1.0-alpine@sha256:c9b77919daeba2c02ad954d0c844cc4e7142069d177b89c5fd771f405daf9e02
     hostname: nohiki-infra-valkey
     command: ["valkey-server", "--appendonly", "yes"]
     volumes:
@@ -960,7 +960,7 @@ services:
 
   nohiki-infra-qdrant:
     <<: *common-infrastructure
-    image: ghcr.io/qdrant/qdrant/qdrant:v1.18.2-unprivileged@sha256:ee77466ae0d2d443300c5893ef09d9fc937c022fd4c15b0946ce1f243de09abd
+    image: ghcr.io/qdrant/qdrant/qdrant:v1.18.3-unprivileged@sha256:baf54c666825f6834a94facc5def76524d978212cbfc69b21dce9f32df386167
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_QDRANT_REST:-6333}:6333"   # REST API
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_QDRANT_GRPC:-6334}:6334"   # gRPC API
@@ -1167,7 +1167,7 @@ services:
 
   nohiki-obs-mimir:
     <<: *common-infrastructure
-    image: docker.io/grafana/mimir:3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d
+    image: docker.io/grafana/mimir:3.1.3@sha256:c906a6fc334ba401b901230b34f660cb1bb1818ef1b169d90e7e4033b97c4f59
     command: ["-config.file=/etc/mimir/mimir.yaml", "-target=all"]
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_MIMIR:-9009}:9009"
@@ -1207,7 +1207,7 @@ services:
 
   nohiki-obs-phoenix:
     <<: *common-infrastructure
-    image: docker.io/arizephoenix/phoenix:17.26.0@sha256:adf850ae51707fc739abd0271fb57661fc1006c204d7eeeb62fa39f7fbc1c3a7
+    image: docker.io/arizephoenix/phoenix:19.2.0@sha256:e90f05fc04d7507a948128ddd701d89ad1816a1b6fcccfb9feebd0f77d5e86a3
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PHOENIX_UI:-6006}:6006"
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PHOENIX_OTLP:-4320}:4317"
