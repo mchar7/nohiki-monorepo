@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # edited: title changes must re-lint because the PR title becomes the merge commit subject
+    types: [opened, synchronize, reopened, edited]
 
 # actions: write lets cache-nix-action purge superseded nix store caches;
 # without it the purge list call fails and aborts the post-job cache save.
@@ -329,6 +331,11 @@ jobs:
           --from ${{ github.event.pull_request.base.sha }}
           --to ${{ github.event.pull_request.head.sha }}
           --verbose
+
+      - name: Validate PR title (merge commit subject)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | nix develop .#ci --command pnpm exec commitlint --verbose
 
   frontend-smoke:
     needs: [changes]
