@@ -73,7 +73,7 @@ def gate_cmd(
     """Compute lane activation for the current diff and emit workflow outputs.
 
     Args:
-        event: GitHub event name; anything but pull_request forces full.
+        event: GitHub event name; only pull_request and push can be scoped.
         base_ref: Base commit for the three-dot diff.
         head_ref: Head commit for the three-dot diff.
         github_output: Optional $GITHUB_OUTPUT path to append key=value lines.
@@ -85,7 +85,7 @@ def gate_cmd(
     packages = load_packages_with_deps(Scope.ALL)
     decision = GateDecision()
 
-    if event != "pull_request":
+    if event not in {"pull_request", "push"}:
         decision.force_full(f"event {event!r} always runs everything")
     elif not base_ref or set(base_ref) == {"0"}:
         decision.force_full("missing or null base ref")

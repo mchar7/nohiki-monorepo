@@ -61,7 +61,10 @@ GLOBAL_TRIGGERS: tuple[str, ...] = (
     "pyproject.toml",  # workspace members, ruff config, dev groups
     ".python-version",
     ".github/workflows/checks.yml",
-    "scripts/ci/src/*",  # the gate and test runner themselves
+    "scripts/ci/src/ci_checks/core/*",  # engine, policy, package graph, scanner
+    "scripts/ci/src/ci_checks/checks/gate.py",
+    "scripts/ci/src/ci_checks/checks/tests.py",
+    "scripts/ci/src/ci_checks/app.py",  # Typer command wiring
     "scripts/ci/pyproject.toml",
 )
 
@@ -129,6 +132,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(("docs/api/*", "docs/api/**/*"), flags=("generated_artifacts",)),
     SurfaceRule(("scripts/util/export-openapi.py",), flags=("generated_artifacts",)),
     SurfaceRule(("semgrep.yml", "semgrep-overrides.txt"), flags=("hygiene",)),
+    SurfaceRule(("scripts/ci/src/ci_checks/checks/*",), packages=("ci-checks",)),
     SurfaceRule(("scripts/ci/tests/*", "scripts/ci/tests/**/*"), packages=("ci-checks",)),
     # Understood, no CI effect. gitleaks runs unconditionally; commitlint
     # always runs on pull requests.

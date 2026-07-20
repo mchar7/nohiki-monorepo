@@ -205,7 +205,7 @@ verify() {
         --playwright-job nohiki-playwright-verification-v1 \
         --timeout-seconds 3600
     uv run python "$image_helper" status --digests "$digest_values" --registry "$registry_endpoint"
-    uv run python "$image_helper" prove-pulls --digests "$digest_values"
+    uv run python "$image_helper" verify-pulls --digests "$digest_values"
     verify_flux_observation
     uv run python "$gateway_helper" stop
     trap - EXIT INT TERM

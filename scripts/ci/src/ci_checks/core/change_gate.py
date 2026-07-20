@@ -87,6 +87,7 @@ def evaluate(changed: set[str], packages: dict[str, Package]) -> GateDecision:
     decision = GateDecision()
     rel_paths = _package_rel_paths(packages)
     seeds: set[str] = set()
+    python_source_changed = False
 
     for path in sorted(changed):
         if _matches_global(path):
@@ -103,6 +104,7 @@ def evaluate(changed: set[str], packages: dict[str, Package]) -> GateDecision:
         if (owner := _owning_package(path, rel_paths)) is not None:
             matched = True
             seeds.add(owner)
+            python_source_changed |= path.endswith(".py")
         if path.endswith(".py"):
             # Every changed Python file lints, workspace-owned or standalone;
             # unmatched standalone files still fall through to the full run.
@@ -113,19 +115,26 @@ def evaluate(changed: set[str], packages: dict[str, Package]) -> GateDecision:
             decision.force_full(f"unmatched file: {path}")
 
     decision.affected = expand_to_dependents(seeds, build_reverse_dependency_index(packages))
-    _derive_package_flags(decision, packages)
+    _derive_package_flags(decision, packages, python_source_changed=python_source_changed)
     return decision
 
 
-def _derive_package_flags(decision: GateDecision, packages: dict[str, Package]) -> None:
-    """Set lane flags implied by the affected-package set."""
+def _derive_package_flags(
+    decision: GateDecision,
+    packages: dict[str, Package],
+    *,
+    python_source_changed: bool,
+) -> None:
+    """Set lane flags implied by affected packages and changed source."""
     if not decision.affected:
         return
     # lint_python stays file-driven (.py suffix in evaluate): dependents of
     # a changed lib have no changed source of their own to lint.
-    decision.flags |= {"python_any", "hygiene"}
-    if any(packages[name].pkg_type in _BACKEND_TYPES for name in decision.affected if name in packages):
-        decision.flags.add("typecheck_backend")
+    decision.flags.add("python_any")
+    if python_source_changed:
+        decision.flags.add("hygiene")
+        if any(packages[name].pkg_type in _BACKEND_TYPES for name in decision.affected if name in packages):
+            decision.flags.add("typecheck_backend")
     if decision.affected & API_EXPORT_SERVICES:
         decision.flags.add("generated_artifacts")
 
