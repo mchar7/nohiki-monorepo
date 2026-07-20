@@ -70,7 +70,7 @@ dependencies:
   version: 0.1.0
 - name: valkey
   repository: https://charts.bitnami.com/bitnami
-  version: 6.1.16
+  version: 6.2.0
 - name: qdrant
   repository: https://qdrant.github.io/qdrant-helm
   version: 1.18.2
@@ -79,7 +79,7 @@ dependencies:
   version: 1.22.0
 - name: kube-prometheus-stack
   repository: https://prometheus-community.github.io/helm-charts
-  version: 87.15.0
+  version: 87.17.0
 - name: grafana-operator
   repository: oci://ghcr.io/grafana/helm-charts
   version: 5.24.0
@@ -91,12 +91,12 @@ dependencies:
   version: 1.61.3
 - name: loki
   repository: https://grafana.github.io/helm-charts
-  version: 7.0.0
+  version: 7.1.0
 - name: pyroscope
   repository: https://grafana.github.io/helm-charts
-  version: 2.1.0
+  version: 2.1.1
 - name: opentelemetry-operator
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
-  version: 0.119.0
-digest: sha256:043a4eb780a219fa598a86df676f0c3b2bd4069e0a813916501299bad6ef4a13
-generated: "2026-07-15T16:32:50.110756974-04:00"
+  version: 0.120.0
+digest: sha256:80582591336e2ba6f7751edb79786143caebbe4995a87b18cf7c98655bc84a4f
+generated: "2026-07-20T22:42:46.524883207Z"

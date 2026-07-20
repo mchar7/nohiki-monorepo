@@ -134,7 +134,7 @@ dependencies:
 
   # Infrastructure: Valkey cache
   - name: valkey
-    version: "6.1.16"
+    version: 6.2.0
     repository: "https://charts.bitnami.com/bitnami"
     condition: valkey.enabled
 
@@ -153,7 +153,7 @@ dependencies:
 
   # Observability: kube-prometheus-stack (Prometheus + Alertmanager + ServiceMonitors)
   - name: kube-prometheus-stack
-    version: "87.15.0"
+    version: 87.17.0
     repository: "https://prometheus-community.github.io/helm-charts"
     condition: kube-prometheus-stack.enabled
 
@@ -177,18 +177,18 @@ dependencies:
 
   # Observability: Loki (log aggregation, SimpleScalable mode)
   - name: loki
-    version: "7.0.0"
+    version: 7.1.0
     repository: "https://grafana.github.io/helm-charts"
     condition: loki.enabled
 
   # Observability: Pyroscope (continuous profiling)
   - name: pyroscope
-    version: "2.1.0"
+    version: 2.1.1
     repository: "https://grafana.github.io/helm-charts"
     condition: pyroscope.enabled
 
   # Observability: OpenTelemetry Operator (manages OTel Collector CRDs)
   - name: opentelemetry-operator
-    version: "0.119.0"
+    version: 0.120.0
     repository: "https://open-telemetry.github.io/opentelemetry-helm-charts"
     condition: opentelemetry-operator.enabled
