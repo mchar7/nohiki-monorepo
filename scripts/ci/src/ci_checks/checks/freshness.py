@@ -8,8 +8,11 @@ rot on a schedule instead of inside a release build.
 Requires ``skopeo`` (provided by ``devShells.ci``).
 """
 
+import functools
+import os
 import re
 import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -75,12 +78,27 @@ def collect_pins(dockerfiles: list[str]) -> dict[str, list[str]]:
     return {ref: sorted(set(files)) for ref, files in pins.items()}
 
 
+@functools.cache
+def _registries_conf() -> str:
+    """Write a minimal registries.conf so probes never parse host container config.
+
+    Hosted runners ship an /etc/containers/registries.conf that this skopeo
+    build cannot parse, which marked every pin DEAD with "loading registries
+    configuration" instead of probing anything.
+    """
+    descriptor, path = tempfile.mkstemp(suffix=".conf", prefix="registries-", text=True)
+    with os.fdopen(descriptor, "w") as handle:
+        handle.write('unqualified-search-registries = ["docker.io"]\n')
+    return path
+
+
 def _skopeo(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["skopeo", *args],
         capture_output=True,
         text=True,
         check=False,
+        env=os.environ | {"CONTAINERS_REGISTRIES_CONF": _registries_conf()},
     )
 
 
