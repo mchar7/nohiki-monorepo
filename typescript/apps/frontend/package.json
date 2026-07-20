@@ -75,7 +75,7 @@
     "i18next-http-backend": "^4.0.0",
     "idb-keyval": "^6.3.0",
     "lucide-react": "^1.24.0",
-    "nanoid": "^5.1.16",
+    "nanoid": "^6.0.0",
     "openapi-fetch": "^0.17.0",
     "openapi-react-query": "^0.5.4",
     "react": "^19.2.7",
