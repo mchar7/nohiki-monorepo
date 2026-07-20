@@ -4,6 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    rebase-strategy: disabled
     groups:
       actions:
         patterns: ["*"]
@@ -18,17 +20,21 @@ updates:
       - /scripts/util/ast_explorer
     schedule:
       interval: weekly
+      day: monday
+    rebase-strategy: disabled
     groups:
-      python-minor-patch:
-        update-types: [minor, patch]
+      python:
+        patterns: ["*"]
 
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    rebase-strategy: disabled
     groups:
-      js-minor-patch:
-        update-types: [minor, patch]
+      javascript:
+        patterns: ["*"]
 
   - package-ecosystem: docker
     directories:
@@ -38,6 +44,8 @@ updates:
       - /infra/shared/qdrant-init
     schedule:
       interval: weekly
+      day: monday
+    rebase-strategy: disabled
     groups:
       base-images:
         patterns: ["*"]
@@ -46,6 +54,8 @@ updates:
     directory: /infra/compose
     schedule:
       interval: weekly
+      day: monday
+    rebase-strategy: disabled
     groups:
       compose-images:
         patterns: ["*"]
@@ -54,6 +64,8 @@ updates:
     directory: /infra/k8s/helm
     schedule:
       interval: weekly
+      day: monday
+    rebase-strategy: disabled
     groups:
       helm-charts:
         patterns: ["*"]
@@ -62,6 +74,8 @@ updates:
     directory: /infra/terraform
     schedule:
       interval: weekly
+      day: monday
+    rebase-strategy: disabled
     groups:
       iac-providers:
         patterns: ["*"]

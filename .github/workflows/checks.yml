@@ -119,21 +119,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-          L_BACKEND: ${{ steps.gate.outputs.python_any }}
-          L_FRONTEND: ${{ steps.gate.outputs.frontend_tests }}
-          L_PROTO: ${{ steps.gate.outputs.lint_proto }}
-          L_DOCKER: ${{ steps.gate.outputs.lint_docker }}
-          L_WORKFLOWS: ${{ steps.gate.outputs.lint_workflows }}
-          L_DOCS: ${{ steps.gate.outputs.lint_markdown }}
-          L_FULL: ${{ steps.gate.outputs.full }}
+          LABELS: ${{ steps.gate.outputs.labels }}
         run: |
           current=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
           sync() {
-            label="$1"; want="$2"
-            if [ "$want" = "true" ]; then
+            label="$1"; color="$2"; active="$3"
+            if [ "$active" = "true" ]; then
+              gh label create "$label" --repo "$REPO" --force --color "$color" \
+                --description "Gate-managed label" > /dev/null
               if ! grep -qxF "$label" <<< "$current"; then
-                gh label create "$label" --repo "$REPO" --force --color 5319E7 \
-                  --description "Gate-managed area label" > /dev/null
                 gh api -X POST "repos/$REPO/issues/$PR/labels" -f "labels[]=$label" > /dev/null
               fi
             elif grep -qxF "$label" <<< "$current"; then
@@ -141,13 +135,9 @@ jobs:
               gh api -X DELETE "repos/$REPO/issues/$PR/labels/$encoded" > /dev/null
             fi
           }
-          sync "area:backend" "$L_BACKEND"
-          sync "area:frontend" "$L_FRONTEND"
-          sync "area:proto" "$L_PROTO"
-          sync "area:docker" "$L_DOCKER"
-          sync "area:workflows" "$L_WORKFLOWS"
-          sync "area:docs" "$L_DOCS"
-          sync "ci:full-run" "$L_FULL"
+          while IFS=$'\t' read -r label color active; do
+            sync "$label" "$color" "$active"
+          done < <(jq -r '.[] | [.name, .color, .active] | @tsv' <<< "$LABELS")
 
   nix:
     needs: [changes]
@@ -368,6 +358,12 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+
 
       - name: Install workspace (all packages + extras)
         run: |
@@ -415,6 +411,13 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        if: needs.changes.outputs.typecheck_backend == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+
 
       - name: Resolve pnpm store path
         if: needs.changes.outputs.typecheck_frontend == 'true'
@@ -489,6 +492,12 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+
 
       - name: Resolve pnpm store path
         if: matrix.scope == 'scripts'
@@ -582,6 +591,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
@@ -604,17 +615,23 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-deadcode-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
 
       - name: Install workspace (all packages + extras)
         run: |
           # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
           nix develop .#ci --command bash -euc '
             export UV_PYTHON="$(command -v python)"
-            uv sync --all-packages --all-extras --no-extra cuda --frozen
+            uv sync --all-packages --all-extras --no-extra cuda --group deadcode --frozen
           '
-
       - name: Check dead code
-        run: nix develop .#ci --command uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
+        run: >
+          nix develop .#ci --command uv run --no-sync ci-checks deadcode
+          --scope all --ci --fail --no-provenance
 
       - name: Check dependencies
         run: nix develop .#ci --command uv run --no-sync ci-checks deptry --scope all --ci
@@ -659,6 +676,12 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+      - name: Cache workspace virtual environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+
 
       - name: Resolve pnpm store path
         id: pnpm-store

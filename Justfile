@@ -61,7 +61,7 @@ sync:
 
 # Sync with all non-conflicting development extras
 sync-dev:
-    uv sync --all-packages --all-extras --no-extra cuda
+    uv sync --all-packages --all-extras --no-extra cuda --group deadcode
 
 # Lock dependencies without installing
 lock:
@@ -152,13 +152,13 @@ hygiene-arch-report:
     uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --no-git-ignore backend/
 
 hygiene-deadcode:
-    uv run --package ci-checks ci-checks deadcode --scope all --ci
+    uv run --package ci-checks --group deadcode ci-checks deadcode --scope all --ci
 
 hygiene-deadcode-strict:
-    uv run --package ci-checks ci-checks deadcode --scope all --ci --fail
+    uv run --package ci-checks --group deadcode ci-checks deadcode --scope all --ci --fail
 
 hygiene-deadcode-llm:
-    uv run --package ci-checks ci-checks deadcode --scope all --ci --llm
+    uv run --package ci-checks --group deadcode ci-checks deadcode --scope all --ci --llm
 
 hygiene-fixtures:
     uv run --package ci-checks ci-checks fixtures --scope all --ci
@@ -321,7 +321,7 @@ api-schema-check:
     set -euo pipefail
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
-    uv run --frozen --all-packages python scripts/util/export-openapi.py --output "$tmpdir/nohiki.openapi.json"
+    uv run --no-sync python scripts/util/export-openapi.py --output "$tmpdir/nohiki.openapi.json"
     {{ pnpm }} --filter nohiki-frontend exec openapi-typescript "$tmpdir/nohiki.openapi.json" -o "$tmpdir/schema.d.ts"
     diff -u docs/api/nohiki.openapi.json "$tmpdir/nohiki.openapi.json"
     diff -u typescript/apps/frontend/src/api/schema.d.ts "$tmpdir/schema.d.ts"

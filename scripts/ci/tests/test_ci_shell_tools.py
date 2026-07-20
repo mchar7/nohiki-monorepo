@@ -107,7 +107,12 @@ def test_checks_workflow_splits_every_prepush_gate_into_hosted_lanes() -> None:
     assert "ty check backend/" in commands["typecheck"]
     assert "pnpm -C typescript/apps/frontend type-check" in commands["typecheck"]
     assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=25%" in commands["frontend-tests"]
-    assert "ci-checks deadcode --scope all --ci --fail --no-provenance" in commands["hygiene"]
+    deadcode = commands["hygiene"]
+    assert "ci-checks deadcode --scope all --ci --fail --no-provenance" in deadcode
+    assert "--diff" not in deadcode
+    assert "--base-ref" not in deadcode
+    assert "--baseline" not in deadcode
+    assert "--no-grep-verify" not in deadcode
     assert "ci-checks deptry --scope all --ci" in commands["hygiene"]
     assert "semgrep scan --config semgrep.yml --error --no-git-ignore backend/" in commands["hygiene"]
     assert "ci-checks build-backend --scope all --ci --strict" in commands["hygiene"]

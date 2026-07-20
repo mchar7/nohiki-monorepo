@@ -7,8 +7,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 _JUSTFILE = _ROOT / "Justfile"
 
 
-def test_api_schema_check_uses_frozen_all_workspace_environment() -> None:
-    """OpenAPI export must retain every installed workspace runtime dependency."""
+def test_api_schema_check_reuses_the_authoritative_workspace_environment() -> None:
+    """OpenAPI export must not resynchronize (and thereby narrow) the pre-built workspace env."""
     commands = [
         shlex.split(line.strip())
         for line in _JUSTFILE.read_text(encoding="utf-8").splitlines()
@@ -16,11 +16,10 @@ def test_api_schema_check_uses_frozen_all_workspace_environment() -> None:
     ]
 
     assert len(commands) == 1, "api-schema-check must define exactly one OpenAPI export command"
-    assert commands[0][:6] == [
+    assert commands[0][:5] == [
         "uv",
         "run",
-        "--frozen",
-        "--all-packages",
+        "--no-sync",
         "python",
         "scripts/util/export-openapi.py",
     ]

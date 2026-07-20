@@ -243,9 +243,25 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
     assert "build_args" not in cpu
     assert gpu["build_args"] == "ML_COMPUTE_BUILDER=sync-gpu"
     assert gpu["dockerfile"] == cpu["dockerfile"] == "backend/services/ml-compute-service/Dockerfile"
-    assert _mapping_at(_mapping_at(steps, "build"), "with")["cache-to"] == (
-        "${{ matrix.name == 'ml-compute-service-gpu' && 'type=inline' "
+    build_with = _mapping_at(_mapping_at(steps, "build"), "with")
+    image_base_path = "steps.image-base-path.outputs.image_base_path"
+    assert build_with["cache-from"] == (
+        "${{ matrix.name == 'ml-compute-service-gpu' && "
+        f"format('type=registry,ref={{0}}/{{1}}:buildcache', {image_base_path}, matrix.name) "
+        "|| format('type=gha,scope={0}', matrix.name) }}"
+    )
+    assert build_with["cache-to"] == (
+        "${{ matrix.name == 'ml-compute-service-gpu' && "
+        "(steps.mode.outputs.push == 'true' && "
+        f"format('type=registry,ref={{0}}/{{1}}:buildcache,mode=max', {image_base_path}, matrix.name) || '') "
         "|| format('type=gha,mode=max,scope={0}', matrix.name) }}"
+    )
+    login_name = "Log into GitHub Container Registry"
+    assert _mapping_at(steps, login_name)["if"] == (
+        "steps.mode.outputs.push == 'true' || matrix.name == 'ml-compute-service-gpu'"
+    )
+    assert next(index for index, step in enumerate(build_steps) if step["name"] == login_name) < next(
+        index for index, step in enumerate(build_steps) if step.get("id") == "build"
     )
     kafka_entry = next(entry for entry in include if entry["name"] == "kafka-connect")
     assert kafka_entry == {
