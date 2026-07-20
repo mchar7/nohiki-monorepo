@@ -143,6 +143,52 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
     )
 
 
+def test_python_workspace_installs_restore_the_exact_virtual_environment_cache() -> None:
+    workflow = _load_yaml(_CHECKS)
+    install_name = "Install workspace (all packages + extras)"
+    cache_name = "Cache workspace virtual environment"
+    # Consistency contract: one full-SHA actions/cache pin across every workflow.
+    # The concrete SHA is deliberately not asserted; freshness belongs to the updater.
+    cache_pins = {
+        str(step["uses"])
+        for path in sorted((_ROOT / ".github" / "workflows").glob("*.yml"))
+        for job in _load_yaml(path)["jobs"].values()
+        for step in job.get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/cache@")
+    }
+    assert len(cache_pins) == 1, f"actions/cache pins diverge across workflows: {sorted(cache_pins)}"
+    cache_action = cache_pins.pop()
+    assert re.fullmatch(r"actions/cache@[0-9a-f]{40}", cache_action), cache_action
+    covered_jobs = 0
+
+    for job_name, job in workflow["jobs"].items():
+        steps = job.get("steps", [])
+        install_indexes = [index for index, step in enumerate(steps) if step.get("name") == install_name]
+        if not install_indexes:
+            continue
+        assert len(install_indexes) == 1
+        caches = [(index, step) for index, step in enumerate(steps) if step.get("name") == cache_name]
+        assert len(caches) == 1
+        cache_index, cache_step = caches[0]
+        assert cache_index < install_indexes[0]
+        assert cache_step["uses"] == cache_action
+        cache_prefix = "venv-deadcode" if job_name == "hygiene" else "venv"
+        cache_key = (
+            f"{cache_prefix}-${{{{ runner.os }}}}-${{{{ runner.arch }}}}"
+            "-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}"
+        )
+        assert cache_step["with"] == {"path": ".venv", "key": cache_key}
+        install_step = steps[install_indexes[0]]
+        assert cache_step.get("if") == install_step.get("if")
+        install_command = str(install_step["run"])
+        assert ("--group deadcode" in install_command) == (job_name == "hygiene")
+        if job_name == "hygiene":
+            assert not any(step.get("name") == "Cache Skylos analysis" for step in steps)
+        covered_jobs += 1
+
+    assert covered_jobs == 5
+
+
 def test_codeql_private_phase_trigger_contract() -> None:
     workflow = _load_yaml(_ROOT / ".github" / "workflows" / "codeql.yml")
     triggers = workflow.get("on", workflow.get(True))
@@ -353,6 +399,19 @@ def test_dependabot_covers_every_active_dependency_ecosystem_and_root() -> None:
         assert all(_is_covered(root, patterns) for root in roots), (
             f"{ecosystem}: roots={sorted(roots)}, patterns={patterns}"
         )
+
+
+def test_dependabot_batches_every_ecosystem_on_the_same_weekly_schedule() -> None:
+    entries = _dependabot_entries()
+    updates = [update for ecosystem_entries in entries.values() for update in ecosystem_entries]
+    assert updates
+
+    for update in updates:
+        assert update["schedule"] == {"interval": "weekly", "day": "monday"}
+        assert update["rebase-strategy"] == "disabled"
+        groups = update["groups"]
+        assert len(groups) == 1
+        assert next(iter(groups.values())) == {"patterns": ["*"]}
 
 
 def test_remote_kubernetes_manifests_are_versioned_and_checksum_verified_before_apply() -> None:

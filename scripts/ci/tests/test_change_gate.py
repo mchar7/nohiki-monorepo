@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import typer
+from ci_checks.checks import gate as checks_gate
 from ci_checks.checks import tests as checks_tests
 from ci_checks.checks.gate import gate_cmd
 from ci_checks.core import packages as packages_module
@@ -18,6 +19,7 @@ from ci_checks.core.change_gate import (
     tests_matrix as build_tests_matrix,
 )
 from ci_checks.core.change_rules import FLAG_NAMES, TEST_SCOPES
+from ci_checks.core.display import GATE_LABELS, LANE_DISPLAY_NAMES
 from ci_checks.core.packages import (
     REPO_ROOT,
     Package,
@@ -154,6 +156,61 @@ def test_evaluate_alembic_change_seeds_ci_checks() -> None:
     assert "ci-checks" in evaluate(changed, packages).affected
 
 
+@pytest.mark.parametrize(
+    ("path", "full", "affected", "present", "absent"),
+    [
+        (
+            "scripts/ci/src/ci_checks/checks/freshness.py",
+            "false",
+            {"ci-checks"},
+            {"python_any"},
+            set(),
+        ),
+        (
+            "scripts/ci/src/ci_checks/core/change_gate.py",
+            "true",
+            set(),
+            set(),
+            set(),
+        ),
+        (
+            "infra/k8s/helm/values.prod.digests.yaml",
+            "false",
+            {"ci-checks"},
+            {"python_any", "hygiene"},
+            {"typecheck_backend"},
+        ),
+        (
+            "backend/libs/nohiki-test-utils/src/nohiki_test_utils/utils/docker.py",
+            "false",
+            {"nohiki-test-utils"},
+            {"hygiene", "typecheck_backend"},
+            set(),
+        ),
+    ],
+)
+def test_evaluate_precision_for_ci_engine_contract_seeds_and_python_sources(
+    path: str,
+    full: str,
+    affected: set[str],
+    present: set[str],
+    absent: set[str],
+) -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+
+    decision = evaluate({path}, packages)
+
+    assert str(decision.full).lower() == full
+    assert affected <= decision.affected
+    assert present <= decision.flags
+    assert decision.flags.isdisjoint(absent)
+    if affected:
+        matrix_packages = {
+            name for entry in build_tests_matrix(decision, packages)["include"] for name in entry["packages"].split(",")
+        }
+        assert affected <= matrix_packages
+
+
 def test_dependency_loader_reads_runtime_extras_and_pep735_groups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -226,6 +283,23 @@ def test_tests_matrix_full_and_scoped_excludes_packages_without_tests(
     }
 
 
+def test_lane_display_names_cover_gate_flags_exactly() -> None:
+    assert set(LANE_DISPLAY_NAMES) == set(FLAG_NAMES)
+
+
+def test_gate_labels_have_distinct_stable_colors() -> None:
+    assert GATE_LABELS == {
+        "python_any": ("area:backend", "1D76DB"),
+        "frontend_tests": ("area:frontend", "D4C5F9"),
+        "lint_proto": ("area:proto", "FBCA04"),
+        "lint_docker": ("area:docker", "0E8A16"),
+        "lint_workflows": ("area:workflows", "5319E7"),
+        "lint_markdown": ("area:docs", "0075CA"),
+        "full": ("ci:full-run", "B60205"),
+    }
+    assert len({color for _, color in GATE_LABELS.values()}) == len(GATE_LABELS)
+
+
 def test_render_outputs_serializes_flags_matrix_and_event_contract() -> None:
     matrix = {"include": [{"scope": "libs", "packages": "lib-a"}]}
     scoped = render_outputs(GateDecision(flags={"lint_python"}), matrix, "push")
@@ -242,7 +316,7 @@ def test_render_outputs_serializes_flags_matrix_and_event_contract() -> None:
     assert all(full[name] == "true" for name in FLAG_NAMES)
 
 
-def test_render_summary_contains_range_verdict_and_every_flag() -> None:
+def test_render_summary_uses_friendly_lanes_and_checkmarks() -> None:
     decision = GateDecision(flags={"lint_markdown"})
     outputs = render_outputs(decision, {"include": []}, "pull_request")
 
@@ -250,27 +324,130 @@ def test_render_summary_contains_range_verdict_and_every_flag() -> None:
 
     assert "`base123...head456`" in summary
     assert "Verdict: scoped run" in summary
-    assert all(f"| {flag} | {outputs[flag]} |" in summary for flag in FLAG_NAMES)
+    assert "| Markdown lint | ✓ |" in summary
+    assert "| Python lint | — |" in summary
+    assert all(f"| {name} |" in summary for name in LANE_DISPLAY_NAMES.values())
+    assert "| lint_markdown |" not in summary
+    assert "true" not in summary
+    assert "false" not in summary
+
+
+def test_render_summary_links_full_run_file_reasons() -> None:
+    decision = GateDecision(
+        full=True,
+        reasons=["global trigger: uv.lock", "unmatched file: odd files/data.bin"],
+        unmatched=["odd files/data.bin"],
+    )
+    outputs = render_outputs(decision, {"include": []}, "pull_request")
+
+    summary = render_summary(
+        decision,
+        outputs,
+        "pull_request",
+        "base123",
+        "head456",
+        repository="mchar7/nohiki-monorepo",
+        head_sha="head456",
+    )
+
+    assert "**Full-run reasons:**" in summary
+    assert ("- global trigger: [`uv.lock`](https://github.com/mchar7/nohiki-monorepo/blob/head456/uv.lock)") in summary
+    assert (
+        "- unmatched file: [`odd files/data.bin`]"
+        "(https://github.com/mchar7/nohiki-monorepo/blob/head456/odd%20files/data.bin)"
+    ) in summary
+    assert all(
+        line.startswith("- ") for line in summary.splitlines() if "trigger:" in line or "unmatched file:" in line
+    )
+
+
+def test_render_summary_keeps_paths_plain_without_github_context() -> None:
+    decision = GateDecision(full=True, reasons=["unmatched file: mystery.bin"], unmatched=["mystery.bin"])
+    outputs = render_outputs(decision, {"include": []}, "push")
+
+    summary = render_summary(decision, outputs, "push", "base", "HEAD")
+
+    assert "- unmatched file: `mystery.bin`" in summary
+    assert "https://github.com/" not in summary
 
 
 @pytest.mark.parametrize(
-    ("event", "extra_args"),
-    [("push", []), ("pull_request", ["--base-ref", "0000000000"])],
+    ("event", "base_ref", "expected_full", "expected_diff_calls"),
+    [
+        ("push", "base123", "true", 0),
+        ("pull_request", "base123", "false", 1),
+        ("push", "0" * 40, "true", 0),
+        ("workflow_dispatch", "base123", "true", 0),
+    ],
 )
-def test_gate_cli_writes_full_outputs(tmp_path: Path, event: str, extra_args: list[str]) -> None:
+def test_gate_cli_scopes_only_supported_events_with_usable_base(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    event: str,
+    base_ref: str,
+    expected_full: str,
+    expected_diff_calls: int,
+) -> None:
     app = typer.Typer()
     app.command("gate")(gate_cmd)
     output = tmp_path / "github-output"
+    calls: list[tuple[str, str]] = []
 
-    result = CliRunner().invoke(app, ["--event", event, "--github-output", str(output), *extra_args])
+    def diff_files(base: str, head: str) -> set[str]:
+        calls.append((base, head))
+        return {"docs/guide.md"}
+
+    monkeypatch.setattr(checks_gate, "_diff_files", diff_files)
+    monkeypatch.setattr(checks_gate, "load_packages_with_deps", lambda _scope: _synthetic_packages())
+
+    result = CliRunner().invoke(
+        app,
+        ["--event", event, "--base-ref", base_ref, "--github-output", str(output)],
+    )
 
     assert result.exit_code == 0, result.output
     parsed = dict(line.split("=", maxsplit=1) for line in output.read_text().splitlines())
-    assert parsed["full"] == "true"
-    assert all(parsed[flag] == "true" for flag in FLAG_NAMES)
-    assert json.loads(parsed["tests_matrix"])["include"] == [
-        {"scope": scope.value, "packages": "ALL"} for scope in TEST_SCOPES
-    ]
+    assert parsed["full"] == expected_full
+    assert len(calls) == expected_diff_calls
+    if expected_full == "true":
+        assert all(parsed[flag] == "true" for flag in FLAG_NAMES)
+        assert json.loads(parsed["tests_matrix"])["include"] == [
+            {"scope": scope.value, "packages": "ALL"} for scope in TEST_SCOPES
+        ]
+        assert json.loads(parsed["labels"]) == [
+            {"name": name, "color": color, "active": "true"} for name, color in GATE_LABELS.values()
+        ]
+    else:
+        assert parsed["lint_markdown"] == "true"
+        assert parsed["hygiene"] == "false"
+        assert json.loads(parsed["tests_matrix"]) == {"include": []}
+
+
+def test_gate_cli_uses_repository_env_for_sticky_comment_links(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(checks_gate, "_diff_files", lambda _base, _head: {"uv.lock"})
+    app = typer.Typer()
+    app.command("gate")(gate_cmd)
+    comment = tmp_path / "gate-comment.md"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--event",
+            "pull_request",
+            "--base-ref",
+            "base123",
+            "--head-ref",
+            "head456",
+            "--comment-file",
+            str(comment),
+        ],
+        env={"GITHUB_REPOSITORY": "mchar7/nohiki-monorepo"},
+    )
+
+    assert result.exit_code == 0, result.output
+    body = comment.read_text()
+    assert body.startswith("<!-- nohiki-change-gate -->\n")
+    assert "[`uv.lock`](https://github.com/mchar7/nohiki-monorepo/blob/head456/uv.lock)" in body
 
 
 def test_get_changed_files_raises_on_staged_git_failure(

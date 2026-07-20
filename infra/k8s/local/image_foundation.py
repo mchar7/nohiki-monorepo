@@ -457,7 +457,7 @@ def _node_image_names(value: JsonValue) -> tuple[str, set[str]]:
     return node_name, names
 
 
-def cmd_prove_pulls(args: argparse.Namespace) -> None:
+def cmd_verify_pulls(args: argparse.Namespace) -> None:
     """Prove every node pulled every required canonical registry digest."""
     doc = load_digests(Path(args.digests))
     if args.nodes_json:
@@ -529,10 +529,10 @@ def parser() -> argparse.ArgumentParser:
     command = commands.add_parser("render-values")
     command.add_argument("--digests", required=True)
     command.set_defaults(func=cmd_render_values)
-    command = commands.add_parser("prove-pulls")
+    command = commands.add_parser("verify-pulls")
     command.add_argument("--digests", required=True)
     command.add_argument("--nodes-json")
-    command.set_defaults(func=cmd_prove_pulls)
+    command.set_defaults(func=cmd_verify_pulls)
     command = commands.add_parser("status")
     command.add_argument("--digests", required=True)
     command.add_argument("--registry", default=DEFAULT_ENDPOINT)

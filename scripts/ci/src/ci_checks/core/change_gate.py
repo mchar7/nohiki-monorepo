@@ -7,6 +7,7 @@ unit-testable without git or GitHub.
 
 import json
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 from ci_checks.core.change_rules import (
     API_EXPORT_SERVICES,
@@ -15,6 +16,7 @@ from ci_checks.core.change_rules import (
     SURFACE_RULES,
     TEST_SCOPES,
 )
+from ci_checks.core.display import LANE_DISPLAY_NAMES
 from ci_checks.core.packages import (
     REPO_ROOT,
     Package,
@@ -188,6 +190,9 @@ def render_summary(
     event: str,
     base_ref: str,
     head_ref: str,
+    *,
+    repository: str | None = None,
+    head_sha: str | None = None,
 ) -> str:
     """Render the human-readable verdict for $GITHUB_STEP_SUMMARY.
 
@@ -197,11 +202,26 @@ def render_summary(
         event: GitHub event name.
         base_ref: Diff base commit.
         head_ref: Diff head commit.
+        repository: Optional GitHub ``owner/repo`` for changed-file links.
+        head_sha: Optional commit SHA for changed-file links.
 
     Returns:
         Markdown text with the verdict, reasons, lane table, and the
         affected-package list for scoped runs.
     """
+
+    def link_path(path: str) -> str:
+        if repository is None or head_sha is None:
+            return f"`{path}`"
+        url = f"https://github.com/{repository}/blob/{head_sha}/{quote(path, safe='/')}"
+        return f"[`{path}`]({url})"
+
+    def render_reason(reason: str) -> str:
+        for prefix in ("global trigger: ", "unmatched file: "):
+            if reason.startswith(prefix):
+                return f"{prefix}{link_path(reason.removeprefix(prefix))}"
+        return reason
+
     lines = [
         "## Change gate",
         "",
@@ -210,10 +230,10 @@ def render_summary(
         f"- Verdict: {'**full run**' if decision.full else 'scoped run'}",
     ]
     if decision.reasons:
-        lines.append("- Reasons:")
-        lines.extend(f"  - {reason}" for reason in decision.reasons)
-    lines += ["", "| Lane | Run |", "|---|---|"]
-    lines.extend(f"| {flag} | {outputs[flag]} |" for flag in FLAG_NAMES)
+        lines += ["", "**Full-run reasons:**"]
+        lines.extend(f"- {render_reason(reason)}" for reason in decision.reasons)
+    lines += ["", "| Lane | Run |", "|---|:---:|"]
+    lines.extend(f"| {LANE_DISPLAY_NAMES[flag]} | {'✓' if outputs[flag] == 'true' else '—'} |" for flag in FLAG_NAMES)
     if not decision.full and decision.affected:
         lines += [
             "",

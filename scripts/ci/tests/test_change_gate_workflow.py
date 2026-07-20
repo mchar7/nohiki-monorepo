@@ -32,6 +32,10 @@ def test_changes_job_computes_gate_from_full_history() -> None:
     assert checkout["with"] == {"fetch-depth": 0}
 
     gate = next(step for step in steps if step.get("name") == "Compute change gate")
+    env = cast("dict[str, str]", gate["env"])
+    assert (
+        env["BASE"] == "${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}"
+    )
     command = cast("str", gate["run"])
     assert "ci-checks gate" in command
     assert '--github-output "$GITHUB_OUTPUT"' in command
@@ -55,17 +59,13 @@ def test_changes_job_publishes_verdict_and_labels_on_prs() -> None:
         assert step["if"] == "github.event_name == 'pull_request'", name
     comment = cast("str", steps["Publish gate verdict to PR"]["run"])
     assert "nohiki-change-gate" in comment
-    labels = cast("str", steps["Sync area labels"]["run"])
-    for label in (
-        "area:backend",
-        "area:frontend",
-        "area:proto",
-        "area:docker",
-        "area:workflows",
-        "area:docs",
-        "ci:full-run",
-    ):
-        assert label in labels
+    label_step = steps["Sync area labels"]
+    env = cast("dict[str, str]", label_step["env"])
+    assert env["LABELS"] == "${{ steps.gate.outputs.labels }}"
+    labels = cast("str", label_step["run"])
+    assert "jq -r '.[] | [.name, .color, .active] | @tsv'" in labels
+    assert 'gh label create "$label"' in labels
+    assert '--color "$color"' in labels
 
 
 def test_digest_freshness_workflow_probes_on_schedule() -> None:

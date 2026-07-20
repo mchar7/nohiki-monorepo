@@ -433,7 +433,7 @@ def test_every_node_proves_every_canonical_digest_pull(tmp_path: Path) -> None:
     digests = _write_digests(tmp_path / "digests.json")
     canonical = [f"{_REGISTRY_NAME}/{name}@{_DIGEST}" for name in _local_names()]
     nodes = _write_nodes(tmp_path / "nodes.json", [canonical, canonical])
-    _IMAGE_FOUNDATION.cmd_prove_pulls(argparse.Namespace(digests=str(digests), nodes_json=str(nodes)))
+    _IMAGE_FOUNDATION.cmd_verify_pulls(argparse.Namespace(digests=str(digests), nodes_json=str(nodes)))
 
 
 @pytest.mark.parametrize("evidence", ["missing-on-node", "tag-only", "unqualified-digest"])
@@ -451,7 +451,7 @@ def test_pull_proof_rejects_cache_only_or_incomplete_evidence(tmp_path: Path, ev
         node_images = [canonical, [f"{name}@{_DIGEST}" for name in _local_names()]]
     nodes = _write_nodes(tmp_path / "nodes.json", node_images)
     with pytest.raises(SystemExit, match="node"):
-        _IMAGE_FOUNDATION.cmd_prove_pulls(argparse.Namespace(digests=str(digests), nodes_json=str(nodes)))
+        _IMAGE_FOUNDATION.cmd_verify_pulls(argparse.Namespace(digests=str(digests), nodes_json=str(nodes)))
 
 
 def test_publish_is_separate_and_normal_reconcile_has_no_host_registry_lifecycle() -> None:

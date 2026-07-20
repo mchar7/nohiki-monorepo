@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[3]
-_SCRIPT = _ROOT / "infra" / "k8s" / "local" / "reset_evidence.py"
+_SCRIPT = _ROOT / "infra" / "k8s" / "local" / "cluster_reset.py"
 _CONTEXT = "k3s-nohiki-test"
 _DATA_LOSS = "I understand this permanently deletes local Nohiki data"
 _FACTORY_LOSS = "I understand factory reset removes the Nohiki and Flux local control planes"
@@ -400,10 +400,21 @@ def harness(tmp_path: Path) -> dict[str, object]:
     repository = tmp_path / "repo"
     repository.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
-    subprocess.run(["git", "config", "user.name", "Test Owner"], cwd=repository, check=True)
+    # --file pins the write to the scratch repo even if repository discovery escapes
+    config_file = repository / ".git" / "config"
     subprocess.run(
-        ["git", "config", "user.email", "owner@example.invalid"],
-        cwd=repository,
+        ["git", "config", "--file", str(config_file), "user.name", "Test Owner"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "--file",
+            str(config_file),
+            "user.email",
+            "owner@example.invalid",
+        ],
         check=True,
     )
     (repository / "tracked.txt").write_text("checkpoint fixture\n", encoding="utf-8")

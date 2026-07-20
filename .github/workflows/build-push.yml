@@ -221,7 +221,7 @@ jobs:
           echo "image_base_path=$imageBasePath" >> "$GITHUB_OUTPUT"
 
       - name: Log into GitHub Container Registry
-        if: steps.mode.outputs.push == 'true'
+        if: steps.mode.outputs.push == 'true' || matrix.name == 'ml-compute-service-gpu'
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
@@ -253,8 +253,9 @@ jobs:
           load: ${{ steps.mode.outputs.push != 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: ${{ matrix.name == 'ml-compute-service-gpu' && 'type=inline' || format('type=gha,mode=max,scope={0}', matrix.name) }}
+          cache-from: ${{ matrix.name == 'ml-compute-service-gpu' && format('type=registry,ref={0}/{1}:buildcache', steps.image-base-path.outputs.image_base_path, matrix.name) || format('type=gha,scope={0}', matrix.name) }}
+          # GPU registry cache is global: import always, export only on authorized pushes.
+          cache-to: ${{ matrix.name == 'ml-compute-service-gpu' && (steps.mode.outputs.push == 'true' && format('type=registry,ref={0}/{1}:buildcache,mode=max', steps.image-base-path.outputs.image_base_path, matrix.name) || '') || format('type=gha,mode=max,scope={0}', matrix.name) }}
           platforms: linux/amd64
           provenance: ${{ steps.mode.outputs.push == 'true' }}
 
@@ -291,7 +292,7 @@ jobs:
           output: 'trivy-results-${{ matrix.name }}.sarif'
 
       - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
         # code scanning uploads 403 on private repos without Advanced Security
         if: always() && !github.event.repository.private
         with:

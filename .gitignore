@@ -59,6 +59,9 @@ coverage.json
 # Skylos fixture analysis tool output
 .skylos_unused_fixtures.json
 **/.skylos/
+!/.skylos/
+/.skylos/*
+!/.skylos/baseline.json
 
 # Lock files (all except workspace-level roots)
 *.lock

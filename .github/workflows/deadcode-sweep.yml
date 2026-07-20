@@ -1,0 +1,80 @@
+name: Deadcode full sweep
+
+on:
+  schedule:
+    - cron: "0 9 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+concurrency:
+  group: deadcode-full-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Full deadcode sweep with grep verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Cache nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Cache uv downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Cache workspace virtual environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .venv
+          key: venv-deadcode-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+
+      - name: Install workspace (all packages + extras)
+        run: |
+          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
+          nix develop .#ci --command bash -euc '
+            export UV_PYTHON="$(command -v python)"
+            uv sync --all-packages --all-extras --no-extra cuda --group deadcode --frozen
+          '
+      - name: Scan all dead code with grep verification
+        id: scan
+        run: >
+          nix develop .#ci --command uv run --no-sync ci-checks deadcode
+          --scope all --ci --fail --no-provenance
+
+      - name: Open or update deadcode issue
+        if: failure() && steps.scan.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Weekly deadcode sweep found new findings"
+          body="Scheduled full sweep ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} found dead code in the verified full sweep."
+          existing=$(gh issue list --repo "${{ github.repository }}" --label deadcode --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "${{ github.repository }}" --body "$body"
+          else
+            gh label create deadcode --repo "${{ github.repository }}" --force --color B60205 --description "Weekly deadcode sweep findings"
+            gh issue create --repo "${{ github.repository }}" --title "$title" --label deadcode --body "$body"
+          fi
