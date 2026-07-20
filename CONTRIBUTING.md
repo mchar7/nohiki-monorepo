@@ -41,9 +41,10 @@ pushes. Even a one-line fix rides a short-lived branch.
 
 ## Commits
 
-[Conventional Commits](https://www.conventionalcommits.org/) format,
-enforced by `commitlint` via the `commit-msg` hook. Scope is the affected
-service or library (`feat(correlation): ...`, `chore(ml-manifest): ...`).
+[Conventional Commits](https://www.conventionalcommits.org/) format. The
+`commit-msg` hook gives fast local feedback but is bypassable by design
+(`git --no-verify`); the required PR check is the enforcement. Scope is the
+affected service or library (`feat(correlation): ...`, `chore(ml-manifest): ...`).
 
 One logical behaviour per commit. Tests live with the implementation they
 exercise.
@@ -53,6 +54,10 @@ exercise.
 Merge pull requests through GitHub's **Create a merge commit** option. Required
 checks and review must pass before merge. Do not squash; the merge commit
 preserves the reviewed branch tip and its semantic commits as ancestry.
+
+PR titles must themselves be conventional: the repository is configured to use
+the PR title as the merge commit subject (with a blank body), and the required
+check lints the title with the same commitlint rules.
 
 Branches are short-lived (target ≤1 week). Long-running branches rebase on
 `main` weekly.

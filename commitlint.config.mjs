@@ -14,6 +14,11 @@
  */
 export default {
   extends: ['@commitlint/config-conventional'],
+  // Classic "Merge pull request" subjects must fail, not silently pass.
+  defaultIgnores: false,
+  // GitHub's update-branch button creates these inside PR ranges; their form is
+  // not author-controllable.
+  ignores: [(message) => /^Merge branch '.+' into .+/.test(message)],
   rules: {
     // Allowed commit types
     'type-enum': [
@@ -39,11 +44,20 @@ export default {
       2,
       'never',
       [
+        'sentence-case', // No "Add a new feature"
         'start-case', // No "Add New Feature"
         'pascal-case', // No "AddNewFeature"
         'upper-case', // No "ADD NEW FEATURE"
       ],
     ],
+
+    // Scope is a service or library name
+    'scope-case': [2, 'always', 'kebab-case'],
+
+    // Spec items 6 and 8: body and footer start one blank line after the
+    // preceding section; config-conventional only warns.
+    'body-leading-blank': [2, 'always'],
+    'footer-leading-blank': [2, 'always'],
 
     // Header max length (type + scope + subject)
     'header-max-length': [2, 'always', 100],
