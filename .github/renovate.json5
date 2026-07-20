@@ -1,0 +1,106 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    ":semanticCommitTypeAll(chore)"
+  ],
+  "timezone": "Etc/UTC",
+  "labels": ["dependencies"],
+  "automerge": false,
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 2,
+  "prHourlyLimit": 2,
+  "internalChecksFilter": "strict",
+  "minimumReleaseAge": "3 days",
+  "prBodyColumns": ["Package", "Type", "Update", "Change", "Pending"],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**/!(Dockerfile.api-runner)",
+    "**/__fixtures__/**"
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 4am on monday"]
+  },
+  "enabledManagers": [
+    "npm",
+    "pep621",
+    "github-actions",
+    "dockerfile",
+    "docker-compose",
+    "helmv3",
+    "helm-values",
+    "flux",
+    "kubernetes",
+    "nix"
+  ],
+  "pep621": {
+    "enabled": true
+  },
+  "nix": {
+    "enabled": true
+  },
+  "flux": {
+    "managerFilePatterns": ["/^infra\\/k8s\\/gitops\\/.+\\.ya?ml$/"]
+  },
+  "helm-values": {
+    "managerFilePatterns": ["/^infra\\/k8s\\/.+\\/values\\.ya?ml$/", "/^infra\\/k8s\\/helm\\/values\\.local\\.ya?ml$/"],
+    "pinDigests": true
+  },
+  "kubernetes": {
+    "managerFilePatterns": ["/^infra\\/k8s\\/.+\\.ya?ml$/"]
+  },
+  "packageRules": [
+    {
+      "description": "Require a human dashboard approval for major updates",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Group pnpm minor and patch updates",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "pnpm minor and patch"
+    },
+    {
+      "description": "Group uv minor and patch updates",
+      "matchManagers": ["pep621"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "uv minor and patch"
+    },
+    {
+      "description": "Group action updates but retain individual major approvals",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "GitHub Actions minor, patch, and digest"
+    },
+    {
+      "description": "Group container updates",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Docker minor, patch, and digest"
+    },
+    {
+      "description": "Group Helm/Kubernetes updates",
+      "matchManagers": ["helmv3", "helm-values", "flux", "kubernetes"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Kubernetes and Helm minor, patch, and digest"
+    },
+    {
+      "description": "Group Nix updates",
+      "matchManagers": ["nix"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Nix minor, patch, and digest"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  },
+  "osvVulnerabilityAlerts": false
+}
