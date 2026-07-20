@@ -10,6 +10,34 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+LANE_DISPLAY_NAMES: dict[str, str] = {
+    "nix": "Nix toolchain",
+    "lint_python": "Python lint",
+    "lint_frontend": "Frontend lint",
+    "lint_proto": "Protobuf lint",
+    "lint_markdown": "Markdown lint",
+    "lint_workflows": "Workflow lint",
+    "lint_docker": "Dockerfile lint",
+    "typecheck_backend": "Backend typecheck",
+    "typecheck_frontend": "Frontend typecheck",
+    "python_any": "Python tests",
+    "frontend_tests": "Frontend tests",
+    "frontend_smoke": "Frontend container smoke",
+    "hygiene": "Code hygiene",
+    "generated_artifacts": "Generated artifacts",
+    "proto_breaking": "Protobuf compatibility",
+}
+
+GATE_LABELS: dict[str, tuple[str, str]] = {
+    "python_any": ("area:backend", "1D76DB"),
+    "frontend_tests": ("area:frontend", "D4C5F9"),
+    "lint_proto": ("area:proto", "FBCA04"),
+    "lint_docker": ("area:docker", "0E8A16"),
+    "lint_workflows": ("area:workflows", "5319E7"),
+    "lint_markdown": ("area:docs", "0075CA"),
+    "full": ("ci:full-run", "B60205"),
+}
+
 # Module-level console singleton for all CI check output.
 # stdout (not stderr) is intentional -- CI log capture expects stdout.
 console = Console()

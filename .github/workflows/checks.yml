@@ -117,21 +117,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-          L_BACKEND: ${{ steps.gate.outputs.python_any }}
-          L_FRONTEND: ${{ steps.gate.outputs.frontend_tests }}
-          L_PROTO: ${{ steps.gate.outputs.lint_proto }}
-          L_DOCKER: ${{ steps.gate.outputs.lint_docker }}
-          L_WORKFLOWS: ${{ steps.gate.outputs.lint_workflows }}
-          L_DOCS: ${{ steps.gate.outputs.lint_markdown }}
-          L_FULL: ${{ steps.gate.outputs.full }}
+          LABELS: ${{ steps.gate.outputs.labels }}
         run: |
           current=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
           sync() {
-            label="$1"; want="$2"
-            if [ "$want" = "true" ]; then
+            label="$1"; color="$2"; active="$3"
+            if [ "$active" = "true" ]; then
+              gh label create "$label" --repo "$REPO" --force --color "$color" \
+                --description "Gate-managed label" > /dev/null
               if ! grep -qxF "$label" <<< "$current"; then
-                gh label create "$label" --repo "$REPO" --force --color 5319E7 \
-                  --description "Gate-managed area label" > /dev/null
                 gh api -X POST "repos/$REPO/issues/$PR/labels" -f "labels[]=$label" > /dev/null
               fi
             elif grep -qxF "$label" <<< "$current"; then
@@ -139,13 +133,9 @@ jobs:
               gh api -X DELETE "repos/$REPO/issues/$PR/labels/$encoded" > /dev/null
             fi
           }
-          sync "area:backend" "$L_BACKEND"
-          sync "area:frontend" "$L_FRONTEND"
-          sync "area:proto" "$L_PROTO"
-          sync "area:docker" "$L_DOCKER"
-          sync "area:workflows" "$L_WORKFLOWS"
-          sync "area:docs" "$L_DOCS"
-          sync "ci:full-run" "$L_FULL"
+          while IFS=$'\t' read -r label color active; do
+            sync "$label" "$color" "$active"
+          done < <(jq -r '.[] | [.name, .color, .active] | @tsv' <<< "$LABELS")
 
   nix:
     needs: [changes]
