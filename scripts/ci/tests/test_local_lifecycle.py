@@ -1,4 +1,4 @@
-"""Fail-closed tests for the eight local Kubernetes lifecycle commands."""
+"""Fail-closed tests for the seven local Kubernetes lifecycle commands."""
 
 from __future__ import annotations
 
@@ -27,7 +27,6 @@ _RECIPES = {
     "k8s-reconcile-local": "reconcile",
     "k8s-verify-local": "verify",
     "k8s-diagnostics-local": "diagnostics",
-    "k8s-reset-local": "reset",
     "k8s-factory-reset-local": "factory-reset",
 }
 
@@ -45,7 +44,7 @@ def _recipe_body(source: str, name: str) -> str:
     return "\n".join(body)
 
 
-def test_justfile_exposes_only_the_eight_canonical_kubernetes_lifecycle_commands() -> None:
+def test_justfile_exposes_only_the_seven_canonical_kubernetes_lifecycle_commands() -> None:
     source = _JUSTFILE.read_text(encoding="utf-8")
     public = {
         match.group(1)
@@ -453,8 +452,8 @@ if [ "${BOOTSTRAP_PARTIAL:-0}" = 1 ] && [ "$1" = --validate ]; then exit 42; fi
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# synthetic lifecycle helper\n", encoding="utf-8")
     _write_executable(
-        root / "infra" / "k8s" / "local" / "reset.sh",
-        '#!/bin/sh\nprintf \'reset %s\\n\' "$*" >> "$CALL_LOG"\n',
+        root / "infra" / "k8s" / "local" / "cluster_reset.py",
+        '#!/bin/sh\nprintf \'factory-reset %s\\n\' "$*" >> "$CALL_LOG"\n',
     )
     (root / "infra" / "k8s" / "gitops" / "clusters" / "local").mkdir(parents=True)
     (root / "infra" / "k8s" / "helm-foundation").mkdir(parents=True)

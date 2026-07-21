@@ -476,11 +476,7 @@ k8s-verify-local:
 k8s-diagnostics-local:
     infra/k8s/local/lifecycle.sh diagnostics
 
-# Delegate guarded local stack reset/dry-run to the evidence-preserving reset boundary.
-k8s-reset-local *args:
-    infra/k8s/local/lifecycle.sh reset {{ args }}
-
-# Delegate guarded local control-plane factory reset/dry-run to the reset boundary.
+# Delegate guarded local control-plane factory reset/dry-run to the evidence-preserving reset boundary.
 k8s-factory-reset-local *args:
     infra/k8s/local/lifecycle.sh factory-reset {{ args }}
 
