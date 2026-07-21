@@ -185,7 +185,7 @@ just logs <service>               # Follow service logs
 just k8s-reconcile-local          # idempotent reconcile: check context, push images, hand off to GitOps controllers
 just gitops-full                  # install GitOps controllers, bootstrap the cluster source, wait (hard) for reconciliation
 just k8s-build / k8s-push-images  # build + push first-party images (LOCAL_REGISTRY, DEV_IMAGE_TAG)
-just k8s-reset-local --confirm    # explicit, context-guarded teardown of Nohiki/GitOps-owned resources
+just k8s-factory-reset-local --help # fresh-control-plane reset: checkpoint-bound, exactly acknowledged, explicitly executed
 just k8s-status / k8s-logs <service> / k8s-port <service> <port>
 just gitops-status / gitops-wait / gitops-logs
 just k8s-health                   # Health check against the selected cluster
