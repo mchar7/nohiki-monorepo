@@ -142,12 +142,15 @@ pre-commit:
 
     # Dockerfiles: hadolint (rules in .hadolint.yaml)
     docker-lint:
-      glob: "**/Dockerfile"
+      glob: "**/Dockerfile{,.*}"
+      exclude:
+        - "**/*.dockerignore"
+        - "**/*.j2"
       run: |
         if command -v hadolint &>/dev/null; then
-          git ls-files -z '*Dockerfile' | xargs -0 -r hadolint
+          git ls-files -z -- '*Dockerfile' '*Dockerfile.*' ':(exclude)*.dockerignore' ':(exclude)*.j2' | xargs -0 -r hadolint
         elif command -v nix &>/dev/null; then
-          git ls-files -z '*Dockerfile' | xargs -0 -r nix run nixpkgs#hadolint --
+          git ls-files -z -- '*Dockerfile' '*Dockerfile.*' ':(exclude)*.dockerignore' ':(exclude)*.j2' | xargs -0 -r nix run nixpkgs#hadolint --
         else
           echo "ERROR: hadolint not found. Install it or activate the dev shell (direnv allow)."
           exit 1
@@ -208,7 +211,7 @@ pre-push:
 
           - name: semgrep
             glob: "backend/**/*.py"
-            run: env -u LD_LIBRARY_PATH uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --error --no-git-ignore backend/
+            run: env -u LD_LIBRARY_PATH uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/
 
           - name: build-backend
             glob: "**/pyproject.toml"

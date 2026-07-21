@@ -114,7 +114,10 @@ def test_checks_workflow_splits_every_prepush_gate_into_hosted_lanes() -> None:
     assert "--baseline" not in deadcode
     assert "--no-grep-verify" not in deadcode
     assert "ci-checks deptry --scope all --ci" in commands["hygiene"]
-    assert "semgrep scan --config semgrep.yml --error --no-git-ignore backend/" in commands["hygiene"]
+    assert (
+        "semgrep scan --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/"
+        in commands["hygiene"]
+    )
     assert "ci-checks build-backend --scope all --ci --strict" in commands["hygiene"]
     assert "just api-schema-check" in commands["generated-artifacts"]
     assert "just image-matrix-check" in commands["generated-artifacts"]

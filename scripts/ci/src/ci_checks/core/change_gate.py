@@ -105,6 +105,8 @@ def evaluate(changed: set[str], packages: dict[str, Package]) -> GateDecision:
         if (owner := _owning_package(path, rel_paths)) is not None:
             matched = True
             seeds.add(owner)
+            if path == f"{rel_paths[owner]}/pyproject.toml":
+                decision.flags.update({"hygiene", "typecheck_backend"})
         if path.endswith(".py"):
             # Every changed Python file lints, workspace-owned or standalone;
             # unmatched standalone files still fall through to the full run.

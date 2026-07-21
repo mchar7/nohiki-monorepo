@@ -203,8 +203,8 @@ def test_deadcode_gate_disables_history_provenance() -> None:
     assert cast("str", deadcode_jobs[0]["run"]).endswith("--no-provenance")
 
 
-def test_semgrep_uses_pinned_host_runtime() -> None:
-    """The uv scanner must not inherit Nix's dynamic-library search path."""
+def test_semgrep_uses_pinned_sovereign_host_runtime() -> None:
+    """The uv scanner must not inherit Nix libraries or contact Semgrep services."""
     pre_push = cast("Mapping[str, object]", _LEFTHOOK_CONFIG)["pre-push"]
     jobs = cast("Mapping[str, object]", pre_push)["jobs"]
     semgrep_jobs = [
@@ -217,5 +217,8 @@ def test_semgrep_uses_pinned_host_runtime() -> None:
     overrides = _SEMGREP_OVERRIDES
 
     assert len(semgrep_jobs) == 1
-    assert cast("str", semgrep_jobs[0]["run"]).startswith("env -u LD_LIBRARY_PATH uvx --override ")
+    command = cast("str", semgrep_jobs[0]["run"])
+    assert command.startswith("env -u LD_LIBRARY_PATH uvx --override ")
+    assert "--metrics=off" in command
+    assert "--disable-version-check" in command
     assert overrides == ["semgrep==1.170.0", "ruamel-yaml-clib>=0.2.15"]
