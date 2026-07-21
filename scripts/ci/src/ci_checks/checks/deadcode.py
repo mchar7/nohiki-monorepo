@@ -8,7 +8,9 @@ cross-package false positives that package-isolated scans introduce.
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,10 +18,28 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import cast
+from urllib.parse import quote
 
-from ci_checks.core.display import console, render_error_panel, render_summary_table
+from ci_checks.core.display import (
+    LANE_DISPLAY_NAMES,
+    console,
+    render_error_panel,
+    render_summary_table,
+)
 from ci_checks.core.packages import REPO_ROOT, Package
 from ci_checks.core.process_env import sanitized_python_env
+
+SKYLOS_TIMEOUT_SECONDS = 600
+_DEAD_CODE_KEYS = frozenset(
+    {
+        "unused_functions",
+        "unused_imports",
+        "unused_classes",
+        "unused_variables",
+        "unused_parameters",
+    }
+)
+_SUMMARY_FINDING_LIMIT = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +93,7 @@ class DeadCodeScanOptions:
     diff: str | None
     diff_base: str | None
     github: bool
-    summary: bool
+    summary: Path | None
     severity: SeverityLevel | None
     file_filter: str | None
     limit: int | None
@@ -82,47 +102,52 @@ class DeadCodeScanOptions:
     include_parameters: bool
 
 
-def _load_skylos_json(raw: str) -> dict[str, object]:
-    """Parse Skylos JSON from stdout.
+def _load_skylos_json(raw: str) -> dict[str, object] | None:
+    """Parse and validate a Skylos dead-code result object.
 
     Args:
         raw: Raw stdout text emitted by Skylos.
 
     Returns:
-        Parsed JSON object; empty dict if parsing fails.
+        Parsed result object, or ``None`` when stdout does not contain the
+        complete dead-code schema.
     """
+
+    def valid_result(value: object) -> dict[str, object] | None:
+        if not isinstance(value, dict):
+            return None
+        result = cast("dict[str, object]", value)
+        if not _DEAD_CODE_KEYS.issubset(result) or any(not isinstance(result[key], list) for key in _DEAD_CODE_KEYS):
+            return None
+        return result
+
     if not raw.strip():
-        return {}
+        return None
 
     try:
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
+        return valid_result(json.loads(raw))
     except json.JSONDecodeError:
         pass
 
     start_index = raw.find("{")
     if start_index < 0:
-        return {}
+        return None
 
     try:
-        data = json.loads(raw[start_index:])
-        return data if isinstance(data, dict) else {}
+        return valid_result(json.loads(raw[start_index:]))
     except json.JSONDecodeError:
-        return {}
+        return None
 
 
-def _parse_skylos_json(raw: str) -> list[DeadCodeFinding]:
-    """Parse Skylos JSON output into structured findings.
+def _parse_skylos_json(data: dict[str, object]) -> list[DeadCodeFinding]:
+    """Convert a validated Skylos result object into findings.
 
     Args:
-        raw: Raw JSON string from Skylos stdout.
+        data: Validated Skylos dead-code result.
 
     Returns:
-        List of parsed findings; empty list on JSON parse error.
+        Parsed findings.
     """
-    data = _load_skylos_json(raw)
-    if not data:
-        return []
 
     def _as_str(value: object, default: str) -> str:
         return value if isinstance(value, str) else default
@@ -141,7 +166,6 @@ def _parse_skylos_json(raw: str) -> list[DeadCodeFinding]:
                 continue
 
             payload = cast("dict[str, object]", item)
-
             findings.append(
                 DeadCodeFinding(
                     name=_as_str(payload.get("name"), "?"),
@@ -255,8 +279,6 @@ def _build_skylos_cmd(scan_paths: list[str], options: DeadCodeScanOptions) -> li
         cmd.extend(["--provenance-base", options.provenance_base])
     if options.github:
         cmd.append("--github")
-    if options.summary:
-        cmd.append("--summary")
     if options.no_grep_verify:
         cmd.append("--no-grep-verify")
     if options.severity:
@@ -304,6 +326,81 @@ def _package_for_file(file_path: str, packages: list[Package]) -> str | None:
     return None
 
 
+def _skylos_version() -> str:
+    """Return the installed Skylos version when the optional group is present."""
+    try:
+        return importlib.metadata.version("skylos")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _write_markdown_summary(
+    results: list[DeadCodeResult],
+    packages: list[Package],
+    options: DeadCodeScanOptions,
+) -> None:
+    """Append the dead-code lane result to a GitHub step summary."""
+    if options.summary is None:
+        return
+
+    repository = os.environ.get("GITHUB_REPOSITORY")
+    head_sha = os.environ.get("GITHUB_SHA")
+
+    def location(finding: DeadCodeFinding) -> str:
+        path = _relative_path(Path(finding.file))
+        label = f"`{path}:{finding.line}`"
+        if not repository or not head_sha:
+            return label
+        url = f"https://github.com/{repository}/blob/{head_sha}/{quote(path, safe='/')}#L{finding.line}"
+        return f"[{label}]({url})"
+
+    findings = [(result.name, finding) for result in results for finding in result.findings]
+    errors = [result for result in results if result.error]
+    verdict = "scanner failure" if errors else ("findings" if findings else "clean")
+    duration_seconds = max((result.duration_ms for result in results), default=0) / 1000
+    lines = [
+        f"## {LANE_DISPLAY_NAMES['hygiene']}",
+        "",
+        "### Dead code (Skylos)",
+        "",
+        f"- Version: `{_skylos_version()}`",
+        f"- Scope: {len(packages)} packages",
+        f"- Confidence: `{options.confidence}`",
+        f"- Duration: `{duration_seconds:.1f}s`",
+        f"- Verdict: **{verdict}**",
+        "",
+        "| Status | Packages | Findings |",
+        "|---|---:|---:|",
+        (
+            f"| {'FAIL' if errors or findings else 'PASS'} | "
+            f"{sum(result.passed for result in results)}/{len(results)} | {len(findings)} |"
+        ),
+    ]
+    if errors:
+        lines += ["", "### Scanner failures", ""]
+        lines.extend(f"- **{result.name}**: {result.error.replace(chr(10), ' ')}" for result in errors)
+    if findings:
+        lines += [
+            "",
+            f"### Findings ({len(findings)})",
+            "",
+            "| Package | Kind | Name | Location |",
+            "|---|---|---|---|",
+        ]
+        lines.extend(
+            f"| {package} | {finding.kind} | `{finding.name.replace('|', '\\|')}` | {location(finding)} |"
+            for package, finding in findings[:_SUMMARY_FINDING_LIMIT]
+        )
+        if len(findings) > _SUMMARY_FINDING_LIMIT:
+            lines += [
+                "",
+                f"_Showing {_SUMMARY_FINDING_LIMIT} of {len(findings)} findings._",
+            ]
+
+    with options.summary.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
 async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> list[DeadCodeResult]:
     """Run Skylos once for scope and group findings by package.
 
@@ -316,16 +413,18 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
     """
     env = sanitized_python_env(extra={"OTEL_SDK_DISABLED": "true", "SKYLOS_GREP_BUDGET": "120"})
     if not options.no_grep_verify and shutil.which("rg", path=env.get("PATH")) is None:
-        return [
+        results = [
             DeadCodeResult(
                 name="scanner-preflight",
                 passed=False,
                 error="ripgrep (rg) is required for deterministic Skylos grep verification",
             )
         ]
+        _write_markdown_summary(results, packages, options)
+        return results
+
     scan_paths = _collect_scan_paths(packages, include_tests=options.include_tests)
     cmd = _build_skylos_cmd(scan_paths, options)
-
     start = asyncio.get_event_loop().time()
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -334,18 +433,50 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
         cwd=REPO_ROOT,
         env=env,
     )
-    stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=600)
-    duration_ms = int((asyncio.get_event_loop().time() - start) * 1000)
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=SKYLOS_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        proc.kill()
+        _, stderr_bytes = await proc.communicate()
+        duration_ms = int((asyncio.get_event_loop().time() - start) * 1000)
+        message = f"Skylos timed out after {SKYLOS_TIMEOUT_SECONDS} seconds"
+        if stderr := stderr_bytes.decode().strip():
+            message = f"{message}\n{stderr}"
+        results = [DeadCodeResult(name="scanner", passed=False, duration_ms=duration_ms, error=message)]
+        _write_markdown_summary(results, packages, options)
+        return results
 
-    findings = _parse_skylos_json(stdout_bytes.decode())
+    duration_ms = int((asyncio.get_event_loop().time() - start) * 1000)
+    stderr = stderr_bytes.decode().strip()
+    data = _load_skylos_json(stdout_bytes.decode())
+    if data is None:
+        message = f"Skylos returned invalid or incomplete JSON (exit code {proc.returncode})"
+        if stderr:
+            message = f"{message}\n{stderr}"
+        results = [DeadCodeResult(name="scanner", passed=False, duration_ms=duration_ms, error=message)]
+        _write_markdown_summary(results, packages, options)
+        return results
+
+    findings = _parse_skylos_json(data)
     if not options.include_parameters:
         findings = [finding for finding in findings if finding.kind != "parameter"]
-    stderr = stderr_bytes.decode().strip()
-    error_message = stderr if proc.returncode not in (0, 1) else ""
+    if proc.returncode not in (0, 1) or (proc.returncode == 1 and not findings):
+        message = (
+            f"Skylos exited with code {proc.returncode}"
+            if proc.returncode not in (0, 1)
+            else "Skylos exited with code 1 without dead-code findings"
+        )
+        if stderr:
+            message = f"{message}\n{stderr}"
+        results = [DeadCodeResult(name="scanner", passed=False, duration_ms=duration_ms, error=message)]
+        _write_markdown_summary(results, packages, options)
+        return results
 
     findings_by_package: dict[str, list[DeadCodeFinding]] = {pkg.name: [] for pkg in packages}
     unmapped: list[DeadCodeFinding] = []
-
     for finding in findings:
         if pkg_name := _package_for_file(finding.file, packages):
             findings_by_package[pkg_name].append(finding)
@@ -355,14 +486,12 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
     results = [
         DeadCodeResult(
             name=pkg.name,
-            passed=len(findings_by_package[pkg.name]) == 0 and not error_message,
+            passed=len(findings_by_package[pkg.name]) == 0,
             duration_ms=duration_ms,
             findings=findings_by_package[pkg.name],
-            error=error_message,
         )
         for pkg in packages
     ]
-
     if unmapped:
         results.append(
             DeadCodeResult(
@@ -370,10 +499,10 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
                 passed=False,
                 duration_ms=duration_ms,
                 findings=unmapped,
-                error=error_message,
             )
         )
 
+    _write_markdown_summary(results, packages, options)
     return results
 
 
@@ -413,12 +542,10 @@ def render_results(results: list[DeadCodeResult], *, fail_on_findings: bool) -> 
             border_style="yellow",
         )
 
-    error_pkgs = [r for r in results if r.error]
-    if error_pkgs:
-        console.print(f"\n[red]⚠ {len(error_pkgs)} package(s) had errors during analysis[/red]")
-        for r in error_pkgs:
-            console.print(f"  [red]{r.name}:[/red] {r.error[:200]}")
+    error_results = [result for result in results if result.error]
+    if error_results:
+        console.print(f"\n[red]⚠ {len(error_results)} scanner error(s)[/red]")
+        for result in error_results:
+            render_error_panel(result.name, result.error)
 
-    # analysis errors must fail the gate: zero findings from a broken run is
-    # not a clean verdict
-    return not (fail_on_findings and (total_findings > 0 or any(r.error for r in results)))
+    return not any(result.error for result in results) and not (fail_on_findings and total_findings > 0)

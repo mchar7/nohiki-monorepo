@@ -611,7 +611,7 @@ jobs:
       - name: Check dead code
         run: >
           nix develop .#ci --command uv run --no-sync ci-checks deadcode
-          --scope all --ci --fail --no-provenance
+          --scope all --ci --fail --no-provenance --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Check dependencies
         run: nix develop .#ci --command uv run --no-sync ci-checks deptry --scope all --ci

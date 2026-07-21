@@ -64,7 +64,7 @@ jobs:
         id: scan
         run: >
           nix develop .#ci --command uv run --no-sync ci-checks deadcode
-          --scope all --ci --fail --no-provenance
+          --scope all --ci --fail --no-provenance --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Open or update deadcode issue
         if: failure() && steps.scan.outcome == 'failure'

@@ -50,7 +50,10 @@ app.command("image-freshness")(_freshness.freshness_cmd)
 @app.command("deadcode")
 def deadcode_cmd(
     scope: Annotated[Scope, typer.Option("--scope", "-s", help="Package scope")] = Scope.ALL,
-    confidence: Annotated[int, typer.Option("--confidence", "-c", help="Min Skylos confidence (0-100)")] = 80,
+    confidence: Annotated[
+        int,
+        typer.Option("--confidence", "-c", min=0, max=100, help="Min Skylos confidence (0-100)"),
+    ] = 80,
     ci: Annotated[bool, typer.Option("--ci", help="CI mode (plain-text output)")] = False,
     fail: Annotated[bool, typer.Option("--fail", help="Exit non-zero if findings found")] = False,
     llm: Annotated[bool, typer.Option("--llm", help="Enable hybrid LLM verification")] = False,
@@ -89,9 +92,9 @@ def deadcode_cmd(
     ] = None,
     github: Annotated[bool, typer.Option("--github", help="Emit GitHub Actions annotations")] = False,
     summary: Annotated[
-        bool,
-        typer.Option("--summary", help="Write markdown summary for GitHub Actions"),
-    ] = False,
+        Path | None,
+        typer.Option("--summary", help="Append markdown to $GITHUB_STEP_SUMMARY"),
+    ] = None,
     severity: Annotated[
         _deadcode.SeverityLevel | None,
         typer.Option("--severity", help="Minimum severity filter: critical|high|medium|low"),
