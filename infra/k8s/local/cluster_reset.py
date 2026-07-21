@@ -1015,7 +1015,6 @@ def factory_reset(args: argparse.Namespace) -> int:  # noqa: PLR0915  # Preserve
         except RefusalError as error:
             _fail_transaction(args.evidence_output, document, str(error))
         _complete_phase(args.evidence_output, document, node_phase)
-        verification_deadline = time.monotonic() + READINESS_TIMEOUT_SECONDS
         identity_phase = _phase("identity")
         phases.append(identity_phase)
         _persist(args.evidence_output, document)
@@ -1040,10 +1039,11 @@ def factory_reset(args: argparse.Namespace) -> int:  # noqa: PLR0915  # Preserve
             cast(list[object], document["absence"]).append(check)
             _persist(args.evidence_output, document)
 
+        absence_deadline = time.monotonic() + READINESS_TIMEOUT_SECONDS
         try:
             verify_absence(
                 args.expected_context,
-                verification_deadline,
+                absence_deadline,
                 record=record_absence,
             )
         except RefusalError as error:
