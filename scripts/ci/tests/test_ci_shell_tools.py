@@ -131,7 +131,7 @@ def test_checks_workflow_splits_every_prepush_gate_into_hosted_lanes() -> None:
     assert all("lefthook run pre-push" not in command for job in jobs.values() for command in _commands(job))
 
 
-def test_python_tests_use_complete_bounded_category_matrix() -> None:
+def test_python_tests_use_three_duration_balanced_batches() -> None:
     workflow = _load_yaml(_CHECKS)
     jobs = _mapping(workflow["jobs"])
     python_tests = _mapping_at(jobs, "python-tests")
@@ -140,7 +140,9 @@ def test_python_tests_use_complete_bounded_category_matrix() -> None:
     steps = {cast("str", step.get("name")): step for step in _mapping_list(python_tests["steps"])}
     nix_install = steps["Install Nix"]
     workspace_install = steps["Install workspace (all packages + extras)"]
-    scoped_test = steps["Run scoped tests"]
+    batch_test = steps["Run batch tests"]
+    assert steps["Resolve pnpm store path"]["if"] == "matrix.needs_pnpm"
+    assert steps["Cache pnpm store"]["if"] == "matrix.needs_pnpm"
 
     assert "if" not in nix_install
     assert nix_install["uses"] == ("DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25")
@@ -150,22 +152,18 @@ def test_python_tests_use_complete_bounded_category_matrix() -> None:
         "nix develop .#ci --command bash -euc '\n"
         '  export UV_PYTHON="$(command -v python)"\n'
         "  uv sync --all-packages --all-extras --no-extra cuda --frozen\n"
-        '  if [ "${{ matrix.scope }}" = "scripts" ]; then\n'
+        '  if [ "${{ matrix.needs_pnpm }}" = "true" ]; then\n'
         "    pnpm install --frozen-lockfile\n"
         "  fi\n"
         "'"
     )
-    assert "if" not in scoped_test
-    assert str(scoped_test["run"]).strip() == (
+    assert "if" not in batch_test
+    assert str(batch_test["run"]).strip() == (
         "# shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here\n"
         "nix develop .#ci --command bash -euc '\n"
         '  export UV_PYTHON="$(command -v python)"\n'
-        "  workers=2\n"
-        '  if [ "${{ matrix.scope }}" = "scripts" ]; then\n'
-        "    workers=1\n"
-        "  fi\n"
-        "  uv run --no-sync ci-checks tests all --scope ${{ matrix.scope }}"
-        ' --packages "${{ matrix.packages }}" --ci --workers "$workers"\n'
+        '  uv run --no-sync ci-checks tests all --scope all --packages "${{ matrix.packages }}" \\\n'
+        '    --ci --workers 2 --summary "$GITHUB_STEP_SUMMARY" --summary-title "${{ matrix.batch }}"\n'
         "'"
     )
     expected_env = {
@@ -173,7 +171,7 @@ def test_python_tests_use_complete_bounded_category_matrix() -> None:
         "UV_NO_SYNC": "1",
         "COVERAGE_CORE": "sysmon",
     }
-    assert scoped_test["env"] == expected_env
+    assert batch_test["env"] == expected_env
     assert "pnpm -C typescript/apps/frontend test --run" not in "\n".join(_commands(python_tests))
     assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=25%" in "\n".join(
         _commands(jobs["frontend-tests"])

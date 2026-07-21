@@ -1,0 +1,111 @@
+# Measured 2026-07-20 on local Linux (Intel Core i7-13700H) in the Nix CI shell.
+# Each weight is package wall time in seconds from `ci-checks tests all --ci --workers 2`;
+# packages without tests use the measured global median (29 seconds).
+
+[weights]
+"bff-service" = 25
+"ci-checks" = 121
+"doc-content-service" = 32
+"doc-process-service" = 27
+"doc-template-service" = 50
+"health-check" = 44
+"job-correlation-evaluation-service" = 48
+"job-ingest-discovery-service" = 28
+"job-ingest-enrichment-service" = 38
+"job-ingest-schedule-service" = 24
+"job-query-composition-service" = 22
+"job-storage-service" = 33
+"llm-benchmark" = 72
+"ml-compute-service" = 71
+"ml-gateway-service" = 21
+"nohiki-common-exceptions" = 12
+"nohiki-core-settings" = 33
+"nohiki-db-utils" = 56
+"nohiki-domain-models" = 16
+"nohiki-embedding-client" = 31
+"nohiki-fastapi-utils" = 16
+"nohiki-finance" = 16
+"nohiki-geo-utils" = 30
+"nohiki-integration-tests" = 29
+"nohiki-kafka-client" = 62
+"nohiki-llm-client" = 82
+"nohiki-ml-core" = 72
+"nohiki-ml-manifest" = 22
+"nohiki-observability" = 23
+"nohiki-qdrant-client" = 28
+"nohiki-redis-utils" = 42
+"nohiki-s3-client" = 22
+"nohiki-scaffold" = 26
+"nohiki-test-utils" = 20
+"notification-service" = 32
+"qdrant-init" = 20
+"skill-graph-service" = 49
+"snapshot-refresh-job" = 29
+"sys-tick-job" = 16
+"tailor" = 81
+"user-auth-service" = 28
+"user-entitlement-service" = 24
+"user-pref-service" = 36
+"user-upload-service" = 26
+
+[[batches]]
+name = "batch-1"
+needs_pnpm = true
+packages = [
+  "bff-service",
+  "ci-checks",
+  "doc-content-service",
+  "doc-process-service",
+  "doc-template-service",
+  "health-check",
+  "job-ingest-discovery-service",
+  "ml-compute-service",
+  "nohiki-finance",
+  "nohiki-geo-utils",
+  "nohiki-observability",
+  "nohiki-s3-client",
+  "qdrant-init",
+  "user-pref-service",
+]
+
+[[batches]]
+name = "batch-2"
+needs_pnpm = false
+packages = [
+  "job-storage-service",
+  "nohiki-db-utils",
+  "nohiki-domain-models",
+  "nohiki-llm-client",
+  "nohiki-ml-core",
+  "nohiki-ml-manifest",
+  "nohiki-redis-utils",
+  "nohiki-test-utils",
+  "notification-service",
+  "skill-graph-service",
+  "snapshot-refresh-job",
+  "sys-tick-job",
+  "user-auth-service",
+  "user-entitlement-service",
+  "user-upload-service",
+]
+
+[[batches]]
+name = "batch-3"
+needs_pnpm = false
+packages = [
+  "job-correlation-evaluation-service",
+  "job-ingest-enrichment-service",
+  "job-ingest-schedule-service",
+  "job-query-composition-service",
+  "llm-benchmark",
+  "ml-gateway-service",
+  "nohiki-common-exceptions",
+  "nohiki-core-settings",
+  "nohiki-embedding-client",
+  "nohiki-fastapi-utils",
+  "nohiki-integration-tests",
+  "nohiki-kafka-client",
+  "nohiki-qdrant-client",
+  "nohiki-scaffold",
+  "tailor",
+]

@@ -436,7 +436,7 @@ jobs:
   python-tests:
     needs: [changes]
     if: needs.changes.outputs.python_any == 'true'
-    name: Python tests (${{ matrix.scope }})
+    name: Python tests (${{ matrix.batch }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -477,12 +477,12 @@ jobs:
 
 
       - name: Resolve pnpm store path
-        if: matrix.scope == 'scripts'
+        if: matrix.needs_pnpm
         id: pnpm-store
         run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
-        if: matrix.scope == 'scripts'
+        if: matrix.needs_pnpm
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
@@ -496,21 +496,18 @@ jobs:
           nix develop .#ci --command bash -euc '
             export UV_PYTHON="$(command -v python)"
             uv sync --all-packages --all-extras --no-extra cuda --frozen
-            if [ "${{ matrix.scope }}" = "scripts" ]; then
+            if [ "${{ matrix.needs_pnpm }}" = "true" ]; then
               pnpm install --frozen-lockfile
             fi
           '
 
-      - name: Run scoped tests
+      - name: Run batch tests
         run: |
           # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
           nix develop .#ci --command bash -euc '
             export UV_PYTHON="$(command -v python)"
-            workers=2
-            if [ "${{ matrix.scope }}" = "scripts" ]; then
-              workers=1
-            fi
-            uv run --no-sync ci-checks tests all --scope ${{ matrix.scope }} --packages "${{ matrix.packages }}" --ci --workers "$workers"
+            uv run --no-sync ci-checks tests all --scope all --packages "${{ matrix.packages }}" \
+              --ci --workers 2 --summary "$GITHUB_STEP_SUMMARY" --summary-title "${{ matrix.batch }}"
           '
         env:
           OTEL_SDK_DISABLED: "true"

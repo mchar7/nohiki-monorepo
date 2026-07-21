@@ -848,6 +848,33 @@ def display_summary(
         display_coverage_summary(results, console)
 
 
+def render_github_summary(results: list[TestResult], title: str) -> str:
+    """Render one test batch as a GitHub-flavored Markdown summary.
+
+    Args:
+        results: Package test results in the batch.
+        title: Batch name displayed in the heading.
+
+    Returns:
+        Markdown containing the batch totals and per-package results.
+    """
+    passed = sum(result.passed for result in results)
+    lines = [
+        f"## Python tests ({title})",
+        "",
+        f"**{passed}/{len(results)} packages passed.**",
+        "",
+        "| Package | Duration | Coverage | Status |",
+        "| --- | ---: | ---: | :---: |",
+    ]
+    for result in sorted(results, key=lambda item: item.name):
+        status = "Pass" if result.passed else "Fail"
+        lines.append(
+            f"| `{result.name}` | {result.duration_ms / 1000:.1f}s | {result.coverage.total_coverage:.0f}% | {status} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def display_failures(results: list[TestResult], console: Console, *, ci_mode: bool) -> None:
     """Display failed test output panels.
 
@@ -991,6 +1018,8 @@ def all_packages_cmd(
             help="CSV of package names to run within scope; 'ALL' or empty runs the whole scope",
         ),
     ] = "ALL",
+    summary: Annotated[Path | None, typer.Option("--summary", help="$GITHUB_STEP_SUMMARY file")] = None,
+    summary_title: Annotated[str, typer.Option("--summary-title", help="Batch name for the summary")] = "all",
 ) -> None:
     """Run tests for all workspace packages with coverage reporting."""
     console = Console()
@@ -1017,6 +1046,9 @@ def all_packages_cmd(
 
     display_summary(results, console, ci_mode=ci, with_coverage=coverage)
     display_failures(results, console, ci_mode=ci)
+    if summary is not None:
+        with summary.open("a", encoding="utf-8") as summary_file:
+            summary_file.write(render_github_summary(results, summary_title))
 
     if _check_exit_conditions(results, strict=strict, with_coverage=coverage):
         raise typer.Exit(1)
