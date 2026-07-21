@@ -158,15 +158,17 @@ def _wait_for_http(runtime: str, container: str, url: str) -> tuple[int, bytes, 
 def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
     runtime = os.environ.get("CONTAINER_RUNTIME", "docker")
     suffix = uuid4().hex
-    image = f"nohiki-frontend-smoke:{suffix}"
     network = f"nohiki-frontend-smoke-{suffix}"
     upstream = f"nohiki-frontend-upstream-{suffix}"
     frontend = f"nohiki-frontend-{suffix}"
-    subprocess.run(
-        [runtime, "build", "--file", str(_DOCKERFILE), "--tag", image, "."],
-        cwd=_ROOT,
-        check=True,
-    )
+    supplied_image = os.environ.get("FRONTEND_SMOKE_IMAGE")
+    image = supplied_image or f"nohiki-frontend-smoke:{suffix}"
+    if supplied_image is None:
+        subprocess.run(
+            [runtime, "build", "--file", str(_DOCKERFILE), "--tag", image, "."],
+            cwd=_ROOT,
+            check=True,
+        )
     subprocess.run([runtime, "network", "create", network], check=True)
     try:
         subprocess.run(
@@ -265,7 +267,8 @@ def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
             capture_output=True,
         )
         subprocess.run([runtime, "network", "rm", network], check=False, capture_output=True)
-        subprocess.run([runtime, "image", "rm", image], check=False, capture_output=True)
+        if supplied_image is None:
+            subprocess.run([runtime, "image", "rm", image], check=False, capture_output=True)
 
 
 def test_build_context_keeps_runner_sources_and_excludes_typescript_artifacts() -> None:
@@ -429,17 +432,50 @@ def test_canonical_workflow_inventory_and_justfile_image_specs_are_equal() -> No
     assert workflow_specs == normalized_inventory_specs == _just_image_specs()
 
 
-def test_checks_workflow_docker_lane_runs_every_marked_contract() -> None:
+def test_checks_workflow_container_lanes_keep_separate_cached_contracts() -> None:
     workflow = yaml.safe_load(_CHECKS_WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["frontend-smoke"]["steps"]
-    smoke_steps = [step for step in steps if step.get("name") == "Smoke production frontend container"]
-    assert smoke_steps == [
-        {
-            "name": "Smoke production frontend container",
-            "run": "nix develop .#ci --command uv run --no-sync pytest scripts/ci/tests -m requires_docker\n",
-            "env": {"CONTAINER_RUNTIME": "docker"},
-        }
-    ]
+    jobs = workflow["jobs"]
+
+    frontend_steps = jobs["frontend-smoke"]["steps"]
+    frontend_build = next(step for step in frontend_steps if step.get("name") == "Build production frontend image")
+    assert frontend_build["with"] == {
+        "context": ".",
+        "file": "typescript/apps/frontend/Dockerfile",
+        "load": True,
+        "tags": "nohiki-frontend-smoke:ci",
+        "cache-from": "type=gha,scope=frontend-smoke",
+        "cache-to": "type=gha,scope=frontend-smoke,mode=max",
+    }
+    frontend_smoke = next(step for step in frontend_steps if step.get("name") == "Smoke production frontend container")
+    assert frontend_smoke == {
+        "name": "Smoke production frontend container",
+        "run": (
+            "nix develop .#ci --command uv run --no-sync pytest "
+            "scripts/ci/tests/test_frontend_delivery.py"
+            "::test_frontend_container_build_and_hardened_runtime_smoke\n"
+        ),
+        "env": {
+            "CONTAINER_RUNTIME": "docker",
+            "FRONTEND_SMOKE_IMAGE": "nohiki-frontend-smoke:ci",
+        },
+    }
+
+    playwright_steps = jobs["frontend-e2e"]["steps"]
+    playwright_build = next(step for step in playwright_steps if step.get("name") == "Build Playwright runner image")
+    assert playwright_build["with"]["file"] == "typescript/apps/frontend/Dockerfile.playwright-runner"
+    assert playwright_build["with"]["cache-to"] == "type=gha,scope=playwright-runner-smoke,mode=max"
+    assert "typescript/apps/frontend/node_modules/.bin/playwright" in next(
+        step["run"] for step in playwright_steps if step.get("name") == "Verify Playwright runner"
+    )
+
+    collector_run = next(
+        step["run"]
+        for step in jobs["otel-collector"]["steps"]
+        if step.get("name") == "Validate OpenTelemetry collector image and configs"
+    )
+    assert collector_run.endswith(
+        "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary\n"
+    )
 
 
 def test_frontend_is_in_canonical_local_and_release_image_inventories() -> None:

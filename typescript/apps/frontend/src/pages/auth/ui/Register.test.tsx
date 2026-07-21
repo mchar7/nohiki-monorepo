@@ -1,11 +1,12 @@
-import { useNavigate } from '@tanstack/react-router';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, vi } from 'vitest';
 
+const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
+
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@tanstack/react-router')>();
-  return { ...actual, useNavigate: vi.fn() };
+  return { ...actual, useNavigate: () => mockNavigate };
 });
 
 vi.mock('./AuthListingsCanvas.tsx', () => ({
@@ -30,12 +31,10 @@ vi.mock('@/features/auth', () => ({
 
 import { Register } from './Register.tsx';
 
-const mockNavigate = vi.fn<ReturnType<typeof useNavigate>>() as ReturnType<typeof useNavigate>;
-
 describe('Register', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    mockNavigate.mockReset();
     mockNavigate.mockResolvedValue(undefined);
   });
 

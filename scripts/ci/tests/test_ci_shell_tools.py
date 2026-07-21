@@ -88,25 +88,43 @@ def test_checks_workflow_splits_every_prepush_gate_into_hosted_lanes() -> None:
     jobs = _mapping(jobs_value)
     assert "prepush" not in jobs
 
-    lanes = {
-        "frontend-smoke",
+    prepush_lanes = {
         "typecheck",
         "python-tests",
         "frontend-tests",
         "hygiene",
-        "generated-artifacts",
+        "api-schema-freshness",
+        "image-matrix-parity",
         "proto-breaking",
     }
+    additive_lanes = {
+        "frontend-smoke",
+        "frontend-e2e",
+        "edge-worker",
+        "otel-collector",
+    }
+    lanes = prepush_lanes | additive_lanes
     assert lanes < jobs.keys()
 
     commands = {job_id: "\n".join(_commands(jobs[job_id])) for job_id in lanes}
     hygiene = _mapping_at(jobs, "hygiene")
     hygiene_step_names = [step.get("name") for step in _mapping_list(hygiene["steps"])]
     assert "Install ripgrep" not in hygiene_step_names
-    assert "-m requires_docker" in commands["frontend-smoke"]
+    assert (
+        "test_frontend_delivery.py::test_frontend_container_build_and_hardened_runtime_smoke"
+        in commands["frontend-smoke"]
+    )
+    assert "typescript/apps/frontend/node_modules/.bin/playwright" in commands["frontend-e2e"]
+    assert "biome ci --reporter=github src/" in commands["edge-worker"]
+    assert "exec tsc --noEmit" in commands["edge-worker"]
+    assert "exec vitest run" in commands["edge-worker"]
+    assert (
+        "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary"
+        in commands["otel-collector"]
+    )
     assert "ty check backend/" in commands["typecheck"]
     assert "pnpm -C typescript/apps/frontend type-check" in commands["typecheck"]
-    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=25%" in commands["frontend-tests"]
+    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=50%" in commands["frontend-tests"]
     deadcode = commands["hygiene"]
     assert "ci-checks deadcode --scope all --ci --fail --no-provenance" in deadcode
     assert '--summary "$GITHUB_STEP_SUMMARY"' in deadcode
@@ -120,8 +138,8 @@ def test_checks_workflow_splits_every_prepush_gate_into_hosted_lanes() -> None:
         in commands["hygiene"]
     )
     assert "ci-checks build-backend --scope all --ci --strict" in commands["hygiene"]
-    assert "just api-schema-check" in commands["generated-artifacts"]
-    assert "just image-matrix-check" in commands["generated-artifacts"]
+    assert "just api-schema-check" in commands["api-schema-freshness"]
+    assert "just image-matrix-check" in commands["image-matrix-parity"]
     proto = _mapping_at(jobs, "proto-breaking")
     proto_step = next(step for step in _mapping_list(proto["steps"]) if step.get("name") == "Check proto compatibility")
     assert _mapping_at(proto_step, "env")["BASE_SHA"] == (
@@ -173,7 +191,7 @@ def test_python_tests_use_three_duration_balanced_batches() -> None:
     }
     assert batch_test["env"] == expected_env
     assert "pnpm -C typescript/apps/frontend test --run" not in "\n".join(_commands(python_tests))
-    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=25%" in "\n".join(
+    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=50%" in "\n".join(
         _commands(jobs["frontend-tests"])
     )
 

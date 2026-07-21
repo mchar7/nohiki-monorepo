@@ -113,8 +113,8 @@ describe('JobListingCard - content', () => {
     expect(screen.getByText('Montreal, QC')).toBeInTheDocument();
   });
 
-  test('hides location when null', () => {
-    renderCard({ location_raw: null });
+  test('hides location when missing', () => {
+    renderCard({ location_raw: undefined });
     expect(screen.queryByText('Montreal, QC')).not.toBeInTheDocument();
   });
 
@@ -133,8 +133,8 @@ describe('JobListingCard - content', () => {
     expect(screen.queryByText(AGO_RE)).not.toBeInTheDocument();
   });
 
-  test('uses the company i18n fallback when company_name is null', () => {
-    renderCard({ company_name: null });
+  test('uses the company i18n fallback when company_name is missing', () => {
+    renderCard({ company_name: undefined });
     // i18n key: jobs:card.company → "Company"
     expect(screen.getByText('Company')).toBeInTheDocument();
   });
@@ -146,8 +146,8 @@ describe('JobListingCard - description preview', () => {
     expect(screen.getByText('Build distributed systems at scale.')).toBeInTheDocument();
   });
 
-  test('does not render description when description is null', () => {
-    renderCard({ description: null });
+  test('does not render description when description is missing', () => {
+    renderCard({ description: undefined });
     expect(screen.queryByText('Build distributed systems at scale.')).not.toBeInTheDocument();
   });
 

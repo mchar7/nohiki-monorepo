@@ -114,6 +114,7 @@ describe('UnifiedDocumentCard - completed', () => {
         status: 'completed',
         download_url: 'https://example.com/doc.pdf',
         error: null,
+        output_format: 'pdf',
       },
     };
     renderCard(doc);

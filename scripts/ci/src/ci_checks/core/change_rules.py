@@ -31,15 +31,19 @@ FLAG_NAMES: tuple[str, ...] = (
     "python_any",
     "frontend_tests",
     "frontend_smoke",
+    "frontend_e2e",
+    "edge_worker",
+    "otel_collector",
     "hygiene",
-    "generated_artifacts",
+    "api_schema_freshness",
+    "image_matrix_parity",
     "proto_breaking",
 )
 
 
 # Services whose FastAPI apps feed scripts/util/export-openapi.py. A change
 # reaching either one (directly or through a dependency) can move the merged
-# OpenAPI spec, so the generated-artifacts lane must run.
+# OpenAPI spec, so the API schema freshness lane must run.
 API_EXPORT_SERVICES: frozenset[str] = frozenset({"bff-service", "user-auth-service"})
 
 # Files that invalidate every lane. Deliberately small: each entry is a root
@@ -58,13 +62,18 @@ GLOBAL_TRIGGERS: tuple[str, ...] = (
     "scripts/ci/pyproject.toml",
 )
 
-# Any frontend source or toolchain change must lint, typecheck, unit-test,
-# and container-smoke the frontend.
-_FRONTEND_FLAGS: tuple[str, ...] = (
+# Application source and toolchain changes exercise every hosted app contract.
+_FRONTEND_APP_FLAGS: tuple[str, ...] = (
     "lint_frontend",
     "typecheck_frontend",
     "frontend_tests",
     "frontend_smoke",
+)
+
+_FRONTEND_E2E_FLAGS: tuple[str, ...] = (
+    "lint_frontend",
+    "typecheck_frontend",
+    "frontend_e2e",
 )
 
 
@@ -92,17 +101,64 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         # Regenerated dataclasses land in nohiki-domain-models; rerun its dependents.
         packages=("nohiki-domain-models",),
     ),
-    SurfaceRule(("typescript/*", "typescript/**/*"), flags=_FRONTEND_FLAGS),
+    SurfaceRule(
+        (
+            "typescript/apps/frontend/src/*",
+            "typescript/apps/frontend/src/**/*",
+            "typescript/apps/frontend/public/*",
+            "typescript/apps/frontend/public/**/*",
+            "typescript/apps/frontend/scripts/*",
+            "typescript/apps/frontend/scripts/**/*",
+            "typescript/apps/frontend/__mocks__/*",
+            "typescript/apps/frontend/__mocks__/**/*",
+            "typescript/apps/frontend/.ast-grep/*",
+            "typescript/apps/frontend/.ast-grep/**/*",
+            "typescript/apps/frontend/index.html",
+            "typescript/apps/frontend/knip.ts",
+            "typescript/apps/frontend/package.json",
+            "typescript/apps/frontend/biome.jsonc",
+            "typescript/apps/frontend/components.json",
+            "typescript/apps/frontend/steiger.config.ts",
+            "typescript/apps/frontend/tsconfig.json",
+            "typescript/apps/frontend/tsconfig.app.json",
+            "typescript/apps/frontend/tsconfig.node.json",
+            "typescript/apps/frontend/tsconfig.test.json",
+            "typescript/apps/frontend/vite.config.ts",
+            "typescript/apps/frontend/vitest.config.ts",
+            "typescript/apps/frontend/Caddyfile",
+        ),
+        flags=_FRONTEND_APP_FLAGS,
+    ),
+    SurfaceRule(
+        ("typescript/apps/frontend/e2e/*", "typescript/apps/frontend/e2e/**/*"),
+        flags=_FRONTEND_E2E_FLAGS,
+    ),
+    SurfaceRule(
+        (
+            "typescript/edge/auth-listings-worker/*",
+            "typescript/edge/auth-listings-worker/**/*",
+        ),
+        flags=("edge_worker",),
+    ),
+    SurfaceRule(
+        ("typescript/libs/*", "typescript/libs/**/*"),
+        flags=(*_FRONTEND_APP_FLAGS, "edge_worker"),
+    ),
     SurfaceRule(
         ("typescript/apps/frontend/src/api/schema.d.ts",),
-        flags=("generated_artifacts",),
+        flags=("api_schema_freshness",),
     ),
     SurfaceRule(
-        # openapi-typescript and vitest versions move generated output and tests.
+        # Root toolchain changes can affect every TypeScript consumer.
         ("pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json", ".npmrc"),
-        flags=(*_FRONTEND_FLAGS, "generated_artifacts"),
+        flags=(
+            *_FRONTEND_APP_FLAGS,
+            "frontend_e2e",
+            "edge_worker",
+            "api_schema_freshness",
+        ),
     ),
-    SurfaceRule(("biome.json", "biome.jsonc"), flags=("lint_frontend",)),
+    SurfaceRule(("biome.json", "biome.jsonc"), flags=("lint_frontend", "edge_worker")),
     SurfaceRule(
         ("Dockerfile", "**/Dockerfile", "**/Dockerfile.*", ".hadolint.yaml"),
         flags=("lint_docker",),
@@ -111,19 +167,37 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     ),
     SurfaceRule(("typescript/apps/frontend/Dockerfile",), flags=("frontend_smoke",)),
     SurfaceRule(
+        ("typescript/apps/frontend/Dockerfile.playwright-runner",),
+        flags=("frontend_e2e",),
+    ),
+    SurfaceRule(
         (".github/workflows/*", ".github/workflows/**/*"),
         flags=("lint_workflows",),
         packages=("ci-checks",),
     ),
-    SurfaceRule((".github/workflows/build-push.yml",), flags=("generated_artifacts",)),
+    SurfaceRule((".github/workflows/build-push.yml",), flags=("image_matrix_parity",)),
     # Helm, compose, gitops, and Qdrant contract tests live in ci-checks.
     SurfaceRule(("infra/*", "infra/**/*"), packages=("ci-checks",)),
+    SurfaceRule(
+        (
+            "infra/k8s/observability/*",
+            "infra/k8s/observability/**/*",
+            "infra/compose/docker-compose.yml",
+            "infra/compose/observability/otel/*",
+            "infra/compose/observability/otel/**/*",
+        ),
+        flags=("otel_collector",),
+    ),
     # Migration-truth contract tests pin every service's Alembic head.
     SurfaceRule(("backend/services/*/alembic/**/*",), packages=("ci-checks",)),
     SurfaceRule(("lefthook.yml",), flags=("nix",), packages=("ci-checks",)),
-    SurfaceRule(("Justfile",), flags=("generated_artifacts",), packages=("ci-checks",)),
-    SurfaceRule(("docs/api/*", "docs/api/**/*"), flags=("generated_artifacts",)),
-    SurfaceRule(("scripts/util/export-openapi.py",), flags=("generated_artifacts",)),
+    SurfaceRule(
+        ("Justfile", "infra/k8s/local/images.json"),
+        flags=("image_matrix_parity",),
+        packages=("ci-checks",),
+    ),
+    SurfaceRule(("docs/api/*", "docs/api/**/*"), flags=("api_schema_freshness",)),
+    SurfaceRule(("scripts/util/export-openapi.py",), flags=("api_schema_freshness",)),
     SurfaceRule(("semgrep.yml", "semgrep-overrides.txt"), flags=("hygiene",)),
     SurfaceRule(("scripts/ci/src/ci_checks/checks/*",), packages=("ci-checks",)),
     SurfaceRule(("scripts/ci/tests/*", "scripts/ci/tests/**/*"), packages=("ci-checks",)),

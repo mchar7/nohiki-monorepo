@@ -4,6 +4,7 @@ import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
 _WORKFLOW = _ROOT / ".github" / "workflows" / "build-push.yml"
+_TRIVYIGNORE = _ROOT / ".trivyignore"
 
 
 def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dispatch() -> None:
@@ -99,7 +100,6 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
     assert build["permissions"] == {
         "contents": "read",
         "packages": "write",
-        "security-events": "write",
     }
     assert "id-token" not in build["permissions"]
     assert build_steps["mode"]["env"]["SHOULD_PUSH"] == "${{ needs.event-validation.outputs.should_push }}"
@@ -110,6 +110,28 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
     assert "type=raw,value=sha-${{ needs.event-validation.outputs.short_source_sha }},enable=true" in metadata_tags
     assert "needs.event-validation.outputs.source_sha" not in metadata_tags
     assert build_steps["capture-digest"]["env"]["SOURCE_SHA"] == ("${{ needs.event-validation.outputs.source_sha }}")
+    trivy = build_steps["Run Trivy vulnerability scanner"]
+    assert trivy["env"] == {
+        "TRIVY_DISABLE_TELEMETRY": "true",
+        "TRIVY_SKIP_VERSION_CHECK": "true",
+    }
+    assert trivy["with"] == {
+        "image-ref": "${{ fromJSON(steps.meta.outputs.json).tags[0] }}",
+        "format": "sarif",
+        "output": "trivy-results-${{ matrix.name }}.sarif",
+        "severity": "CRITICAL,HIGH",
+        "exit-code": "1",
+    }
+    upload = build_steps["Upload Trivy scan results"]
+    assert upload["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    assert upload["if"] == "always()"
+    assert upload["with"] == {
+        "name": "trivy-results-${{ matrix.name }}",
+        "path": "trivy-results-${{ matrix.name }}.sarif",
+        "if-no-files-found": "error",
+        "retention-days": 30,
+    }
+    assert all("upload-sarif" not in step.get("uses", "") for step in build["steps"])
 
     aggregate = jobs["aggregate-digests"]
     assert aggregate["needs"] == ["event-validation", "build-push"]
@@ -120,3 +142,14 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
     assert "needs.event-validation.outputs.authorized == 'true'" in proposal["if"]
     assert proposal["permissions"] == {"contents": "write", "pull-requests": "write"}
     assert "id-token" not in proposal["permissions"]
+
+
+def test_trivy_waivers_each_have_a_reason_and_expiry() -> None:
+    blocks = _TRIVYIGNORE.read_text(encoding="utf-8").strip().split("\n\n")
+
+    assert blocks
+    for block in blocks:
+        reason, expiry, vulnerability_id = block.splitlines()
+        assert reason.startswith("# Reason: ")
+        assert expiry.startswith("# Expires: 20")
+        assert vulnerability_id.startswith("CVE-")

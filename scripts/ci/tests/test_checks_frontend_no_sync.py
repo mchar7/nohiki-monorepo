@@ -41,7 +41,7 @@ def test_frontend_and_python_tests_use_distinct_jobs() -> None:
     frontend_commands = " ".join(step.get("run", "") for step in jobs["frontend-tests"]["steps"])
     python_commands = " ".join(step.get("run", "") for step in jobs["python-tests"]["steps"])
 
-    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=25%" in frontend_commands
+    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=50%" in frontend_commands
     assert "ci-checks tests all" not in frontend_commands
     assert "ci-checks tests all" in python_commands
     assert "pnpm test --run" not in python_commands

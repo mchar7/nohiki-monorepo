@@ -41,6 +41,7 @@ const baseHookReturn: ReturnType<typeof useDocumentForm> = {
     id: 'version-1',
     namespace: 'default',
     name: 'Test Template',
+    display_name: 'Test Template',
     version: '1.0.0',
     template_content: '<html>{{ name }}</html>',
     content_schema: null,

@@ -9,7 +9,7 @@
     "analyze": "ANALYZE=true vite build",
     "build": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit && vite build",
     "preview": "vite preview",
-    "type-check": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "type-check": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "check": "biome check .",
     "check:apply": "biome check --write .",
     "check:all": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit && biome check . && vitest run",

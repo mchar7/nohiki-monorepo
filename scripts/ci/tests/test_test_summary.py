@@ -285,9 +285,11 @@ def test_python_batches_use_one_nix_interpreter_and_bounded_workers() -> None:
         for step in workflow["jobs"]["frontend-smoke"]["steps"]
         if step.get("name") == "Smoke production frontend container"
     )
-    assert "pytest scripts/ci/tests" in docker_smoke["run"]
-    assert "-m requires_docker" in docker_smoke["run"]
-    assert "::" not in docker_smoke["run"]
+    assert (
+        "pytest scripts/ci/tests/test_frontend_delivery.py"
+        "::test_frontend_container_build_and_hardened_runtime_smoke" in docker_smoke["run"]
+    )
+    assert "-m requires_docker" not in docker_smoke["run"]
 
 
 @pytest.mark.asyncio

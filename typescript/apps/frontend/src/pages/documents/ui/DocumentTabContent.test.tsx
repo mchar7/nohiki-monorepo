@@ -71,6 +71,7 @@ const DOCUMENT: MockDocument = {
   status: 'completed',
   download_url: null,
   error: null,
+  output_format: 'pdf',
   created_at: '2025-01-01T00:00:00.000Z',
 };
 
