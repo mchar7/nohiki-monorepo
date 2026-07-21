@@ -12,7 +12,7 @@ import type { TFunction } from 'i18next';
 import type { JSX } from 'react';
 import { I18nextProvider, useTranslation } from 'react-i18next';
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest';
-import type { JobCorrelationResponse } from '@/shared/api';
+import type { FeedbackType, JobCorrelationResponse } from '@/shared/api';
 import { TooltipProvider } from '@/shared/ui/tooltip.tsx';
 import { i18n } from '@/test/setup.ts';
 import { createColumns } from './matchesTableColumns.tsx';
@@ -52,10 +52,7 @@ function TestTable({
   isStatusActionPending = false,
 }: {
   readonly onFeedback?: (correlationId: string, type: 'like' | 'dislike') => Promise<void>;
-  readonly onStatusAction?: (
-    correlationId: string,
-    type: 'SAVED' | 'APPLIED' | 'DISMISSED',
-  ) => void;
+  readonly onStatusAction?: (correlationId: string, type: FeedbackType) => void;
   readonly isStatusActionPending?: boolean;
 }): JSX.Element {
   const { t } = useTranslation(['jobs', 'common']);
@@ -97,7 +94,7 @@ function TestTable({
 
 function renderTableWithRouter(
   onFeedback?: (correlationId: string, type: 'like' | 'dislike') => Promise<void>,
-  onStatusAction?: (correlationId: string, type: 'SAVED' | 'APPLIED' | 'DISMISSED') => void,
+  onStatusAction?: (correlationId: string, type: FeedbackType) => void,
   isStatusActionPending = false,
 ) {
   const rootRoute = createRootRoute();
@@ -267,14 +264,16 @@ describe('matchesTableColumns', () => {
     ])('does not open unsafe or malformed listing URL %s', async (listingUrl) => {
       const user = userEvent.setup();
       const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-      mockData[0] = { ...mockData[0], listing_url: listingUrl };
+      const original = mockData[0];
+      if (!original) throw new Error('expected a listing row');
+      mockData[0] = { ...original, listing_url: listingUrl };
       renderTableWithRouter();
 
       await user.click(await screen.findByRole('button', { name: 'More options' }));
       await user.click(await screen.findByText('View Original Posting'));
 
       expect(openSpy).not.toHaveBeenCalled();
-      mockData[0] = { ...mockData[0], listing_url: 'https://example.com/job' };
+      mockData[0] = { ...original, listing_url: 'https://example.com/job' };
       openSpy.mockRestore();
     });
 

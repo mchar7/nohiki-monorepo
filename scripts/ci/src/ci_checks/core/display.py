@@ -23,8 +23,12 @@ LANE_DISPLAY_NAMES: dict[str, str] = {
     "python_any": "Python tests",
     "frontend_tests": "Frontend tests",
     "frontend_smoke": "Frontend container smoke",
+    "frontend_e2e": "Playwright runner smoke",
+    "edge_worker": "Edge worker quality",
+    "otel_collector": "OpenTelemetry collector validation",
     "hygiene": "Code hygiene",
-    "generated_artifacts": "Generated artifacts",
+    "api_schema_freshness": "API schema freshness",
+    "image_matrix_parity": "Image matrix parity",
     "proto_breaking": "Protobuf compatibility",
 }
 

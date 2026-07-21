@@ -32,6 +32,7 @@ const mockTemplateFamily: TemplateFamilyResponse = {
   id: 'family-1',
   namespace: 'resume',
   name: 'Resume Template',
+  display_name: 'Resume Template',
 };
 
 const mockDataset: Dataset = {

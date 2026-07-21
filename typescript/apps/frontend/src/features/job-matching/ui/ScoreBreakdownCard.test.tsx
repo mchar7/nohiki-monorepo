@@ -36,6 +36,11 @@ const BREAKDOWN: FitRankingBreakdownResponse = {
   ],
 };
 
+const EMPTY_BREAKDOWN: FitRankingBreakdownResponse = {
+  method_version: 'deterministic-fit-v1',
+  factors: [],
+};
+
 function renderCard(
   breakdown: FitRankingBreakdownResponse | null | undefined,
   fitScore = 85,
@@ -94,7 +99,7 @@ describe('ScoreBreakdownCard public fit-ranking contract', () => {
   test.each([
     ['missing', undefined],
     ['null', null],
-    ['empty', { method_version: 'deterministic-fit-v1', factors: [] }],
+    ['empty', EMPTY_BREAKDOWN],
   ] as const)('renders unavailable when the typed breakdown is %s', (_state, breakdown) => {
     renderCard(breakdown);
 

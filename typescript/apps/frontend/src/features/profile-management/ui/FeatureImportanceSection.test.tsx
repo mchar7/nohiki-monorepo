@@ -83,7 +83,11 @@ describe('FeatureImportanceSection', () => {
     mockUseFormAutoSave.mockReturnValue(undefined);
 
     render(<FeatureImportanceSection profileId="prof-1" />, { wrapper: createWrapper() });
-    const { onSave } = mockUseFormAutoSave.mock.calls.at(-1)[0];
+    const lastAutoSaveCall = mockUseFormAutoSave.mock.calls.at(-1);
+    if (!lastAutoSaveCall) {
+      throw new Error('Expected useFormAutoSave to be called');
+    }
+    const { onSave } = lastAutoSaveCall[0];
     const values = {
       skill_match_importance: 80,
       location_importance: 50,

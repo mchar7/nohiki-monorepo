@@ -48,7 +48,7 @@ describe('DeveloperInfo cache clearing', () => {
     vi.spyOn(indexedDB, 'databases').mockResolvedValue([{ name: 'private-cache', version: 1 }]);
     vi.spyOn(indexedDB, 'deleteDatabase').mockImplementation(() => {
       const pending = {} as IDBOpenDBRequest;
-      queueMicrotask(() => pending.onblocked?.(new Event('blocked')));
+      queueMicrotask(() => pending.onblocked?.(new IDBVersionChangeEvent('blocked')));
       return pending;
     });
     const reload = vi.fn();

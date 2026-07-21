@@ -429,21 +429,39 @@ build-all:
     done
     exit "$status"
 
-# Ensure local and GitHub Actions release image names cannot drift
+# Ensure release image specs cannot drift across their three canonical inventories
 image-matrix-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    diff -u \
-        <(printf '%s\n' {{ first_party_image_names }} | sort) \
-        <(yq -r '.jobs."build-push".strategy.matrix.include[].name' .github/workflows/build-push.yml | sort)
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+
+    yq -r '
+        .jobs."build-push".strategy.matrix.include[]
+        | [.name, (.context // "."), .dockerfile, (.build_args // "")]
+        | join("|")
+    ' .github/workflows/build-push.yml | sort > "$tmp/workflow"
+
+    jq -r '
+        .images[]
+        | (.context // ".") as $context
+        | [
+            .name,
+            $context,
+            (if $context == "." then .dockerfile else $context + "/" + .dockerfile end),
+            ((.buildArgs // {}) | to_entries | sort_by(.key) | map("\(.key)=\(.value)") | join(","))
+        ]
+        | join("|")
+    ' infra/k8s/local/images.json | sort > "$tmp/inventory"
+
     read -ra specs <<< "{{ first_party_image_specs }}"
-    spec_names=()
-    for spec in "${specs[@]}"; do
-        spec_names+=("${spec%%|*}")
-    done
-    diff -u \
-        <(printf '%s\n' {{ first_party_image_names }} | sort) \
-        <(printf '%s\n' "${spec_names[@]}" | sort)
+    printf '%s\n' "${specs[@]}" | awk -F'|' 'BEGIN { OFS="|" } { print $1, $2, $3, $4 }' | sort > "$tmp/just"
+    diff -u --label workflow --label inventory "$tmp/workflow" "$tmp/inventory"
+    diff -u --label workflow --label justfile "$tmp/workflow" "$tmp/just"
+
+    printf '%s\n' {{ first_party_image_names }} | sort > "$tmp/names"
+    cut -d'|' -f1 "$tmp/just" | sort > "$tmp/spec-names"
+    diff -u --label first_party_image_names --label first_party_image_specs "$tmp/names" "$tmp/spec-names"
 
 # Measure image size after build
 build-measure service:

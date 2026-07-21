@@ -112,11 +112,11 @@ def test_evaluate_package_change_expands_runtime_and_test_extra_dependents() -> 
     assert {"lint_python", "python_any", "hygiene", "typecheck_backend"} <= python.flags
 
 
-def test_api_export_service_dependent_activates_generated_artifacts() -> None:
+def test_api_export_service_dependent_activates_schema_freshness() -> None:
     decision = evaluate({"backend/libs/lib-a/src/lib_a.py"}, _synthetic_packages())
 
     assert "bff-service" in decision.affected
-    assert "generated_artifacts" in decision.flags
+    assert "api_schema_freshness" in decision.flags
 
 
 def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> None:
@@ -143,17 +143,73 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
                 "typecheck_frontend",
                 "frontend_tests",
                 "frontend_smoke",
-                "generated_artifacts",
+                "api_schema_freshness",
+            },
+        ),
+        (
+            "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
+            {"lint_frontend", "typecheck_frontend", "frontend_e2e"},
+        ),
+        (
+            "typescript/edge/auth-listings-worker/src/index.ts",
+            {"edge_worker"},
+        ),
+        (
+            "typescript/libs/tsconfig/base.json",
+            {
+                "lint_frontend",
+                "typecheck_frontend",
+                "frontend_tests",
+                "frontend_smoke",
+                "edge_worker",
             },
         ),
     ],
 )
-def test_evaluate_frontend_flags_without_python(path: str, expected: set[str]) -> None:
+def test_evaluate_typescript_surfaces_without_python(path: str, expected: set[str]) -> None:
     decision = evaluate({path}, _synthetic_packages())
 
     assert decision.flags == expected
     assert "python_any" not in decision.flags
     assert not decision.full
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_full", "flags"),
+    [
+        (
+            "typescript/apps/frontend/Dockerfile",
+            "false",
+            {"frontend_smoke", "lint_docker", "python_any", "hygiene"},
+        ),
+        (
+            "typescript/apps/frontend/Dockerfile.playwright-runner",
+            "false",
+            {"frontend_e2e", "lint_docker", "python_any", "hygiene"},
+        ),
+        (
+            "infra/k8s/observability/base/otel/collector.yaml",
+            "false",
+            {"otel_collector", "python_any", "hygiene"},
+        ),
+        (
+            "scripts/util/export-openapi.py",
+            "false",
+            {"api_schema_freshness", "lint_python"},
+        ),
+        (
+            "infra/k8s/local/images.json",
+            "false",
+            {"image_matrix_parity", "python_any", "hygiene"},
+        ),
+        ("unknown.bin", "true", set()),
+    ],
+)
+def test_evaluate_container_and_generated_surfaces(path: str, expected_full: str, flags: set[str]) -> None:
+    decision = evaluate({path}, load_packages_with_deps(Scope.ALL))
+
+    assert str(decision.full).lower() == expected_full
+    assert decision.flags == flags
 
 
 def test_evaluate_deleted_package_path_still_maps_to_owner() -> None:

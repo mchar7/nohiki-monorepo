@@ -93,8 +93,8 @@ describe('JobHeader', () => {
     expect(screen.getByText('Toronto, ON')).toBeInTheDocument();
   });
 
-  test('hides location when null', () => {
-    renderDetail({ location_raw: null });
+  test('hides location when missing', () => {
+    renderDetail({ location_raw: undefined });
     expect(screen.queryByText('Toronto, ON')).not.toBeInTheDocument();
   });
 
@@ -108,8 +108,8 @@ describe('JobHeader', () => {
     expect(screen.getByText('mid')).toBeInTheDocument();
   });
 
-  test('shows localized fallback when company_name is null', () => {
-    renderDetail({ company_name: null });
+  test('shows localized fallback when company_name is missing', () => {
+    renderDetail({ company_name: undefined });
     // i18n key: jobs:detail.unknownCompany → "Unknown Company"
     expect(screen.getByText('Unknown Company')).toBeInTheDocument();
   });
@@ -121,8 +121,8 @@ describe('JobDescription', () => {
     expect(screen.getByText('We are looking for a backend developer.')).toBeInTheDocument();
   });
 
-  test('shows placeholder when description is null', () => {
-    renderDetail({ description: null });
+  test('shows placeholder when description is missing', () => {
+    renderDetail({ description: undefined });
     // i18n key: jobs:card.noDescription → "No description available"
     expect(screen.getByText('No description available')).toBeInTheDocument();
   });

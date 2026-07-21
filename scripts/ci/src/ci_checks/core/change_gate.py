@@ -122,7 +122,7 @@ def _derive_package_flags(decision: GateDecision, packages: dict[str, Package]) 
     if any(packages[name].pkg_type in _BACKEND_TYPES for name in decision.affected if name in packages):
         decision.flags.add("typecheck_backend")
     if decision.affected & API_EXPORT_SERVICES:
-        decision.flags.add("generated_artifacts")
+        decision.flags.add("api_schema_freshness")
 
 
 def tests_matrix(decision: GateDecision, packages: dict[str, Package]) -> dict[str, list[dict[str, str | bool]]]:

@@ -275,11 +275,7 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
     )
     assert _mapping_at(steps, "upload-digest")["if"] == "steps.mode.outputs.push == 'true'"
     assert _mapping_at(_mapping_at(steps, "upload-digest"), "with")["name"] == "image-digest-${{ matrix.name }}"
-    assert build["permissions"] == {
-        "contents": "read",
-        "packages": "write",
-        "security-events": "write",
-    }
+    assert build["permissions"] == {"contents": "read", "packages": "write"}
 
     aggregate = _mapping_at(jobs, "aggregate-digests")
     assert aggregate["needs"] == ["event-validation", "build-push"]

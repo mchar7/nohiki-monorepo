@@ -36,6 +36,7 @@ const createMockTemplateFamily = (
   id: 'family-1',
   namespace: 'default',
   name: 'Test Template',
+  display_name: 'Test Template',
   description: 'Test template',
   latest_version: null,
   ...overrides,

@@ -204,8 +204,12 @@ describe('useGenerateTailoredDocument', () => {
     );
     expect(response).toEqual(mockResponse);
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledOnce());
-    const [{ predicate }] = invalidateSpy.mock.calls[0] ?? [];
-    expect(predicate?.({ queryKey: ['get', '/api/v1/documents'] } as never)).toBe(true);
-    expect(predicate?.({ queryKey: ['get', '/api/v1/profiles'] } as never)).toBe(false);
+    const invalidationFilters = invalidateSpy.mock.calls[0]?.[0];
+    expect(
+      invalidationFilters?.predicate?.({ queryKey: ['get', '/api/v1/documents'] } as never),
+    ).toBe(true);
+    expect(
+      invalidationFilters?.predicate?.({ queryKey: ['get', '/api/v1/profiles'] } as never),
+    ).toBe(false);
   });
 });

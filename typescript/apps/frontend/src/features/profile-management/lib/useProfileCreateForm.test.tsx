@@ -59,7 +59,11 @@ describe('useProfileCreateForm', () => {
   test('keeps a 422 response as a form failure instead of navigating', async () => {
     mockMutateAsync.mockRejectedValue(new ApiError('Profile validation failed', 422));
 
-    const { result } = renderHook(() => useProfileCreateForm());
+    const { result } = renderHook(() => {
+      const profileForm = useProfileCreateForm();
+      void profileForm.form.formState.errors;
+      return profileForm;
+    });
 
     await act(async () => {
       await result.current.onSubmit(VALID_PROFILE_VALUES);
@@ -72,7 +76,7 @@ describe('useProfileCreateForm', () => {
         disallowed_keywords: ['php'],
       }),
     });
-    expect(result.current.form.getFieldState('root').error?.message).toContain(
+    expect(result.current.form.formState.errors.root?.message).toContain(
       'Profile validation failed',
     );
     expect(toast.error).toHaveBeenCalledTimes(1);

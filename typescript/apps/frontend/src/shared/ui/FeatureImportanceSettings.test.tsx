@@ -26,7 +26,8 @@ describe('FeatureImportanceSettings', () => {
     const onChange = vi.fn();
     render(<FeatureImportanceSettings values={VALUES} onChange={onChange} />);
 
-    const slider = screen.getAllByRole('slider')[0];
+    const [slider] = screen.getAllByRole('slider');
+    if (!slider) throw new Error('expected a feature-importance slider');
     expect(slider).toHaveAttribute('aria-valuemin', '0');
     expect(slider).toHaveAttribute('aria-valuemax', '100');
     expect(slider).toHaveAttribute('aria-valuenow', '80');

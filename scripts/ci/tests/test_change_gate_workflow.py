@@ -112,11 +112,15 @@ def test_checks_aggregator_only_allows_gate_sanctioned_skips() -> None:
     gates = {
         "nix": ("nix",),
         "frontend-smoke": ("frontend_smoke",),
+        "frontend-e2e": ("frontend_e2e",),
+        "edge-worker": ("edge_worker",),
+        "otel-collector": ("otel_collector",),
         "typecheck": ("typecheck_backend", "typecheck_frontend"),
         "python-tests": ("python_any",),
         "frontend-tests": ("frontend_tests",),
         "hygiene": ("hygiene",),
-        "generated-artifacts": ("generated_artifacts",),
+        "api-schema-freshness": ("api_schema_freshness",),
+        "image-matrix-parity": ("image_matrix_parity",),
         "proto-breaking": ("proto_breaking",),
     }
     for job_id, output_names in gates.items():
@@ -126,6 +130,26 @@ def test_checks_aggregator_only_allows_gate_sanctioned_skips() -> None:
         for output_name in output_names:
             gate_output = f"test '${{{{ needs.changes.outputs.{output_name} }}}}' != true"
             assert gate_output in skip_allowance, (job_id, output_name)
+
+
+def test_typescript_quality_jobs_use_ci_native_commands() -> None:
+    jobs = _jobs()
+    lint_steps = {cast("str", step.get("name")): step for step in _steps(jobs["lint"])}
+    assert lint_steps["Lint frontend"]["run"] == (
+        "nix develop .#ci --command pnpm --filter nohiki-frontend exec biome ci --reporter=github ."
+    )
+
+    edge_commands = {
+        cast("str", step.get("name")): cast("str", step.get("run"))
+        for step in _steps(jobs["edge-worker"])
+        if step.get("run")
+    }
+    assert "biome ci --reporter=github src/" in edge_commands["Lint edge worker"]
+    assert "exec tsc --noEmit" in edge_commands["Typecheck edge worker"]
+    assert "exec vitest run" in edge_commands["Test edge worker"]
+
+    frontend_test = next(step for step in _steps(jobs["frontend-tests"]) if step.get("name") == "Test frontend")
+    assert cast("str", frontend_test["run"]).endswith("test --run --maxWorkers=50%")
 
 
 def test_gitleaks_is_unconditional() -> None:

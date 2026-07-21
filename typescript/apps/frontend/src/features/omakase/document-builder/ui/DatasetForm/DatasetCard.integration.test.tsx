@@ -34,6 +34,7 @@ const mockSetActiveDataset = vi.fn<(id: string | null) => void>();
 const mockTemplateFamily: TemplateFamilyResponse = {
   id: 'version-1',
   name: 'Resume Template',
+  display_name: 'Resume Template',
   namespace: 'resume',
 };
 

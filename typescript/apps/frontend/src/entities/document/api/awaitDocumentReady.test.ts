@@ -141,6 +141,6 @@ describe('awaitDocumentReady edge cases', () => {
     });
     await promise;
 
-    expect(getDocumentEventStream().subscriberCount).toBe(0);
+    expect(getDocumentEventStream('req-cleanup').subscriberCount).toBe(0);
   });
 });

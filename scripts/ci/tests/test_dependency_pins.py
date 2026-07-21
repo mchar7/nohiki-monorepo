@@ -196,7 +196,7 @@ def test_python_workspace_installs_restore_the_exact_virtual_environment_cache()
     assert len(cache_pins) == 1, f"actions/cache pins diverge across workflows: {sorted(cache_pins)}"
     cache_action = cache_pins.pop()
     assert re.fullmatch(r"actions/cache@[0-9a-f]{40}", cache_action), cache_action
-    covered_jobs = 0
+    covered_jobs: set[str] = set()
 
     for job_name, job in workflow["jobs"].items():
         steps = job.get("steps", [])
@@ -221,9 +221,16 @@ def test_python_workspace_installs_restore_the_exact_virtual_environment_cache()
         assert ("--group deadcode" in install_command) == (job_name == "hygiene")
         if job_name == "hygiene":
             assert not any(step.get("name") == "Cache Skylos analysis" for step in steps)
-        covered_jobs += 1
+        covered_jobs.add(job_name)
 
-    assert covered_jobs == 5
+    assert covered_jobs == {
+        "api-schema-freshness",
+        "frontend-smoke",
+        "hygiene",
+        "otel-collector",
+        "python-tests",
+        "typecheck",
+    }
 
 
 def test_codeql_private_phase_trigger_contract() -> None:
