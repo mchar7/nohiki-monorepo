@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import fnmatch
+import json
 import re
 import subprocess
 import sys
@@ -12,6 +15,7 @@ from typing import cast
 
 import pytest
 import yaml
+from ci_checks.app import app
 from ci_checks.checks import deadcode as deadcode_check
 from ci_checks.checks.deadcode import (
     DeadCodeFinding,
@@ -22,9 +26,11 @@ from ci_checks.checks.deadcode import (
     _collect_scan_paths,
 )
 from ci_checks.core.packages import Package, PackageType
+from typer.testing import CliRunner
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CI_PROJECT = tomllib.loads((_ROOT / "scripts" / "ci" / "pyproject.toml").read_text(encoding="utf-8"))
+_ROOT_PROJECT = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 _LEFTHOOK_CONFIG = yaml.safe_load((_ROOT / "lefthook.yml").read_text(encoding="utf-8"))
 _SEMGREP_OVERRIDES = (_ROOT / "semgrep-overrides.txt").read_text(encoding="utf-8").splitlines()
 _DEADCODE_SWEEP = yaml.safe_load((_ROOT / ".github" / "workflows" / "deadcode-sweep.yml").read_text(encoding="utf-8"))
@@ -34,7 +40,7 @@ def _run_git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
 
-def _options() -> DeadCodeScanOptions:
+def _options(*, summary: Path | None = None) -> DeadCodeScanOptions:
     return DeadCodeScanOptions(
         confidence=80,
         llm=False,
@@ -51,7 +57,7 @@ def _options() -> DeadCodeScanOptions:
         diff=None,
         diff_base=None,
         github=False,
-        summary=False,
+        summary=summary,
         severity=SeverityLevel.HIGH,
         file_filter=None,
         limit=None,
@@ -92,6 +98,166 @@ async def test_deadcode_fails_closed_without_ripgrep(
             "ripgrep (rg) is required for deterministic Skylos grep verification",
         )
     ]
+
+
+def _valid_skylos_result(*, findings: list[dict[str, object]] | None = None) -> bytes:
+    payload = {
+        "unused_functions": findings or [],
+        "unused_imports": [],
+        "unused_classes": [],
+        "unused_variables": [],
+        "unused_parameters": [],
+    }
+    return json.dumps(payload).encode()
+
+
+class _SkylosProcess:
+    def __init__(self, returncode: int, stdout: bytes, stderr: bytes = b"") -> None:
+        self.returncode = returncode
+        self._stdout = stdout
+        self._stderr = stderr
+        self.killed = False
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return self._stdout, self._stderr
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "expected"),
+    [
+        (0, b"", "invalid or incomplete JSON"),
+        (1, b"not-json", "invalid or incomplete JSON"),
+        (1, _valid_skylos_result(), "without dead-code findings"),
+        (2, _valid_skylos_result(), "exited with code 2"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_deadcode_fails_closed_on_invalid_or_non_finding_scanner_results(
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    stdout: bytes,
+    expected: str,
+) -> None:
+    """No scanner error path may be reinterpreted as a clean result."""
+    process = _SkylosProcess(returncode, stdout, b"scanner diagnostic")
+
+    async def spawn(*_args: object, **_kwargs: object) -> _SkylosProcess:
+        return process
+
+    monkeypatch.setattr(deadcode_check.shutil, "which", lambda *_args, **_kwargs: "/bin/rg")
+    monkeypatch.setattr(deadcode_check.asyncio, "create_subprocess_exec", spawn)
+
+    results = await deadcode_check.scan_scope(
+        [Package(name="package", path=_ROOT, pkg_type=PackageType.OTHER)],
+        _options(),
+    )
+
+    assert [(result.name, result.passed) for result in results] == [("scanner", False)]
+    assert expected in results[0].error
+    assert results[0].error.endswith("scanner diagnostic")
+    assert not deadcode_check.render_results(results, fail_on_findings=False)
+
+
+@pytest.mark.asyncio
+async def test_deadcode_timeout_is_a_scanner_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bounded scan timeout must fail with captured stderr instead of a traceback."""
+
+    class TimeoutProcess(_SkylosProcess):
+        calls = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            self.calls += 1
+            if self.calls == 1:
+                await asyncio.sleep(60)
+            return b"", b"timeout diagnostic"
+
+    process = TimeoutProcess(1, b"")
+
+    async def spawn(*_args: object, **_kwargs: object) -> TimeoutProcess:
+        return process
+
+    monkeypatch.setattr(deadcode_check, "SKYLOS_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(deadcode_check.shutil, "which", lambda *_args, **_kwargs: "/bin/rg")
+    monkeypatch.setattr(deadcode_check.asyncio, "create_subprocess_exec", spawn)
+
+    results = await deadcode_check.scan_scope(
+        [Package(name="package", path=_ROOT, pkg_type=PackageType.OTHER)],
+        _options(),
+    )
+
+    assert process.killed
+    assert not results[0].passed
+    assert "timed out" in results[0].error
+    assert "timeout diagnostic" in results[0].error
+
+
+@pytest.mark.parametrize(
+    ("installed_version", "expected_version"),
+    [("4.30.0", "4.30.0"), (None, "unknown")],
+)
+@pytest.mark.asyncio
+async def test_deadcode_summary_uses_sha_pinned_finding_links(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    installed_version: str | None,
+    expected_version: str,
+) -> None:
+    """The lane summary must bind every source link to the analyzed commit."""
+    finding = {
+        "name": "dead_symbol",
+        "file": "scripts/ci/src/ci_checks/app.py",
+        "line": 53,
+        "type": "function",
+        "confidence": 100,
+        "message": "unused",
+    }
+    process = _SkylosProcess(1, _valid_skylos_result(findings=[finding]))
+
+    async def spawn(*_args: object, **_kwargs: object) -> _SkylosProcess:
+        return process
+
+    summary = tmp_path / "summary.md"
+
+    def version_lookup(distribution: str) -> str:
+        if installed_version is None:
+            raise deadcode_check.importlib.metadata.PackageNotFoundError(distribution)
+        return installed_version
+
+    monkeypatch.setattr(deadcode_check.importlib.metadata, "version", version_lookup)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "mchar7/nohiki-monorepo")
+    monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    monkeypatch.setattr(deadcode_check.shutil, "which", lambda *_args, **_kwargs: "/bin/rg")
+    monkeypatch.setattr(deadcode_check.asyncio, "create_subprocess_exec", spawn)
+
+    await deadcode_check.scan_scope(
+        [
+            Package(
+                name="ci-checks",
+                path=_ROOT / "scripts" / "ci",
+                pkg_type=PackageType.OTHER,
+            )
+        ],
+        _options(summary=summary),
+    )
+
+    rendered = summary.read_text(encoding="utf-8")
+    assert "## Code hygiene\n\n### Dead code (Skylos)" in rendered
+    assert f"- Version: `{expected_version}`" in rendered
+    assert "Verdict: **findings**" in rendered
+    assert (
+        f"https://github.com/mchar7/nohiki-monorepo/blob/{'a' * 40}/scripts/ci/src/ci_checks/app.py#L53"
+    ) in rendered
+
+
+def test_deadcode_confidence_is_bounded() -> None:
+    """Typer must reject confidence values outside Skylos' supported range."""
+    assert CliRunner().invoke(app, ["deadcode", "--confidence", "-1"]).exit_code == 2
+    assert CliRunner().invoke(app, ["deadcode", "--confidence", "101"]).exit_code == 2
 
 
 def test_deadcode_inputs_ignore_local_caches_and_generated_outputs(
@@ -143,8 +309,55 @@ def test_deadcode_command_uses_locked_skylos_offline_whole_graph() -> None:
     # name-only baseline fingerprints suppress globally; the clean corpus needs no baseline
     assert "--baseline" not in command
     assert "--no-upload" in command
+    assert "--summary" not in command
     assert "--diff" not in command
     assert "--no-grep-verify" not in command
+
+
+def test_deadcode_whitelist_is_path_scoped_and_collision_safe() -> None:
+    """Every former global exception must match only its defining file."""
+    expected_names = {
+        "K8sDeploymentRolloutCheck",
+        "KubernetesPlatformContractsCheck",
+        "aclose",
+        "generate",
+        "get_profile",
+        "handle",
+        "initiate_upload",
+        "list_profiles",
+        "matches",
+        "predict",
+        "record_error",
+        "record_orphan_completion",
+        "record_request",
+        "reset_cache",
+        "version_callback",
+        "_execute_function",
+        "_generate_content",
+        "_handle_circuit_open",
+        "_handle_exception",
+        "_handle_failure",
+        "_handle_success",
+        "_log_pipeline_start",
+        "_profile_to_detail",
+        "_validate_shape_kafka_consistency",
+        "_validate_strings",
+        "_validate_topic_naming",
+        "_validate_topic_name",
+    }
+    skylos = cast("dict[str, object]", cast("dict[str, object]", _ROOT_PROJECT["tool"])["skylos"])
+    whitelist = cast("dict[str, object]", skylos["whitelist"])
+    overrides = cast("dict[str, dict[str, list[str]]]", skylos["overrides"])
+    patterns = [pattern for rules in overrides.values() for pattern in rules["whitelist"]]
+
+    assert whitelist.get("names") == []
+    assert not whitelist.get("documented")
+    assert all("*" not in path and "?" not in path and "[" not in path for path in overrides)
+    assert all((_ROOT / path).is_file() for path in overrides)
+    assert {
+        name for name in expected_names if any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
+    } == expected_names
+    assert all(sum(fnmatch.fnmatchcase(name, pattern) for name in expected_names) == 1 for pattern in patterns)
 
 
 def test_deadcode_baseline_gate_passes_known_findings_and_fails_new_findings() -> None:
@@ -178,6 +391,7 @@ def test_weekly_deadcode_sweep_keeps_full_grep_verification() -> None:
     command = cast("str", scan["run"])
 
     assert "--scope all" in command
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in command
     assert "--baseline" not in command
     assert "--no-grep-verify" not in command
 

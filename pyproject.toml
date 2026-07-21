@@ -638,39 +638,74 @@ nohiki-redis-utils = "nohiki_redis_utils"
 pydantic-settings = "pydantic_settings"
 
 # SKYLOS - Dead code detection (ci-checks deadcode)
-# ci-checks deadcode false positives: names skylos' static resolver misses in
-# some environments despite live references (evidence per name in git history
-# of this line): instance-attribute and DI-injected calls, typer callbacks,
-# dataclass __post_init__ and self-call dispatch, async lifecycle protocol
-# members, classmethod invocations. Name-based and global (the only mechanism
-# skylos offers); prune when upstream resolution improves.
+# Dynamic dispatch exceptions are scoped to their definitions below so an
+# identically named dead symbol elsewhere remains visible.
 [tool.skylos.whitelist]
-names = [
-    "K8sDeploymentRolloutCheck",
-    "KubernetesPlatformContractsCheck",
-    "aclose",
-    "generate",
-    "get_profile",
-    "handle",
-    "initiate_upload",
-    "list_profiles",
-    "matches",
-    "predict",
-    "record_error",
-    "record_orphan_completion",
-    "record_request",
-    "reset_cache",
-    "version_callback",
-    "_execute_function",
-    "_generate_content",
-    "_handle_circuit_open",
-    "_handle_exception",
-    "_handle_failure",
-    "_handle_success",
-    "_log_pipeline_start",
-    "_profile_to_detail",
-    "_validate_shape_kafka_consistency",
-    "_validate_strings",
-    "_validate_topic_naming",
-    "_validate_topic_name",
+names = []
+
+# Health-check classes are instantiated from the registry in health_check.checks.
+[tool.skylos.overrides."scripts/util/health_check/src/health_check/checks/kubernetes/deployment_rollout.py"]
+whitelist = ["K8sDeploymentRolloutChec[k]"]
+
+[tool.skylos.overrides."scripts/util/health_check/src/health_check/checks/kubernetes/platform_contracts.py"]
+whitelist = ["KubernetesPlatformContractsChec[k]"]
+
+# Provider and orchestrator lifecycle methods satisfy runtime protocols.
+[tool.skylos.overrides."backend/services/notification-service/src/notification_service/services/provider_clients/resend_email_provider.py"]
+whitelist = ["aclos[e]"]
+
+[tool.skylos.overrides."scripts/util/tailor/src/tailor/core/orchestrator.py"]
+whitelist = ["aclos[e]", "generat[e]", "_generate_conten[t]", "_log_pipeline_star[t]"]
+
+# FastAPI dependency injection and projection dispatch obscure these calls.
+[tool.skylos.overrides."backend/services/bff-service/src/bff_service/services/profile_service.py"]
+whitelist = ["get_profil[e]", "list_profile[s]", "_profile_to_detai[l]"]
+
+[tool.skylos.overrides."backend/services/bff-service/src/bff_service/services/upload_service.py"]
+whitelist = ["initiate_uploa[d]"]
+
+# The change gate evaluates rules through its table-driven matcher.
+# Same-name probes remain grep-rescued elsewhere; the path scope is future-proofing.
+[tool.skylos.overrides."scripts/ci/src/ci_checks/core/change_rules.py"]
+whitelist = ["matche[s]"]
+
+# The scoring protocol invokes predictor implementations through structural typing.
+[tool.skylos.overrides."backend/services/job-correlation-evaluation-service/src/job_correlation_evaluation_service/services/scoring/listing_quality.py"]
+whitelist = ["predic[t]"]
+
+# Metrics adapters are invoked through injected protocol-shaped objects.
+[tool.skylos.overrides."backend/services/doc-process-service/src/doc_process_service/metrics.py"]
+whitelist = ["record_erro[r]", "record_reques[t]"]
+
+[tool.skylos.overrides."backend/services/job-storage-service/src/job_storage_service/metrics/ingest.py"]
+whitelist = ["record_orphan_completio[n]"]
+
+# Tests and lifecycle setup call this classmethod through the manager type.
+[tool.skylos.overrides."backend/services/job-correlation-evaluation-service/src/job_correlation_evaluation_service/services/scoring/pipeline_config.py"]
+whitelist = ["reset_cach[e]"]
+
+# Typer calls eager option callbacks during command parsing.
+[tool.skylos.overrides."scripts/util/tailor/src/tailor/cli/app.py"]
+whitelist = ["version_callbac[k]"]
+
+# Decorator dispatch reaches these helpers through the executor instance.
+# `handle` probes remain grep-rescued elsewhere; the path scope is future-proofing.
+[tool.skylos.overrides."backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/circuit_breaker_decorator.py"]
+whitelist = [
+    "handl[e]",
+    "_execute_functio[n]",
+    "_handle_circuit_ope[n]",
+    "_handle_exceptio[n]",
+    "_handle_failur[e]",
+    "_handle_succes[s]",
 ]
+
+# Dataclass post-init validation invokes these methods implicitly.
+[tool.skylos.overrides."scripts/util/scaffold/src/nohiki_scaffold/core/models/service.py"]
+whitelist = ["_validate_shape_kafka_consistenc[y]", "_validate_string[s]"]
+
+[tool.skylos.overrides."backend/libs/nohiki-kafka-client/src/nohiki_kafka_client/admin/models.py"]
+whitelist = ["_validate_topic_nam[e]"]
+
+[tool.skylos.overrides."backend/libs/nohiki-kafka-client/src/nohiki_kafka_client/handlers/types.py"]
+whitelist = ["_validate_topic_namin[g]"]
