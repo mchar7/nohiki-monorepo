@@ -16,8 +16,6 @@ Fail-closed tiers:
 import fnmatch
 from dataclasses import dataclass
 
-from ci_checks.core.packages import Scope
-
 # Lane flags emitted to $GITHUB_OUTPUT. Every name must have a matching
 # consumer in .github/workflows/checks.yml.
 FLAG_NAMES: tuple[str, ...] = (
@@ -38,14 +36,6 @@ FLAG_NAMES: tuple[str, ...] = (
     "proto_breaking",
 )
 
-# Matrix lanes; must stay aligned with the python-tests matrix in checks.yml.
-TEST_SCOPES: tuple[Scope, ...] = (
-    Scope.SERVICES,
-    Scope.LIBS,
-    Scope.JOBS,
-    Scope.SCRIPTS,
-    Scope.OTHER,
-)
 
 # Services whose FastAPI apps feed scripts/util/export-openapi.py. A change
 # reaching either one (directly or through a dependency) can move the merged

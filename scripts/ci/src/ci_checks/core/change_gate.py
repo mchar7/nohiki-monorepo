@@ -14,25 +14,16 @@ from ci_checks.core.change_rules import (
     FLAG_NAMES,
     GLOBAL_TRIGGERS,
     SURFACE_RULES,
-    TEST_SCOPES,
 )
 from ci_checks.core.display import LANE_DISPLAY_NAMES
 from ci_checks.core.packages import (
     REPO_ROOT,
     Package,
     PackageType,
-    Scope,
     build_reverse_dependency_index,
     expand_to_dependents,
 )
-
-_SCOPE_TO_TYPE: dict[Scope, PackageType] = {
-    Scope.SERVICES: PackageType.SERVICE,
-    Scope.LIBS: PackageType.LIB,
-    Scope.JOBS: PackageType.JOB,
-    Scope.SCRIPTS: PackageType.SCRIPTS,
-    Scope.OTHER: PackageType.OTHER,
-}
+from ci_checks.core.test_batches import load_test_batches
 
 _BACKEND_TYPES: frozenset[PackageType] = frozenset({PackageType.SERVICE, PackageType.LIB, PackageType.JOB})
 
@@ -134,37 +125,51 @@ def _derive_package_flags(decision: GateDecision, packages: dict[str, Package]) 
         decision.flags.add("generated_artifacts")
 
 
-def tests_matrix(decision: GateDecision, packages: dict[str, Package]) -> dict[str, list[dict[str, str]]]:
-    """Build the python-tests strategy matrix for the decision.
+def tests_matrix(decision: GateDecision, packages: dict[str, Package]) -> dict[str, list[dict[str, str | bool]]]:
+    """Build the duration-balanced python-tests strategy matrix.
 
     Args:
         decision: Evaluated gate decision.
         packages: Workspace packages keyed by name.
 
     Returns:
-        A GitHub Actions matrix object: full runs carry every scope with
-        the ``ALL`` sentinel; scoped runs carry only scopes whose affected
-        set contains testable packages, as a sorted CSV.
+        A GitHub Actions matrix object containing the affected portion of each
+        committed batch, or all three complete batches for a full run.
+
+    Raises:
+        ValueError: If the committed batches do not partition the workspace.
     """
-    include: list[dict[str, str]] = []
-    for scope in TEST_SCOPES:
-        if decision.full:
-            include.append({"scope": scope.value, "packages": "ALL"})
-            continue
-        scope_type = _SCOPE_TO_TYPE[scope]
+    if not decision.full and not decision.affected:
+        return {"include": []}
+    batches = load_test_batches()
+    assigned = [name for batch in batches for name in batch.packages]
+    workspace = set(packages)
+    if set(assigned) != workspace or len(assigned) != len(workspace):
+        missing = sorted(workspace - set(assigned))
+        extra = sorted(set(assigned) - workspace)
+        duplicates = sorted(name for name in set(assigned) if assigned.count(name) > 1)
+        msg = f"invalid Python test batch assignment: missing={missing}, extra={extra}, duplicates={duplicates}"
+        raise ValueError(msg)
+
+    include: list[dict[str, str | bool]] = []
+    for batch in batches:
         names = sorted(
-            name
-            for name in decision.affected
-            if name in packages and packages[name].pkg_type == scope_type and packages[name].has_tests
+            name for name in batch.packages if packages[name].has_tests and (decision.full or name in decision.affected)
         )
         if names:
-            include.append({"scope": scope.value, "packages": ",".join(names)})
+            include.append(
+                {
+                    "batch": batch.name,
+                    "packages": ",".join(names),
+                    "needs_pnpm": batch.needs_pnpm,
+                }
+            )
     return {"include": include}
 
 
 def render_outputs(
     decision: GateDecision,
-    matrix: dict[str, list[dict[str, str]]],
+    matrix: dict[str, list[dict[str, str | bool]]],
     event: str,
 ) -> dict[str, str]:
     """Render the decision as $GITHUB_OUTPUT key/value pairs.

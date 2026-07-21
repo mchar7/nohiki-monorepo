@@ -8,6 +8,7 @@ import typer
 from ci_checks.checks import gate as checks_gate
 from ci_checks.checks import tests as checks_tests
 from ci_checks.checks.gate import gate_cmd
+from ci_checks.core import change_gate as change_gate_module
 from ci_checks.core import packages as packages_module
 from ci_checks.core.change_gate import (
     GateDecision,
@@ -18,7 +19,7 @@ from ci_checks.core.change_gate import (
 from ci_checks.core.change_gate import (
     tests_matrix as build_tests_matrix,
 )
-from ci_checks.core.change_rules import FLAG_NAMES, TEST_SCOPES
+from ci_checks.core.change_rules import FLAG_NAMES
 from ci_checks.core.display import GATE_LABELS, LANE_DISPLAY_NAMES
 from ci_checks.core.packages import (
     REPO_ROOT,
@@ -29,6 +30,7 @@ from ci_checks.core.packages import (
     expand_to_dependents,
     load_packages_with_deps,
 )
+from ci_checks.core.test_batches import TestBatch as BatchSpec
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -274,6 +276,7 @@ lint = ["lint-dep"]
 
 def test_tests_matrix_full_and_scoped_excludes_packages_without_tests(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     package_specs = (
         ("z-service", PackageType.SERVICE, True),
@@ -288,17 +291,26 @@ def test_tests_matrix_full_and_scoped_excludes_packages_without_tests(
         if has_tests:
             (path / "tests").mkdir()
         packages[name] = Package(name, path, package_type)
+    monkeypatch.setattr(
+        change_gate_module,
+        "load_test_batches",
+        lambda: (
+            BatchSpec(name="batch-1", packages=("z-service", "a-service"), needs_pnpm=True),
+            BatchSpec(name="batch-2", packages=("untested-lib",), needs_pnpm=False),
+            BatchSpec(name="batch-3", packages=("tested-lib",), needs_pnpm=False),
+        ),
+    )
 
     full = build_tests_matrix(GateDecision(full=True), packages)
-    assert full == {"include": [{"scope": scope.value, "packages": "ALL"} for scope in TEST_SCOPES]}
-
-    scoped = build_tests_matrix(GateDecision(affected=set(packages)), packages)
-    assert scoped == {
+    assert full == {
         "include": [
-            {"scope": "services", "packages": "a-service,z-service"},
-            {"scope": "libs", "packages": "tested-lib"},
+            {"batch": "batch-1", "packages": "a-service,z-service", "needs_pnpm": True},
+            {"batch": "batch-3", "packages": "tested-lib", "needs_pnpm": False},
         ]
     }
+
+    scoped = build_tests_matrix(GateDecision(affected=set(packages)), packages)
+    assert scoped == full
 
 
 def test_lane_display_names_cover_gate_flags_exactly() -> None:
@@ -319,14 +331,14 @@ def test_gate_labels_have_distinct_stable_colors() -> None:
 
 
 def test_render_outputs_serializes_flags_matrix_and_event_contract() -> None:
-    matrix = {"include": [{"scope": "libs", "packages": "lib-a"}]}
+    matrix = {"include": [{"batch": "batch-2", "packages": "lib-a", "needs_pnpm": False}]}
     scoped = render_outputs(GateDecision(flags={"lint_python"}), matrix, "push")
 
     assert scoped["lint_python"] == "true"
     assert scoped["nix"] == "false"
     assert set(scoped.values()) - {"true", "false", scoped["tests_matrix"]} == set()
     assert json.loads(scoped["tests_matrix"]) == matrix
-    assert scoped["tests_matrix"] == '{"include":[{"scope":"libs","packages":"lib-a"}]}'
+    assert scoped["tests_matrix"] == ('{"include":[{"batch":"batch-2","packages":"lib-a","needs_pnpm":false}]}')
     assert scoped["commitlint_expected"] == "false"
     assert render_outputs(GateDecision(), {"include": []}, "pull_request")["commitlint_expected"] == "true"
 
@@ -417,6 +429,11 @@ def test_gate_cli_scopes_only_supported_events_with_usable_base(
 
     monkeypatch.setattr(checks_gate, "_diff_files", diff_files)
     monkeypatch.setattr(checks_gate, "load_packages_with_deps", lambda _scope: _synthetic_packages())
+    monkeypatch.setattr(
+        change_gate_module,
+        "load_test_batches",
+        lambda: (BatchSpec(name="batch-1", packages=tuple(_synthetic_packages()), needs_pnpm=False),),
+    )
 
     result = CliRunner().invoke(
         app,
@@ -430,7 +447,11 @@ def test_gate_cli_scopes_only_supported_events_with_usable_base(
     if expected_full == "true":
         assert all(parsed[flag] == "true" for flag in FLAG_NAMES)
         assert json.loads(parsed["tests_matrix"])["include"] == [
-            {"scope": scope.value, "packages": "ALL"} for scope in TEST_SCOPES
+            {
+                "batch": "batch-1",
+                "packages": "bff-service,nohiki-domain-models",
+                "needs_pnpm": False,
+            }
         ]
         assert json.loads(parsed["labels"]) == [
             {"name": name, "color": color, "active": "true"} for name, color in GATE_LABELS.values()

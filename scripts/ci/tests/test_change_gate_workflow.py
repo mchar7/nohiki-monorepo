@@ -137,3 +137,4 @@ def test_python_test_matrix_comes_from_change_gate() -> None:
     python_tests = _jobs()["python-tests"]
     strategy = cast("dict[str, object]", python_tests["strategy"])
     assert strategy["matrix"] == "${{ fromJSON(needs.changes.outputs.tests_matrix) }}"
+    assert python_tests["name"] == "Python tests (${{ matrix.batch }})"

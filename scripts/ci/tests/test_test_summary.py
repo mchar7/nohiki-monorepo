@@ -15,6 +15,7 @@ from ci_checks.checks.tests import (
     CoverageResult,
     _check_exit_conditions,
     display_summary,
+    render_github_summary,
 )
 from ci_checks.checks.tests import (
     TestResult as RunnerTestResult,
@@ -65,6 +66,29 @@ def test_summary_honors_exempt_package_coverage_policy() -> None:
     assert "COVERAGE: OK" in output
     assert "BELOW THRESHOLD" not in output
     assert not _check_exit_conditions([result], strict=True, with_coverage=True)
+
+
+def test_github_summary_renders_batch_results_as_markdown() -> None:
+    results = [
+        RunnerTestResult(
+            name="package-b",
+            passed=False,
+            duration_ms=2345,
+            coverage=CoverageResult(total_coverage=78.0),
+        ),
+        RunnerTestResult(
+            name="package-a",
+            passed=True,
+            duration_ms=1234,
+            coverage=CoverageResult(total_coverage=96.0),
+        ),
+    ]
+
+    summary = render_github_summary(results, "batch-2")
+
+    assert summary.startswith("## Python tests (batch-2)\n\n**1/2 packages passed.**")
+    assert "| `package-a` | 1.2s | 96% | Pass |" in summary
+    assert "| `package-b` | 2.3s | 78% | Fail |" in summary
 
 
 @pytest.mark.asyncio
@@ -236,13 +260,13 @@ async def test_integration_run_ignores_unit_fixture_report(monkeypatch: pytest.M
     assert commands[0][commands[0].index("-m") + 1] == "integration"
 
 
-def test_scripts_ci_uses_one_nix_interpreter_and_bounded_workers() -> None:
-    """Every matrix lane must build and run one nix environment without starving ci-checks."""
+def test_python_batches_use_one_nix_interpreter_and_bounded_workers() -> None:
+    """Every matrix batch builds and runs one nix environment with bounded workers."""
     workflow = yaml.safe_load(_CHECKS_WORKFLOW.read_text(encoding="utf-8"))
     python_steps = {step["name"]: step for step in workflow["jobs"]["python-tests"]["steps"] if "name" in step}
 
     sync = python_steps["Install workspace (all packages + extras)"]
-    test = python_steps["Run scoped tests"]
+    test = python_steps["Run batch tests"]
     assert "if" not in sync
     assert "if" not in test
 
@@ -250,9 +274,11 @@ def test_scripts_ci_uses_one_nix_interpreter_and_bounded_workers() -> None:
     assert interpreter_pin in sync["run"]
     assert "uv sync --all-packages --all-extras --no-extra cuda --frozen" in sync["run"]
     assert interpreter_pin in test["run"]
-    assert '--scope ${{ matrix.scope }} --packages "${{ matrix.packages }}" --ci --workers' in test["run"]
-    assert "workers=1" in test["run"]
-    assert "workers=2" in test["run"]
+    assert '--scope all --packages "${{ matrix.packages }}"' in test["run"]
+    assert "--ci --workers 2" in test["run"]
+    assert "--lf" not in test["run"]
+    assert "--ff" not in test["run"]
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in test["run"]
 
     docker_smoke = next(
         step
