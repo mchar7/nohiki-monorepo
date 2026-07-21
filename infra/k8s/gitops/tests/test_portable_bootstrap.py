@@ -1,19 +1,19 @@
 """Portable contracts for the one-time bootstrap and local lifecycle boundary.
 
-Local Kubernetes operations have exactly eight public entrypoints:
+Local Kubernetes operations have exactly seven public entrypoints:
 ``k8s-preflight-local``, ``k8s-bootstrap-local``,
 ``k8s-publish-local-images``, ``k8s-reconcile-local``, ``k8s-verify-local``,
-``k8s-diagnostics-local``, ``k8s-reset-local``, and
-``k8s-factory-reset-local``. Their shared lifecycle authority is covered in
+``k8s-diagnostics-local``, and ``k8s-factory-reset-local``. Their shared
+lifecycle authority is covered in
 ``scripts/ci/tests/test_local_lifecycle.py``; this module instead exercises
 portable bootstrap boundaries that do not require a live cluster.
 
 The bootstrap is a one-time operation with validate, dry-run, and execute
 modes. It accepts only the reviewed local runtime-control identity, renders the
 exact three-file Flux source in isolation, and refuses stale or ambiguous
-state. Normal convergence belongs to the reconcile lifecycle command. Reset
-confirmation is enforced after lifecycle dispatch by the reset authority, not
-encoded into the Justfile delegation.
+state. Normal convergence belongs to the reconcile lifecycle command. Factory
+reset confirmation is enforced after lifecycle dispatch by the reset authority,
+not encoded into the Justfile delegation.
 
 Run only these:
     uv run pytest infra/k8s/gitops/tests/test_portable_bootstrap.py -v
@@ -364,32 +364,17 @@ def test_gitops_install_recipe_is_removed() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("mode", "acknowledgement_arguments", "expected_error"),
-    [
-        (
-            "reset",
-            ("--acknowledge-data-loss", "wrong acknowledgement"),
-            "exact --acknowledge-data-loss text is required",
-        ),
-        (
-            "factory-reset",
-            (
-                "--acknowledge-data-loss",
-                DATA_LOSS_ACK,
-                "--acknowledge-factory-reset",
-                "wrong acknowledgement",
-            ),
-            "exact --acknowledge-factory-reset text is required",
-        ),
-    ],
-)
-def test_reset_confirmation_is_enforced_after_lifecycle_dispatch(
+def test_factory_reset_confirmation_is_enforced_after_lifecycle_dispatch(
     tmp_path: Path,
-    mode: str,
-    acknowledgement_arguments: tuple[str, ...],
-    expected_error: str,
 ) -> None:
+    acknowledgement_arguments = (
+        "--acknowledge-data-loss",
+        DATA_LOSS_ACK,
+        "--acknowledge-factory-reset",
+        "wrong acknowledgement",
+    )
+    expected_error = "exact --acknowledge-factory-reset text is required"
+    mode = "factory-reset"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     marker = tmp_path / "mutating-tool-called"
@@ -417,6 +402,8 @@ def test_reset_confirmation_is_enforced_after_lifecycle_dispatch(
         *acknowledgement_arguments,
         "--owner-authorization",
         "I am the recorded owner portable-test",
+        "--evidence-output",
+        str(tmp_path / "transaction.json"),
     ]
 
     result = _run(arguments, cwd=REPO_ROOT, env=environment)

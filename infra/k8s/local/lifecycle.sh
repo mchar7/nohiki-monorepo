@@ -12,7 +12,7 @@ bootstrap_helper="infra/k8s/gitops/install/bootstrap.sh"
 secret_helper="scripts/infra/validate_local_secret_sources.py"
 secret_source_dir="${NOHIKI_LOCAL_SECRETS_DIR:-}"
 gateway_helper="infra/k8s/local/gateway_proxy.py"
-reset_helper="infra/k8s/local/reset.sh"
+cluster_reset_helper="infra/k8s/local/cluster_reset.py"
 registry_endpoint="${K8S_LOCAL_REGISTRY_ENDPOINT:-http://127.0.0.1:30500}"
 mirror_config="${K3S_REGISTRIES_CONFIG:-/etc/rancher/k3s/registries.yaml}"
 
@@ -228,7 +228,7 @@ diagnostics() {
 }
 
 mode="${1:-}"
-[[ -n "$mode" ]] || fail "usage: $0 preflight|bootstrap|publish|reconcile|verify|diagnostics|reset|factory-reset"
+[[ -n "$mode" ]] || fail "usage: $0 preflight|bootstrap|publish|reconcile|verify|diagnostics|factory-reset"
 shift
 case "$mode" in
     preflight) [[ $# -eq 0 ]] || fail "preflight accepts no arguments"; preflight ;;
@@ -237,9 +237,9 @@ case "$mode" in
     reconcile) [[ $# -eq 0 ]] || fail "reconcile accepts no arguments"; reconcile ;;
     verify) [[ $# -eq 0 ]] || fail "verify accepts no arguments"; verify ;;
     diagnostics) [[ $# -eq 0 ]] || fail "diagnostics accepts no arguments"; diagnostics ;;
-    reset|factory-reset)
-        require_file "$reset_helper"
-        exec "$reset_helper" "$mode" "$@"
+    factory-reset)
+        require_file "$cluster_reset_helper"
+        exec "$cluster_reset_helper" factory-reset "$@"
         ;;
     *) fail "unknown lifecycle mode: $mode" ;;
 esac

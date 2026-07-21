@@ -5,11 +5,10 @@ the cluster, watches this repository, and reconciles three stacks in dependency
 order. Continuous delivery never holds write credentials to a cluster; promotion
 is a reviewed Git change.
 
-The engine is [Flux v2](https://fluxcd.io). Installation and cluster
-self-management use the upstream, idempotent `flux bootstrap github` command, so
-the engine install, the deploy key, and the per-cluster sync configuration are
-owned by Flux rather than by vendored manifests. The user-facing recipes stay
-`gitops-*`.
+The engine is [Flux v2](https://fluxcd.io). A guarded, one-time invocation of
+upstream `flux bootstrap github` installs the engine, deploy key, and per-cluster
+sync configuration on a pristine cluster. The user-facing lifecycle recipes are
+the `k8s-*-local` commands.
 
 ## Layout
 
@@ -128,18 +127,21 @@ just k8s-reconcile-local
 Individual recipes:
 
 ```bash
-just gitops-bootstrap       # flux bootstrap github for the selected cluster
-just gitops-wait            # wait for the source, stacks, and platform workloads
-just gitops-rollout-local   # restart first-party Deployments to pull the repushed local tag
-just gitops-status          # source, stacks, and releases at a glance
-just gitops-logs            # follow the reconciler logs
-just gitops-full            # bootstrap + wait + status
+just k8s-preflight-local       # validate the selected cluster and local prerequisites
+just k8s-bootstrap-local       # perform the one-time Flux/trust-root installation
+just k8s-publish-local-images  # build, publish, and record first-party image digests
+just k8s-reconcile-local       # request and observe ordered Flux convergence
+just k8s-verify-local          # run the complete local verification gates
+just k8s-diagnostics-local     # print read-only, redacted diagnostics
+just k8s-factory-reset-local   # invoke the guarded fresh-cluster reset authority
 ```
 
-Bootstrap uses the upstream `flux bootstrap github`, so it is idempotent: re-run
-it to upgrade the controllers or reconcile drift. The command creates or updates
-the read-only cluster deploy key, commits the generated `flux-system` sync files
-to the selected branch, installs the controllers, and waits for reconciliation.
+Bootstrap uses upstream `flux bootstrap github`, but the lifecycle guard permits
+it only against reviewed, pristine runtime-control and cluster state. A completed
+or partial bootstrap refuses a second run; use `k8s-reconcile-local` for normal
+convergence. Bootstrap creates the read-only cluster deploy key, commits the
+generated `flux-system` sync files to the selected branch, installs the
+controllers, and waits for reconciliation.
 Its `GITHUB_TOKEN` is used for those GitHub operations only and is never written
 to Git, a manifest, or the cluster.
 
@@ -164,7 +166,7 @@ GITHUB_TOKEN=<short-lived-pat> \
   GITOPS_GITHUB_REPOSITORY=nohiki-monorepo \
   GITOPS_GITHUB_BRANCH=main \
   GITOPS_GITHUB_PERSONAL=true \
-  just gitops-bootstrap
+  just k8s-bootstrap-local
 ```
 
 `GITOPS_GITHUB_PERSONAL` is required and explicit: `true` for a personal account,
@@ -180,22 +182,24 @@ Flux commits the sync configuration to that fork and branch, so self-reconcile
 stays consistent with wherever the cluster was bootstrapped, with no tracked-file
 edit.
 
-Reset the local stack (the Flux engine in `flux-system` is preserved):
+Factory-reset the local control plane and all cluster-local state:
 
 ```bash
-just k8s-reset-local --confirm
+just k8s-factory-reset-local --help
 ```
 
-The reset suspends the self-managing `flux-system` Kustomization first so it
-cannot re-apply the stacks, then deletes the stacks in reverse dependency order
-so each Kustomization's finalizer prunes its managed workloads, then deletes the
-application namespaces. It requires the current context to equal
-`K8S_LOCAL_CONTEXT` and never deletes the `flux-system` namespace, so a
-re-bootstrap resumes the suspended control root.
+Capture a checkpoint first, then invoke the recipe with that checkpoint and its
+digest, the exact data-loss, owner, and factory-reset acknowledgements,
+`--destructive`, `--execute`, and an evidence output path. The reset verifies the
+checkpoint against the live cluster, calls the preflighted host purge and start
+adapters, waits for a ready replacement control plane, and proves a fresh
+`kube-system` identity plus absence of Nohiki and Flux state. It does not preserve
+the old Flux installation; bootstrap the pristine replacement once, then use
+normal reconciliation.
 
 ## Ownership boundary
 
 OpenTofu owns the cloud account and cluster add-ons; the GitOps engine owns
-application, foundation, and observability reconciliation. The engine itself is
-installed and kept current by `flux bootstrap`, which pins the controllers to the
-flake-pinned Flux CLI version and is idempotent and self-updating on re-run.
+application, foundation, and observability reconciliation. The engine is
+installed by the guarded one-time bootstrap. After installation, reviewed Git
+changes and `k8s-reconcile-local` drive controller and workload convergence.

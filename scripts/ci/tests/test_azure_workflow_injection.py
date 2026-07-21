@@ -357,7 +357,6 @@ def test_local_deploy_inventory_excludes_gpu_and_kafka_connect() -> None:
         "k8s-reconcile-local": "reconcile",
         "k8s-verify-local": "verify",
         "k8s-diagnostics-local": "diagnostics",
-        "k8s-reset-local": "reset {{ args }}",
         "k8s-factory-reset-local": "factory-reset {{ args }}",
     }
     recipes = _just_recipes()

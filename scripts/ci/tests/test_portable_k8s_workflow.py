@@ -16,7 +16,6 @@ _CANONICAL_RECIPES = (
     "k8s-reconcile-local",
     "k8s-verify-local",
     "k8s-diagnostics-local",
-    "k8s-reset-local",
     "k8s-factory-reset-local",
 )
 
@@ -100,10 +99,10 @@ esac
         )
 
     _write_executable(
-        root / "infra" / "k8s" / "local" / "reset.sh",
+        root / "infra" / "k8s" / "local" / "cluster_reset.py",
         """#!/bin/sh
-printf 'reset-call\\n' >> "$CALL_LOG"
-printf 'reset-arg <%s>\\n' "$@" >> "$CALL_LOG"
+printf 'cluster-reset-call\\n' >> "$CALL_LOG"
+printf 'cluster-reset-arg <%s>\\n' "$@" >> "$CALL_LOG"
 exit "${RESET_EXIT:-0}"
 """,
     )
@@ -186,7 +185,7 @@ def test_reconcile_source_failure_stops_before_any_stack_reconcile(
     assert not any("reconcile kustomization" in call for call in calls)
 
 
-def test_reset_dispatch_preserves_mode_and_adversarial_arguments(
+def test_factory_reset_dispatch_preserves_mode_and_adversarial_arguments(
     sandbox: LifecycleSandbox,
 ) -> None:
     lifecycle, log, env = sandbox
@@ -196,7 +195,7 @@ def test_reset_dispatch_preserves_mode_and_adversarial_arguments(
 
     result = _run_lifecycle(
         lifecycle,
-        "reset",
+        "factory-reset",
         "--dry-run",
         "--confirm=k3s-nohiki-test",
         payload,
@@ -205,11 +204,11 @@ def test_reset_dispatch_preserves_mode_and_adversarial_arguments(
 
     assert result.returncode == 0, result.stderr
     assert _calls(log) == [
-        "reset-call",
-        "reset-arg <reset>",
-        "reset-arg <--dry-run>",
-        "reset-arg <--confirm=k3s-nohiki-test>",
-        f"reset-arg <{payload}>",
+        "cluster-reset-call",
+        "cluster-reset-arg <factory-reset>",
+        "cluster-reset-arg <--dry-run>",
+        "cluster-reset-arg <--confirm=k3s-nohiki-test>",
+        f"cluster-reset-arg <{payload}>",
     ]
     assert not marker.exists()
 
@@ -307,7 +306,7 @@ def test_reconcile_stack_failure_stops_before_wait_and_later_stacks(
     assert not any("kustomization infrastructure" in call for call in calls)
 
 
-def test_factory_reset_propagates_reset_boundary_failure(
+def test_factory_reset_propagates_reset_authority_failure(
     sandbox: LifecycleSandbox,
 ) -> None:
     lifecycle, log, env = sandbox
@@ -322,10 +321,10 @@ def test_factory_reset_propagates_reset_boundary_failure(
 
     assert result.returncode == 86
     assert _calls(log) == [
-        "reset-call",
-        "reset-arg <factory-reset>",
-        "reset-arg <--execute>",
-        "reset-arg <--confirm=k3s-nohiki-test>",
+        "cluster-reset-call",
+        "cluster-reset-arg <factory-reset>",
+        "cluster-reset-arg <--execute>",
+        "cluster-reset-arg <--confirm=k3s-nohiki-test>",
     ]
 
 
