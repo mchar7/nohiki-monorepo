@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -16,7 +17,7 @@ GITOPS = ROOT / "infra/k8s/gitops"
 OBSERVABILITY = ROOT / "infra/k8s/observability"
 IDENTITY_FIXTURE = ROOT / "scripts/ci/tests/fixtures/values.prod.identity.yaml"
 NETWORK_FIXTURE = ROOT / "scripts/ci/tests/fixtures/values.prod.network.yaml"
-BUILD_MATRIX = ROOT / ".github/workflows/build-push.yml"
+IMAGE_INVENTORY = ROOT / "scripts/ci/image_inventory.json"
 
 ENVIRONMENTS = {
     "local": ("local", "nohiki", "values.local.yaml"),
@@ -90,9 +91,7 @@ def _kustomize(relative: str) -> list[dict[str, Any]]:
 
 
 def _digest_values(tmp_path: Path) -> Path:
-    matrix = yaml.safe_load(BUILD_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"][
-        "include"
-    ]
+    matrix = json.loads(IMAGE_INVENTORY.read_text(encoding="utf-8"))["images"]
     digests = {
         f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": f"sha256:{index + 1:064x}"
         for index, entry in enumerate(matrix)

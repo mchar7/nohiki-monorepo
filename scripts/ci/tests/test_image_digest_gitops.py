@@ -19,7 +19,7 @@ assert _IMAGE_DIGESTS_SPEC is not None
 assert _IMAGE_DIGESTS_SPEC.loader is not None
 image_digests = importlib.util.module_from_spec(_IMAGE_DIGESTS_SPEC)
 _IMAGE_DIGESTS_SPEC.loader.exec_module(image_digests)
-_WORKFLOW = _ROOT / ".github" / "workflows" / "build-push.yml"
+_INVENTORY = _ROOT / "scripts" / "ci" / "image_inventory.json"
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _SCHEDULE_TICK_IMAGE = "ghcr.io/mchar7/nohiki-monorepo/sys-tick-job"
 _PROD_PLATFORM_OVERLAY = _ROOT / "infra" / "k8s" / "gitops" / "platform" / "prod"
@@ -81,8 +81,8 @@ def _assert_schedule_tick_image(actual: str, expected: str) -> None:
 
 @cache
 def _matrix_include() -> list[dict[str, object]]:
-    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
-    return workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
+    document = json.loads(_INVENTORY.read_text(encoding="utf-8"))
+    return document["images"]
 
 
 @cache
@@ -100,16 +100,26 @@ def _record(name: str, index: int = 0, *, repository: str = _SYNTHETIC_REPOSITOR
     }
 
 
+def _existing_overlay(tmp_path: Path, repository: str = _SYNTHETIC_REPOSITORY) -> Path:
+    values = {f"ghcr.io/{repository}/{name}": f"sha256:{index + 100:064x}" for index, name in enumerate(_names())}
+    path = tmp_path / "existing.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"global": {"imageDigests": values}}), encoding="utf-8")
+    return path
+
+
 def _assemble(
     tmp_path: Path,
     records: list[dict[str, str]],
     *,
     repository: str = _SYNTHETIC_REPOSITORY,
+    affected: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     records_dir = tmp_path / "records"
     records_dir.mkdir(parents=True)
     for index, record in enumerate(records):
         (records_dir / f"{index}.json").write_text(json.dumps(record), encoding="utf-8")
+    selected = list(_names()) if affected is None else affected
     return subprocess.run(
         [
             sys.executable,
@@ -117,12 +127,16 @@ def _assemble(
             "assemble",
             "--records",
             str(records_dir),
+            "--existing",
+            str(_existing_overlay(tmp_path, repository)),
+            "--affected",
+            json.dumps(selected),
             "--repository",
             repository,
             "--output",
             str(tmp_path / "digests.yaml"),
         ],
-        cwd=_ROOT,
+        cwd=tmp_path,
         capture_output=True,
         text=True,
         check=False,
@@ -142,10 +156,12 @@ def _assemble_direct(
     args = image_digests.parser().parse_args(
         [
             "assemble",
-            "--workflow",
-            str(_WORKFLOW),
             "--records",
             str(records_dir),
+            "--existing",
+            str(_existing_overlay(tmp_path, repository)),
+            "--affected",
+            json.dumps(list(_names())),
             "--repository",
             repository,
             "--output",
@@ -175,6 +191,28 @@ def test_assemble_accepts_exact_matrix_and_is_deterministic(tmp_path: Path) -> N
     assert cpu_key in digests
     assert gpu_key in digests
     assert digests[cpu_key] != digests[gpu_key]
+
+
+def test_assemble_carries_forward_only_unaffected_digests(tmp_path: Path) -> None:
+    affected = ["frontend", "user-auth-service"]
+    records = [_record(name, index) for index, name in enumerate(affected)]
+    result = _assemble(tmp_path, records, affected=affected)
+    assert result.returncode == 0, result.stderr
+
+    composed = yaml.safe_load((tmp_path / "digests.yaml").read_text(encoding="utf-8"))["global"]["imageDigests"]
+    old = yaml.safe_load(_existing_overlay(tmp_path).read_text(encoding="utf-8"))["global"]["imageDigests"]
+    expected = old | {record["image"]: record["digest"] for record in records}
+    assert composed == expected
+
+
+def test_assemble_rejects_missing_fresh_affected_record(tmp_path: Path) -> None:
+    result = _assemble(
+        tmp_path,
+        [_record("frontend")],
+        affected=["frontend", "user-auth-service"],
+    )
+    assert result.returncode == 2
+    assert "missing=['user-auth-service']" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -262,7 +300,7 @@ def test_record_writes_buildx_digest_provenance(tmp_path: Path) -> None:
     }
     result = subprocess.run(
         [sys.executable, str(_SCRIPT), "record", "--output", str(output)],
-        cwd=_ROOT,
+        cwd=tmp_path,
         env=env,
         capture_output=True,
         text=True,

@@ -5,6 +5,8 @@ on:
     workflows: [Checks]
     types: [completed]
     branches: [main]
+  schedule:
+    - cron: '17 3 * * 1'
   workflow_dispatch:
     inputs:
       push_to_registry:
@@ -29,6 +31,10 @@ jobs:
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'schedule' &&
+          vars.IMAGE_PUBLICATION_ENABLED == 'true'
+        ) ||
         (
           github.event_name == 'workflow_run' &&
           github.event.workflow_run.name == 'Checks' &&
@@ -80,6 +86,11 @@ jobs:
             [[ "$PUBLICATION_ENABLED" == "true" ]]
             [[ "$WORKFLOW_RUN_SHA" =~ ^[0-9a-f]{40}$ ]]
             source_sha="$WORKFLOW_RUN_SHA"
+            should_push="true"
+          elif [[ "$EVENT_NAME" == "schedule" ]]; then
+            [[ "$PUBLICATION_ENABLED" == "true" ]]
+            [[ "$DISPATCH_SHA" =~ ^[0-9a-f]{40}$ ]]
+            source_sha="$DISPATCH_SHA"
             should_push="true"
           else
             [[ "$EVENT_NAME" == "workflow_dispatch" ]]
@@ -138,8 +149,85 @@ jobs:
           fi
           echo "authorized=$authorized" >> "$GITHUB_OUTPUT"
 
+  image-matrix:
+    needs: [event-validation]
+    if: needs.event-validation.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      matrix: ${{ steps.emit.outputs.matrix }}
+      images: ${{ steps.emit.outputs.images }}
+    steps:
+      - name: Checkout publication source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.event-validation.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Download affected images from triggering Checks run
+        id: affected-attempt-1
+        if: github.event_name == 'workflow_run'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: affected-images
+          path: affected-images
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Wait before affected image retry 2
+        if: github.event_name == 'workflow_run' && steps.affected-attempt-1.outcome != 'success'
+        run: sleep 20
+
+      - name: Retry affected image download 2
+        id: affected-attempt-2
+        if: github.event_name == 'workflow_run' && steps.affected-attempt-1.outcome != 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: affected-images
+          path: affected-images
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Wait before affected image retry 3
+        if: github.event_name == 'workflow_run' && steps.affected-attempt-1.outcome != 'success' && steps.affected-attempt-2.outcome != 'success'
+        run: sleep 20
+
+      - name: Retry affected image download 3
+        id: affected-attempt-3
+        if: github.event_name == 'workflow_run' && steps.affected-attempt-1.outcome != 'success' && steps.affected-attempt-2.outcome != 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: affected-images
+          path: affected-images
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Emit affected image matrix
+        id: emit
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_SHA: ${{ needs.event-validation.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          artifact_args=()
+          if [[ "$EVENT_NAME" == "workflow_run" && -f affected-images/affected-images.json ]]; then
+            artifact_args=(--artifact affected-images/affected-images.json --source-sha "$SOURCE_SHA")
+          fi
+          matrix="$(python3 scripts/ci/image_matrix.py matrix "${artifact_args[@]}")"
+          images="$(jq -c '[.include[].name]' <<< "$matrix")"
+          {
+            echo "matrix=$matrix"
+            echo "images=$images"
+          } >> "$GITHUB_OUTPUT"
+
   build-push:
-    needs: [ event-validation ]
+    needs: [event-validation, image-matrix]
     if: needs.event-validation.outputs.authorized == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -147,40 +235,8 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { name: user-auth-service, dockerfile: backend/services/user-auth-service/Dockerfile }
-          - { name: user-pref-service, dockerfile: backend/services/user-pref-service/Dockerfile }
-          - { name: user-upload-service, dockerfile: backend/services/user-upload-service/Dockerfile }
-          - { name: user-entitlement-service, dockerfile: backend/services/user-entitlement-service/Dockerfile }
-          - { name: job-storage-service, dockerfile: backend/services/job-storage-service/Dockerfile }
-          - { name: job-ingest-discovery-service, dockerfile: backend/services/job-ingest-discovery-service/Dockerfile }
-          - { name: job-ingest-schedule-service, dockerfile: backend/services/job-ingest-schedule-service/Dockerfile }
-          - { name: job-ingest-enrichment-service, dockerfile: backend/services/job-ingest-enrichment-service/Dockerfile }
-          - { name: job-query-composition-service, dockerfile: backend/services/job-query-composition-service/Dockerfile }
-          - { name: job-correlation-evaluation-service, dockerfile: backend/services/job-correlation-evaluation-service/Dockerfile }
-          - { name: skill-graph-service, dockerfile: backend/services/skill-graph-service/Dockerfile }
-          - { name: doc-template-service, dockerfile: backend/services/doc-template-service/Dockerfile }
-          - { name: doc-content-service, dockerfile: backend/services/doc-content-service/Dockerfile }
-          - { name: doc-process-service, dockerfile: backend/services/doc-process-service/Dockerfile }
-          - { name: notification-service, dockerfile: backend/services/notification-service/Dockerfile }
-          - { name: bff-service, dockerfile: backend/services/bff-service/Dockerfile }
-          - { name: frontend, context: ., dockerfile: typescript/apps/frontend/Dockerfile }
-          - { name: api-verification-runner, context: ., dockerfile: tests/Dockerfile.api-runner }
-          - { name: playwright-verification-runner, context: ., dockerfile: typescript/apps/frontend/Dockerfile.playwright-runner }
-          - { name: health-runner, context: ., dockerfile: scripts/util/health_check/Dockerfile }
-          - { name: ml-gateway-service, dockerfile: backend/services/ml-gateway-service/Dockerfile }
-          - { name: ml-compute-service, dockerfile: backend/services/ml-compute-service/Dockerfile }
-          # Production GPU variant: same Dockerfile + single lockfile, built via the
-          # CUDA builder stage (torch +cu130). Distinct image name so its digest keys a
-          # separate global.imageDigests entry; only values.prod.yaml points ml-compute
-          # at it, keeping local/staging on the CPU ml-compute-service image.
-          - { name: ml-compute-service-gpu, dockerfile: backend/services/ml-compute-service/Dockerfile, build_args: ML_COMPUTE_BUILDER=sync-gpu, timeout_minutes: 35 }
-          - { name: sys-tick-job, dockerfile: backend/jobs/sys-tick-job/Dockerfile }
-          - { name: snapshot-refresh-job, dockerfile: backend/jobs/snapshot-refresh-job/Dockerfile }
-          - { name: qdrant-init, dockerfile: infra/shared/qdrant-init/Dockerfile }
-          - { name: kafka-connect, context: infra/k8s/kafka-connect, dockerfile: infra/k8s/kafka-connect/Dockerfile }
-    timeout-minutes: ${{ matrix.timeout_minutes || 20 }}
+      matrix: ${{ fromJSON(needs.image-matrix.outputs.matrix) }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -241,6 +297,7 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+          # Cold-layer parallel fetch requires build-record proof that downloads dominate kafka-connect.
       - name: Build container image for ${{ matrix.name }}
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         id: build
@@ -253,6 +310,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: ${{ matrix.name == 'ml-compute-service-gpu' && format('type=registry,ref={0}/{1}:buildcache', steps.image-base-path.outputs.image_base_path, matrix.name) || format('type=gha,scope={0}', matrix.name) }}
+          # GPU cache-retention changes require a measured warm main run showing a net benefit.
           # GPU registry cache is global: import always, export only on authorized pushes.
           cache-to: ${{ matrix.name == 'ml-compute-service-gpu' && (steps.mode.outputs.push == 'true' && format('type=registry,ref={0}/{1}:buildcache,mode=max', steps.image-base-path.outputs.image_base_path, matrix.name) || '') || format('type=gha,mode=max,scope={0}', matrix.name) }}
           platforms: linux/amd64
@@ -305,7 +363,7 @@ jobs:
           retention-days: 30
 
   aggregate-digests:
-    needs: [ event-validation, build-push ]
+    needs: [event-validation, image-matrix, build-push]
     if: ${{ needs.event-validation.outputs.authorized == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.push_to_registry == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -328,7 +386,14 @@ jobs:
       - name: Assemble and validate production digests
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 scripts/ci/image_digests.py assemble --records digest-records --repository "$GITHUB_REPOSITORY" --output infra/k8s/helm/values.prod.digests.yaml
+          AFFECTED_IMAGES: ${{ needs.image-matrix.outputs.images }}
+        run: >-
+          python3 scripts/ci/image_digests.py assemble
+          --records digest-records
+          --existing infra/k8s/helm/values.prod.digests.yaml
+          --affected "$AFFECTED_IMAGES"
+          --repository "$GITHUB_REPOSITORY"
+          --output infra/k8s/helm/values.prod.digests.yaml
 
       - name: Upload aggregate production digests
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

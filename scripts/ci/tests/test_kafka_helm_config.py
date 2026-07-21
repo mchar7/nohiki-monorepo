@@ -1,5 +1,6 @@
 """Focused Helm regression coverage for Kafka SASL environment wiring."""
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -10,7 +11,7 @@ import yaml
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm"
 _SECRET_NAME = "kafka-sasl-credentials"
-_WORKFLOW = _REPOSITORY_ROOT / ".github" / "workflows" / "build-push.yml"
+_INVENTORY = _REPOSITORY_ROOT / "scripts" / "ci" / "image_inventory.json"
 _FIRST_PARTY_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 _TLS_ENV_SUFFIXES = (
     "KAFKA__SECURITY__TLS__CA_LOCATION",
@@ -55,10 +56,9 @@ _WAL_CONFIG = {
 
 
 def _digest_values(tmp_path: Path) -> Path:
-    workflow = cast(dict[str, Any], yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8")))
     entries = cast(
         list[dict[str, str]],
-        workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"],
+        json.loads(_INVENTORY.read_text(encoding="utf-8"))["images"],
     )
     digests = {
         f"{_FIRST_PARTY_PREFIX}{entry['name']}": f"sha256:{index + 1:064x}" for index, entry in enumerate(entries)

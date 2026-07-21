@@ -20,7 +20,7 @@ _AGENTGATEWAY_CRDS = _ROOT / "infra/k8s/helm-foundation/charts/agentgateway-crds
 _GATEWAY_API_CRDS = _ROOT / "infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml"
 _IDENTITY = Path(__file__).parent / "fixtures/values.prod.identity.yaml"
 _NETWORK = Path(__file__).parent / "fixtures/values.prod.network.yaml"
-_IMAGE_MATRIX = _ROOT / ".github/workflows/build-push.yml"
+_IMAGE_INVENTORY = _ROOT / "scripts" / "ci" / "image_inventory.json"
 _GATEWAY_NAME = "nohiki-model-egress"
 _GATEWAY_HOST = f"{_GATEWAY_NAME}.nohiki.svc.cluster.local"
 _GATEWAY_ORIGIN = f"https://{_GATEWAY_HOST}:8443"
@@ -152,9 +152,7 @@ def _render_environment(values_name: str, tmp_path: Path) -> tuple[Manifest, ...
         str(_CHART / values_name),
     ]
     if environment == "prod":
-        matrix = yaml.safe_load(_IMAGE_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"][
-            "include"
-        ]
+        matrix = json.loads(_IMAGE_INVENTORY.read_text(encoding="utf-8"))["images"]
         digests = {
             f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": f"sha256:{index + 1:064x}"
             for index, entry in enumerate(matrix)

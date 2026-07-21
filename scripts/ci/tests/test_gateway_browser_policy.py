@@ -1,5 +1,6 @@
 """Regression tests for browser security headers at the Helm gateway."""
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -9,16 +10,14 @@ from helm_test_utils import runtime_eso_args
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm"
-_BUILD_MATRIX = _REPOSITORY_ROOT / ".github" / "workflows" / "build-push.yml"
+_BUILD_INVENTORY = _REPOSITORY_ROOT / "scripts" / "ci" / "image_inventory.json"
 _PROD_IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
 _PROD_NETWORK = Path(__file__).parent / "fixtures" / "values.prod.network.yaml"
 _FIRST_PARTY_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 
 
 def _digest_overlay(tmp_path: Path) -> Path:
-    matrix = yaml.safe_load(_BUILD_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"][
-        "include"
-    ]
+    matrix = json.loads(_BUILD_INVENTORY.read_text(encoding="utf-8"))["images"]
     digests = {
         f"{_FIRST_PARTY_PREFIX}{entry['name']}": f"sha256:{index + 1:064x}" for index, entry in enumerate(matrix)
     }

@@ -71,10 +71,9 @@ def _render_environment(values_file: str) -> tuple[dict[str, object], ...]:
                 *runtime_eso_args("prod"),
             ]
         )
-    workflow = yaml.safe_load((_REPOSITORY_ROOT / ".github/workflows/build-push.yml").read_text(encoding="utf-8"))
+    inventory = json.loads((_REPOSITORY_ROOT / "scripts/ci/image_inventory.json").read_text(encoding="utf-8"))
     image_digests = {
-        f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": _MIGRATION_DIGEST
-        for entry in workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
+        f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": _MIGRATION_DIGEST for entry in inventory["images"]
     }
     command.extend(["--set-json", f"global.imageDigests={json.dumps(image_digests)}"])
     result = subprocess.run(

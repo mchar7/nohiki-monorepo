@@ -25,7 +25,7 @@ _CADDYFILE = _FRONTEND / "Caddyfile"
 _API_CLIENT = _FRONTEND / "src" / "shared" / "api" / "client.ts"
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _FRONTEND_CHART = _CHART / "charts" / "nohiki-frontend"
-_BUILD_WORKFLOW = _ROOT / ".github" / "workflows" / "build-push.yml"
+_BUILD_INVENTORY = _ROOT / "scripts" / "ci" / "image_inventory.json"
 _CHECKS_WORKFLOW = _ROOT / ".github" / "workflows" / "checks.yml"
 _IMAGE_INVENTORY = _ROOT / "infra" / "k8s" / "local" / "images.json"
 _JUSTFILE = _ROOT / "Justfile"
@@ -38,8 +38,7 @@ _IMAGE_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 
 
 def _matrix() -> list[dict[str, Any]]:
-    workflow = yaml.safe_load(_BUILD_WORKFLOW.read_text(encoding="utf-8"))
-    return workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
+    return json.loads(_BUILD_INVENTORY.read_text(encoding="utf-8"))["images"]
 
 
 def _digest_overlay(tmp_path: Path, environment: str) -> tuple[Path, str]:
@@ -106,16 +105,16 @@ def _named(documents: tuple[dict[str, Any], ...], kind: str, name: str) -> dict[
 
 def _just_image_specs() -> set[tuple[str, str, str, str | None]]:
     value = subprocess.run(
-        ["just", "--evaluate", "first_party_image_specs"],
+        ["python3", "scripts/ci/image_matrix.py", "specs"],
         cwd=_ROOT,
         check=True,
         capture_output=True,
         text=True,
     ).stdout
     specs: set[tuple[str, str, str, str | None]] = set()
-    for raw_spec in value.split():
-        name, context, dockerfile, *build_arg = raw_spec.split("|")
-        specs.add((name, context, dockerfile, build_arg[0] if build_arg else None))
+    for raw_spec in value.splitlines():
+        name, context, dockerfile, build_arg = raw_spec.split("\t")
+        specs.add((name, context, dockerfile, build_arg or None))
     return specs
 
 
@@ -406,7 +405,7 @@ def test_canonical_workflow_inventory_and_justfile_image_specs_are_equal() -> No
             entry["name"],
             entry.get("context", "."),
             entry["dockerfile"],
-            entry.get("build_args"),
+            entry.get("build_args") or None,
         )
         for entry in _matrix()
     }
@@ -481,7 +480,11 @@ def test_checks_workflow_container_lanes_keep_separate_cached_contracts() -> Non
 def test_frontend_is_in_canonical_local_and_release_image_inventories() -> None:
     inventory = json.loads(_IMAGE_INVENTORY.read_text(encoding="utf-8"))
     inventory_rows = [entry for entry in inventory["images"] if entry["name"] == "frontend"]
-    workflow_rows = [entry for entry in _matrix() if entry["name"] == "frontend"]
+    release_rows = [
+        {key: entry[key] for key in ("name", "context", "dockerfile")}
+        for entry in _matrix()
+        if entry["name"] == "frontend"
+    ]
 
     assert inventory["schemaVersion"] == 1
     assert inventory_rows == [
@@ -492,7 +495,7 @@ def test_frontend_is_in_canonical_local_and_release_image_inventories() -> None:
             "local": True,
         }
     ]
-    assert workflow_rows == [
+    assert release_rows == [
         {
             "name": "frontend",
             "context": ".",

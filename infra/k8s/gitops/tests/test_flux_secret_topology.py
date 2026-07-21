@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -22,6 +23,7 @@ BOOTSTRAP = GITOPS / "install/bootstrap.sh"
 IDENTITY_FIXTURE = ROOT / "scripts/ci/tests/fixtures/values.prod.identity.yaml"
 NETWORK_FIXTURE = ROOT / "scripts/ci/tests/fixtures/values.prod.network.yaml"
 BUILD_MATRIX = ROOT / ".github/workflows/build-push.yml"
+IMAGE_INVENTORY = ROOT / "scripts/ci/image_inventory.json"
 LOCAL_SECRET_CONTRACT = ROOT / "scripts/infra/local_secret_contract.py"
 
 CLUSTERS = {
@@ -123,9 +125,7 @@ def _kustomize(relative: str) -> tuple[dict[str, Any], ...]:
 
 
 def _digest_values(tmp_path: Path) -> Path:
-    matrix = yaml.safe_load(BUILD_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"][
-        "include"
-    ]
+    matrix = json.loads(IMAGE_INVENTORY.read_text(encoding="utf-8"))["images"]
     digests = {
         f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": f"sha256:{index + 1:064x}"
         for index, entry in enumerate(matrix)

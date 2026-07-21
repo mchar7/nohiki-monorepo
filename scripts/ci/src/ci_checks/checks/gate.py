@@ -22,6 +22,12 @@ from ci_checks.core.change_gate import (
     tests_matrix,
 )
 from ci_checks.core.display import GATE_LABELS
+from ci_checks.core.image_inventory import (
+    affected_images,
+    image_names,
+    load_inventory,
+    write_affected_record,
+)
 from ci_checks.core.packages import REPO_ROOT, Scope, load_packages_with_deps
 
 
@@ -84,6 +90,13 @@ def gate_cmd(
             help="GitHub owner/repo for changed-file links",
         ),
     ] = None,
+    affected_images_record: Annotated[
+        Path | None,
+        typer.Option(
+            "--affected-images-record",
+            help="Write the main-push affected-image artifact",
+        ),
+    ] = None,
 ) -> None:
     """Compute lane activation for the current diff and emit workflow outputs.
 
@@ -96,26 +109,38 @@ def gate_cmd(
         comment_file: Optional path receiving the marker-prefixed verdict
             body for a sticky PR comment.
         repository: Optional GitHub ``owner/repo`` for changed-file links.
+        affected_images_record: Optional path receiving ``{head_sha, images[]}``
+            for a push event.
     """
     console = Console()
     packages = load_packages_with_deps(Scope.ALL)
     decision = GateDecision()
+    changed: set[str] | None = None
 
-    if event != "pull_request":
-        decision.force_full(f"event {event!r} always runs everything")
-    elif not base_ref or set(base_ref) == {"0"}:
-        decision.force_full("missing or null base ref")
-    else:
+    if (event == "pull_request" or affected_images_record is not None) and base_ref and set(base_ref) != {"0"}:
         try:
             changed = _diff_files(base_ref, head_ref)
         except RuntimeError as exc:
             decision.force_full(str(exc))
-        else:
-            decision = evaluate(changed, packages)
+
+    if event != "pull_request":
+        decision.force_full(f"event {event!r} always runs everything")
+    elif changed is None:
+        if not decision.full:
+            decision.force_full("missing or null base ref")
+    else:
+        decision = evaluate(changed, packages)
 
     matrix = tests_matrix(decision, packages)
     outputs = render_outputs(decision, matrix, event)
     emitted_outputs = outputs | {"labels": _label_output(outputs)}
+    if affected_images_record is not None:
+        if event != "push":
+            msg = "--affected-images-record is valid only for push events"
+            raise ValueError(msg)
+        images = load_inventory()
+        names = image_names(images) if changed is None else affected_images(changed, images)
+        write_affected_record(affected_images_record, head_ref, names)
     _append(
         github_output,
         "".join(f"{key}={value}\n" for key, value in emitted_outputs.items()),

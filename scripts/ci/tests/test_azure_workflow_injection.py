@@ -31,6 +31,7 @@ def _mapping_list_at(mapping: Mapping[str, object], key: str) -> list[dict[str, 
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _IMAGE_INVENTORY = _REPOSITORY_ROOT / "infra" / "k8s" / "local" / "images.json"
+_RELEASE_INVENTORY = _REPOSITORY_ROOT / "scripts" / "ci" / "image_inventory.json"
 
 
 @cache
@@ -74,11 +75,16 @@ def _evaluate(name: str) -> str:
 
 @cache
 def _first_party_image_specs() -> tuple[tuple[str, str, str, str | None], ...]:
-    specs: list[tuple[str, str, str, str | None]] = []
-    for spec in _evaluate("first_party_image_specs").split():
-        image, context, dockerfile, *rest = spec.split("|")
-        specs.append((image, context, dockerfile, rest[0] if rest else None))
-    return tuple(specs)
+    images = json.loads(_RELEASE_INVENTORY.read_text(encoding="utf-8"))["images"]
+    return tuple(
+        (
+            str(image["name"]),
+            str(image["context"]),
+            str(image["dockerfile"]),
+            str(image["build_args"]) or None,
+        )
+        for image in images
+    )
 
 
 @cache
@@ -91,12 +97,7 @@ def _build_workflow() -> dict[str, object]:
 
 @cache
 def _matrix_include() -> list[dict[str, object]]:
-    workflow = _build_workflow()
-    jobs = _mapping_at(workflow, "jobs")
-    build = _mapping_at(jobs, "build-push")
-    strategy = _mapping_at(build, "strategy")
-    matrix = _mapping_at(strategy, "matrix")
-    return _mapping_list_at(matrix, "include")
+    return _mapping_list(json.loads(_RELEASE_INVENTORY.read_text(encoding="utf-8"))["images"])
 
 
 def _fake_container_runtime(tmp_path: Path) -> tuple[Path, Path]:
@@ -182,7 +183,7 @@ def test_single_image_build_uses_every_canonical_spec(tmp_path: Path) -> None:
             str(entry["name"]),
             str(entry.get("context", ".")),
             str(entry["dockerfile"]),
-            str(entry["build_args"]) if "build_args" in entry else None,
+            str(entry["build_args"]) or None,
         )
         for entry in _matrix_include()
     }
@@ -233,14 +234,14 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
     build_steps = _mapping_list_at(build, "steps")
     steps: dict[str, dict[str, object]] = {cast("str", step.get("id", step["name"])): step for step in build_steps}
 
-    matrix = _mapping_at(_mapping_at(build, "strategy"), "matrix")
-    include = _mapping_list_at(matrix, "include")
+    assert _mapping_at(build, "strategy")["matrix"] == "${{ fromJSON(needs.image-matrix.outputs.matrix) }}"
+    include = _matrix_include()
     names = [entry["name"] for entry in include]
     assert len(names) == len(set(names))
     assert set(names) == {image for image, *_ in _image_inventory_specs()}
     cpu = next(entry for entry in include if entry["name"] == "ml-compute-service")
     gpu = next(entry for entry in include if entry["name"] == "ml-compute-service-gpu")
-    assert "build_args" not in cpu
+    assert cpu["build_args"] == ""
     assert gpu["build_args"] == "ML_COMPUTE_BUILDER=sync-gpu"
     assert gpu["dockerfile"] == cpu["dockerfile"] == "backend/services/ml-compute-service/Dockerfile"
     build_with = _mapping_at(_mapping_at(steps, "build"), "with")
@@ -264,7 +265,7 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
         index for index, step in enumerate(build_steps) if step.get("id") == "build"
     )
     kafka_entry = next(entry for entry in include if entry["name"] == "kafka-connect")
-    assert kafka_entry == {
+    assert {key: kafka_entry[key] for key in ("name", "context", "dockerfile")} == {
         "name": "kafka-connect",
         "context": "infra/k8s/kafka-connect",
         "dockerfile": "infra/k8s/kafka-connect/Dockerfile",
@@ -278,7 +279,7 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
     assert build["permissions"] == {"contents": "read", "packages": "write"}
 
     aggregate = _mapping_at(jobs, "aggregate-digests")
-    assert aggregate["needs"] == ["event-validation", "build-push"]
+    assert aggregate["needs"] == ["event-validation", "image-matrix", "build-push"]
     assert aggregate["permissions"] == {"contents": "read"}
     download = next(
         step for step in _mapping_list_at(aggregate, "steps") if step["name"] == "Download image digest records"
@@ -338,9 +339,9 @@ def test_build_workflow_reclaims_build_cache_before_trivy_scan() -> None:
 def test_local_deploy_inventory_excludes_gpu_and_kafka_connect() -> None:
     inventory = _image_inventory_specs()
     inventory_names = {image for image, *_ in inventory}
-    release_names = set(_evaluate("first_party_image_names").split())
+    release_names = {str(entry["name"]) for entry in _matrix_include()}
     assert len(inventory_names) == len(inventory)
-    assert inventory_names == release_names == {str(entry["name"]) for entry in _matrix_include()}
+    assert inventory_names == release_names
 
     non_local_names = {image for image, *_, local in inventory if not local}
     assert non_local_names == {"ml-compute-service-gpu", "kafka-connect"}

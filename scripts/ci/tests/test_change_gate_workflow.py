@@ -41,6 +41,16 @@ def test_changes_job_computes_gate_from_full_history() -> None:
     assert '--github-output "$GITHUB_OUTPUT"' in command
     assert '--summary "$GITHUB_STEP_SUMMARY"' in command
     assert "--comment-file gate-comment.md" in command
+    assert "--affected-images-record affected-images.json" in command
+    upload = next(step for step in steps if step.get("name") == "Upload affected image selection")
+    assert upload["if"] == "github.event_name == 'push'"
+    assert upload["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    assert upload["with"] == {
+        "name": "affected-images",
+        "path": "affected-images.json",
+        "if-no-files-found": "error",
+        "retention-days": 7,
+    }
 
 
 def test_hadolint_enumerates_canonical_and_suffixed_dockerfiles() -> None:

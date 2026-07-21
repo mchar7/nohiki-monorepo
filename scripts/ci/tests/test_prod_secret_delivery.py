@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -10,12 +11,12 @@ import yaml
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra/k8s/helm"
 _IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
-_MATRIX = _ROOT / ".github" / "workflows" / "build-push.yml"
+_INVENTORY = _ROOT / "scripts" / "ci" / "image_inventory.json"
 _LOCAL_SECRET_CONTRACT = _ROOT / "scripts/infra/local_secret_contract.py"
 
 
 def _digest_fixture(tmp_path: Path) -> Path:
-    matrix = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"]["include"]
+    matrix = json.loads(_INVENTORY.read_text(encoding="utf-8"))["images"]
     digests = {
         f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": f"sha256:{index + 1:064x}"
         for index, entry in enumerate(matrix)

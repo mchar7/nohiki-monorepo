@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 import subprocess
 from pathlib import Path
@@ -96,8 +97,8 @@ def _on(workflow: dict[str, Any]) -> dict[str, Any]:
 def test_staging_uses_canonical_first_party_images_and_external_jwt_secret(
     tmp_path: Path,
 ) -> None:
-    workflow = yaml.safe_load((_ROOT / ".github" / "workflows" / "build-push.yml").read_text(encoding="utf-8"))
-    names = {entry["name"] for entry in workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]}
+    inventory = json.loads((_ROOT / "scripts" / "ci" / "image_inventory.json").read_text(encoding="utf-8"))
+    names = {entry["name"] for entry in inventory["images"]}
     documents = _helm("values.staging.yaml", tmp_path)
     images = {
         container["image"]
