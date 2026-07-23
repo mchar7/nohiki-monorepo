@@ -560,7 +560,7 @@ def _model_config_entries(raw: object) -> list[dict[str, object]]:
 
 
 def _inherit_model_base_urls(provider_data: dict[str, object], chains_data: dict[str, dict[str, object]]) -> None:
-    """Propagate explicit provider endpoints to same-provider fallback models."""
+    """Propagate provider endpoints to same-provider models without endpoint-specific credentials."""
     provider_models = _model_config_entries(provider_data.get("models"))
     base_urls: dict[str, object] = {}
     for model in provider_models:
@@ -571,7 +571,7 @@ def _inherit_model_base_urls(provider_data: dict[str, object], chains_data: dict
         model for chain_data in chains_data.values() for model in _model_config_entries(chain_data.get("models"))
     ]
     for model in all_models:
-        if model.get("base_url") or not isinstance(model_name := model.get("model"), str):
+        if model.get("base_url") or model.get("api_key") or not isinstance(model_name := model.get("model"), str):
             continue
         if base_url := base_urls.get(model_name.partition(LLM_MODEL_SEPARATOR)[0]):
             model["base_url"] = base_url
