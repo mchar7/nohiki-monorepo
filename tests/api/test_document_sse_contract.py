@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 OPENAPI_PATH = REPOSITORY_ROOT / "docs" / "api" / "nohiki.openapi.json"
 SSE_PATH = "/api/documents/{request_id}/events"

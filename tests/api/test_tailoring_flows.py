@@ -27,6 +27,8 @@ from requests.exceptions import HTTPError
 
 from .client import NohikiClient
 
+pytestmark = pytest.mark.integration
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("nohiki-e2e-tailoring")
 
@@ -209,20 +211,16 @@ FULL_RESUME_DATA = {
 
 
 @pytest.fixture(scope="module")
-def client() -> NohikiClient:
+def client(healthy_base_url: str) -> NohikiClient:
     """Create E2E client."""
-    c = NohikiClient(BASE_URL)
-    if not c.wait_for_healthy(timeout=60):
-        pytest.skip("Services not healthy")
+    c = NohikiClient(healthy_base_url)
     return c
 
 
 @pytest.fixture
-def fresh_client() -> Generator[NohikiClient]:
+def fresh_client(healthy_base_url: str) -> Generator[NohikiClient]:
     """Create a fresh client with its own session for test isolation."""
-    c = NohikiClient(BASE_URL)
-    if not c.check_ping():
-        pytest.skip("Services not healthy - BFF not responding")
+    c = NohikiClient(healthy_base_url)
     yield c
     c.clear_session()
 

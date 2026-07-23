@@ -57,16 +57,22 @@ def e2e_config() -> E2EConfig:
 
 
 @pytest.fixture(scope="session")
-def session_client() -> NohikiClient:
+def healthy_base_url() -> str:
+    """Return the base URL after one bounded health verdict per test session."""
+    client = NohikiClient(BASE_URL)
+    if not client.wait_for_healthy():
+        pytest.skip("Services not healthy - is the deployment running?")
+    return BASE_URL
+
+
+@pytest.fixture(scope="session")
+def session_client(healthy_base_url: str) -> NohikiClient:
     """Session-scoped authenticated client.
 
     Creates user once at session start, reuses for all tests.
     Idempotent: tries login first, registers only if needed.
     """
-    client = NohikiClient(BASE_URL)
-
-    if not client.wait_for_healthy(timeout=60):
-        pytest.skip("Services not healthy - is the deployment running?")
+    client = NohikiClient(healthy_base_url)
 
     try:
         client.login(SESSION_USER_EMAIL, SESSION_USER_PASSWORD)
@@ -151,14 +157,12 @@ def authenticated_client(session_client: NohikiClient) -> NohikiClient:
 
 
 @pytest.fixture
-def fresh_client() -> Generator[NohikiClient]:
+def fresh_client(healthy_base_url: str) -> Generator[NohikiClient]:
     """Get a fresh unauthenticated client.
 
     Use for testing auth flows that need unauthenticated state.
     """
-    client = NohikiClient(BASE_URL)
-    if not client.check_ping():
-        pytest.skip("Services not healthy - BFF not responding (check deployment)")
+    client = NohikiClient(healthy_base_url)
     yield client
     client.clear_session()
 
@@ -230,6 +234,7 @@ def ml_pipeline_ready() -> bool:
     Works for both Docker Compose and Kubernetes targets.
     """
     platform = get_platform()
+    platform.get_service_statuses()
     code, stdout, _ = platform.exec_kafka_cmd(
         [
             "kafka-consumer-groups",

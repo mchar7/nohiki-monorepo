@@ -23,7 +23,9 @@ from collections.abc import Generator
 import pytest
 from requests.exceptions import HTTPError
 
-from .client import NohikiClient
+from .client import NohikiClient, poll_until
+
+pytestmark = pytest.mark.integration
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("nohiki-e2e")
@@ -38,20 +40,16 @@ def unique_email() -> str:
 
 
 @pytest.fixture(scope="module")
-def client() -> NohikiClient:
+def client(healthy_base_url: str) -> NohikiClient:
     """Create E2E client."""
-    c = NohikiClient(BASE_URL)
-    if not c.wait_for_healthy(timeout=60):
-        pytest.skip("Services not healthy")
+    c = NohikiClient(healthy_base_url)
     return c
 
 
 @pytest.fixture
-def fresh_client() -> Generator[NohikiClient]:
+def fresh_client(healthy_base_url: str) -> Generator[NohikiClient]:
     """Create a fresh client with its own session for test isolation."""
-    c = NohikiClient(BASE_URL)
-    if not c.check_ping():
-        pytest.skip("Services not healthy - BFF not responding")
+    c = NohikiClient(healthy_base_url)
     yield c
     c.clear_session()
 
@@ -453,19 +451,13 @@ class TestLocationPreferences:
             {"open_to_relocation": True},
         )
 
-        # Poll until the update is reflected
-        import time
-
-        start = time.time()
-        updated = False
-        while time.time() - start < 30:
+        def update_is_projected() -> bool | None:
             updated_profile = authenticated_client.get_profile(profile["id"])
-            if updated_profile.get("open_to_relocation") is True:
-                updated = True
-                break
-            time.sleep(0.5)
+            return True if updated_profile.get("open_to_relocation") is True else None
 
-        assert updated, "Profile open_to_relocation should have been updated to True"
+        assert poll_until(update_is_projected, timeout=30), (
+            "Profile open_to_relocation should have been updated to True"
+        )
 
     @pytest.mark.timeout(60)
     def test_multiple_profiles_different_relocation_settings(self, authenticated_client: NohikiClient) -> None:

@@ -24,15 +24,18 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 import uuid
 from typing import TYPE_CHECKING
 
 import pytest
 from requests.exceptions import HTTPError
 
+from .client import poll_until
+
 if TYPE_CHECKING:
     from .client import NohikiClient
+
+pytestmark = pytest.mark.integration
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("nohiki-e2e")
@@ -434,14 +437,16 @@ class TestJobDiscoveryJourney:
     def _wait_for_listings(self, client: NohikiClient, timeout: int = 180) -> list[dict]:
         """Poll for job listings to appear in BFF projection."""
         logger.info("Waiting for job discovery pipeline...")
-        start = time.time()
 
-        while time.time() - start < timeout:
+        def get_listings() -> list[dict] | None:
             result = client.list_job_listings(page_size=100)
-            if result["total"] > 0:
-                logger.info("Jobs found in storage: %d", result["total"])
-                return result["items"]
-            time.sleep(5)
+            if result["total"] <= 0:
+                return None
+            logger.info("Jobs found in storage: %d", result["total"])
+            return result["items"]
+
+        if listings := poll_until(get_listings, timeout=timeout):
+            return listings
 
         pytest.fail(
             "No job listings found - verify:\n"
@@ -498,7 +503,9 @@ class TestJobDiscoveryJourney:
                 corr.get("fit_score", 0),
             )
 
-        assert any(corr.get("score_breakdown") for corr in correlations), "Correlations should include score_breakdown"
+        assert any(corr.get("fit_ranking_breakdown") for corr in correlations), (
+            "Correlations should include fit_ranking_breakdown"
+        )
 
 
 # Profile Correlation Filtering Tests (uses session profile, no new creation)

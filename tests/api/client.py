@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import logging
 import os
-import queue
-import threading
 import time
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -24,6 +23,10 @@ HTTP_CONFLICT = 409
 HTTP_NOT_FOUND = 404
 HTTP_ACCEPTED = 202
 DEFAULT_TIMEOUT = 30
+HEALTH_REQUEST_TIMEOUT = (0.5, 1.0)
+HEALTH_PROBE_ATTEMPTS = 3
+HEALTH_PROBE_INTERVAL = 0.25
+MAX_POLL_INTERVAL = 1.0
 type JSONValue = None | bool | int | float | str | list[JSONValue] | dict[str, JSONValue]
 type QueryValue = str | int
 type RequestValue = (
@@ -32,6 +35,31 @@ type RequestValue = (
 
 ACCOUNT_ENDPOINT = "/api/v1/account"
 TEMPLATE_FAMILIES_ENDPOINT = "/api/v1/template-families"
+
+
+def poll_until[T](
+    probe: Callable[[], T | None],
+    *,
+    timeout: float,
+    max_interval: float = 1.0,
+) -> T | None:
+    """Poll until a probe returns a result or its timeout expires.
+
+    Polls immediately, then backs off from 100 ms to at most one second while
+    bounding every sleep by the monotonic deadline.
+    """
+    deadline = time.monotonic() + timeout
+    interval_cap = min(max_interval, MAX_POLL_INTERVAL)
+    interval = min(0.1, interval_cap)
+    while time.monotonic() < deadline:
+        if (result := probe()) is not None:
+            return result
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(interval, remaining))
+        interval = min(interval * 2, interval_cap)
+    return None
 
 
 class NohikiClient:
@@ -311,14 +339,11 @@ class NohikiClient:
 
         Returns the profile data if found, None if timeout.
         """
-        start = time.time()
-        while time.time() - start < timeout:
-            profiles = self.list_profiles()
-            for p in profiles:
-                if p.get("pref_name") == profile_name:
-                    return p
-            time.sleep(interval)
-        return None
+
+        def find_profile() -> dict[str, Any] | None:
+            return next((profile for profile in self.list_profiles() if profile.get("pref_name") == profile_name), None)
+
+        return poll_until(find_profile, timeout=timeout, max_interval=interval)
 
     def poll_for_profile_deletion(
         self,
@@ -330,13 +355,12 @@ class NohikiClient:
 
         Returns True if profile was deleted within timeout, False otherwise.
         """
-        start = time.time()
-        while time.time() - start < timeout:
+
+        def profile_is_deleted() -> bool | None:
             profiles = self.list_profiles()
-            if not any(p.get("pref_name") == profile_name for p in profiles):
-                return True
-            time.sleep(interval)
-        return False
+            return True if not any(profile.get("pref_name") == profile_name for profile in profiles) else None
+
+        return poll_until(profile_is_deleted, timeout=timeout, max_interval=interval) is True
 
     def associate_attachment(self, pref_id: str, upload_id: str) -> dict[str, Any]:
         """Associate an attachment with a profile.
@@ -724,8 +748,8 @@ class NohikiClient:
 
         Returns the template family data if found, None if timeout.
         """
-        start = time.time()
-        while time.time() - start < timeout:
+
+        def find_template() -> dict[str, Any] | None:
             page = 1
             while True:
                 url = self._url(TEMPLATE_FAMILIES_ENDPOINT)
@@ -736,14 +760,16 @@ class NohikiClient:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                for f in data.get("items", []):
-                    if f.get("name") == template_name:
-                        return f
+                if template := next(
+                    (family for family in data.get("items", []) if family.get("name") == template_name),
+                    None,
+                ):
+                    return template
                 if not data.get("has_next", False):
-                    break
+                    return None
                 page += 1
-            time.sleep(interval)
-        return None
+
+        return poll_until(find_template, timeout=timeout, max_interval=interval)
 
     # Document Generation - /api/v1/documents (async via BFF)
 
@@ -797,24 +823,30 @@ class NohikiClient:
         Returns the document status with download_url when completed.
         Raises TimeoutError if not completed within timeout.
         """
-        start = time.time()
-        while time.time() - start < timeout:
+
+        def completed_status() -> dict[str, Any] | None:
             status = self.get_document_status(request_id)
-            if status.get("status") == "completed":
-                return status
-            if status.get("status") == "failed":
-                msg = f"Document generation failed: {status.get('error')}"
-                raise RuntimeError(msg)
-            time.sleep(interval)
-        elapsed = time.time() - start
+            match status.get("status"):
+                case "completed":
+                    return status
+                case "failed":
+                    msg = f"Document generation failed: {status.get('error')}"
+                    raise RuntimeError(msg)
+                case _:
+                    return None
+
+        start = time.monotonic()
+        if status := poll_until(completed_status, timeout=timeout, max_interval=interval):
+            return status
+        elapsed = time.monotonic() - start
         msg = f"Document generation not completed within {elapsed:.1f}s"
         raise TimeoutError(msg)
 
-    # SSE Streaming - /api/v1/documents/events
+    # Request-scoped SSE streaming - /api/documents/{request_id}/events
 
-    def _sse_url(self) -> str:
-        """SSE endpoint URL."""
-        return self._url("/api/v1/documents/events")
+    def _sse_url(self, request_id: str) -> str:
+        """SSE endpoint URL for one document generation request."""
+        return self._url(f"/api/documents/{request_id}/events")
 
     @staticmethod
     def _parse_sse_line(
@@ -834,30 +866,41 @@ class NohikiClient:
             current[field.strip()] = value.strip()
         return current, None
 
-    def connect_sse_raw(self, *, timeout: float = 10.0) -> requests.Response:
-        """Open a raw streaming connection to the SSE endpoint.
+    def connect_sse_raw(
+        self,
+        request_id: str,
+        *,
+        timeout: float = 10.0,
+        last_event_id: str | None = None,
+    ) -> requests.Response:
+        """Open a raw streaming connection for one document request.
 
         Returns the Response object with stream=True for manual iteration.
         Raises HTTPError on non-2xx status (e.g., 401 without auth).
         Caller is responsible for closing the response.
         """
+        headers = {"Accept": "text/event-stream"}
+        if last_event_id is not None:
+            headers["Last-Event-ID"] = last_event_id
         resp = self.session.get(
-            self._sse_url(),
+            self._sse_url(request_id),
             stream=True,
             timeout=timeout,
-            headers={"Accept": "text/event-stream"},
+            headers=headers,
         )
         resp.raise_for_status()
         return resp
 
     def collect_sse_events(
         self,
+        request_id: str,
         *,
         max_events: int = 50,
         timeout: float = 15.0,
         stop_on_event_type: str | None = None,
+        last_event_id: str | None = None,
     ) -> list[dict[str, str]]:
-        """Collect SSE events from the streaming endpoint.
+        """Collect SSE events for one document generation request.
 
         Connects, collects events (parsed into {event, data, id} dicts),
         and returns them. Stops after max_events, timeout, or when
@@ -865,18 +908,21 @@ class NohikiClient:
         """
         events: list[dict[str, str]] = []
         current: dict[str, str] = {}
-        start = time.time()
+        deadline = time.monotonic() + timeout
+        headers = {"Accept": "text/event-stream"}
+        if last_event_id is not None:
+            headers["Last-Event-ID"] = last_event_id
 
         try:
             with self.session.get(
-                self._sse_url(),
+                self._sse_url(request_id),
                 stream=True,
                 timeout=(5.0, timeout),
-                headers={"Accept": "text/event-stream"},
+                headers=headers,
             ) as resp:
                 resp.raise_for_status()
                 for line in resp.iter_lines(decode_unicode=True):
-                    if time.time() - start > timeout:
+                    if time.monotonic() >= deadline:
                         break
                     if line is None:
                         continue
@@ -905,100 +951,6 @@ class NohikiClient:
         if count >= max_events:
             return True
         return bool(stop_on_event_type and event.get("event") == stop_on_event_type)
-
-    def stream_sse_with_action(
-        self,
-        action: callable,
-        *,
-        timeout: float = 30.0,
-        stop_on: str | None = "document_status",
-    ) -> tuple[list[dict[str, str]], Any]:
-        """Open SSE stream, run an action, collect events.
-
-        Opens the SSE connection in a background thread, executes the
-        given action (e.g., generate_document), then collects events.
-        Returns (events, action_result).
-
-        This handles the race condition: SSE must be connected BEFORE
-        the action fires so we don't miss events.
-        """
-        import queue
-        import threading
-
-        event_queue: queue.Queue[dict[str, str] | None] = queue.Queue()
-        connected = threading.Event()
-        stop_flag = threading.Event()
-
-        thread = threading.Thread(
-            target=self._sse_background_reader,
-            args=(event_queue, connected, stop_flag, timeout),
-            daemon=True,
-        )
-        thread.start()
-        connected.wait(timeout=10)
-        time.sleep(0.5)  # Brief settle time for SSE connection
-
-        action_result = action()
-        events = self._drain_sse_queue(event_queue, stop_on, timeout)
-
-        stop_flag.set()
-        thread.join(timeout=5)
-        return events, action_result
-
-    def _sse_background_reader(
-        self,
-        event_queue: queue.Queue,
-        connected: threading.Event,
-        stop_flag: threading.Event,
-        timeout: float,
-    ) -> None:
-        """Background thread: read SSE lines and push parsed events to queue."""
-        try:
-            with self.session.get(
-                self._sse_url(),
-                stream=True,
-                timeout=(5.0, timeout + 5),
-                headers={"Accept": "text/event-stream"},
-            ) as resp:
-                resp.raise_for_status()
-                connected.set()
-                current: dict[str, str] = {}
-                for line in resp.iter_lines(decode_unicode=True):
-                    if stop_flag.is_set():
-                        break
-                    if line is None:
-                        continue
-                    current, event = self._parse_sse_line(line, current)
-                    if event is not None:
-                        event_queue.put(event)
-        except Exception:
-            logger.debug("SSE background reader stopped", exc_info=True)
-        finally:
-            connected.set()  # Ensure we don't block forever
-            event_queue.put(None)  # Sentinel
-
-    @staticmethod
-    def _drain_sse_queue(
-        event_queue: queue.Queue,
-        stop_on: str | None,
-        timeout: float,
-    ) -> list[dict[str, str]]:
-        """Drain events from the queue until stop condition or timeout."""
-        import queue as queue_mod
-
-        events: list[dict[str, str]] = []
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                event = event_queue.get(timeout=1)
-                if event is None:
-                    break
-                events.append(event)
-                if stop_on and event.get("event") == stop_on:
-                    break
-            except queue_mod.Empty:
-                continue
-        return events
 
     # Job Listings - /api/v1/listings (read-only projections via BFF)
 
@@ -1097,16 +1049,13 @@ class NohikiClient:
 
         Returns correlations if found, empty list if timeout.
         """
-        import time as _time
 
-        start = _time.time()
-        while _time.time() - start < timeout:
+        def find_correlations() -> list[dict[str, Any]] | None:
             resp = self.list_my_correlations(pref_id=pref_id, page_size=page_size)
             correlations = resp.get("items", [])
-            if len(correlations) >= min_count:
-                return correlations
-            _time.sleep(interval)
-        return []
+            return correlations if len(correlations) >= min_count else None
+
+        return poll_until(find_correlations, timeout=timeout, max_interval=interval) or []
 
     # Account Management - /api/v1/account (via user-auth-service)
 
@@ -1128,13 +1077,14 @@ class NohikiClient:
         user-auth-service. Polling prevents flakiness in tests that call
         get_account() immediately after register().
         """
-        start = time.time()
-        while time.time() - start < timeout:
+
+        def get_projected_account() -> dict[str, Any] | None:
             try:
                 return self.get_account()
             except Exception:
-                time.sleep(interval)
-        return None
+                return None
+
+        return poll_until(get_projected_account, timeout=timeout, max_interval=interval)
 
     def update_account(
         self,
@@ -1168,7 +1118,7 @@ class NohikiClient:
     def check_health(self, path: str = "/api/ping") -> bool:
         """Check if gateway is healthy via BFF ping endpoint."""
         try:
-            resp = self.session.get(self._url(path), timeout=5)
+            resp = self.session.get(self._url(path), timeout=HEALTH_REQUEST_TIMEOUT)
         except RequestException:
             return False
         else:
@@ -1176,23 +1126,23 @@ class NohikiClient:
 
     def check_ping(self) -> bool:
         """Check if BFF ping endpoint is responding."""
-        try:
-            resp = self.session.get(self._url("/api/ping"), timeout=5)
-        except RequestException:
-            return False
-        else:
-            return resp.status_code == 200
+        return self.check_health()
 
-    def wait_for_healthy(self, timeout: int = 120, interval: int = 5) -> bool:
-        """Wait for services to become healthy."""
-        start = time.time()
-        while time.time() - start < timeout:
-            if self.check_health() and self.check_ping():
-                logger.info("Services healthy after %.1fs", time.time() - start)
+    def wait_for_healthy(self) -> bool:
+        """Probe service health with a bounded retry budget."""
+        start = time.monotonic()
+        for attempt in range(HEALTH_PROBE_ATTEMPTS):
+            if self.check_health():
+                logger.info("Services healthy after %.1fs", time.monotonic() - start)
                 return True
-            logger.info("Waiting for services... (%.1fs)", time.time() - start)
-            time.sleep(interval)
-        logger.error("Services not healthy after %ds", timeout)
+            if attempt + 1 < HEALTH_PROBE_ATTEMPTS:
+                logger.info("Waiting for services... (attempt %d/%d)", attempt + 1, HEALTH_PROBE_ATTEMPTS)
+                time.sleep(HEALTH_PROBE_INTERVAL)
+        logger.error(
+            "Services not healthy after %d attempts in %.1fs",
+            HEALTH_PROBE_ATTEMPTS,
+            time.monotonic() - start,
+        )
         return False
 
     def clear_session(self) -> None:

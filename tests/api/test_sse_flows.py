@@ -38,6 +38,8 @@ from requests.exceptions import HTTPError
 
 from .client import NohikiClient
 
+pytestmark = pytest.mark.integration
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("nohiki-e2e-sse")
 
@@ -456,20 +458,16 @@ FULL_RESUME_DATA = {
 
 
 @pytest.fixture(scope="module")
-def client() -> NohikiClient:
+def client(healthy_base_url: str) -> NohikiClient:
     """Create E2E client."""
-    c = NohikiClient(BASE_URL)
-    if not c.wait_for_healthy(timeout=60):
-        pytest.skip("Services not healthy")
+    c = NohikiClient(healthy_base_url)
     return c
 
 
 @pytest.fixture
-def fresh_client() -> Generator[NohikiClient]:
+def fresh_client(healthy_base_url: str) -> Generator[NohikiClient]:
     """Create a fresh client with its own session for test isolation."""
-    c = NohikiClient(BASE_URL)
-    if not c.check_ping():
-        pytest.skip("Services not healthy - BFF not responding")
+    c = NohikiClient(healthy_base_url)
     yield c
     c.clear_session()
 
@@ -506,12 +504,21 @@ class TestSSEEndpointBasics:
     def test_sse_endpoint_requires_authentication(self, fresh_client: NohikiClient) -> None:
         """Unauthenticated SSE request returns 401."""
         with pytest.raises(HTTPError, match=r"401|403"):
-            fresh_client.connect_sse_raw(timeout=5)
+            fresh_client.connect_sse_raw(str(uuid.uuid4()), timeout=5)
 
     @pytest.mark.timeout(SSE_TIMEOUT)
-    def test_sse_endpoint_returns_event_stream_content_type(self, authenticated_client: NohikiClient) -> None:
+    def test_sse_endpoint_returns_event_stream_content_type(
+        self,
+        authenticated_client: NohikiClient,
+        template_version: dict,
+    ) -> None:
         """SSE endpoint returns Content-Type: text/event-stream."""
-        resp = authenticated_client.connect_sse_raw(timeout=5)
+        request_id = authenticated_client.generate_document(
+            template_version_id=template_version["id"],
+            data=FULL_RESUME_DATA,
+            output_format="html",
+        )["request_id"]
+        resp = authenticated_client.connect_sse_raw(request_id, timeout=5)
         try:
             content_type = resp.headers.get("content-type", "")
             assert "text/event-stream" in content_type, f"Expected text/event-stream, got {content_type}"
@@ -520,14 +527,26 @@ class TestSSEEndpointBasics:
             resp.close()
 
     @pytest.mark.timeout(SSE_TIMEOUT)
-    def test_sse_endpoint_sends_heartbeat_pings(self, authenticated_client: NohikiClient) -> None:
-        """SSE endpoint sends :ping comments as heartbeats."""
-        # Heartbeats are sent every 10s by sse-starlette; wait up to 15s
-        events = authenticated_client.collect_sse_events(timeout=15, max_events=10)
+    def test_sse_endpoint_streams_initial_status(
+        self,
+        authenticated_client: NohikiClient,
+        template_version: dict,
+    ) -> None:
+        """SSE endpoint immediately streams the request's current status."""
+        request_id = authenticated_client.generate_document(
+            template_version_id=template_version["id"],
+            data=FULL_RESUME_DATA,
+            output_format="html",
+        )["request_id"]
+        events = authenticated_client.collect_sse_events(
+            request_id,
+            timeout=15,
+            stop_on_event_type="document_status",
+        )
 
-        ping_events = [e for e in events if "comment" in e and e["comment"] == "ping"]
-        assert len(ping_events) >= 1, f"Expected at least 1 heartbeat ping, got events: {events}"
-        logger.info("Received %d heartbeat ping(s)", len(ping_events))
+        status_events = [event for event in events if event.get("event") == "document_status"]
+        assert status_events, f"Expected an initial document_status event, got events: {events}"
+        assert request_id in status_events[0].get("data", "")
 
     @pytest.mark.e2e
     @pytest.mark.slow
@@ -647,21 +666,18 @@ class TestSSEDocumentLifecycle:
         template_version: dict,
     ) -> None:
         """Generate a document and verify SSE delivers the status event."""
-
-        def _generate() -> dict:
-            return authenticated_client.generate_document(
-                template_version_id=template_version["id"],
-                data=FULL_RESUME_DATA,
-                output_format="html",
-            )
-
-        events, gen_result = authenticated_client.stream_sse_with_action(
-            _generate,
+        gen_result = authenticated_client.generate_document(
+            template_version_id=template_version["id"],
+            data=FULL_RESUME_DATA,
+            output_format="html",
+        )
+        request_id = gen_result["request_id"]
+        events = authenticated_client.collect_sse_events(
+            request_id,
             timeout=30,
-            stop_on="document_status",
+            stop_on_event_type="document_status",
         )
 
-        request_id = gen_result["request_id"]
         logger.info("Generated document %s, received %d SSE events", request_id, len(events))
 
         # Filter for document_status events matching our request
@@ -678,21 +694,17 @@ class TestSSEDocumentLifecycle:
         template_version: dict,
     ) -> None:
         """SSE document_status event has all required fields."""
-
-        def _generate() -> dict:
-            return authenticated_client.generate_document(
-                template_version_id=template_version["id"],
-                data=FULL_RESUME_DATA,
-                output_format="html",
-            )
-
-        events, gen_result = authenticated_client.stream_sse_with_action(
-            _generate,
-            timeout=30,
-            stop_on="document_status",
+        gen_result = authenticated_client.generate_document(
+            template_version_id=template_version["id"],
+            data=FULL_RESUME_DATA,
+            output_format="html",
         )
-
         request_id = gen_result["request_id"]
+        events = authenticated_client.collect_sse_events(
+            request_id,
+            timeout=30,
+            stop_on_event_type="document_status",
+        )
 
         # Find the document_status event for our request
         status_events = [e for e in events if e.get("event") == "document_status" and request_id in e.get("data", "")]
@@ -730,6 +742,7 @@ class TestSSEDocumentLifecycle:
 
         # Connect SSE immediately, should include the document in initial state
         events = authenticated_client.collect_sse_events(
+            request_id,
             timeout=15,
             max_events=20,
             stop_on_event_type="document_status",
@@ -753,36 +766,32 @@ class TestSSEStreamBehavior:
         authenticated_client: NohikiClient,
         template_version: dict,
     ) -> None:
-        """Generating 2 documents produces 2 SSE events."""
-        request_ids: list[str] = []
-
-        def _generate_two() -> list[dict]:
-            results = []
-            for fmt in ("html", "pdf"):
-                result = authenticated_client.generate_document(
-                    template_version_id=template_version["id"],
-                    data=FULL_RESUME_DATA,
-                    output_format=fmt,
-                )
-                results.append(result)
-                request_ids.append(result["request_id"])
-            return results
-
-        events, _gen_results = authenticated_client.stream_sse_with_action(
-            _generate_two,
-            timeout=30,
-            stop_on=None,  # Don't stop on first event, collect all
-        )
+        """Each request-scoped stream reports its generated document."""
+        streams: dict[str, list[dict[str, str]]] = {}
+        for fmt in ("html", "pdf"):
+            result = authenticated_client.generate_document(
+                template_version_id=template_version["id"],
+                data=FULL_RESUME_DATA,
+                output_format=fmt,
+            )
+            request_id = result["request_id"]
+            streams[request_id] = authenticated_client.collect_sse_events(
+                request_id,
+                timeout=30,
+                stop_on_event_type="document_status",
+            )
 
         logger.info(
-            "Generated %d documents, received %d SSE events",
-            len(request_ids),
-            len(events),
+            "Generated %d documents across request-scoped streams",
+            len(streams),
         )
 
-        # Each generated document should have at least one status event
-        for rid in request_ids:
-            matching = [e for e in events if e.get("event") == "document_status" and rid in e.get("data", "")]
-            assert len(matching) >= 1, f"Expected at least 1 document_status event for {rid}, got events: {events}"
+        for request_id, events in streams.items():
+            matching = [
+                event
+                for event in events
+                if event.get("event") == "document_status" and request_id in event.get("data", "")
+            ]
+            assert matching, f"Expected a document_status event for {request_id}, got events: {events}"
 
         logger.info("Both documents received SSE events")
