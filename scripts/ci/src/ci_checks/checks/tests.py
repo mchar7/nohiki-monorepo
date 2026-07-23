@@ -322,9 +322,28 @@ class PendingCoverageColumn(ProgressColumn):
 
 
 def _sync_workspace(console: Console) -> None:
-    """Synchronize the frozen workspace environment before parallel test execution."""
+    """Synchronize the frozen workspace environment before parallel test execution.
+
+    Uses the canonical dev sync shape (all packages, all non-CUDA extras, deadcode
+    group) behind the exclusive venv lock so a runner invocation never narrows an
+    environment that other consumers share.
+    """
     result = subprocess.run(
-        ["uv", "sync", "--all-packages", "--frozen"],
+        [
+            "scripts/dev/env-lock.sh",
+            "exclusive",
+            "venv",
+            "--",
+            "uv",
+            "sync",
+            "--all-packages",
+            "--all-extras",
+            "--no-extra",
+            "cuda",
+            "--group",
+            "deadcode",
+            "--frozen",
+        ],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,

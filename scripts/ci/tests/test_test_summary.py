@@ -174,7 +174,23 @@ async def test_parallel_runner_syncs_frozen_workspace_once_before_tests(
         with_coverage=False,
     )
 
-    assert sync_commands == [["uv", "sync", "--all-packages", "--frozen"]]
+    assert sync_commands == [
+        [
+            "scripts/dev/env-lock.sh",
+            "exclusive",
+            "venv",
+            "--",
+            "uv",
+            "sync",
+            "--all-packages",
+            "--all-extras",
+            "--no-extra",
+            "cuda",
+            "--group",
+            "deadcode",
+            "--frozen",
+        ]
+    ]
     assert events[0] == "sync"
     assert set(events[1:]) == {"pytest:first", "pytest:second"}
     assert package_args == [("-n", "4"), ("-n", "4")]
