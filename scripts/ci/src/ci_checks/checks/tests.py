@@ -46,7 +46,7 @@ from ci_checks.core.process_env import sanitized_python_env
 PYTEST_SUCCESS = 0
 PYTEST_NO_TESTS = 5
 _WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS: int = 30 * 60
-_UNIT_TEST_MARKERS = "not integration and not e2e and not requires_docker"
+_UNIT_TEST_MARKERS = "not integration and not e2e and not requires_docker and not slow"
 
 
 # Git change detection
