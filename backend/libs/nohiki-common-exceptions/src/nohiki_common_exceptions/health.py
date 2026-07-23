@@ -8,6 +8,7 @@ router aggregates results.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, Self, runtime_checkable
@@ -71,21 +72,27 @@ class HealthProbe(Protocol):
 class HealthProbeTimer:
     """Context manager for timing health probe operations."""
 
-    __slots__ = ("_end", "_start")
+    __slots__ = ("_clock", "_end", "_start")
 
-    def __init__(self) -> None:
-        """Initialize timer with zero values."""
+    def __init__(self, clock: Callable[[], float] = time.perf_counter) -> None:
+        """Initialize the timer.
+
+        Args:
+            clock: Monotonic clock used to measure elapsed time.
+
+        """
+        self._clock = clock
         self._start: float = 0.0
         self._end: float = 0.0
 
     def __enter__(self) -> Self:
         """Start the timer."""
-        self._start = time.perf_counter()
+        self._start = self._clock()
         return self
 
     def __exit__(self, *_: object) -> None:
         """Stop the timer."""
-        self._end = time.perf_counter()
+        self._end = self._clock()
 
     @property
     def elapsed_ms(self) -> float:

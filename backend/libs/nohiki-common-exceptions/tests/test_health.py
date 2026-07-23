@@ -183,14 +183,14 @@ class TestHealthProbeTimer:
         assert timer._end >= timer._start
 
     def test_timer_elapsed_ms_after_context(self) -> None:
-        """elapsed_ms returns positive value after context exit."""
-        timer = HealthProbeTimer()
+        """elapsed_ms reports the injected clock delta."""
+        timestamps = iter((1.0, 1.001))
+        timer = HealthProbeTimer(lambda: next(timestamps))
+
         with timer:
-            import time
+            pass
 
-            time.sleep(0.001)
-
-        assert timer.elapsed_ms >= 0
+        assert timer.elapsed_ms == pytest.approx(1.0)
 
     def test_timer_as_context_manager(self) -> None:
         """Timer works as a context manager."""
@@ -201,13 +201,12 @@ class TestHealthProbeTimer:
 
     def test_timer_measures_elapsed_time(self) -> None:
         """Timer accurately measures elapsed time."""
-        import time
+        timestamps = iter((10.0, 10.01))
 
-        timer = HealthProbeTimer()
-        with timer:
-            time.sleep(0.01)  # 10ms
+        with HealthProbeTimer(lambda: next(timestamps)) as timer:
+            pass
 
-        assert timer.elapsed_ms >= 10.0
+        assert timer.elapsed_ms == pytest.approx(10.0)
 
 
 class TestCreateHealthyResult:
