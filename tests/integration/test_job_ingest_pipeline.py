@@ -1,4 +1,4 @@
-"""Integration tests for job ingest pipeline event structures.
+"""Unit tests for job ingest pipeline event structures.
 
 Tests the proto structures used in the ingest pipeline from discovery
 through enrichment to storage.
@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
-import pytest
 from nohiki.common.v1 import (
     CurrencyCode,
     EventMetadata,
@@ -40,12 +39,10 @@ def generate_content_hash(content: str) -> str:
     return sha256(content.encode()).hexdigest()
 
 
-@pytest.mark.integration
 class TestDiscoveredListingProto:
     """Test DiscoveredListing proto structure."""
 
-    @pytest.mark.asyncio
-    async def test_discovered_listing_required_fields(self) -> None:
+    def test_discovered_listing_required_fields(self) -> None:
         """Test DiscoveredListing has required fields."""
         description = "Looking for a Python developer..."
         listing = DiscoveredListing(
@@ -66,8 +63,7 @@ class TestDiscoveredListingProto:
         assert len(listing.raw_skills) == 3
         assert len(listing.content_hash) == 64
 
-    @pytest.mark.asyncio
-    async def test_discovered_listing_job_board_sources(self) -> None:
+    def test_discovered_listing_job_board_sources(self) -> None:
         """Test all JobBoardSource enum values work."""
         sources = [
             JobBoardSource.INDEED,
@@ -90,12 +86,10 @@ class TestDiscoveredListingProto:
             assert listing.source == source
 
 
-@pytest.mark.integration
 class TestListingReferenceProto:
     """Test ListingReference proto structure."""
 
-    @pytest.mark.asyncio
-    async def test_listing_reference_fields(self) -> None:
+    def test_listing_reference_fields(self) -> None:
         """Test ListingReference uses listing_url field."""
         ref = ListingReference(
             listing_url="https://example.com/job/123",
@@ -107,12 +101,10 @@ class TestListingReferenceProto:
         assert ref.source == JobBoardSource.INDEED
 
 
-@pytest.mark.integration
 class TestStoredListingProto:
     """Test StoredListing proto structure."""
 
-    @pytest.mark.asyncio
-    async def test_stored_listing_with_work_arrangement(self) -> None:
+    def test_stored_listing_with_work_arrangement(self) -> None:
         """Test StoredListing with work arrangement."""
         stored = StoredListing(
             listing_url="https://example.com/job/enriched",
@@ -130,8 +122,7 @@ class TestStoredListingProto:
         assert stored.work_arrangement == WorkArrangement.REMOTE
         assert stored.version == 1
 
-    @pytest.mark.asyncio
-    async def test_stored_listing_with_compensation(self) -> None:
+    def test_stored_listing_with_compensation(self) -> None:
         """Test StoredListing with compensation using correct currency enum."""
         from nohiki.common.v1 import (
             Compensation,
@@ -161,12 +152,10 @@ class TestStoredListingProto:
         assert stored.compensation.frequency == PaymentFrequency.ANNUALLY
 
 
-@pytest.mark.integration
 class TestEventMetadataProto:
     """Test EventMetadata proto structure."""
 
-    @pytest.mark.asyncio
-    async def test_event_metadata_required_fields(self) -> None:
+    def test_event_metadata_required_fields(self) -> None:
         """Test EventMetadata uses correct field names."""
         metadata = EventMetadata(
             event_id=str(uuid4()),
@@ -179,8 +168,7 @@ class TestEventMetadataProto:
         assert metadata.source_service == "job-ingest-service"
         assert metadata.version == "v1"
 
-    @pytest.mark.asyncio
-    async def test_event_metadata_with_correlation(self) -> None:
+    def test_event_metadata_with_correlation(self) -> None:
         """Test EventMetadata with correlation and causation IDs."""
         correlation_id = str(uuid4())
         causation_id = str(uuid4())

@@ -1,68 +1,77 @@
-"""Integration tests for shared observability components across services."""
+"""Unit tests for shared structured logging contracts."""
 
 import uuid
+from collections.abc import Iterator
 
 import pytest
 import structlog
+from structlog.testing import LogCapture
 
 from tests._helpers import TEST_USER_ID
 
 
-@pytest.mark.integration
-class TestObservabilityIntegration:
-    """Test suite for shared observability components usage across services."""
+@pytest.fixture
+def log_output() -> LogCapture:
+    """Capture structured log event dictionaries."""
+    return LogCapture()
 
-    def test_structured_logging_consistency(self) -> None:
-        """Test that structured logging works consistently across all services."""
-        # Configure structlog for testing (similar to how services would configure it)
-        structlog.configure(
-            processors=[
-                structlog.stdlib.filter_by_level,
-                structlog.stdlib.add_logger_name,
-                structlog.stdlib.add_log_level,
-                structlog.stdlib.PositionalArgumentsFormatter(),
-                structlog.processors.TimeStamper(fmt="iso"),
-                structlog.processors.StackInfoRenderer(),
-                structlog.processors.format_exc_info,
-                structlog.processors.UnicodeDecoder(),
-                structlog.processors.JSONRenderer(),
-            ],
-            context_class=dict,
-            logger_factory=structlog.stdlib.LoggerFactory(),
-            wrapper_class=structlog.stdlib.BoundLogger,
-            cache_logger_on_first_use=True,
-        )
 
-        # Test logging from different service contexts
+@pytest.fixture(autouse=True)
+def _configure_structlog(log_output: LogCapture) -> Iterator[None]:
+    """Isolate structlog's process-global configuration for every test."""
+    structlog.reset_defaults()
+    structlog.configure(processors=[log_output], cache_logger_on_first_use=False)
+    yield
+    structlog.reset_defaults()
+
+
+class TestObservabilityContracts:
+    """Test shared structured logging event contracts."""
+
+    def test_structured_logging_consistency(self, log_output: LogCapture) -> None:
+        """Test that each service emits structured events at the requested levels."""
         services = [
             "user-service",
             "job-scraper-service",
             "job-ingest-enrichment-service",
             "scrape-post-process-service",
         ]
+        expected: list[dict[str, object]] = []
 
         for service in services:
             test_id = f"test_{service}_{uuid.uuid4().hex[:8]}"
             logger = structlog.get_logger(service)
+            logger.info("Testing structured logging", service=service, test_id=test_id)
+            logger.warning("Testing warning level", service=service, test_id=test_id)
+            logger.error("Testing error level", service=service, test_id=test_id)
+            expected.extend(
+                [
+                    {
+                        "event": "Testing structured logging",
+                        "service": service,
+                        "test_id": test_id,
+                        "log_level": "info",
+                    },
+                    {
+                        "event": "Testing warning level",
+                        "service": service,
+                        "test_id": test_id,
+                        "log_level": "warning",
+                    },
+                    {
+                        "event": "Testing error level",
+                        "service": service,
+                        "test_id": test_id,
+                        "log_level": "error",
+                    },
+                ]
+            )
 
-            # Test different log levels and structured data
-            # Use a simpler approach - just verify the logger can be called without errors
-            try:
-                # Test structured logging
-                logger.info("Testing structured logging", service=service, test_id=test_id)
-                logger.warning("Testing warning level", service=service, test_id=test_id)
-                logger.error("Testing error level", service=service, test_id=test_id)
+        assert log_output.entries == expected
 
-                # If we get here without exception, the logging is working
-                assert True
-            except (ImportError, AttributeError, TypeError, ValueError) as e:
-                pytest.fail(f"Structured logging failed for service {service}: {e}")
-
-    def test_correlation_id_propagation(self) -> None:
-        """Test that correlation IDs are properly propagated across service boundaries."""
+    def test_correlation_id_propagation(self, log_output: LogCapture) -> None:
+        """Test that each service emits the same correlation ID."""
         correlation_id = str(uuid.uuid4())
-
-        # Simulate how correlation IDs would be passed between services
         service_chain = [
             ("user-service", "role_updated"),
             ("job-scraper-service", "scraping_started"),
@@ -70,27 +79,27 @@ class TestObservabilityIntegration:
             ("job-ingest-enrichment-service", "enrichment_started"),
         ]
 
-        # Track correlation ID through the chain
-        current_correlation_id = correlation_id
-
         for service, operation in service_chain:
-            logger = structlog.get_logger(service)
+            structlog.get_logger(service).info(
+                "Operation started",
+                service=service,
+                operation=operation,
+                correlation_id=correlation_id,
+            )
 
-            # Each service should log with the same correlation ID
-            try:
-                logger.info(
-                    "Operation started",
-                    service=service,
-                    operation=operation,
-                    correlation_id=current_correlation_id,
-                )
-                # Verify the correlation ID is preserved by checking it's the same
-                assert current_correlation_id == correlation_id
-            except (ValueError, TypeError) as e:
-                pytest.fail(f"Correlation ID propagation failed for {service}: {e}")
+        assert log_output.entries == [
+            {
+                "event": "Operation started",
+                "service": service,
+                "operation": operation,
+                "correlation_id": correlation_id,
+                "log_level": "info",
+            }
+            for service, operation in service_chain
+        ]
 
-    def test_error_logging_and_tracking(self) -> None:
-        """Test error logging and tracking across services."""
+    def test_error_logging_and_tracking(self, log_output: LogCapture) -> None:
+        """Test error event fields emitted by each service."""
         error_scenarios = [
             {
                 "service": "job-scraper-service",
@@ -113,22 +122,26 @@ class TestObservabilityIntegration:
         ]
 
         for scenario in error_scenarios:
-            logger = structlog.get_logger(scenario["service"])
+            structlog.get_logger(scenario["service"]).error(
+                scenario["error_message"],
+                service=scenario["service"],
+                error_type=scenario["error_type"],
+                **scenario["context"],
+            )
 
-            try:
-                logger.error(
-                    scenario["error_message"],
-                    service=scenario["service"],
-                    error_type=scenario["error_type"],
-                    **scenario["context"],
-                )
-                # If we get here without exception, error logging is working
-                assert True
-            except (ValueError, TypeError) as e:
-                pytest.fail(f"Error logging failed for {scenario['service']}: {e}")
+        assert log_output.entries == [
+            {
+                "event": scenario["error_message"],
+                "service": scenario["service"],
+                "error_type": scenario["error_type"],
+                **scenario["context"],
+                "log_level": "error",
+            }
+            for scenario in error_scenarios
+        ]
 
-    def test_performance_metrics_logging(self) -> None:
-        """Test performance metrics logging patterns used across services."""
+    def test_performance_metrics_logging(self, log_output: LogCapture) -> None:
+        """Test performance event fields emitted by each service."""
         performance_scenarios = [
             {
                 "service": "job-scraper-service",
@@ -154,23 +167,14 @@ class TestObservabilityIntegration:
         ]
 
         for scenario in performance_scenarios:
-            logger = structlog.get_logger(scenario["service"])
+            structlog.get_logger(scenario["service"]).info("Operation completed", **scenario)
 
-            try:
-                logger.info(
-                    "Operation completed",
-                    service=scenario["service"],
-                    operation=scenario["operation"],
-                    duration_ms=scenario["duration_ms"],
-                    **{k: v for k, v in scenario.items() if k not in ["service", "operation", "duration_ms"]},
-                )
-                # If we get here without exception, performance logging is working
-                assert True
-            except (ValueError, TypeError) as e:
-                pytest.fail(f"Performance logging failed for {scenario['service']}: {e}")
+        assert log_output.entries == [
+            {"event": "Operation completed", **scenario, "log_level": "info"} for scenario in performance_scenarios
+        ]
 
-    def test_user_activity_tracking(self) -> None:
-        """Test user activity tracking across different services."""
+    def test_user_activity_tracking(self, log_output: LogCapture) -> None:
+        """Test user activity event fields emitted by each service."""
         user_activities = [
             {
                 "service": "user-service",
@@ -193,79 +197,84 @@ class TestObservabilityIntegration:
         ]
 
         for activity in user_activities:
-            logger = structlog.get_logger(activity["service"])
+            structlog.get_logger(activity["service"]).info(
+                "Account activity logged",
+                service=activity["service"],
+                activity=activity["activity"],
+                user_id=activity["user_id"],
+                **activity["metadata"],
+            )
 
-            try:
-                logger.info(
-                    "Account activity logged",
-                    service=activity["service"],
-                    activity=activity["activity"],
-                    user_id=activity["user_id"],
-                    **activity["metadata"],
-                )
-                # If we get here without exception, user activity tracking is working
-                assert True
-            except (ValueError, TypeError) as e:
-                pytest.fail(f"Account activity tracking failed for {activity['service']}: {e}")
+        assert log_output.entries == [
+            {
+                "event": "Account activity logged",
+                "service": activity["service"],
+                "activity": activity["activity"],
+                "user_id": activity["user_id"],
+                **activity["metadata"],
+                "log_level": "info",
+            }
+            for activity in user_activities
+        ]
 
-    def test_security_event_logging(self) -> None:
-        """Test security event logging patterns."""
+    def test_security_event_logging(self, log_output: LogCapture) -> None:
+        """Test security event fields and severity-dependent log levels."""
         security_events = [
             {
                 "service": "user-service",
                 "event_type": "authentication_failure",
                 "severity": "warning",
+                "log_level": "warning",
                 "details": {"user_id": TEST_USER_ID, "reason": "invalid_credentials", "ip_address": "192.168.1.100"},
             },
             {
                 "service": "user-service",
                 "event_type": "suspicious_activity",
                 "severity": "high",
+                "log_level": "error",
                 "details": {"user_id": TEST_USER_ID, "activity": "multiple_failed_logins", "count": 5},
             },
             {
                 "service": "job-ingest-enrichment-service",
                 "event_type": "config_update",
                 "severity": "info",
+                "log_level": "info",
                 "details": {"config_key": "enrichment_model", "updated_at": "2024-01-15T10:30:00Z"},
             },
         ]
 
         for event in security_events:
             logger = structlog.get_logger(event["service"])
+            fields = {
+                "service": event["service"],
+                "event_type": event["event_type"],
+                "severity": event["severity"],
+                **event["details"],
+            }
+            match event["log_level"]:
+                case "error":
+                    logger.error("Security event detected", **fields)
+                case "warning":
+                    logger.warning("Security event detected", **fields)
+                case "info":
+                    logger.info("Security event detected", **fields)
+                case unexpected:
+                    pytest.fail(f"Unsupported security log level: {unexpected}")
 
-            try:
-                if event["severity"] == "high":
-                    logger.error(
-                        "Security event detected",
-                        service=event["service"],
-                        event_type=event["event_type"],
-                        severity=event["severity"],
-                        **event["details"],
-                    )
-                elif event["severity"] == "warning":
-                    logger.warning(
-                        "Security event detected",
-                        service=event["service"],
-                        event_type=event["event_type"],
-                        severity=event["severity"],
-                        **event["details"],
-                    )
-                else:
-                    logger.info(
-                        "Security event detected",
-                        service=event["service"],
-                        event_type=event["event_type"],
-                        severity=event["severity"],
-                        **event["details"],
-                    )
-                # If we get here without exception, security logging is working
-                assert True
-            except (ValueError, TypeError) as e:
-                pytest.fail(f"Security event logging failed for {event['service']}: {e}")
+        assert log_output.entries == [
+            {
+                "event": "Security event detected",
+                "service": event["service"],
+                "event_type": event["event_type"],
+                "severity": event["severity"],
+                **event["details"],
+                "log_level": event["log_level"],
+            }
+            for event in security_events
+        ]
 
-    def test_business_metrics_tracking(self) -> None:
-        """Test business metrics tracking across services."""
+    def test_business_metrics_tracking(self, log_output: LogCapture) -> None:
+        """Test business metric event fields emitted by each service."""
         business_metrics = [
             {
                 "service": "job-scraper-service",
@@ -288,27 +297,30 @@ class TestObservabilityIntegration:
         ]
 
         for metric in business_metrics:
-            logger = structlog.get_logger(metric["service"])
+            structlog.get_logger(metric["service"]).info(
+                "Business metric recorded",
+                service=metric["service"],
+                metric_name=metric["metric"],
+                metric_value=metric["value"],
+                **metric["dimensions"],
+            )
 
-            try:
-                logger.info(
-                    "Business metric recorded",
-                    service=metric["service"],
-                    metric_name=metric["metric"],
-                    metric_value=metric["value"],
-                    **metric["dimensions"],
-                )
-                # If we get here without exception, business metrics tracking is working
-                assert True
-            except (ValueError, TypeError) as e:
-                pytest.fail(f"Business metrics tracking failed for {metric['service']}: {e}")
+        assert log_output.entries == [
+            {
+                "event": "Business metric recorded",
+                "service": metric["service"],
+                "metric_name": metric["metric"],
+                "metric_value": metric["value"],
+                **metric["dimensions"],
+                "log_level": "info",
+            }
+            for metric in business_metrics
+        ]
 
-    def test_distributed_tracing_context(self) -> None:
-        """Test distributed tracing context propagation."""
+    def test_distributed_tracing_context(self, log_output: LogCapture) -> None:
+        """Test that each service emits the same trace and span context."""
         trace_id = str(uuid.uuid4())
         span_id = str(uuid.uuid4())
-
-        # Simulate a request flowing through multiple services
         service_flow = [
             ("user-service", "handle_role_update"),
             ("job-scraper-service", "trigger_job_scraping"),
@@ -318,26 +330,31 @@ class TestObservabilityIntegration:
         ]
 
         for service, operation in service_flow:
-            logger = structlog.get_logger(service)
+            structlog.get_logger(service).info(
+                "Operation executed",
+                service=service,
+                operation=operation,
+                trace_id=trace_id,
+                span_id=span_id,
+                user_id=TEST_USER_ID,
+            )
 
-            try:
-                logger.info(
-                    "Operation executed",
-                    service=service,
-                    operation=operation,
-                    trace_id=trace_id,
-                    span_id=span_id,
-                    user_id=TEST_USER_ID,
-                )
-                # If we get here without exception, distributed tracing is working
-                assert True
-            except (ValueError, TypeError) as e:
-                pytest.fail(f"Distributed tracing failed for {service}: {e}")
+        assert log_output.entries == [
+            {
+                "event": "Operation executed",
+                "service": service,
+                "operation": operation,
+                "trace_id": trace_id,
+                "span_id": span_id,
+                "user_id": TEST_USER_ID,
+                "log_level": "info",
+            }
+            for service, operation in service_flow
+        ]
 
-    def test_log_aggregation_compatibility(self) -> None:
-        """Test that logs are formatted for aggregation systems (ELK, etc.)."""
-        # Test various log formats that should be compatible with log aggregation
-        test_scenarios = [
+    def test_log_aggregation_compatibility(self, log_output: LogCapture) -> None:
+        """Test aggregation events retain their event names, levels, and structured fields."""
+        scenarios = [
             {
                 "service": "job-scraper-service",
                 "message": "Listing scraping completed successfully",
@@ -362,23 +379,23 @@ class TestObservabilityIntegration:
             },
         ]
 
-        for scenario in test_scenarios:
+        for scenario in scenarios:
             logger = structlog.get_logger(scenario["service"])
+            fields = {"service": scenario["service"], **scenario["structured_data"]}
+            match scenario["level"]:
+                case "error":
+                    logger.error(scenario["message"], **fields)
+                case "info":
+                    logger.info(scenario["message"], **fields)
+                case unexpected:
+                    pytest.fail(f"Unsupported aggregation log level: {unexpected}")
 
-            try:
-                if scenario["level"] == "error":
-                    logger.error(
-                        scenario["message"],
-                        service=scenario["service"],
-                        **scenario["structured_data"],
-                    )
-                else:
-                    logger.info(
-                        scenario["message"],
-                        service=scenario["service"],
-                        **scenario["structured_data"],
-                    )
-                # If we get here without exception, log aggregation compatibility is working
-                assert True
-            except (ValueError, TypeError) as e:
-                pytest.fail(f"Log aggregation compatibility failed for {scenario['service']}: {e}")
+        assert log_output.entries == [
+            {
+                "event": scenario["message"],
+                "service": scenario["service"],
+                **scenario["structured_data"],
+                "log_level": scenario["level"],
+            }
+            for scenario in scenarios
+        ]
