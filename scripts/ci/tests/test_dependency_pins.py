@@ -130,13 +130,14 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
     flake = _read_text(_FLAKE)
     base_hook = re.search(r"baseHook = ''(?P<body>.*?)'';", flake, re.DOTALL)
     assert base_hook, "flake.nix has no base development-shell hook"
-    flake_syncs = re.findall(r"^\s*(uv sync\b[^\n]*)", base_hook["body"], re.MULTILINE)
+    sync_pattern = r"^\s*(?:.*?\s--\s+)?(uv sync\b[^\n]*)"
+    flake_syncs = re.findall(sync_pattern, base_hook["body"], re.MULTILINE)
     assert len(flake_syncs) == 1, flake_syncs
 
     justfile = _read_text(_JUSTFILE)
     sync_dev = re.search(r"^sync-dev:\n(?P<body>(?:[ \t]+[^\n]*\n?)+)", justfile, re.MULTILINE)
     assert sync_dev, "Justfile has no sync-dev recipe"
-    just_syncs = re.findall(r"^\s*(uv sync\b[^\n]*)", sync_dev["body"], re.MULTILINE)
+    just_syncs = re.findall(sync_pattern, sync_dev["body"], re.MULTILINE)
     assert len(just_syncs) == 1, just_syncs
 
     hosted_steps = (step for job in _load_yaml(_CHECKS)["jobs"].values() for step in job.get("steps", ()))
