@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Final
 
+from health_check.config.kafka import CdcConnector, cdc_connectors_for
 from health_check.core.base import HealthCheck
 from health_check.core.models import CheckCategory, CheckMetadata, CheckResult, CheckStatus
 from health_check.platform.models import PlatformTarget
@@ -19,10 +20,10 @@ _METADATA: Final[CheckMetadata] = CheckMetadata(
     platforms=frozenset({PlatformTarget.COMPOSE, PlatformTarget.KUBERNETES}),
     depends_on=frozenset({"postgres_connectivity"}),
     timeout_seconds=15.0,
-    description="Verify the Nohiki PostgreSQL publication exists with outbox tables.",
+    description="Verify every current CDC publication exists with its configured table.",
 )
 
-_PUB_QUERY: Final[str] = "SELECT pubname FROM pg_publication WHERE pubname LIKE 'nohiki%'"
+_PUB_QUERY: Final[str] = "SELECT pubname FROM pg_publication ORDER BY pubname"
 _PUB_TABLES_QUERY: Final[str] = (
     "SELECT schemaname || '.' || tablename FROM pg_publication_tables WHERE pubname = '{name}'"
 )
@@ -30,29 +31,28 @@ _PUB_TABLES_QUERY: Final[str] = (
 
 async def _publication_table_failures(
     platform: Platform,
-    pub_name: str,
+    connector: CdcConnector,
 ) -> list[str]:
-    """Return failures if the publication has no outbox tables."""
+    """Return failures when a publication lacks its configured source table."""
     code, stdout, _ = await asyncio.to_thread(
         platform.exec_psql,
-        _PUB_TABLES_QUERY.format(name=pub_name),
+        _PUB_TABLES_QUERY.format(name=connector.publication_name),
     )
     if code != 0:
-        return [f"{pub_name}: cannot query publication tables"]
+        return [f"{connector.publication_name}: cannot query publication tables"]
 
     tables = [t.strip() for t in stdout.strip().split("\n") if t.strip()]
     if not tables:
-        return [f"{pub_name}: publication exists but has no tables"]
+        return [f"{connector.publication_name}: publication exists but has no tables"]
 
-    outbox_tables = [t for t in tables if "outbox" in t.lower()]
-    if not outbox_tables:
-        return [f"{pub_name}: no outbox tables in publication (found: {tables})"]
+    if connector.table_name not in tables:
+        return [f"{connector.publication_name}: missing configured table {connector.table_name} (found: {tables})"]
 
     return []
 
 
 class PublicationCheck(HealthCheck):
-    """Verify the Nohiki PostgreSQL logical replication publication is configured."""
+    """Verify the exact current PostgreSQL publication inventory and tables."""
 
     @property
     def metadata(self) -> CheckMetadata:
@@ -69,16 +69,25 @@ class PublicationCheck(HealthCheck):
                 details=(stderr[:200],),
             )
 
-        pub_names = [n.strip() for n in stdout.strip().split("\n") if n.strip()]
-        if not pub_names:
+        connectors = cdc_connectors_for(platform.target)
+        pub_names = frozenset(n.strip() for n in stdout.splitlines() if n.strip())
+        expected = frozenset(connector.publication_name for connector in connectors)
+        missing = sorted(expected - pub_names)
+        unexpected = sorted(pub_names - expected)
+        if missing or unexpected:
+            details = (
+                *(f"{name}: required publication missing" for name in missing),
+                *(f"{name}: unexpected publication" for name in unexpected),
+            )
             return self._make_result(
                 CheckStatus.FAILED,
-                "No Nohiki publication found",
-                remediation_hint="Run: just kafka-connect-register - Debezium creates the publication on startup",
+                f"publication inventory mismatch: {len(missing)} missing, {len(unexpected)} unexpected",
+                details=details,
+                remediation_hint="Reconcile current Debezium connectors and remove verified legacy publications",
             )
 
         async with asyncio.TaskGroup() as tg:
-            tasks = [tg.create_task(_publication_table_failures(platform, name)) for name in pub_names]
+            tasks = [tg.create_task(_publication_table_failures(platform, connector)) for connector in connectors]
 
         failures = [msg for t in tasks for msg in t.result()]
 
@@ -91,5 +100,5 @@ class PublicationCheck(HealthCheck):
             )
         return self._make_result(
             CheckStatus.PASSED,
-            f"{len(pub_names)} publication(s) configured with outbox tables",
+            f"All {len(expected)} current publications contain their configured tables",
         )

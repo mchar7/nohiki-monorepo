@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
 from health_check.checks.infrastructure.infra_services import InfraServicesCheck
 from health_check.checks.infrastructure.kafka_broker import KafkaBrokerCheck
 from health_check.checks.infrastructure.platform_services import PlatformServicesCheck
 from health_check.checks.infrastructure.postgres_connectivity import PostgresConnectivityCheck
 from health_check.checks.infrastructure.redis_health import RedisHealthCheck
+from health_check.config.thresholds import QDRANT_PORT, RUSTFS_HOST_PORT
 from health_check.core.models import CheckStatus
 from health_check.platform.models import PlatformTarget, ServiceStatus
 
@@ -168,6 +170,53 @@ class TestPlatformServicesCheck:
 
         assert result.status == CheckStatus.PASSED
         assert "5" in result.summary
+
+    async def test_accepts_expected_rustfs_forbidden_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        platform = MockPlatform()
+
+        def curl(url: str, *, timeout: int = 10) -> tuple[int, str, str]:
+            del timeout
+            if url == f"http://localhost:{RUSTFS_HOST_PORT}/":
+                return 22, "", "curl: (22) The requested URL returned error: 403"
+            return 0, "", ""
+
+        monkeypatch.setattr(platform, "curl", curl)
+        result = await PlatformServicesCheck().execute(platform)
+
+        assert result.status == CheckStatus.PASSED
+
+    async def test_accepts_expected_rustfs_forbidden_response_from_kubernetes_httpx(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        platform = MockPlatform(target=PlatformTarget.KUBERNETES)
+
+        def curl(url: str, *, timeout: int = 10) -> tuple[int, str, str]:
+            del timeout
+            if url == "http://rustfs:9000/":
+                return 1, "", "Client error '403 Forbidden' for url 'http://rustfs:9000/'"
+            return 0, "", ""
+
+        monkeypatch.setattr(platform, "curl", curl)
+        result = await PlatformServicesCheck().execute(platform)
+
+        assert result.status == CheckStatus.PASSED
+
+    async def test_rejects_forbidden_response_from_other_services(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        platform = MockPlatform()
+
+        def curl(url: str, *, timeout: int = 10) -> tuple[int, str, str]:
+            del timeout
+            if url == f"http://localhost:{QDRANT_PORT}/readyz":
+                return 22, "", "curl: (22) The requested URL returned error: 403"
+            return 0, "", ""
+
+        monkeypatch.setattr(platform, "curl", curl)
+        result = await PlatformServicesCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert len(result.details) == 1
+        assert "Qdrant" in result.details[0]
 
     async def test_fails_when_all_unhealthy(self) -> None:
         platform = MockPlatform(

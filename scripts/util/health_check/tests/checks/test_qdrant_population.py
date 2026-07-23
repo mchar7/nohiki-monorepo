@@ -83,6 +83,11 @@ async def test_populated_both_sides_reports_observed_counts(
     assert any(detail.endswith("=5") for detail in result.details)
 
 
+def test_profile_population_counts_completed_canonical_profiles() -> None:
+    assert "is_enrichment_complete" in ProfileVectorPopulationCheck.sql
+    assert "embedding IS NOT NULL" not in ProfileVectorPopulationCheck.sql
+
+
 async def test_orphan_points_are_actionable() -> None:
     result = await JobVectorPopulationCheck().execute(_platform(entities=0, points=3))
 

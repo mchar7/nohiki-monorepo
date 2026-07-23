@@ -31,8 +31,17 @@ class ModelReadinessCheck(HealthCheck):
 
     async def execute(self, platform: Platform) -> CheckResult:
         """Validate the model readiness endpoint response."""
-        url = f"{platform.service_url('ml-compute-service', 8000)}/readyz"
-        code, stdout, _ = await asyncio.to_thread(platform.curl, url, timeout=int(HTTP_CHECK_TIMEOUT_SECONDS))
+        probe = (
+            "import urllib.request; "
+            f"print(urllib.request.urlopen('http://localhost:8000/readyz', "
+            f"timeout={HTTP_CHECK_TIMEOUT_SECONDS}).read().decode())"
+        )
+        code, stdout, _ = await asyncio.to_thread(
+            platform.exec_in_service,
+            "ml-compute-service",
+            ["python", "-c", probe],
+            timeout=int(HTTP_CHECK_TIMEOUT_SECONDS) + 1,
+        )
         if code != 0:
             return self._make_result(
                 CheckStatus.FAILED,

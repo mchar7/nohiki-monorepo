@@ -19,9 +19,12 @@ from health_check.platform.models import PlatformTarget
 from .._helpers import MockPlatform
 
 _SKILL_COLLECTION = "skills_v1"
-_PG_SUFFICIENT = "13896\n"
+_EXPECTED_SKILL_COUNT = 13_896
+_EXPECTED_EMBEDDING_COUNT = _EXPECTED_SKILL_COUNT * 3
+_PG_SUFFICIENT = f"{_EXPECTED_SKILL_COUNT}\n"
 _PG_EMPTY = "0\n"
-_QDRANT_SUFFICIENT = json.dumps({"result": {"points_count": 13896}})
+_QDRANT_SUFFICIENT = json.dumps({"result": {"points_count": _EXPECTED_EMBEDDING_COUNT}})
+_QDRANT_PARTIAL = json.dumps({"result": {"points_count": 1_980}})
 _QDRANT_EMPTY = json.dumps({"result": {"points_count": 0}})
 
 
@@ -44,6 +47,16 @@ class TestSkillGraphSeededCheck:
 
         assert result.status == CheckStatus.PASSED
         assert "13,896" in result.summary
+
+    async def test_fails_while_embedding_bootstrap_is_partial(self) -> None:
+        platform = MockPlatform(
+            _psql_result=(0, _PG_SUFFICIENT, ""),
+            _curl_result=(0, _QDRANT_PARTIAL, ""),
+        )
+        result = await SkillGraphSeededCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert any("1,980 points (minimum 10,000)" in detail for detail in result.details)
 
     async def test_fails_when_qdrant_empty(self) -> None:
         platform = MockPlatform(

@@ -534,9 +534,9 @@ class KubernetesPlatform:
 
     def restart_kafka_connector(self, connector_name: str, *, timeout: int = 10) -> tuple[int, str, str]:
         """Restart failed instances of one canonical Kafka Connect connector."""
-        from health_check.config.kafka import OUTBOX_CONNECTOR_NAMES
+        from health_check.config.kafka import connector_names_for
 
-        if connector_name not in OUTBOX_CONNECTOR_NAMES:
+        if connector_name not in connector_names_for(self.target):
             message = f"Non-canonical connector rejected: {connector_name}"
             raise ValueError(message)
         base = self.service_url("kafka-connect", 8083)

@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from health_check.config.kafka import connector_names_for
 from health_check.platform.kubernetes import (
     _CRASH_REASONS,
     K8S_NAME_MAP,
@@ -454,9 +455,8 @@ class TestKubernetesPlatformCurl:
 
 class TestKubernetesPlatformRestartKafkaConnector:
     def test_local_mode_uses_exact_scoped_post_and_timeout(self) -> None:
-        from health_check.config.kafka import OUTBOX_CONNECTOR_NAMES
 
-        connector = OUTBOX_CONNECTOR_NAMES[0]
+        connector = connector_names_for(PlatformTarget.KUBERNETES)[0]
         platform = KubernetesPlatform(local_mode=True)
         with patch(
             "health_check.platform.kubernetes._restart_request",
@@ -473,9 +473,8 @@ class TestKubernetesPlatformRestartKafkaConnector:
         )
 
     def test_cluster_mode_has_identical_endpoint_semantics(self) -> None:
-        from health_check.config.kafka import OUTBOX_CONNECTOR_NAMES
 
-        connector = OUTBOX_CONNECTOR_NAMES[0]
+        connector = connector_names_for(PlatformTarget.KUBERNETES)[0]
         platform = KubernetesPlatform(namespace="audit", local_mode=False)
         with patch(
             "health_check.platform.kubernetes._restart_request",
@@ -487,6 +486,15 @@ class TestKubernetesPlatformRestartKafkaConnector:
             f"http://kafka-connect.audit.svc.cluster.local:8083/connectors/{connector}/restart?includeTasks=true&onlyFailed=true",
             4,
         )
+
+    def test_accepts_kubernetes_sink_connector(self) -> None:
+        platform = KubernetesPlatform()
+        with patch(
+            "health_check.platform.kubernetes._restart_request",
+            return_value=(0, "ok", ""),
+        ) as request:
+            platform.restart_kafka_connector("qdrant-embedding-sink")
+        request.assert_called_once()
 
     def test_rejects_noncanonical_name_before_request(self) -> None:
         platform = KubernetesPlatform()

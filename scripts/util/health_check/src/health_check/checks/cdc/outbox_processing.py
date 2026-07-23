@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Final
 
 from health_check.checks._utils import ConnectorStatus, fetch_connector_status
-from health_check.config.kafka import OUTBOX_CONNECTOR_NAMES
+from health_check.config.kafka import cdc_connectors_for
 from health_check.config.thresholds import KAFKA_CONNECT_DEFAULT_PORT
 from health_check.core.base import HealthCheck
 from health_check.core.models import (
@@ -31,26 +31,37 @@ _METADATA: Final[CheckMetadata] = CheckMetadata(
 )
 
 _CONNECT_BASE: Final[str] = f"http://localhost:{KAFKA_CONNECT_DEFAULT_PORT}"
-_INACTIVE_SLOT_QUERY: Final[str] = (
-    "SELECT slot_name FROM pg_replication_slots WHERE slot_name LIKE 'nohiki_outbox_%' AND active = false"
-)
+_SLOT_QUERY: Final[str] = "SELECT slot_name, active FROM pg_replication_slots ORDER BY slot_name"
 
 
 def _connect_base(platform: Platform) -> str:
     return "http://nohiki-connect-api:8083" if platform.target is PlatformTarget.KUBERNETES else _CONNECT_BASE
 
 
-def _inactive_slot_names(stdout: str) -> list[str]:
-    """Parse psql output into a list of inactive slot names."""
-    return [s.strip() for s in stdout.strip().split("\n") if s.strip()]
+def _slot_states(stdout: str) -> dict[str, bool]:
+    """Parse psql output into replication slot states."""
+    states: dict[str, bool] = {}
+    for line in stdout.splitlines():
+        name, separator, active = line.partition("|")
+        if separator:
+            states[name.strip()] = active.strip() == "t"
+    return states
 
 
 async def _slot_failures(platform: Platform) -> list[str]:
-    """Return failure messages for inactive Debezium replication slots."""
-    code, stdout, _ = await asyncio.to_thread(platform.exec_psql, _INACTIVE_SLOT_QUERY)
+    """Return current CDC replication slot inventory failures."""
+    code, stdout, _ = await asyncio.to_thread(platform.exec_psql, _SLOT_QUERY, field_separator="|")
     if code != 0:
         return ["Failed to query replication slots"]
-    return [f"Replication slot {name} inactive (CDC broken)" for name in _inactive_slot_names(stdout)]
+
+    states = _slot_states(stdout)
+    expected = frozenset(connector.slot_name for connector in cdc_connectors_for(platform.target))
+    observed = frozenset(states)
+    return [
+        *(f"Replication slot {name} missing" for name in sorted(expected - observed)),
+        *(f"Replication slot {name} unexpected" for name in sorted(observed - expected)),
+        *(f"Replication slot {name} inactive (CDC broken)" for name in sorted(expected & observed) if not states[name]),
+    ]
 
 
 def _connector_failures(statuses: list[ConnectorStatus]) -> list[str]:
@@ -69,9 +80,11 @@ class OutboxProcessingCheck(HealthCheck):
     async def execute(self, platform: Platform) -> CheckResult:
         """Run connector and replication slot checks in parallel."""
         connect_base = _connect_base(platform)
+        connectors = cdc_connectors_for(platform.target)
         async with asyncio.TaskGroup() as tg:
             connector_tasks = [
-                tg.create_task(fetch_connector_status(platform, connect_base, name)) for name in OUTBOX_CONNECTOR_NAMES
+                tg.create_task(fetch_connector_status(platform, connect_base, connector.name))
+                for connector in connectors
             ]
             slot_task = tg.create_task(_slot_failures(platform))
 
@@ -86,5 +99,5 @@ class OutboxProcessingCheck(HealthCheck):
             )
         return self._make_result(
             CheckStatus.PASSED,
-            f"All {len(OUTBOX_CONNECTOR_NAMES)} outbox connectors running with active slots",
+            f"All {len(connectors)} CDC connectors running with active slots",
         )

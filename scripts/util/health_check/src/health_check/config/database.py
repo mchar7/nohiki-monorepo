@@ -96,11 +96,6 @@ CRITICAL_COLUMNS: Final[MappingProxyType[str, frozenset[str]]] = MappingProxyTyp
     }
 )
 
-OUTBOX_PUBLICATION_NAME_PREFIX: Final[str] = "nohiki"
-"""All CDC publications are expected to have names starting with this prefix."""
-
-REPLICATION_SLOT_NAME_PREFIX: Final[str] = "nohiki"
-"""All CDC replication slots are expected to have names starting with this prefix."""
 
 NOHIKI_DB_NAME: Final[str] = "nohiki_db"
 """Primary PostgreSQL database name."""

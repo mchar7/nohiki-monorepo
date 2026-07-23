@@ -105,10 +105,7 @@ class ProfileVectorPopulationCheck(_PopulationCheck):
     """Detect embedded profiles missing all Qdrant points."""
 
     entity = "profiles"
-    sql = (
-        "SELECT count(*) FROM user_pref_schema.search_prefs "
-        "WHERE user_skills_embedding IS NOT NULL OR query_embedding IS NOT NULL"
-    )
+    sql = "SELECT count(*) FROM user_pref_schema.search_prefs WHERE is_enrichment_complete"
     metadata = CheckMetadata(
         check_id="profile_vector_population",
         name="Profile Vector Population",

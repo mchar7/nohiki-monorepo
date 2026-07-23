@@ -49,7 +49,7 @@ async def test_recent_dispatch_progress_passes_with_age_evidence() -> None:
 
 
 async def test_missing_model_readiness_is_actionable() -> None:
-    result = await ModelReadinessCheck().execute(MockPlatform(_curl_result=(22, "", "HTTP 503")))
+    result = await ModelReadinessCheck().execute(MockPlatform(_exec_in_service_result=(22, "", "HTTP 503")))
 
     assert result.status == CheckStatus.FAILED
     assert result.summary == "ML inference models are not ready"
@@ -87,7 +87,7 @@ async def test_missing_model_readiness_is_actionable() -> None:
 async def test_model_readiness_rejects_empty_malformed_non_object_and_missing_state(
     response: str, summary: str, detail: str
 ) -> None:
-    result = await ModelReadinessCheck().execute(MockPlatform(_curl_result=(0, response, "")))
+    result = await ModelReadinessCheck().execute(MockPlatform(_exec_in_service_result=(0, response, "")))
 
     assert result.status == CheckStatus.FAILED
     assert result.summary == summary
@@ -96,7 +96,9 @@ async def test_model_readiness_rejects_empty_malformed_non_object_and_missing_st
 
 
 async def test_warming_model_state_fails_without_private_probe_content() -> None:
-    result = await ModelReadinessCheck().execute(MockPlatform(_curl_result=(0, json.dumps({"state": "warming"}), "")))
+    result = await ModelReadinessCheck().execute(
+        MockPlatform(_exec_in_service_result=(0, json.dumps({"state": "warming"}), ""))
+    )
 
     assert result.status == CheckStatus.FAILED
     assert result.summary == "ML readiness state is not ready"
@@ -107,7 +109,9 @@ async def test_warming_model_state_fails_without_private_probe_content() -> None
 
 
 async def test_ready_model_passes() -> None:
-    result = await ModelReadinessCheck().execute(MockPlatform(_curl_result=(0, json.dumps({"status": "ready"}), "")))
+    result = await ModelReadinessCheck().execute(
+        MockPlatform(_exec_in_service_result=(0, json.dumps({"status": "ready"}), ""))
+    )
 
     assert result.status == CheckStatus.PASSED
     assert "state=ready" in result.summary
