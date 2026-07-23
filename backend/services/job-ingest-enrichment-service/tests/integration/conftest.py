@@ -12,7 +12,6 @@ via fixture injection, eliminating cross-directory imports.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Callable, Coroutine, Iterator
 from dataclasses import dataclass, field
@@ -917,11 +916,6 @@ async def _get_extraction_impl(fixture: JobListingFixture) -> JobExtractionSchem
     return _extraction_cache[fixture.id]
 
 
-def _get_cache_stats_impl() -> dict[str, int]:
-    """Return cache statistics for debugging."""
-    return {"cached_extractions": len(_extraction_cache)}
-
-
 # Failure Logger
 
 
@@ -1025,37 +1019,11 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
-class _CachePopulationState:
-    """Track whether extraction cache has been populated."""
-
-    populated: bool = False
-
-
-def _populate_extraction_cache() -> None:
-    """Pre-populate extraction cache with ALL fixtures sequentially.
-
-    Sequential extraction avoids overwhelming local LLM instances (e.g., Ollama)
-    that cannot handle parallel requests efficiently.
-    """
-    fixtures = _fixture_cache.get_all()
-    _logger.info("Pre-populating extraction cache sequentially", fixture_count=len(fixtures))
-
-    async def _extract_all() -> None:
-        for i, fixture in enumerate(fixtures, 1):
-            _logger.info("Extracting fixture", current=i, total=len(fixtures), fixture_id=fixture.id)
-            await _get_extraction_impl(fixture)
-
-    asyncio.run(_extract_all())
-
-    stats = _get_cache_stats_impl()
-    _logger.info("Extraction cache populated", cache_stats=stats)
-
-
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
 ) -> None:
-    """Skip llm_cost tests by default unless explicitly requested, and pre-populate cache."""
+    """Skip llm_cost tests by default unless explicitly requested."""
     marker_expr = config.getoption("-m", default="")
     has_llm_cost_marker = marker_expr and "llm_cost" in marker_expr
 
@@ -1065,10 +1033,6 @@ def pytest_collection_modifyitems(
             if "llm_cost" in item.keywords:
                 item.add_marker(skip_marker)
         return
-
-    if not _CachePopulationState.populated:
-        _populate_extraction_cache()
-        _CachePopulationState.populated = True
 
 
 # Pytest Fixtures

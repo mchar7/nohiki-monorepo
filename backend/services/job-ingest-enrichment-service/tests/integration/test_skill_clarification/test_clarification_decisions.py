@@ -64,6 +64,8 @@ def _create_clarification(
     )
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.llm_cost
 @pytest.mark.asyncio
 class TestSkillClarificationDecisions:

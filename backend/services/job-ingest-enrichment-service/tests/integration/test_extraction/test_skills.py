@@ -94,6 +94,8 @@ type FixtureIterator = Callable[[], Iterator[JobListingFixtureProtocol]]
 type FixtureByAttributeGetter = Callable[[str], list[JobListingFixtureProtocol]]
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.llm_cost
 @pytest.mark.asyncio
 class TestSkillsExtraction:

@@ -77,6 +77,8 @@ type FixtureIterator = Callable[[], Iterator[JobListingFixtureProtocol]]
 type FixtureListGetter = Callable[[], list[JobListingFixtureProtocol]]
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.llm_cost
 @pytest.mark.asyncio
 class TestWorkArrangementExtraction:
