@@ -26,6 +26,13 @@ case "$lock_name" in
         exit 64
         ;;
 esac
+marker_name=NOHIKI_ENV_LOCK_${lock_name}
+marker_value=
+eval "marker_value=\${$marker_name-}"
+if [ "$marker_value" = 1 ]; then
+    shift 3
+    exec "$@"
+fi
 
 shift 3
 runtime_dir=${XDG_RUNTIME_DIR:-/tmp}
@@ -42,6 +49,7 @@ if [ -z "$repo_hash" ]; then
 fi
 lock_dir=$runtime_dir/nohiki-env-locks/$repo_hash
 umask 077
+export "$marker_name=1"
 mkdir -p -- "$lock_dir"
 lock_file=$lock_dir/$lock_name.lock
 exec 9>"$lock_file"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -68,3 +69,27 @@ def test_development_sync_shape_is_identical() -> None:
     assert len(flake_syncs) == 1
     assert all(_DEV_SYNC_SHAPE in line for line in [*just_syncs, *flake_syncs])
     assert "--locked" in flake_syncs[0]
+
+
+def test_nested_lock_invocation_is_reentrant() -> None:
+    wrapper = _ROOT / "scripts" / "dev" / "env-lock.sh"
+    result = subprocess.run(
+        [
+            "timeout",
+            "10",
+            str(wrapper),
+            "shared",
+            "venv",
+            "--",
+            str(wrapper),
+            "exclusive",
+            "venv",
+            "--",
+            "true",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout == ""
+    assert result.stderr == ""
