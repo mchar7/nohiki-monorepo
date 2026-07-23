@@ -8,6 +8,7 @@ from nohiki.common.v1 import (
     Compensation,
     EventMetadata,
     Location,
+    PaymentFrequency,
     WorkArrangement,
 )
 from nohiki.job.listing.v1 import ListingCreated, ListingSnapshot
@@ -55,8 +56,9 @@ class TestCompensationFactory:
 
     def test_build_with_overrides(self) -> None:
         """Factory respects field overrides."""
-        comp = CompensationFactory.build()
+        comp = CompensationFactory.build(frequency=PaymentFrequency.ANNUALLY)
         assert isinstance(comp, Compensation)
+        assert comp.frequency == PaymentFrequency.ANNUALLY
 
     def test_batch_creates_multiple_instances(self) -> None:
         """Factory batch creates multiple unique instances."""
