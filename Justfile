@@ -322,7 +322,8 @@ api-schema-check:
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
     uv run --no-sync python scripts/util/export-openapi.py --output "$tmpdir/nohiki.openapi.json"
-    {{ pnpm }} --filter nohiki-frontend exec openapi-typescript "$tmpdir/nohiki.openapi.json" -o "$tmpdir/schema.d.ts"
+    test -x typescript/apps/frontend/node_modules/.bin/openapi-typescript || { echo "error: openapi-typescript is not installed; run pnpm install" >&2; exit 1; }
+    typescript/apps/frontend/node_modules/.bin/openapi-typescript "$tmpdir/nohiki.openapi.json" -o "$tmpdir/schema.d.ts"
     diff -u docs/api/nohiki.openapi.json "$tmpdir/nohiki.openapi.json"
     diff -u typescript/apps/frontend/src/api/schema.d.ts "$tmpdir/schema.d.ts"
 
