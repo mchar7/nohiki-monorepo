@@ -6,7 +6,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from nohiki_common_exceptions import HealthProbeResult
-from nohiki_qdrant_client.health import QdrantHealthProbe, ensure_qdrant_ready
+from nohiki_qdrant_client.health import ProbeTiming, QdrantHealthProbe, ensure_qdrant_ready
+
+
+class _FakeTime:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.elapsed
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.elapsed += seconds
 
 
 class TestQdrantHealthProbe:
@@ -156,24 +169,35 @@ class TestEnsureQdrantReady:
                 mock_collections,
             ]
         )
+        fake_time = _FakeTime()
 
-        await ensure_qdrant_ready(mock_client, timeout_seconds=5.0, retry_interval_seconds=0.1)
+        await ensure_qdrant_ready(
+            mock_client,
+            timeout_seconds=5.0,
+            retry_interval_seconds=0.1,
+            timing=ProbeTiming(clock=fake_time, sleep=fake_time.sleep),
+        )
 
-        assert mock_client.get_collections.call_count >= 3
+        assert mock_client.get_collections.call_count == 3
+        assert fake_time.sleeps == pytest.approx([0.1, 0.1])
 
     @pytest.mark.asyncio
     async def test_raises_after_timeout(self, mock_client: AsyncMock) -> None:
         """Test function raises RuntimeError after timeout."""
         mock_client.get_collections = AsyncMock(side_effect=TimeoutError())
+        fake_time = _FakeTime()
 
         with pytest.raises(RuntimeError) as exc_info:
             await ensure_qdrant_ready(
                 mock_client,
                 timeout_seconds=0.2,
                 retry_interval_seconds=0.1,
+                timing=ProbeTiming(clock=fake_time, sleep=fake_time.sleep),
             )
 
         assert "unavailable" in str(exc_info.value).lower()
+        assert fake_time.elapsed == pytest.approx(0.2)
+        assert fake_time.sleeps == pytest.approx([0.1, 0.1])
 
     @pytest.mark.asyncio
     async def test_with_required_collections(self, mock_client: AsyncMock) -> None:
