@@ -149,7 +149,8 @@ class TestMLScoringServiceScoreListingsBatch:
         service.initialize()
         return service, mock_pipeline
 
-    def test_raises_when_not_initialized(self) -> None:
+    @pytest.mark.asyncio
+    async def test_raises_when_not_initialized(self) -> None:
         """Test raises MLScoringServiceError when not initialized."""
         from job_correlation_evaluation_service.services.scoring_service import (
             MLScoringServiceError,
@@ -157,15 +158,9 @@ class TestMLScoringServiceScoreListingsBatch:
 
         mock_pipeline = MagicMock()
         service = MLScoringService(mock_pipeline)
-        # Don't initialize
-
-        async def _run_test() -> None:
-            await service.score_listings_batch({}, MagicMock(), MagicMock())
-
-        import asyncio
 
         with pytest.raises(MLScoringServiceError, match="Service not initialized"):
-            asyncio.run(_run_test())
+            await service.score_listings_batch({}, MagicMock(), MagicMock())
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_listings_empty(

@@ -31,6 +31,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
+pytestmark = pytest.mark.requires_docker
+
+
 PROFILE_REVISION = datetime(2026, 1, 1, tzinfo=UTC)
 
 
