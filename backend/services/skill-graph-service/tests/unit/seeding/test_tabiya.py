@@ -314,6 +314,14 @@ class TestTabiyaIterSkills:
         assert python_record.description == "Programming in Python"
         assert python_record.external_id == "skill-001"
 
+    def test_repository_dataset_has_expected_canonical_cardinality(self) -> None:
+        """The pinned Tabiya dataset yields one unique canonical row per source skill."""
+        dataset = Path(__file__).resolve().parents[6] / "data" / "tabiya" / "skills.csv"
+        records = list(TabiyaDataSource(skills_csv_path=dataset).iter_skills())
+
+        assert len(records) == 13_896
+        assert len({record.normalized_text for record in records}) == 13_896
+
     def test_missing_file_fails_closed(self, tmp_path: Path) -> None:
         """A missing required skills CSV aborts seeding instead of reporting success."""
         missing = tmp_path / "nonexistent.csv"

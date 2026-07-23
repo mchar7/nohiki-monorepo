@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -14,25 +12,6 @@ from nohiki_db_utils.testing import create_mock_session
 
 if TYPE_CHECKING:
     from collections.abc import Generator
-
-
-@pytest.fixture(autouse=True)
-def _close_stale_event_loops() -> Generator[None]:
-    """Close any event loop left in thread-local state between tests.
-
-    pytest-asyncio sets a new event loop but does not always close it
-    before the next test. Prevents ResourceWarning from orphaned loops.
-    """
-    yield
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            return
-    if not loop.is_closed():
-        loop.close()
-    asyncio.set_event_loop(None)
 
 
 # Set environment variables BEFORE any imports that might load settings
@@ -46,8 +25,6 @@ os.environ.setdefault(
     "SKILL_GRAPH_MANIFEST_PATH",
     str(Path(__file__).resolve().parents[4] / "data" / "config" / "semantic_representation_manifest.json"),
 )
-
-import pytest
 
 
 @pytest.fixture(autouse=True)
