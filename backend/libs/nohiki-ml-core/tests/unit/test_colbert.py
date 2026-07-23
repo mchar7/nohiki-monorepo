@@ -1,6 +1,9 @@
 """Unit tests for ColBERTEncoder."""
 
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
+from time import sleep
 from typing import cast
 from unittest.mock import MagicMock, patch
 
@@ -238,6 +241,45 @@ def test_colbert_direct_batch_encode_preserves_is_query(
     model.reset_mock()
     encoder.encode_batch(["query text"], is_query=True, batch_size=5)
     model.encode.assert_called_once_with(["query text"], is_query=True, batch_size=5)
+
+
+@pytest.mark.usefixtures("mock_require_pylate")
+def test_colbert_serializes_shared_tokenizer_access(
+    manifest: SemanticRepresentationManifest,
+) -> None:
+    """Concurrent requests must not borrow the mutable tokenizer at the same time."""
+    encoder = ColBERTEncoder(manifest)
+    borrowed = Lock()
+
+    def encode(
+        texts: list[str],
+        *,
+        is_query: bool,
+        batch_size: int,
+    ) -> list[np.ndarray]:
+        del is_query, batch_size
+        if not borrowed.acquire(blocking=False):
+            message = "Already borrowed"
+            raise RuntimeError(message)
+        try:
+            sleep(0.02)
+            return [np.zeros((2, 48), dtype=np.float32) for _ in texts]
+        finally:
+            borrowed.release()
+
+    model = MagicMock()
+    model.encode.side_effect = encode
+    encoder._model = model
+    start = Barrier(8)
+
+    def encode_query(index: int) -> np.ndarray:
+        start.wait()
+        return encoder.encode_query(str(index))
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(encode_query, range(8)))
+
+    assert len(results) == 8
 
 
 @pytest.mark.usefixtures("mock_require_pylate")

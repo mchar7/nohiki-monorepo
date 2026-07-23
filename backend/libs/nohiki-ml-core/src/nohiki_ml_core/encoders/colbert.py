@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Sequence
+from threading import Lock
 from typing import Protocol, cast
 
 import numpy as np
@@ -53,6 +54,7 @@ class ColBERTEncoder:
         self.max_length = manifest.late_interaction.max_length
         self._backend = manifest.late_interaction.inference_backend
         self._model: ColBERTModel | None = None
+        self._inference_lock = Lock()
 
         if self._backend != InferenceBackend.DIRECT:
             msg = f"ColBERT supports only inference_backend='direct'; got {self._backend.value!r}"
@@ -93,9 +95,10 @@ class ColBERTEncoder:
 
     def _encode_via_pylate(self, text: str, *, is_query: bool) -> np.ndarray:
         """Encode one text using the matching PyLate encoding mode."""
-        model = self._ensure_model()
         try:
-            tokens = model.encode([text], is_query=is_query, batch_size=1)[0]
+            with self._inference_lock:
+                model = self._ensure_model()
+                tokens = model.encode([text], is_query=is_query, batch_size=1)[0]
             result = self._validate_tokens(tokens)
             logger.debug(
                 "Encoded via PyLate",
@@ -125,9 +128,10 @@ class ColBERTEncoder:
         batch_size: int = 8,
     ) -> list[np.ndarray]:
         """Encode texts in one PyLate batch with the requested encoding mode."""
-        model = self._ensure_model()
         try:
-            results = model.encode(texts, is_query=is_query, batch_size=batch_size)
+            with self._inference_lock:
+                model = self._ensure_model()
+                results = model.encode(texts, is_query=is_query, batch_size=batch_size)
         except Exception:
             logger.exception(
                 "PyLate batch encoding failed",
@@ -142,5 +146,6 @@ class ColBERTEncoder:
 
     def warm_up(self) -> None:
         """Pre-load the PyLate model to avoid first-request cold-start latency."""
-        self._ensure_model()
+        with self._inference_lock:
+            self._ensure_model()
         logger.info("ColBERT model warmed up", model_id=self.model_id)
