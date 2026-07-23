@@ -61,6 +61,21 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModel
 from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
+_PATCH_TARGETS = {
+    "AnthropicModel": "pydantic_ai.models.anthropic.AnthropicModel",
+    "AnthropicProvider": "pydantic_ai.providers.anthropic.AnthropicProvider",
+    "AsyncAnthropicVertex": "anthropic.AsyncAnthropicVertex",
+    "GoogleCloudProvider": "pydantic_ai.providers.google_cloud.GoogleCloudProvider",
+    "GoogleModel": "pydantic_ai.models.google.GoogleModel",
+    "LlamaCppProvider": "nohiki_llm_client.providers.llamacpp.LlamaCppProvider",
+    "OllamaProvider": "pydantic_ai.providers.ollama.OllamaProvider",
+    "OpenAIChatModel": "pydantic_ai.models.openai.OpenAIChatModel",
+    "OpenAIProvider": "pydantic_ai.providers.openai.OpenAIProvider",
+    "OpenAIResponsesModel": "pydantic_ai.models.openai.OpenAIResponsesModel",
+    "OpenRouterProvider": "pydantic_ai.providers.openrouter.OpenRouterProvider",
+    "RobustOpenRouterModel": "nohiki_llm_client.providers.openrouter.RobustOpenRouterModel",
+}
+
 
 def _require_mapping(value: object) -> Mapping[str, object]:
     assert isinstance(value, Mapping)
@@ -156,7 +171,7 @@ class TestModelFactory:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=owned_transport,
             ),
-            patch("nohiki_llm_client.providers.factory.OpenAIResponsesModel") as model,
+            patch("pydantic_ai.models.openai.OpenAIResponsesModel") as model,
         ):
             create_model(config, provider, transport_clients=[])
 
@@ -187,8 +202,8 @@ class TestModelFactory:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=owned_transport,
             ),
-            patch("nohiki_llm_client.providers.factory.AsyncOpenAI") as sdk_client,
-            patch("nohiki_llm_client.providers.factory.OpenAIResponsesModel") as model,
+            patch("openai.AsyncOpenAI") as sdk_client,
+            patch("pydantic_ai.models.openai.OpenAIResponsesModel") as model,
             pytest.raises(ValueError, match="requires reasoning effort 'medium'"),
         ):
             create_model(config, provider, transport_clients=[])
@@ -215,7 +230,7 @@ class TestModelFactory:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=owned_transport,
             ),
-            patch("nohiki_llm_client.providers.factory.OpenAIResponsesModel") as model,
+            patch("pydantic_ai.models.openai.OpenAIResponsesModel") as model,
         ):
             create_model(config, provider, transport_clients=[])
 
@@ -393,8 +408,8 @@ class TestModelFactory:
         )
 
         with (
-            patch(f"nohiki_llm_client.providers.factory.{provider_constructor}") as provider,
-            patch("nohiki_llm_client.providers.factory.OpenAIChatModel"),
+            patch(_PATCH_TARGETS[provider_constructor]) as provider,
+            patch("pydantic_ai.models.openai.OpenAIChatModel"),
         ):
             create_model(config, provider_settings, transport_clients=[])
 
@@ -508,7 +523,7 @@ class TestModelFactory:
         )
         provider = LLMProviderSettings(models=[config])
 
-        with patch("nohiki_llm_client.providers.factory.GoogleModel") as google_model:
+        with patch("pydantic_ai.models.google.GoogleModel") as google_model:
             create_model(config, provider, transport_clients=[])
 
         settings = _require_mapping(google_model.call_args.kwargs["settings"])
@@ -536,7 +551,7 @@ class TestModelFactory:
         )
         provider = LLMProviderSettings(models=[config])
 
-        with patch("nohiki_llm_client.providers.factory.GoogleModel") as google_model:
+        with patch("pydantic_ai.models.google.GoogleModel") as google_model:
             create_model(config, provider, transport_clients=[])
 
         settings = _require_mapping(google_model.call_args.kwargs["settings"])
@@ -565,7 +580,7 @@ class TestModelFactory:
             google_location="us-east1",
         )
         provider_settings = LLMProviderSettings(models=[config])
-        with patch("nohiki_llm_client.providers.factory.GoogleCloudProvider") as mock_gp:
+        with patch("pydantic_ai.providers.google_cloud.GoogleCloudProvider") as mock_gp:
             create_model(config, provider_settings, transport_clients=[])
             assert mock_gp.call_args.kwargs["project"] == "my-project"
             assert mock_gp.call_args.kwargs["location"] == "us-east1"
@@ -602,9 +617,9 @@ class TestModelFactory:
         )
         provider_settings = LLMProviderSettings(models=[config])
         with (
-            patch("nohiki_llm_client.providers.factory.AsyncAnthropicVertex") as mock_vertex,
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as mock_ap,
-            patch("nohiki_llm_client.providers.factory.AnthropicModel") as mock_am,
+            patch("anthropic.AsyncAnthropicVertex") as mock_vertex,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as mock_ap,
+            patch("pydantic_ai.models.anthropic.AnthropicModel") as mock_am,
         ):
             mock_vertex.return_value = MagicMock()
             mock_ap.return_value = MagicMock()
@@ -656,7 +671,7 @@ class TestModelFactory:
         config = LLMModelConfig.model_validate(config_values)
         provider = LLMProviderSettings(models=[config], temperature=0.2)
 
-        with patch("nohiki_llm_client.providers.factory.AnthropicModel") as model:
+        with patch("pydantic_ai.models.anthropic.AnthropicModel") as model:
             create_model(config, provider, transport_clients=[])
 
         settings = _require_mapping(model.call_args.kwargs["settings"])
@@ -704,10 +719,10 @@ class TestModelFactory:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=http_client,
             ) as create_http_client,
-            patch(f"nohiki_llm_client.providers.factory.{provider_constructor}") as provider,
-            patch("nohiki_llm_client.providers.factory.GoogleModel"),
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider"),
-            patch("nohiki_llm_client.providers.factory.AnthropicModel"),
+            patch(_PATCH_TARGETS[provider_constructor]) as provider,
+            patch("pydantic_ai.models.google.GoogleModel"),
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider"),
+            patch("pydantic_ai.models.anthropic.AnthropicModel"),
         ):
             create_model(config, provider_settings, transport_clients=[])
 
@@ -1149,10 +1164,10 @@ class TestModelScopedTransport:
                     return_value=http_client,
                 )
             )
-            provider_mock = stack.enter_context(patch(f"nohiki_llm_client.providers.factory.{provider_constructor}"))
-            stack.enter_context(patch(f"nohiki_llm_client.providers.factory.{model_constructor}"))
+            provider_mock = stack.enter_context(patch(_PATCH_TARGETS[provider_constructor]))
+            stack.enter_context(patch(_PATCH_TARGETS[model_constructor]))
             if provider_constructor == "OpenRouterProvider":
-                sdk_client = stack.enter_context(patch("nohiki_llm_client.providers.factory.AsyncOpenAI"))
+                sdk_client = stack.enter_context(patch("openai.AsyncOpenAI"))
                 sdk_client_kwarg = "openai_client"
                 stack.enter_context(
                     patch(
@@ -1162,10 +1177,10 @@ class TestModelScopedTransport:
                 )
 
             elif provider_constructor == "OpenAIProvider":
-                sdk_client = stack.enter_context(patch("nohiki_llm_client.providers.factory.AsyncOpenAI"))
+                sdk_client = stack.enter_context(patch("openai.AsyncOpenAI"))
                 sdk_client_kwarg = "openai_client"
             elif provider_constructor == "AnthropicProvider":
-                sdk_client = stack.enter_context(patch("nohiki_llm_client.providers.factory.AsyncAnthropic"))
+                sdk_client = stack.enter_context(patch("anthropic.AsyncAnthropic"))
                 sdk_client_kwarg = "anthropic_client"
             create_model(config, provider, transport_clients=[])
 
@@ -1199,9 +1214,9 @@ class TestModelScopedTransport:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=http_client,
             ),
-            patch("nohiki_llm_client.providers.factory.AsyncOpenAI") as openai_client,
-            patch("nohiki_llm_client.providers.factory.OpenRouterProvider") as openrouter_provider,
-            patch("nohiki_llm_client.providers.factory.RobustOpenRouterModel"),
+            patch("openai.AsyncOpenAI") as openai_client,
+            patch("pydantic_ai.providers.openrouter.OpenRouterProvider") as openrouter_provider,
+            patch("nohiki_llm_client.providers.openrouter.RobustOpenRouterModel"),
             patch(
                 "nohiki_llm_client.providers.factory._resolve_effective_profile",
                 return_value=None,
@@ -1283,8 +1298,8 @@ class TestModelScopedTransport:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=http_client,
             ),
-            patch("nohiki_llm_client.providers.factory.GoogleCloudProvider") as provider,
-            patch("nohiki_llm_client.providers.factory.GoogleModel"),
+            patch("pydantic_ai.providers.google_cloud.GoogleCloudProvider") as provider,
+            patch("pydantic_ai.models.google.GoogleModel"),
         ):
             create_model(config, provider_settings, transport_clients=[])
 
@@ -1328,8 +1343,8 @@ class TestModelScopedTransport:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=expected["http_client"],
             ),
-            patch("nohiki_llm_client.providers.factory.GoogleCloudProvider") as provider,
-            patch("nohiki_llm_client.providers.factory.GoogleModel"),
+            patch("pydantic_ai.providers.google_cloud.GoogleCloudProvider") as provider,
+            patch("pydantic_ai.models.google.GoogleModel"),
         ):
             create_model(config, provider_settings, transport_clients=[])
 
@@ -1354,9 +1369,9 @@ class TestModelScopedTransport:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=http_client,
             ),
-            patch("nohiki_llm_client.providers.factory.AsyncAnthropicVertex") as vertex,
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider"),
-            patch("nohiki_llm_client.providers.factory.AnthropicModel"),
+            patch("anthropic.AsyncAnthropicVertex") as vertex,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider"),
+            patch("pydantic_ai.models.anthropic.AnthropicModel"),
         ):
             create_model(config, provider_settings, transport_clients=[])
 
@@ -1418,8 +1433,8 @@ class TestAnthropicFactory:
             api_keys=ApiKeyRegistry.model_validate({"anthropic": "test-key"}),
         )
         with (
-            patch("nohiki_llm_client.providers.factory.AsyncAnthropic") as client,
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as provider,
+            patch("anthropic.AsyncAnthropic") as client,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as provider,
         ):
             create_model(config, provider_settings, transport_clients=[])
 
@@ -1508,8 +1523,8 @@ class TestAnthropicFactory:
         transport.aclose = AsyncMock()
         transports: list[httpx.AsyncClient] = []
         with (
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as mock_ap,
-            patch("nohiki_llm_client.providers.factory.AnthropicModel") as mock_am,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as mock_ap,
+            patch("pydantic_ai.models.anthropic.AnthropicModel") as mock_am,
             patch(
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=transport,
@@ -1545,8 +1560,8 @@ class TestAnthropicFactory:
         transport.aclose = AsyncMock()
         transports: list[httpx.AsyncClient] = []
         with (
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as mock_ap,
-            patch("nohiki_llm_client.providers.factory.AnthropicModel") as mock_am,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as mock_ap,
+            patch("pydantic_ai.models.anthropic.AnthropicModel") as mock_am,
             patch(
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=transport,
@@ -1575,8 +1590,8 @@ class TestAnthropicFactory:
             api_keys=ApiKeyRegistry.model_validate({"anthropic": "test-key"}),
         )
         with (
-            patch("nohiki_llm_client.providers.factory.AsyncAnthropic") as client,
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as provider,
+            patch("anthropic.AsyncAnthropic") as client,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as provider,
         ):
             create_model(config, provider_settings, transport_clients=[])
 
@@ -1595,8 +1610,8 @@ class TestAnthropicFactory:
             max_tokens=4096,
         )
         with (
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as mock_ap,
-            patch("nohiki_llm_client.providers.factory.AnthropicModel") as mock_am,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as mock_ap,
+            patch("pydantic_ai.models.anthropic.AnthropicModel") as mock_am,
         ):
             mock_ap.return_value = MagicMock()
             create_model(config, provider_settings, transport_clients=[])
@@ -1611,8 +1626,8 @@ class TestAnthropicFactory:
             api_keys=ApiKeyRegistry.model_validate({"anthropic": "registry-key"}),
         )
         with (
-            patch("nohiki_llm_client.providers.factory.AsyncAnthropic") as client,
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as provider,
+            patch("anthropic.AsyncAnthropic") as client,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as provider,
         ):
             create_model(config, provider_settings, transport_clients=[])
 
@@ -1635,8 +1650,8 @@ class TestAnthropicFactory:
         transport.aclose = AsyncMock()
         transports: list[httpx.AsyncClient] = []
         with (
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as mock_ap,
-            patch("nohiki_llm_client.providers.factory.AnthropicModel") as mock_am,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as mock_ap,
+            patch("pydantic_ai.models.anthropic.AnthropicModel") as mock_am,
             patch(
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=transport,
@@ -1782,7 +1797,7 @@ class TestOpenRouterZdrRouting:
         assert config.provider_zdr is True
 
         captured = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr(factory, "OpenAIResponsesModel", captured)
+        monkeypatch.setattr("pydantic_ai.models.openai.OpenAIResponsesModel", captured)
         create_model(config, provider, transport_clients=[])
 
         settings = captured.call_args.kwargs["settings"]
@@ -2541,8 +2556,8 @@ class TestAnthropicThinkingProfileOverride:
 
         provider = self._make_provider("claude-sonnet-4-6", "high")
         with (
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as mock_ap,
-            patch("nohiki_llm_client.providers.factory.AnthropicModel") as mock_am,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as mock_ap,
+            patch("pydantic_ai.models.anthropic.AnthropicModel") as mock_am,
         ):
             mock_ap.return_value = MagicMock()
             create_model(provider.models[0], provider, transport_clients=[])
@@ -2561,8 +2576,8 @@ class TestAnthropicThinkingProfileOverride:
 
         provider = self._make_provider("claude-haiku-4-5", "high")
         with (
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as mock_ap,
-            patch("nohiki_llm_client.providers.factory.AnthropicModel") as mock_am,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as mock_ap,
+            patch("pydantic_ai.models.anthropic.AnthropicModel") as mock_am,
         ):
             mock_ap.return_value = MagicMock()
             create_model(provider.models[0], provider, transport_clients=[])
@@ -2581,8 +2596,8 @@ class TestAnthropicThinkingProfileOverride:
 
         provider = self._make_provider("claude-sonnet-4-6", "disabled")
         with (
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as mock_ap,
-            patch("nohiki_llm_client.providers.factory.AnthropicModel") as mock_am,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as mock_ap,
+            patch("pydantic_ai.models.anthropic.AnthropicModel") as mock_am,
         ):
             mock_ap.return_value = MagicMock()
             create_model(provider.models[0], provider, transport_clients=[])
@@ -2596,8 +2611,8 @@ class TestAnthropicThinkingProfileOverride:
 
         provider = self._make_provider("claude-opus-4-6", "low")
         with (
-            patch("nohiki_llm_client.providers.factory.AnthropicProvider") as mock_ap,
-            patch("nohiki_llm_client.providers.factory.AnthropicModel") as mock_am,
+            patch("pydantic_ai.providers.anthropic.AnthropicProvider") as mock_ap,
+            patch("pydantic_ai.models.anthropic.AnthropicModel") as mock_am,
         ):
             mock_ap.return_value = MagicMock()
             create_model(provider.models[0], provider, transport_clients=[])

@@ -1203,7 +1203,7 @@ class TestExactModelReadiness:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=owned_client,
             ),
-            patch("nohiki_llm_client.providers.factory.AsyncOpenAI") as sdk_client,
+            patch("openai.AsyncOpenAI") as sdk_client,
             patch(
                 "nohiki_llm_client.observability.health.create_model",
                 side_effect=create_real_model,
