@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nohiki_observability import get_logger
-from qdrant_client import models
+from qdrant_client.http import models
 
 from nohiki_qdrant_client.collections import (
     PAYLOAD_INDEX_SCHEMAS,
@@ -51,7 +51,7 @@ from nohiki_qdrant_client.collections import (
 from nohiki_qdrant_client.filter_builder import build_filter
 
 if TYPE_CHECKING:
-    from qdrant_client import AsyncQdrantClient
+    from qdrant_client.async_qdrant_client import AsyncQdrantClient
 
 logger = get_logger(__name__)
 

@@ -5,16 +5,16 @@ const BATCH_DOWNLOAD_STAGGER_DIVISOR: number = 3;
 const BULLET_SEPARATOR = ' \u2022 ';
 const PIPE_SEPARATOR = '|';
 
+import { Button } from '@shared/ui/button.tsx';
+import { Checkbox } from '@shared/ui/checkbox.tsx';
 import {
-  Button,
-  Checkbox,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  Label,
-} from '@shared/ui/index.ts';
+} from '@shared/ui/dialog.tsx';
+import { Label } from '@shared/ui/label.tsx';
 import { CheckCircle, Download, FileText } from 'lucide-react';
 import type { JSX } from 'react';
 import { useState } from 'react';

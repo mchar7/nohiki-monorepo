@@ -5,15 +5,22 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import pytest
 from health_check.checks.cdc.cdc_end_to_end import CdcEndToEndCheck
 from health_check.checks.cdc.debezium_connectors import DebeziumConnectorsCheck
 from health_check.checks.cdc.outbox_processing import OutboxProcessingCheck
 from health_check.checks.cdc.publication import PublicationCheck
 from health_check.checks.cdc.replication_slot import ReplicationSlotCheck
-from health_check.config.kafka import OUTBOX_CONNECTOR_NAMES
+from health_check.config.kafka import cdc_connectors_for, connector_names_for
 from health_check.core.models import CheckStatus, FixStatus
+from health_check.platform.models import PlatformTarget
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
+
+_TARGETS = (PlatformTarget.COMPOSE, PlatformTarget.KUBERNETES)
+_COMPOSE_CDC_CONNECTORS = cdc_connectors_for(PlatformTarget.COMPOSE)
+_COMPOSE_SLOT_NAMES = tuple(connector.slot_name for connector in _COMPOSE_CDC_CONNECTORS)
+_COMPOSE_CONNECTOR_NAMES = connector_names_for(PlatformTarget.COMPOSE)
 
 
 def _connector_response(state: str = "RUNNING", task_state: str = "RUNNING") -> str:
@@ -23,6 +30,26 @@ def _connector_response(state: str = "RUNNING", task_state: str = "RUNNING") -> 
             "tasks": [{"id": 0, "state": task_state}],
         }
     )
+
+
+def _slot_rows(
+    target: PlatformTarget = PlatformTarget.COMPOSE,
+    *,
+    inactive: str | None = None,
+    legacy: bool = False,
+) -> str:
+    slot_names = tuple(connector.slot_name for connector in cdc_connectors_for(target))
+    rows = [f"{name}|{'f' if name == inactive else 't'}" for name in slot_names]
+    if legacy:
+        rows.append("nohiki_outbox_user_auth_slot|t")
+    return "\n".join(rows)
+
+
+def _publication_names(target: PlatformTarget = PlatformTarget.COMPOSE, *, legacy: bool = False) -> str:
+    names = [connector.publication_name for connector in cdc_connectors_for(target)]
+    if legacy:
+        names.append("nohiki_outbox_pub_user_auth")
+    return "\n".join(names)
 
 
 _KNOWN_UUID: str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -79,11 +106,13 @@ class TestCdcEndToEndCheck:
 
 
 class TestDebeziumConnectorsCheck:
-    async def test_passes_when_all_running(self) -> None:
+    @pytest.mark.parametrize("target", _TARGETS)
+    async def test_passes_when_all_running(self, target: PlatformTarget) -> None:
+        names = connector_names_for(target)
         responses = iter(
             [
-                (0, json.dumps(list(OUTBOX_CONNECTOR_NAMES)), ""),
-                *((0, _connector_response(), "") for _ in OUTBOX_CONNECTOR_NAMES),
+                (0, json.dumps(list(names)), ""),
+                *((0, _connector_response(), "") for _ in names),
             ]
         )
 
@@ -91,8 +120,18 @@ class TestDebeziumConnectorsCheck:
             def curl(self, url: str, *, timeout: int = 10) -> tuple[int, str, str]:
                 return next(responses)
 
-        result = await DebeziumConnectorsCheck().execute(_MultiCurlPlatform())
+        result = await DebeziumConnectorsCheck().execute(_MultiCurlPlatform(target=target))
         assert result.status == CheckStatus.PASSED
+
+    async def test_rejects_legacy_connector_alongside_exact_current_inventory(self) -> None:
+        names = [*_COMPOSE_CONNECTOR_NAMES, "nohiki-outbox-user_auth"]
+        platform = MockPlatform(_curl_result=(0, json.dumps(names), ""))
+
+        result = await DebeziumConnectorsCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert "unexpected" in result.summary
+        assert "nohiki-outbox-user_auth: unexpected connector" in result.details
 
     async def test_error_when_api_unreachable(self) -> None:
         platform = MockPlatform(_curl_result=(1, "", "connection refused"))
@@ -127,13 +166,13 @@ class TestDebeziumConnectorsCheck:
         assert result.status == CheckStatus.FAILED
 
     async def test_fails_when_one_connector_task_failed_with_evidence(self) -> None:
-        connector = next(iter(OUTBOX_CONNECTOR_NAMES))
+        connector = next(iter(_COMPOSE_CONNECTOR_NAMES))
         responses = iter(
             [
-                (0, json.dumps(list(OUTBOX_CONNECTOR_NAMES)), ""),
+                (0, json.dumps(list(_COMPOSE_CONNECTOR_NAMES)), ""),
                 *[
                     (0, _connector_response(task_state="FAILED" if name == connector else "RUNNING"), "")
-                    for name in OUTBOX_CONNECTOR_NAMES
+                    for name in _COMPOSE_CONNECTOR_NAMES
                 ],
             ]
         )
@@ -162,7 +201,7 @@ class TestDebeziumConnectorsCheck:
         assert check.fix_timeout == 10.0
 
     async def test_fix_restarts_first_canonical_failed_connector_once(self) -> None:
-        canonical = tuple(OUTBOX_CONNECTOR_NAMES)
+        canonical = tuple(_COMPOSE_CONNECTOR_NAMES)
         failed = canonical[1]
         responses = iter(
             [
@@ -185,7 +224,7 @@ class TestDebeziumConnectorsCheck:
         assert platform.restart_kafka_connector_calls == [(failed, 10)]
 
     async def test_fix_restarts_failed_task(self) -> None:
-        canonical = tuple(OUTBOX_CONNECTOR_NAMES)
+        canonical = tuple(_COMPOSE_CONNECTOR_NAMES)
         responses = iter(
             [
                 (0, json.dumps(list(canonical)), ""),
@@ -206,7 +245,7 @@ class TestDebeziumConnectorsCheck:
         assert platform.restart_kafka_connector_calls == [(canonical[0], 10)]
 
     async def test_fix_does_not_restart_unsafe_states_or_inventory(self) -> None:
-        canonical = tuple(OUTBOX_CONNECTOR_NAMES)
+        canonical = tuple(_COMPOSE_CONNECTOR_NAMES)
         cases = [
             [(1, "", "unreachable")],
             [(0, "[]", "")],
@@ -232,7 +271,7 @@ class TestDebeziumConnectorsCheck:
             assert platform.restart_kafka_connector_calls is None
 
     async def test_fix_maps_platform_failure_without_retry(self) -> None:
-        canonical = tuple(OUTBOX_CONNECTOR_NAMES)
+        canonical = tuple(_COMPOSE_CONNECTOR_NAMES)
         responses = iter(
             [
                 (0, json.dumps(list(canonical)), ""),
@@ -255,7 +294,8 @@ class TestDebeziumConnectorsCheck:
 
 
 class TestOutboxProcessingCheck:
-    async def test_passes_when_connectors_healthy_no_inactive_slots(self) -> None:
+    @pytest.mark.parametrize("target", _TARGETS)
+    async def test_passes_when_connectors_healthy_no_inactive_slots(self, target: PlatformTarget) -> None:
         status_body = _connector_response()
 
         class _HealthyPlatform(MockPlatform):
@@ -263,9 +303,9 @@ class TestOutboxProcessingCheck:
                 return (0, status_body, "")
 
             def exec_psql(self, query: str, *, field_separator: str = "") -> tuple[int, str, str]:
-                return (0, "", "")
+                return (0, _slot_rows(target), "")
 
-        result = await OutboxProcessingCheck().execute(_HealthyPlatform())
+        result = await OutboxProcessingCheck().execute(_HealthyPlatform(target=target))
         assert result.status == CheckStatus.PASSED
 
     async def test_fails_when_connector_unreachable(self) -> None:
@@ -274,7 +314,7 @@ class TestOutboxProcessingCheck:
                 return (1, "", "error")
 
             def exec_psql(self, query: str, *, field_separator: str = "") -> tuple[int, str, str]:
-                return (0, "", "")
+                return (0, _slot_rows(), "")
 
         result = await OutboxProcessingCheck().execute(_UnreachablePlatform())
         assert result.status == CheckStatus.FAILED
@@ -287,7 +327,7 @@ class TestOutboxProcessingCheck:
                 return (0, status_body, "")
 
             def exec_psql(self, query: str, *, field_separator: str = "") -> tuple[int, str, str]:
-                return (0, "nohiki_outbox_user_pref_slot", "")
+                return (0, _slot_rows(inactive=_COMPOSE_SLOT_NAMES[1]), "")
 
         result = await OutboxProcessingCheck().execute(_InactiveSlotPlatform())
         assert result.status == CheckStatus.FAILED
@@ -298,8 +338,9 @@ class TestOutboxProcessingCheck:
 
 
 class TestReplicationSlotCheck:
-    async def test_passes_when_active_slot_exists(self) -> None:
-        platform = MockPlatform(_psql_result=(0, "nohiki_slot|t", ""))
+    @pytest.mark.parametrize("target", _TARGETS)
+    async def test_passes_when_exact_target_slots_are_active(self, target: PlatformTarget) -> None:
+        platform = MockPlatform(target=target, _psql_result=(0, _slot_rows(target), ""))
         result = await ReplicationSlotCheck().execute(platform)
         assert result.status == CheckStatus.PASSED
 
@@ -307,6 +348,14 @@ class TestReplicationSlotCheck:
         platform = MockPlatform(_psql_result=(0, "", ""))
         result = await ReplicationSlotCheck().execute(platform)
         assert result.status == CheckStatus.FAILED
+
+    async def test_rejects_legacy_slot_alongside_exact_current_inventory(self) -> None:
+        platform = MockPlatform(_psql_result=(0, _slot_rows(legacy=True), ""))
+
+        result = await ReplicationSlotCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert any(detail == "nohiki_outbox_user_auth_slot: unexpected slot" for detail in result.details)
 
     async def test_error_when_psql_fails(self) -> None:
         platform = MockPlatform(_psql_result=(1, "", "error"))
@@ -318,24 +367,32 @@ class TestReplicationSlotCheck:
 
 
 class TestPublicationCheck:
-    async def test_passes_when_publication_and_tables_exist(self) -> None:
-        call_count = 0
+    @pytest.mark.parametrize("target", _TARGETS)
+    async def test_passes_when_exact_target_publications_and_tables_exist(self, target: PlatformTarget) -> None:
+        connectors = cdc_connectors_for(target)
 
         class _PubPlatform(MockPlatform):
             def exec_psql(self, query: str, *, field_separator: str = "") -> tuple[int, str, str]:
-                nonlocal call_count
-                call_count += 1
-                if call_count == 1:
-                    return (0, "nohiki_publication", "")
-                return (0, "outbox_schema.outbox", "")
+                if "FROM pg_publication ORDER BY" in query:
+                    return (0, _publication_names(target), "")
+                connector = next(item for item in connectors if item.publication_name in query)
+                return (0, connector.table_name, "")
 
-        result = await PublicationCheck().execute(_PubPlatform())
+        result = await PublicationCheck().execute(_PubPlatform(target=target))
         assert result.status == CheckStatus.PASSED
 
     async def test_fails_when_no_publication(self) -> None:
         platform = MockPlatform(_psql_result=(0, "", ""))
         result = await PublicationCheck().execute(platform)
         assert result.status == CheckStatus.FAILED
+
+    async def test_rejects_legacy_publication_alongside_exact_current_inventory(self) -> None:
+        platform = MockPlatform(_psql_result=(0, _publication_names(legacy=True), ""))
+
+        result = await PublicationCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert any(detail == "nohiki_outbox_pub_user_auth: unexpected publication" for detail in result.details)
 
     async def test_error_when_psql_fails(self) -> None:
         platform = MockPlatform(_psql_result=(1, "", "error"))

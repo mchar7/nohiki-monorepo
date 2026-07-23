@@ -13,7 +13,7 @@ from health_check.checks.vectors.qdrant_population import (
 )
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class _Manifest:
@@ -81,6 +81,11 @@ async def test_populated_both_sides_reports_observed_counts(
     assert result.status == CheckStatus.PASSED
     assert any(detail.endswith("=7") for detail in result.details)
     assert any(detail.endswith("=5") for detail in result.details)
+
+
+def test_profile_population_counts_completed_canonical_profiles() -> None:
+    assert "is_enrichment_complete" in ProfileVectorPopulationCheck.sql
+    assert "embedding IS NOT NULL" not in ProfileVectorPopulationCheck.sql
 
 
 async def test_orphan_points_are_actionable() -> None:

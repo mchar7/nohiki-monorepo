@@ -31,8 +31,6 @@
       "matches": "Job Matches",
       "trend": "Trend"
     },
-    "subtitle": "Job matches and applications over time",
-    "subtitleShort": "Activity trends",
     "timeRange": {
       "days30": "30 days",
       "days7": "7 days",
@@ -95,12 +93,10 @@
     }
   },
   "onboarding": {
-    "cta": "Get Started",
     "progress": {
       "label": "{{completed}} of {{total}} steps completed",
       "percent": "{{value}}% complete"
     },
-    "step": "Step {{number}}",
     "stepState": {
       "active": "Current step",
       "completed": "Completed",
@@ -130,8 +126,6 @@
       }
     },
     "stepsAriaLabel": "Onboarding steps",
-    "subtitle": "Get started by setting up your job search profile",
-    "title": "Welcome to Nohiki",
     "welcome": {
       "greeting": "Welcome back, {{name}}!",
       "greetingGeneric": "Welcome to Nohiki!",

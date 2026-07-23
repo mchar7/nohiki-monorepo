@@ -1,7 +1,8 @@
 import type { JSX } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useFormAutoSave } from '@/shared/lib/index.ts';
-import { FEATURE_IMPORTANCE_DEFAULTS, FeatureImportanceSettings } from '@/shared/ui/index.ts';
+import { FeatureImportanceSettings } from '@/shared/ui/FeatureImportanceSettings.tsx';
+import { FEATURE_IMPORTANCE_DEFAULTS } from '@/shared/ui/feature-importance-settings-model.ts';
 import type { FeatureImportanceRequest, ResolvedFeatureImportanceResponse } from '../api/index.ts';
 import { useResolvedFeatureImportance, useSetFeatureImportance } from '../api/index.ts';
 

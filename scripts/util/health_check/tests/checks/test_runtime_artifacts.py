@@ -5,7 +5,7 @@ from __future__ import annotations
 from health_check.checks.application.runtime_artifacts import RequiredRuntimeArtifactsCheck
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class _ArtifactPlatform(MockPlatform):

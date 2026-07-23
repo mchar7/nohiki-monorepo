@@ -6,7 +6,7 @@ import pytest
 from health_check.checks.application.correlation_viability import CorrelationViabilityCheck
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 async def test_vectors_on_both_sides_without_correlations_fails_actionably() -> None:

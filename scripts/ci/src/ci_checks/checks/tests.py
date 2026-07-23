@@ -46,7 +46,7 @@ from ci_checks.core.process_env import sanitized_python_env
 PYTEST_SUCCESS = 0
 PYTEST_NO_TESTS = 5
 _WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS: int = 30 * 60
-_UNIT_TEST_MARKERS = "not integration and not e2e and not requires_docker"
+_UNIT_TEST_MARKERS = "not integration and not e2e and not requires_docker and not slow"
 
 
 # Git change detection
@@ -322,9 +322,28 @@ class PendingCoverageColumn(ProgressColumn):
 
 
 def _sync_workspace(console: Console) -> None:
-    """Synchronize the frozen workspace environment before parallel test execution."""
+    """Synchronize the frozen workspace environment before parallel test execution.
+
+    Uses the canonical dev sync shape (all packages, all non-CUDA extras, deadcode
+    group) behind the exclusive venv lock so a runner invocation never narrows an
+    environment that other consumers share.
+    """
     result = subprocess.run(
-        ["uv", "sync", "--all-packages", "--frozen"],
+        [
+            "scripts/dev/env-lock.sh",
+            "exclusive",
+            "venv",
+            "--",
+            "uv",
+            "sync",
+            "--all-packages",
+            "--all-extras",
+            "--no-extra",
+            "cuda",
+            "--group",
+            "deadcode",
+            "--frozen",
+        ],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,

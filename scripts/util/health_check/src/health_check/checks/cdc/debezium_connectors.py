@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Final
 
 from health_check.checks._utils import ConnectorStatus, fetch_connector_names, fetch_connector_status
-from health_check.config.kafka import OUTBOX_CONNECTOR_NAMES
+from health_check.config.kafka import connector_names_for
 from health_check.config.thresholds import KAFKA_CONNECT_DEFAULT_PORT
 from health_check.core.base import HealthCheck
 from health_check.core.models import CheckCategory, CheckMetadata, CheckResult, CheckStatus, FixResult, FixStatus
@@ -55,7 +55,7 @@ class DebeziumConnectorsCheck(HealthCheck):
         start = self._start_timer()
         connect_base = platform.service_url("kafka-connect", KAFKA_CONNECT_DEFAULT_PORT)
         names = await fetch_connector_names(platform, connect_base)
-        expected = tuple(OUTBOX_CONNECTOR_NAMES)
+        expected = connector_names_for(platform.target)
         if names is None or frozenset(names) != frozenset(expected):
             return FixResult(
                 self.metadata.check_id,
@@ -106,18 +106,18 @@ class DebeziumConnectorsCheck(HealthCheck):
                 "No connectors registered in Kafka Connect",
                 remediation_hint="Register connectors: just kafka-connect-register",
             )
-        expected = frozenset(OUTBOX_CONNECTOR_NAMES)
+        expected = frozenset(connector_names_for(platform.target))
         observed = frozenset(names)
         missing = sorted(expected - observed)
-        unexpected = sorted(name for name in observed - expected if name.startswith("nohiki"))
+        unexpected = sorted(observed - expected)
         if missing or unexpected:
             details = (
                 *(f"{name}: required connector missing" for name in missing),
-                *(f"{name}: unexpected legacy connector" for name in unexpected),
+                *(f"{name}: unexpected connector" for name in unexpected),
             )
             return self._make_result(
                 CheckStatus.FAILED,
-                f"connector inventory mismatch: {len(missing)} missing, {len(unexpected)} legacy",
+                f"connector inventory mismatch: {len(missing)} missing, {len(unexpected)} unexpected",
                 details=details,
                 remediation_hint="Reconcile connector inventory: just kafka-connect-register",
             )

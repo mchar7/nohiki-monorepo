@@ -24,8 +24,10 @@ import signal
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import cache
@@ -34,6 +36,7 @@ from typing import Any
 
 import pytest
 import yaml
+from ci_checks.core.repository import tracked_text_files
 
 _ENV_ROOT = os.environ.get("NOHIKI_PORTABILITY_TEST_ROOT")
 _REPO = Path(_ENV_ROOT).resolve() if _ENV_ROOT else Path(__file__).resolve().parents[3]
@@ -177,6 +180,16 @@ def _sh(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str
         stdin=subprocess.DEVNULL,
         check=False,
     )
+
+
+def test_skill_graph_readiness_matches_seed_health_minimum() -> None:
+    assert _find_env("SKILL_GRAPH_READINESS_GATE__MIN_POINT_COUNT") == "10000"
+
+
+def test_common_readiness_probe_allows_real_llm_health_latency() -> None:
+    healthcheck = _compose()["x-common-microservice"]["healthcheck"]
+    assert "timeout=15" in healthcheck["test"][1]
+    assert healthcheck["timeout"] == "20s"
 
 
 # Host ports are environment-overrideable with preserved defaults.
@@ -355,7 +368,9 @@ def _fake_runtime(bin_dir: Path, *, compose_ok: bool = True) -> None:
     waiter.chmod(waiter.stat().st_mode | stat.S_IEXEC)
     _make_exe(
         bin_dir / "fakeruntime",
-        f'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then\n  exit {0 if compose_ok else 1}\nfi\n'
+        f'if [ "$1" = "compose" ] && [ "$2" = "version" ]; then\n'
+        '  printf "%s\\n" "${FAKE_COMPOSE_VERSION_OUTPUT:-}"\n'
+        f"  exit {0 if compose_ok else 1}\nfi\n"
         'last=""\nfor argument in "$@"; do last=$argument; done\n'
         'if [ "$last" = "config" ] || '
         '[ "$last" = "--quiet" ]; then\n'
@@ -406,10 +421,106 @@ def _fake_runtime(bin_dir: Path, *, compose_ok: bool = True) -> None:
         "    fi\n"
         "  fi\n"
         '  [ -z "${FAKE_ACTION_CONFIG_MODE:-}" ] || stat -c "%a" "$action_file" > "$FAKE_ACTION_CONFIG_MODE"\n'
+        '  if [ "$action_command" = "ps" ]; then\n'
+        '    if [ -n "${FAKE_RECOVERY_PS_READY:-}" ] && '
+        '{ [ -z "${FAKE_RECOVERY_STARTED_FILE:-}" ] || [ ! -e "$FAKE_RECOVERY_STARTED_FILE" ]; }; then\n'
+        "      FAKE_ACTION_READY=$FAKE_RECOVERY_PS_READY\n"
+        "      export FAKE_ACTION_READY\n"
+        "      exec fake-action-waiter\n"
+        "    fi\n"
+        '    if [ -n "${FAKE_RECOVERY_STARTED_FILE:-}" ] && [ -e "$FAKE_RECOVERY_STARTED_FILE" ]; then\n'
+        '      printf "%b" "${FAKE_COMPOSE_PS_AFTER_START_OUTPUT:-}"\n'
+        "    else\n"
+        '      printf "%b" "${FAKE_COMPOSE_PS_OUTPUT:-}"\n'
+        "    fi\n"
+        '    exit "${FAKE_COMPOSE_PS_EXIT:-0}"\n'
+        "  fi\n"
+        '  if [ "$action_command" = "up" ]; then\n'
+        '    recovery_command=""\n'
+        '    recovery_service=""\n'
+        '    recovery_force_recreate=""\n'
+        '    recovery_no_deps=""\n'
+        '    after_up=""\n'
+        '    for argument in "$@"; do\n'
+        '      if [ -n "$after_up" ]; then\n'
+        '        recovery_command="${recovery_command}${recovery_command:+ }${argument}"\n'
+        '        case "$argument" in\n'
+        "          --force-recreate) recovery_force_recreate=yes ;;\n"
+        "          --no-deps) recovery_no_deps=yes ;;\n"
+        "          -*) ;;\n"
+        "          *) recovery_service=$argument ;;\n"
+        "        esac\n"
+        '      elif [ "$argument" = "up" ]; then\n'
+        "        after_up=yes\n"
+        "      fi\n"
+        "    done\n"
+        '    if [ "$recovery_force_recreate" = yes ] && [ "$recovery_no_deps" = yes ]; then\n'
+        '      printf "recovery:up %s\\n" "$recovery_command" >> "${FAKE_RUNTIME_LOG:-/dev/null}"\n'
+        '      [ -z "${FAKE_RECOVERY_COMMAND_LOG:-}" ] || '
+        'printf "up %s\\n" "$recovery_command" >> "$FAKE_RECOVERY_COMMAND_LOG"\n'
+        '      [ -z "${FAKE_RECOVERY_SERVICE_LOG:-}" ] || '
+        'printf "%s\\n" "$recovery_service" >> "$FAKE_RECOVERY_SERVICE_LOG"\n'
+        '      [ -z "${FAKE_RECOVERY_STARTED_FILE:-}" ] || : > "$FAKE_RECOVERY_STARTED_FILE"\n'
+        '      if [ -n "${FAKE_RECOVERY_READY:-}" ]; then\n'
+        "        FAKE_ACTION_READY=$FAKE_RECOVERY_READY\n"
+        "        export FAKE_ACTION_READY\n"
+        '        if [ -n "${FAKE_RECOVERY_DESCENDANT:-}" ]; then\n'
+        "          fake-action-waiter &\n"
+        "          wait $!\n"
+        "          exit $?\n"
+        "        fi\n"
+        "        exec fake-action-waiter\n"
+        "      fi\n"
+        '      exit "${FAKE_RECOVERY_EXIT:-0}"\n'
+        "    fi\n"
+        '    if [ -n "${FAKE_ACTION_ERROR:-}" ]; then\n'
+        '      printf "%s\\n" "$FAKE_ACTION_ERROR" >&2\n'
+        "    fi\n"
+        "  fi\n"
         '  if [ -n "${FAKE_ACTION_READY:-}" ]; then\n'
         "    exec fake-action-waiter\n"
         "  fi\n"
         '  exit "${FAKE_ACTION_EXIT:-0}"\nfi\n'
+        'if [ "$1" = "start" ]; then\n'
+        '  echo "direct:start" >> "${FAKE_RUNTIME_LOG:-/dev/null}"\n'
+        "  shift\n"
+        '  [ -z "${FAKE_RECOVERY_WAVE_LOG:-}" ] || printf "%s\\n" "$*" >> "$FAKE_RECOVERY_WAVE_LOG"\n'
+        '  for argument in "$@"; do\n'
+        '    [ -z "${FAKE_RECOVERY_SERVICE_LOG:-}" ] || '
+        'printf "%s\\n" "$argument" >> "$FAKE_RECOVERY_SERVICE_LOG"\n'
+        "  done\n"
+        '  [ -z "${FAKE_RECOVERY_STARTED_FILE:-}" ] || : > "$FAKE_RECOVERY_STARTED_FILE"\n'
+        '  if [ -n "${FAKE_RECOVERY_READY:-}" ]; then\n'
+        "    FAKE_ACTION_READY=$FAKE_RECOVERY_READY\n"
+        "    export FAKE_ACTION_READY\n"
+        '    if [ -n "${FAKE_RECOVERY_DESCENDANT:-}" ]; then\n'
+        "      fake-action-waiter &\n"
+        "      wait $!\n"
+        "      exit $?\n"
+        "    fi\n"
+        "    exec fake-action-waiter\n"
+        "  fi\n"
+        '  exit "${FAKE_RECOVERY_EXIT:-0}"\n'
+        "fi\n"
+        'if [ "$1" = "wait" ]; then\n'
+        '  echo "direct:wait" >> "${FAKE_RUNTIME_LOG:-/dev/null}"\n'
+        '  [ -z "${FAKE_RECOVERY_COMMAND_LOG:-}" ] || '
+        'printf "%s\\n" "$*" >> "$FAKE_RECOVERY_COMMAND_LOG"\n'
+        '  if [ -n "${FAKE_RECOVERY_WAIT_READY:-}" ]; then\n'
+        "    FAKE_ACTION_READY=$FAKE_RECOVERY_WAIT_READY\n"
+        "    export FAKE_ACTION_READY\n"
+        "    exec fake-action-waiter\n"
+        "  fi\n"
+        '  if [ "$2" = "--condition=exited" ]; then\n'
+        '    if [ "${FAKE_RECOVERY_WAIT_OUTPUT+x}" = x ]; then\n'
+        '      printf "%b" "$FAKE_RECOVERY_WAIT_OUTPUT"\n'
+        "    else\n"
+        "      shift 2\n"
+        '      for _container in "$@"; do printf "0\\n"; done\n'
+        "    fi\n"
+        "  fi\n"
+        '  exit "${FAKE_RECOVERY_WAIT_EXIT:-0}"\n'
+        "fi\n"
         "exit 1\n",
     )
 
@@ -529,6 +640,77 @@ def test_compose_probe_selects_pinned_podman_compose(tmp_path: Path, monkeypatch
     assert trace.read_text(encoding="utf-8").splitlines() == ["--version"]
 
 
+@pytest.mark.requires_docker
+def test_podman_status_reporter_template_matches_real_created_container(tmp_path: Path) -> None:
+    runtime = shutil.which("podman")
+    if runtime is None:
+        pytest.skip("podman is not installed")
+    name = f"nohiki-portability-reporter-{os.getpid()}-{time.monotonic_ns()}"
+    image = f"localhost/{name}:test"
+    archive_path = tmp_path / "rootfs.tar"
+    with tarfile.open(archive_path, "w") as archive:
+        marker = tarfile.TarInfo("etc/.keep")
+        marker.mode = 0o644
+        archive.addfile(marker)
+    imported = subprocess.run(
+        [runtime, "import", str(archive_path), image],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert imported.returncode == 0, imported.stderr
+    try:
+        created = subprocess.run(
+            [
+                runtime,
+                "create",
+                "--name",
+                name,
+                "--label",
+                f"io.podman.compose.service={name}",
+                image,
+                "/bin/true",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert created.returncode == 0, created.stderr
+        try:
+            reported = subprocess.run(
+                [
+                    runtime,
+                    "ps",
+                    "--all",
+                    "--filter",
+                    f"label=io.podman.compose.service={name}",
+                    "--format",
+                    '{{index .Labels "io.podman.compose.service"}}|{{.Names}}|{{.State}}|{{.ExitCode}}|{{.Status}}',
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert reported.returncode == 0, reported.stderr
+            assert reported.stdout.strip() == f"{name}|{name}|created|0|Created"
+        finally:
+            removed = subprocess.run(
+                [runtime, "rm", "--force", name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert removed.returncode == 0, removed.stderr
+    finally:
+        removed_image = subprocess.run(
+            [runtime, "rmi", "--force", image],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert removed_image.returncode == 0, removed_image.stderr
+
+
 def _dotenv_values(text: str) -> dict[str, str]:
     values: dict[str, str] = {}
     for raw_line in text.splitlines():
@@ -551,7 +733,8 @@ def _rendered_compose(endpoint_values: dict[str, str], path: Path) -> Path:
     compose = _compose()
     provider_inputs = compose["x-llm-provider-endpoints"]
     for variable in provider_inputs:
-        provider_inputs[variable] = endpoint_values.get(variable, "")
+        default = "0" if variable == "NOHIKI_ALLOW_HTTP_LLM_LOCAL" else ""
+        provider_inputs[variable] = endpoint_values.get(variable, default)
     for service in compose["services"].values():
         environment = service.get("environment", {})
         if not isinstance(environment, dict):
@@ -680,13 +863,27 @@ _EXPECTED_LLM_MODELS = {
         "JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__MODEL",
     ): "openai:gpt-5.6-luna",
     (
+        "nohiki-svc-job-ingest-enrichment",
+        "JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__1__MODEL",
+    ): "openai:gpt-5.6-luna",
+    (
+        "nohiki-svc-job-ingest-enrichment",
+        "JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__2__MODEL",
+    ): "openrouter:deepseek/deepseek-v4-flash",
+    ("nohiki-svc-doc-content", "DOC_CONTENT_LLM__PROVIDER__MODELS__0__MODEL"): "openai:gpt-5.6-sol",
+    ("nohiki-svc-doc-content", "DOC_CONTENT_LLM__PROVIDER__MODELS__1__MODEL"): "openai:gpt-5.6-luna",
+    (
         "nohiki-svc-doc-content",
-        "DOC_CONTENT_LLM__PROVIDER__MODELS__0__MODEL",
-    ): "openai:gpt-5.6-sol",
+        "DOC_CONTENT_LLM__PROVIDER__MODELS__2__MODEL",
+    ): "openrouter:deepseek/deepseek-v4-flash",
     (
         "nohiki-svc-doc-content",
         "DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__MODEL",
     ): "openai:gpt-5.6-sol",
+    (
+        "nohiki-svc-doc-content",
+        "DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__1__MODEL",
+    ): "openrouter:deepseek/deepseek-v4-flash",
 }
 
 
@@ -707,12 +904,16 @@ def _llm_models() -> dict[tuple[str, str], tuple[str, str | None]]:
     return models
 
 
-def test_compose_renders_every_private_model_to_its_provider_endpoint() -> None:
+def test_compose_renders_private_primaries_and_public_fallbacks() -> None:
     endpoint = "https://openai.models.example.test/v1"
     models = _llm_models()
 
     assert {key: model for key, (model, _) in models.items()} == _EXPECTED_LLM_MODELS
-    for model, raw_base_url in models.values():
+    for (_, key), (model, raw_base_url) in models.items():
+        if "__MODELS__0__" not in key:
+            assert model.startswith(("openai:", "openrouter:"))
+            assert raw_base_url is None
+            continue
         assert model.startswith("openai:")
         assert raw_base_url == "${NOHIKI_LLM_OPENAI_BASE_URL:?set NOHIKI_LLM_OPENAI_BASE_URL}"
         rendered_base_url = raw_base_url.replace(
@@ -721,11 +922,16 @@ def test_compose_renders_every_private_model_to_its_provider_endpoint() -> None:
         assert rendered_base_url == endpoint
         assert f"{rendered_base_url.rstrip('/')}/models" == "https://openai.models.example.test/v1/models"
 
+    doc_content = _compose()["services"]["nohiki-svc-doc-content"]["environment"]
+    assert doc_content["DOC_CONTENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT"] == "high"
+    assert doc_content["DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__REASONING_EFFORT"] == "high"
+
 
 def test_luna_enrichment_has_no_unused_gcp_credentials_or_mount() -> None:
     service = _compose()["services"]["nohiki-svc-job-ingest-enrichment"]
     environment = service["environment"]
     assert environment["JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__MODEL"] == "openai:gpt-5.6-luna"
+    assert environment["JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT"] == "medium"
     assert not any(key == "GOOGLE_APPLICATION_CREDENTIALS" or key.startswith("GOOGLE_") for key in environment)
     assert not any("/run/secrets/gcp" in volume for volume in service["volumes"])
 
@@ -741,6 +947,40 @@ def test_correlation_has_no_llm_provider_configuration_but_keeps_ml_ranking_asse
     )
 
 
+def test_clean_boot_orders_schema_migrations_before_seed_and_connect() -> None:
+    services = _compose()["services"]
+    seed_dependencies = services["nohiki-job-skill-graph-seed"]["depends_on"]
+    assert seed_dependencies["nohiki-svc-skill-graph"]["condition"] == "service_started"
+    for service_name in (
+        "nohiki-svc-user-pref",
+        "nohiki-svc-job-storage",
+        "nohiki-svc-skill-graph",
+        "nohiki-job-skill-graph-seed",
+        "nohiki-svc-job-correlation",
+    ):
+        dependencies = services[service_name]["depends_on"]
+        assert dependencies["nohiki-infra-qdrant-init"]["condition"] == "service_completed_successfully"
+
+    connector_owners = {
+        "nohiki-svc-user-auth",
+        "nohiki-svc-user-pref",
+        "nohiki-svc-user-upload",
+        "nohiki-svc-user-entitlement",
+        "nohiki-svc-job-query-composition",
+        "nohiki-svc-job-ingest-enrichment",
+        "nohiki-svc-job-storage",
+        "nohiki-svc-doc-template",
+        "nohiki-svc-bff",
+        "nohiki-svc-notification",
+        "nohiki-svc-job-correlation",
+    }
+    connect_dependencies = services["nohiki-cp-kafka-connect"]["depends_on"]
+    assert {
+        name for name, dependency in connect_dependencies.items() if dependency["condition"] == "service_healthy"
+    } >= connector_owners
+    assert connect_dependencies["nohiki-job-skill-graph-seed"]["condition"] == "service_completed_successfully"
+
+
 def test_compose_omits_direct_provider_defaults_and_derived_transport_fields() -> None:
     for service in _compose()["services"].values():
         environment = service.get("environment", {})
@@ -751,7 +991,7 @@ def test_compose_omits_direct_provider_defaults_and_derived_transport_fields() -
                 continue
             base_key = key.removesuffix("__MODEL") + "__BASE_URL"
             provider = str(model).partition(":")[0]
-            if provider == "openrouter":
+            if provider == "openrouter" or "__MODELS__0__" not in key:
                 assert base_key not in environment
             else:
                 assert base_key in environment
@@ -761,10 +1001,10 @@ def test_compose_omits_direct_provider_defaults_and_derived_transport_fields() -
 def test_compose_endpoint_sources_have_no_private_default_or_credential_literal() -> None:
     compose_text = _COMPOSE.read_text(encoding="utf-8")
     env_example = _ENV_EXAMPLE.read_text(encoding="utf-8")
-    bases = [base for _, base in _llm_models().values()]
+    bases = [base for _, base in _llm_models().values() if base is not None]
 
     assert bases
-    assert all(base and base.startswith("${NOHIKI_LLM_") for base in bases)
+    assert all(base.startswith("${NOHIKI_LLM_") for base in bases)
     assert "api.openai.com" not in compose_text
     assert "api.anthropic.com" not in compose_text
     active_endpoint_inputs = {
@@ -773,6 +1013,9 @@ def test_compose_endpoint_sources_have_no_private_default_or_credential_literal(
         if re.fullmatch(r"NOHIKI_LLM_[A-Z0-9_]+_BASE_URL=.*", line)
     }
     assert active_endpoint_inputs == {"NOHIKI_LLM_OPENAI_BASE_URL"}
+    assert _compose()["x-llm-provider-endpoints"]["NOHIKI_ALLOW_HTTP_LLM_LOCAL"] == (
+        "${NOHIKI_ALLOW_HTTP_LLM_LOCAL:-0}"
+    )
     assert not re.search(r"NOHIKI_LLM_.*(?:KEY|TOKEN|PASSWORD)\s*[:=]", compose_text)
 
 
@@ -788,6 +1031,20 @@ def test_validator_accepts_separate_custom_openai_and_anthropic_conventions(
     assert result.returncode == 0, result.stderr
     assert "openai.models.example.test" not in result.stdout + result.stderr
     assert "anthropic.models.example.test" not in result.stdout + result.stderr
+
+
+def test_validator_accepts_openai_sdk_default_without_base_url(tmp_path: Path) -> None:
+    model_key = "DIRECT_LLM__PROVIDER__MODELS__2__MODEL"
+    environment = {model_key: "openai:direct-model"}
+    result = _run_endpoint_validator(
+        tmp_path,
+        "https://openai.models.example.test/v1",
+        "https://anthropic.models.example.test",
+        source_environment=environment,
+        rendered_environment=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_validator_redacts_unsupported_provider_and_model_sentinels(
@@ -1004,13 +1261,53 @@ def test_validator_accepts_distinct_bracketed_ipv6_origins(tmp_path: Path) -> No
     assert result.returncode == 0, result.stderr
 
 
+def test_validator_requires_explicit_opt_in_for_local_http(tmp_path: Path) -> None:
+    endpoint = "http://127.0.0.1:8317/v1"
+    result = _run_endpoint_validator(tmp_path, endpoint, "")
+
+    assert result.returncode == 1
+    assert "NOHIKI_ALLOW_HTTP_LLM_LOCAL=1" in result.stderr
+    assert endpoint not in result.stdout + result.stderr
+
+
+def test_validator_accepts_opted_in_loopback_http(tmp_path: Path) -> None:
+    result = _run_endpoint_validator(
+        tmp_path,
+        "http://127.0.0.1:8317/v1",
+        "",
+        source_environment={
+            "NOHIKI_ALLOW_HTTP_LLM_LOCAL": "${NOHIKI_ALLOW_HTTP_LLM_LOCAL:-0}",
+        },
+        rendered_environment={"NOHIKI_ALLOW_HTTP_LLM_LOCAL": "1"},
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_validator_rejects_external_http_even_with_local_opt_in(tmp_path: Path) -> None:
+    endpoint = "http://203.0.113.10/v1"
+    result = _run_endpoint_validator(
+        tmp_path,
+        endpoint,
+        "",
+        source_environment={
+            "NOHIKI_ALLOW_HTTP_LLM_LOCAL": "${NOHIKI_ALLOW_HTTP_LLM_LOCAL:-0}",
+        },
+        rendered_environment={"NOHIKI_ALLOW_HTTP_LLM_LOCAL": "1"},
+    )
+
+    assert result.returncode == 1
+    assert "loopback or RFC1918" in result.stderr
+    assert endpoint not in result.stdout + result.stderr
+
+
 @pytest.mark.parametrize(
     ("endpoint_env", "expected_error"),
     [
         ({"NOHIKI_LLM_OPENAI_BASE_URL": ""}, "required endpoint variable"),
         (
             {"NOHIKI_LLM_OPENAI_BASE_URL": "http://models.example.test/v1"},
-            "absolute HTTPS",
+            "must use HTTPS",
         ),
         (
             {"NOHIKI_LLM_OPENAI_BASE_URL": "https://models.example.test"},
@@ -1712,6 +2009,7 @@ def test_preflight_action_uses_the_validated_render_once_without_source_rerender
     assert Path(rendered_path).name != _COMPOSE.name
     decoded = yaml.safe_load(snapshot.read_text(encoding="utf-8"))
     assert decoded["x-llm-provider-endpoints"] == {
+        "NOHIKI_ALLOW_HTTP_LLM_LOCAL": "0",
         "NOHIKI_LLM_ANTHROPIC_BASE_URL": "",
         "NOHIKI_LLM_OPENAI_BASE_URL": "https://models.example.test/v1",
     }
@@ -1746,6 +2044,982 @@ def test_preflight_cleans_render_and_diagnostics_after_action_failure(
     assert result.returncode == 23
     assert rendered_mode.read_text(encoding="utf-8").strip() == "600"
     assert action_mode.read_text(encoding="utf-8").strip() == "600"
+    assert _compose_temporary_files() == before
+
+
+_PODMAN_COMPOSE_VERSION = "podman-compose version 1.6.0"
+_PODMAN_DEPENDENCY_ERROR = 'time="runtime" level=error msg="a dependency failed: container state improper"'
+
+
+def _podman_state(service: str, state: str, exit_code: int, status: str) -> str:
+    return f"{service}|{service}-1|{state}|{exit_code}|{status}\\n"
+
+
+_BFF_PREREQUISITES_READY = "".join(
+    (
+        _podman_state("nohiki-infra-secrets-init", "exited", 0, "Exited (0) 1 minute ago"),
+        _podman_state("nohiki-infra-postgres", "running", 0, "Up 1 minute (healthy)"),
+        _podman_state("nohiki-cp-kafka", "running", 0, "Up 1 minute (healthy)"),
+        _podman_state("nohiki-cp-kafka-init", "exited", 0, "Exited (0) 1 minute ago"),
+        _podman_state("nohiki-infra-valkey", "running", 0, "Up 1 minute (healthy)"),
+        _podman_state("nohiki-svc-user-auth", "running", 0, "Up 1 minute (healthy)"),
+        _podman_state("nohiki-infra-rustfs", "running", 0, "Up 1 minute (healthy)"),
+        _podman_state("nohiki-infra-rustfs-init", "exited", 0, "Exited (0) 1 minute ago"),
+    )
+)
+_CREATED_BFF_WITH_READY_PREREQUISITES = _BFF_PREREQUISITES_READY + _podman_state(
+    "nohiki-svc-bff", "created", 0, "Created"
+)
+_RECOVERED_COMPLETED_PREREQUISITES = "".join(
+    (
+        _podman_state("nohiki-infra-secrets-init", "exited", 0, "Exited (0) 1 second ago"),
+        _podman_state("nohiki-cp-kafka-init", "exited", 0, "Exited (0) 1 second ago"),
+        _podman_state("nohiki-infra-rustfs-init", "exited", 0, "Exited (0) 1 second ago"),
+    )
+)
+_RECOVERED_BFF_STATE = _RECOVERED_COMPLETED_PREREQUISITES + _podman_state(
+    "nohiki-svc-bff", "running", 0, "Up 1 second (starting)"
+)
+_CREATED_SET_WITH_READY_PREREQUISITES = "".join(
+    (
+        _CREATED_BFF_WITH_READY_PREREQUISITES,
+        _podman_state("nohiki-obs-loki", "running", 0, "Up 1 minute"),
+        _podman_state("nohiki-obs-tempo", "running", 0, "Up 1 minute"),
+        _podman_state("nohiki-obs-mimir", "running", 0, "Up 1 minute"),
+        _podman_state("nohiki-obs-readiness", "created", 0, "Created"),
+    )
+)
+_RECOVERED_CREATED_SET = _RECOVERED_BFF_STATE + _podman_state(
+    "nohiki-obs-readiness", "running", 0, "Up 1 second (healthy)"
+)
+
+
+def _podman_created_dependency_snapshot(compose: dict[str, Any], created: set[str]) -> str:
+    services = compose["services"]
+    scope: set[str] = set()
+    conditions: dict[str, set[str]] = {}
+
+    def collect(service: str) -> None:
+        if service in scope:
+            return
+        scope.add(service)
+        depends_on = services[service].get("depends_on", {})
+        items = (
+            ((dependency, "service_started") for dependency in depends_on)
+            if isinstance(depends_on, list)
+            else (
+                (
+                    dependency,
+                    details.get("condition", "service_started") if isinstance(details, dict) else "service_started",
+                )
+                for dependency, details in depends_on.items()
+            )
+        )
+        for dependency, condition in items:
+            conditions.setdefault(dependency, set()).add(condition)
+            collect(dependency)
+
+    for service in created:
+        collect(service)
+
+    snapshot = []
+    for service, description in services.items():
+        if service not in scope:
+            continue
+        if service in created:
+            snapshot.append(_podman_state(service, "created", 0, "Created"))
+        elif "service_completed_successfully" in conditions.get(service, set()) or description.get("restart") in (
+            "no",
+            False,
+        ):
+            snapshot.append(_podman_state(service, "exited", 0, "Exited (0) 1 minute ago"))
+        elif "service_healthy" in conditions.get(service, set()):
+            snapshot.append(_podman_state(service, "running", 0, "Up 1 minute (healthy)"))
+        else:
+            snapshot.append(_podman_state(service, "running", 0, "Up 1 minute"))
+    return "".join(snapshot)
+
+
+def _fake_action_commands(runtime_log: Path) -> list[str]:
+    operations = runtime_log.read_text(encoding="utf-8").splitlines()
+    return [operation.rsplit(":", 1)[-1] for operation in operations if operation.startswith(("action:", "direct:"))]
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_recreates_created_set_without_restarting_successful_one_shot_ancestors(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    service_log = tmp_path / "recovery-services.log"
+    command_log = tmp_path / "recovery-commands.log"
+    started_file = tmp_path / "recovery-started"
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff", "nohiki-obs-readiness"),
+        endpoint_env={
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": _CREATED_SET_WITH_READY_PREREQUISITES,
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": _RECOVERED_CREATED_SET,
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_COMMAND_LOG": str(command_log),
+            "FAKE_RECOVERY_SERVICE_LOG": str(service_log),
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _fake_action_commands(runtime_log) == ["up", "ps", "up", "up", "ps"]
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "up -d --force-recreate --no-deps nohiki-svc-bff",
+        "up -d --force-recreate --no-deps nohiki-obs-readiness",
+    ]
+    assert service_log.read_text(encoding="utf-8").splitlines() == [
+        "nohiki-svc-bff",
+        "nohiki-obs-readiness",
+    ]
+    assert "direct:start" not in runtime_log.read_text(encoding="utf-8")
+    assert "recovered Created services" in result.stderr
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_podman_recovery_topologically_recreates_dependent_created_services(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    service_log = tmp_path / "recovery-services.log"
+    command_log = tmp_path / "recovery-commands.log"
+    started_file = tmp_path / "recovery-started"
+    created = {"nohiki-svc-bff", "nohiki-cp-kafka-connect"}
+    state = _podman_created_dependency_snapshot(_compose(), created)
+    recovered = "".join(
+        (
+            _podman_state("nohiki-svc-bff", "running", 0, "Up 1 second (healthy)"),
+            _podman_state(
+                "nohiki-cp-kafka-connect",
+                "running",
+                0,
+                "Up 1 second (healthy)",
+            ),
+        )
+    )
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-cp-kafka-connect"),
+        endpoint_env={
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": recovered,
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_COMMAND_LOG": str(command_log),
+            "FAKE_RECOVERY_SERVICE_LOG": str(service_log),
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _fake_action_commands(runtime_log) == [
+        "up",
+        "ps",
+        "up",
+        "wait",
+        "up",
+        "ps",
+    ]
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "up -d --force-recreate --no-deps nohiki-svc-bff",
+        "wait --condition=healthy nohiki-svc-bff-1",
+        "up -d --force-recreate --no-deps nohiki-cp-kafka-connect",
+    ]
+    assert service_log.read_text(encoding="utf-8").splitlines() == [
+        "nohiki-svc-bff",
+        "nohiki-cp-kafka-connect",
+    ]
+    assert "direct:start" not in runtime_log.read_text(encoding="utf-8")
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_podman_recovery_verifies_started_created_dependency_before_dependent(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    command_log = tmp_path / "recovery-commands.log"
+    started_file = tmp_path / "recovery-started"
+    state = "".join(
+        (
+            _podman_state("nohiki-obs-loki", "created", 0, "Created"),
+            _podman_state("nohiki-obs-tempo", "running", 0, "Up 1 minute"),
+            _podman_state("nohiki-obs-mimir", "running", 0, "Up 1 minute"),
+            _podman_state("nohiki-obs-readiness", "created", 0, "Created"),
+        )
+    )
+    recovered = "".join(
+        (
+            _podman_state("nohiki-obs-loki", "running", 0, "Up 1 second"),
+            _podman_state("nohiki-obs-readiness", "running", 0, "Up 1 second (healthy)"),
+        )
+    )
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-obs-readiness"),
+        endpoint_env={
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": recovered,
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_COMMAND_LOG": str(command_log),
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _fake_action_commands(runtime_log) == [
+        "up",
+        "ps",
+        "up",
+        "ps",
+        "up",
+        "ps",
+    ]
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "up -d --force-recreate --no-deps nohiki-obs-loki",
+        "up -d --force-recreate --no-deps nohiki-obs-readiness",
+    ]
+    assert "direct:start" not in runtime_log.read_text(encoding="utf-8")
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_podman_recovery_rejects_created_dependency_cycles(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    rendered_dir = tmp_path / "cyclic"
+    rendered_dir.mkdir()
+    rendered = _rendered_compose(
+        {"NOHIKI_LLM_OPENAI_BASE_URL": "https://models.example.test/v1"},
+        rendered_dir,
+    )
+    compose = yaml.safe_load(rendered.read_text(encoding="utf-8"))
+    compose["services"]["nohiki-svc-bff"]["depends_on"]["nohiki-cp-kafka-connect"] = {"condition": "service_healthy"}
+    rendered.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
+    state = _podman_created_dependency_snapshot(compose, {"nohiki-svc-bff", "nohiki-cp-kafka-connect"})
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-cp-kafka-connect"),
+        endpoint_env={
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RENDERED_CONFIG": str(rendered),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 125
+    assert _fake_action_commands(runtime_log) == ["up", "ps"]
+    assert "direct:start" not in runtime_log.read_text(encoding="utf-8")
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_recovers_safe_created_state_after_compose_up_timeout(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    command_log = tmp_path / "recovery-commands.log"
+    started_file = tmp_path / "recovery-started"
+    pid_file = tmp_path / "action.pid"
+    signal_log = tmp_path / "action.signal"
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff"),
+        endpoint_env={
+            "COMPOSE_UP_TIMEOUT_SECONDS": "1",
+            "FAKE_ACTION_PID": str(pid_file),
+            "FAKE_ACTION_READY": str(tmp_path / "action.ready"),
+            "FAKE_ACTION_SIGNAL_LOG": str(signal_log),
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": _RECOVERED_BFF_STATE,
+            "FAKE_COMPOSE_PS_OUTPUT": _CREATED_BFF_WITH_READY_PREREQUISITES,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_COMMAND_LOG": str(command_log),
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _fake_action_commands(runtime_log) == ["up", "ps", "up", "ps"]
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "up -d --force-recreate --no-deps nohiki-svc-bff",
+    ]
+    assert "Compose up exceeded" not in result.stderr
+    assert signal_log.read_text(encoding="utf-8").strip() == "TERM"
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text(encoding="utf-8")), 0)
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_preserves_timeout_when_no_created_service_is_safe_to_recover(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    pid_file = tmp_path / "action.pid"
+    signal_log = tmp_path / "action.signal"
+    before = _compose_temporary_files()
+    running_state = _BFF_PREREQUISITES_READY + _podman_state("nohiki-svc-bff", "running", 0, "Up 1 minute (healthy)")
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff"),
+        endpoint_env={
+            "COMPOSE_UP_TIMEOUT_SECONDS": "1",
+            "FAKE_ACTION_PID": str(pid_file),
+            "FAKE_ACTION_READY": str(tmp_path / "action.ready"),
+            "FAKE_ACTION_SIGNAL_LOG": str(signal_log),
+            "FAKE_COMPOSE_PS_OUTPUT": running_state,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 124
+    assert _fake_action_commands(runtime_log) == ["up", "ps"]
+    assert "Compose up exceeded 1s" in result.stderr
+    assert signal_log.read_text(encoding="utf-8").strip() == "TERM"
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text(encoding="utf-8")), 0)
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_podman_recovery_waits_for_recreated_one_shot_to_exit_successfully(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    command_log = tmp_path / "recovery-commands.log"
+    started_file = tmp_path / "recovery-started"
+    state = _BFF_PREREQUISITES_READY.replace(
+        _podman_state("nohiki-cp-kafka-init", "exited", 0, "Exited (0) 1 minute ago"),
+        _podman_state("nohiki-cp-kafka-init", "created", 0, "Created"),
+    ) + _podman_state("nohiki-svc-bff", "running", 0, "Up 1 minute (healthy)")
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff", "nohiki-cp-kafka-init"),
+        endpoint_env={
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": _podman_state(
+                "nohiki-cp-kafka-init", "exited", 0, "Exited (0) 1 second ago"
+            ),
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_COMMAND_LOG": str(command_log),
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _fake_action_commands(runtime_log) == ["up", "ps", "up", "wait", "ps"]
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "up -d --force-recreate --no-deps nohiki-cp-kafka-init",
+        "wait --condition=exited nohiki-cp-kafka-init-1",
+    ]
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_podman_recovery_rejects_nonzero_recreated_one_shot_exit_code(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    command_log = tmp_path / "recovery-commands.log"
+    started_file = tmp_path / "recovery-started"
+    state = _BFF_PREREQUISITES_READY.replace(
+        _podman_state("nohiki-cp-kafka-init", "exited", 0, "Exited (0) 1 minute ago"),
+        _podman_state("nohiki-cp-kafka-init", "created", 0, "Created"),
+    ) + _podman_state("nohiki-svc-bff", "running", 0, "Up 1 minute (healthy)")
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff", "nohiki-cp-kafka-init"),
+        endpoint_env={
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": _podman_state(
+                "nohiki-cp-kafka-init", "exited", 0, "Exited (0) 1 second ago"
+            ),
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_COMMAND_LOG": str(command_log),
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RECOVERY_WAIT_OUTPUT": "1\n",
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 125
+    assert _fake_action_commands(runtime_log) == ["up", "ps", "up", "wait"]
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "up -d --force-recreate --no-deps nohiki-cp-kafka-init",
+        "wait --condition=exited nohiki-cp-kafka-init-1",
+    ]
+    assert "direct:start" not in runtime_log.read_text(encoding="utf-8")
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_podman_recovery_waits_for_recreated_health_dependency_to_be_healthy(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    command_log = tmp_path / "recovery-commands.log"
+    started_file = tmp_path / "recovery-started"
+    state = _BFF_PREREQUISITES_READY.replace(
+        _podman_state("nohiki-infra-postgres", "running", 0, "Up 1 minute (healthy)"),
+        _podman_state("nohiki-infra-postgres", "created", 0, "Created"),
+    ) + _podman_state("nohiki-svc-bff", "running", 0, "Up 1 minute (healthy)")
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff", "nohiki-infra-postgres"),
+        endpoint_env={
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": _podman_state(
+                "nohiki-infra-postgres", "running", 0, "Up 1 second (healthy)"
+            ),
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_COMMAND_LOG": str(command_log),
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _fake_action_commands(runtime_log) == ["up", "ps", "up", "wait", "ps"]
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "up -d --force-recreate --no-deps nohiki-infra-postgres",
+        "wait --condition=healthy nohiki-infra-postgres-1",
+    ]
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_does_not_apply_podman_recovery_to_docker_compose(tmp_path: Path) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d"),
+        endpoint_env={
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": _CREATED_BFF_WITH_READY_PREREQUISITES,
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_COMPOSE_VERSION_OUTPUT": "Docker Compose version v2.38.2",
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 125
+    assert _fake_action_commands(runtime_log) == ["up"]
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+@pytest.mark.parametrize("action_error", ["", "Error: image build failed"])
+def test_preflight_preserves_unrelated_podman_exit_125_without_dependency_error_shape(
+    tmp_path: Path,
+    action_error: str,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d"),
+        endpoint_env={
+            "FAKE_ACTION_ERROR": action_error,
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": _CREATED_BFF_WITH_READY_PREREQUISITES,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 125
+    assert _fake_action_commands(runtime_log) == ["up"]
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_rejects_non_gnu_timeout_before_compose_up(tmp_path: Path) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    portable_timeout = bin_dir / "portable-timeout"
+    _make_exe(
+        portable_timeout,
+        'if [ "${1:-}" = "--version" ]; then echo "portable timeout 1.0"; exit 0; fi\nexit 0\n',
+    )
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d"),
+        endpoint_env={"TIMEOUT": str(portable_timeout)},
+    )
+
+    assert result.returncode == 1
+    assert "must be GNU coreutils" in result.stderr
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_scopes_podman_recovery_to_the_requested_service_closure(tmp_path: Path) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    service_log = tmp_path / "recovery-services.log"
+    started_file = tmp_path / "recovery-started"
+    state = _CREATED_BFF_WITH_READY_PREREQUISITES + _podman_state("nohiki-infra-traefik", "created", 0, "Created")
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff"),
+        endpoint_env={
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": _RECOVERED_BFF_STATE,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_SERVICE_LOG": str(service_log),
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _fake_action_commands(runtime_log) == ["up", "ps", "up", "ps"]
+    assert service_log.read_text(encoding="utf-8").splitlines() == [
+        "nohiki-svc-bff",
+    ]
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_preserves_failure_when_requested_service_is_not_in_created_set(tmp_path: Path) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff"),
+        endpoint_env={
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": _podman_state("nohiki-infra-traefik", "created", 0, "Created"),
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 125
+    assert _fake_action_commands(runtime_log) == ["up", "ps"]
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_preserves_failure_when_another_requested_long_running_service_failed(
+    tmp_path: Path,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    state = (
+        _CREATED_BFF_WITH_READY_PREREQUISITES
+        + _podman_state("nohiki-infra-qdrant", "running", 0, "Up 1 minute (healthy)")
+        + _podman_state("nohiki-svc-user-pref", "exited", 1, "Exited (1) 1 second ago")
+    )
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff", "nohiki-svc-user-pref"),
+        endpoint_env={
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 125
+    assert _fake_action_commands(runtime_log) == ["up", "ps"]
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+@pytest.mark.parametrize(
+    ("state", "services"),
+    [
+        (
+            _CREATED_BFF_WITH_READY_PREREQUISITES.replace(
+                _podman_state("nohiki-infra-valkey", "running", 0, "Up 1 minute (healthy)"),
+                "",
+            ),
+            ("nohiki-svc-bff",),
+        ),
+        (
+            _CREATED_BFF_WITH_READY_PREREQUISITES.replace(
+                _podman_state("nohiki-infra-secrets-init", "exited", 0, "Exited (0) 1 minute ago"),
+                _podman_state("nohiki-infra-secrets-init", "exited", 1, "Exited (1) 1 minute ago"),
+            ),
+            ("nohiki-svc-bff",),
+        ),
+        (
+            _CREATED_BFF_WITH_READY_PREREQUISITES.replace(
+                _podman_state("nohiki-infra-postgres", "running", 0, "Up 1 minute (healthy)"),
+                _podman_state("nohiki-infra-postgres", "running", 0, "Up 1 minute (unhealthy)"),
+            ),
+            ("nohiki-svc-bff",),
+        ),
+        (
+            _CREATED_BFF_WITH_READY_PREREQUISITES
+            + _podman_state("nohiki-obs-loki", "running", 0, "Up 1 minute")
+            + _podman_state("nohiki-obs-tempo", "exited", 0, "Exited (0) 1 minute ago")
+            + _podman_state("nohiki-obs-mimir", "running", 0, "Up 1 minute")
+            + _podman_state("nohiki-obs-readiness", "created", 0, "Created"),
+            ("nohiki-svc-bff", "nohiki-obs-readiness"),
+        ),
+    ],
+    ids=("absent-dependency", "failed-completed", "unhealthy", "stopped-started"),
+)
+def test_preflight_preserves_podman_failure_when_any_transitive_dependency_is_not_ready(
+    tmp_path: Path,
+    state: str,
+    services: tuple[str, ...],
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", *services),
+        endpoint_env={
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 125
+    assert _fake_action_commands(runtime_log) == ["up", "ps"]
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_recovers_every_selected_created_service_as_one_set(tmp_path: Path) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    service_log = tmp_path / "recovery-services.log"
+    started_file = tmp_path / "recovery-started"
+    state = _CREATED_BFF_WITH_READY_PREREQUISITES + _podman_state("nohiki-infra-traefik", "created", 0, "Created")
+    post_state = _RECOVERED_BFF_STATE + _podman_state("nohiki-infra-traefik", "running", 0, "Up 1 second")
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff", "nohiki-infra-traefik"),
+        endpoint_env={
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": state,
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": post_state,
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_SERVICE_LOG": str(service_log),
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _fake_action_commands(runtime_log) == ["up", "ps", "up", "up", "ps"]
+    assert set(service_log.read_text(encoding="utf-8").splitlines()) == {
+        "nohiki-svc-bff",
+        "nohiki-infra-traefik",
+    }
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+@pytest.mark.parametrize(
+    ("recovery_exit", "post_state", "expected_commands"),
+    [
+        ("47", _RECOVERED_BFF_STATE, ["up", "ps", "up"]),
+        (
+            "0",
+            _RECOVERED_COMPLETED_PREREQUISITES + _podman_state("nohiki-svc-bff", "created", 0, "Created"),
+            ["up", "ps", "up", "ps"],
+        ),
+        (
+            "0",
+            _RECOVERED_COMPLETED_PREREQUISITES
+            + _podman_state("nohiki-svc-bff", "exited", 0, "Exited (0) 1 second ago"),
+            ["up", "ps", "up", "ps"],
+        ),
+    ],
+    ids=("failed-recreate", "partial-recreate", "long-running-clean-exit"),
+)
+def test_preflight_preserves_podman_failure_when_recreate_does_not_fully_recover_created_set(
+    tmp_path: Path,
+    recovery_exit: str,
+    post_state: str,
+    expected_commands: list[str],
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    started_file = tmp_path / "recovery-started"
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", "nohiki-svc-bff"),
+        endpoint_env={
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": _CREATED_BFF_WITH_READY_PREREQUISITES,
+            "FAKE_COMPOSE_PS_AFTER_START_OUTPUT": post_state,
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_EXIT": recovery_exit,
+            "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+            "FAKE_RUNTIME_LOG": str(runtime_log),
+        },
+    )
+
+    assert result.returncode == 125
+    assert _fake_action_commands(runtime_log) == expected_commands
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+@pytest.mark.parametrize("blocked_phase", ["inspection", "recreate", "wait"])
+def test_preflight_bounds_podman_recovery_commands_and_cleans_children(
+    tmp_path: Path,
+    blocked_phase: str,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    runtime_log = tmp_path / "runtime.log"
+    pid_file = tmp_path / "recovery.pid"
+    signal_log = tmp_path / "recovery.signal"
+    ready_file = tmp_path / "recovery.ready"
+    started_file = tmp_path / "recovery-started"
+    endpoint_env = {
+        "COMPOSE_UP_TIMEOUT_SECONDS": "1",
+        "FAKE_ACTION_EXIT": "125",
+        "FAKE_ACTION_PID": str(pid_file),
+        "FAKE_ACTION_SIGNAL_LOG": str(signal_log),
+        "FAKE_COMPOSE_PS_OUTPUT": _CREATED_BFF_WITH_READY_PREREQUISITES,
+        "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+        "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+        "FAKE_RECOVERY_STARTED_FILE": str(started_file),
+        "FAKE_RUNTIME_LOG": str(runtime_log),
+    }
+    compose_services = ("nohiki-svc-bff",)
+    if blocked_phase == "inspection":
+        endpoint_env["FAKE_RECOVERY_PS_READY"] = str(ready_file)
+        expected_commands = ["up", "ps"]
+    elif blocked_phase == "recreate":
+        endpoint_env["FAKE_RECOVERY_READY"] = str(ready_file)
+        expected_commands = ["up", "ps", "up"]
+    else:
+        endpoint_env["FAKE_COMPOSE_PS_OUTPUT"] = _BFF_PREREQUISITES_READY.replace(
+            _podman_state("nohiki-cp-kafka-init", "exited", 0, "Exited (0) 1 minute ago"),
+            _podman_state("nohiki-cp-kafka-init", "created", 0, "Created"),
+        ) + _podman_state("nohiki-svc-bff", "running", 0, "Up 1 minute (healthy)")
+        endpoint_env["FAKE_RECOVERY_WAIT_READY"] = str(ready_file)
+        compose_services = ("nohiki-svc-bff", "nohiki-cp-kafka-init")
+        expected_commands = ["up", "ps", "up", "wait"]
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d", *compose_services),
+        endpoint_env=endpoint_env,
+    )
+
+    assert result.returncode == 125
+    assert _fake_action_commands(runtime_log) == expected_commands
+    assert signal_log.read_text(encoding="utf-8").strip() == "TERM"
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text(encoding="utf-8")), 0)
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+@pytest.mark.parametrize(
+    ("sent_signal", "expected_status"),
+    [(signal.SIGHUP, 129), (signal.SIGINT, 130), (signal.SIGTERM, 143)],
+    ids=("hup", "int", "term"),
+)
+def test_preflight_forwards_signals_to_podman_provider_descendants_during_recovery(
+    tmp_path: Path,
+    sent_signal: signal.Signals,
+    expected_status: int,
+) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    secrets = _make_secrets(tmp_path)
+    rendered = _rendered_compose(
+        {"NOHIKI_LLM_OPENAI_BASE_URL": "https://models.example.test/v1"},
+        tmp_path,
+    )
+    ready_fifo = tmp_path / "recovery-ready.fifo"
+    os.mkfifo(ready_fifo)
+    pid_file = tmp_path / "recovery.pid"
+    signal_log = tmp_path / "recovery.signal"
+    before = _compose_temporary_files()
+    process = subprocess.Popen(
+        ["sh", str(_PREFLIGHT), "up", "-d", "nohiki-svc-bff"],
+        cwd=_REPO,
+        env={
+            **os.environ,
+            "PATH": _path_with(bin_dir),
+            "SECRETS_DIR": str(secrets),
+            "CONTAINER_RUNTIME": "fakeruntime",
+            "FAKE_RENDERED_CONFIG": str(rendered),
+            "FAKE_ACTION_EXIT": "125",
+            "FAKE_COMPOSE_PS_OUTPUT": _CREATED_BFF_WITH_READY_PREREQUISITES,
+            "FAKE_ACTION_ERROR": _PODMAN_DEPENDENCY_ERROR,
+            "FAKE_COMPOSE_VERSION_OUTPUT": _PODMAN_COMPOSE_VERSION,
+            "FAKE_RECOVERY_DESCENDANT": "1",
+            "FAKE_RECOVERY_READY": str(tmp_path / "recovery.ready"),
+            "FAKE_ACTION_READY_FIFO": str(ready_fifo),
+            "FAKE_ACTION_PID": str(pid_file),
+            "FAKE_ACTION_SIGNAL_LOG": str(signal_log),
+            "PYTHON": sys.executable,
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    with ready_fifo.open(encoding="utf-8") as ready:
+        assert ready.readline().strip() == "ready"
+    child_pid = int(pid_file.read_text(encoding="utf-8"))
+    process.send_signal(sent_signal)
+    try:
+        stdout, stderr = process.communicate(timeout=3)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        pytest.fail("preflight did not terminate after signaling a recovery provider descendant")
+
+    assert process.returncode == expected_status, stdout + stderr
+    assert signal_log.read_text(encoding="utf-8").strip() == sent_signal.name.removeprefix("SIG")
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
+    assert _compose_temporary_files() == before
+
+
+@pytest.mark.usefixtures("_serialized_compose_preflight")
+def test_preflight_bounds_compose_up_wait_and_cleans_temporary_files(tmp_path: Path) -> None:
+    bin_dir = _bin_dir(tmp_path)
+    _fake_runtime(bin_dir)
+    pid_file = tmp_path / "action.pid"
+    signal_log = tmp_path / "action.signal"
+    before = _compose_temporary_files()
+
+    result = _run_preflight(
+        bin_dir,
+        _make_secrets(tmp_path),
+        compose_args=("up", "-d"),
+        endpoint_env={
+            "COMPOSE_UP_TIMEOUT_SECONDS": "1",
+            "FAKE_ACTION_READY": str(tmp_path / "action.ready"),
+            "FAKE_ACTION_PID": str(pid_file),
+            "FAKE_ACTION_SIGNAL_LOG": str(signal_log),
+        },
+    )
+
+    assert result.returncode == 124
+    assert "Compose up exceeded 1s" in result.stderr
+    assert signal_log.read_text(encoding="utf-8").strip() == "TERM"
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text(encoding="utf-8")), 0)
     assert _compose_temporary_files() == before
 
 
@@ -2074,7 +3348,6 @@ def test_preflight_forwards_signal_between_action_spawn_and_pid_publication(
             f"{signal_name}; pending_status={status}; "
             'printf "handled\\n" > "${FAKE_SIGNAL_HANDLED_FIFO}"\''
             f" {signal_name}",
-            1,
         )
     spawn_boundary = "fi\naction_pid=$!"
     assert spawn_boundary in wrapper_text
@@ -2170,57 +3443,15 @@ def test_all_supported_just_compose_commands_use_the_validation_gate() -> None:
     assert sorted(actual_commands) == sorted(expected_commands)
 
 
-def test_production_wrapper_callsites_use_the_accepted_action_grammar() -> None:
-    call_pattern = re.compile(
-        r"infra/compose/scripts/preflight\.sh(?P<args>[^\n`]*?)\s*(?:$|['\"])",
-        re.MULTILINE,
-    )
-    excluded_dirs = {
-        ".git",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".venv",
-        "__pycache__",
-        "node_modules",
-    }
-    accepted_actions = {"up", "run", "build", "down", "logs"}
-    rejected_options = {"--no-recreate", "--no-deps", "--env-file", "--env-from-file"}
-    invalid: list[str] = []
-
-    for root, dirs, files in os.walk(_REPO):
-        dirs[:] = [directory for directory in dirs if directory not in excluded_dirs]
-        for filename in files:
-            path = Path(root, filename)
-            relative = path.relative_to(_REPO)
-            if relative.parts[:3] == ("scripts", "ci", "tests"):
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except OSError, UnicodeDecodeError:
-                continue
-            for match in call_pattern.finditer(text):
-                arguments = match.group("args").strip().removesuffix(".")
-                tokens = arguments.split()
-                if not tokens:
-                    continue
-                action = tokens[0]
-                if action not in accepted_actions or rejected_options.intersection(tokens):
-                    invalid.append(f"{relative.as_posix()}: {arguments}")
-                    continue
-                for index, token in enumerate(tokens):
-                    if token in {"-e", "--env"} and (
-                        index + 1 == len(tokens) or not tokens[index + 1].startswith("REFRESH_REASON=")
-                    ):
-                        invalid.append(f"{relative.as_posix()}: {arguments}")
-                        break
-
-    assert invalid == [], "wrapper calls outside accepted grammar:\n" + "\n".join(invalid)
+@cache
+def _tracked_repo_text_files() -> tuple[tuple[Path, str], ...]:
+    return tracked_text_files(_REPO)
 
 
-def test_repo_runtime_strings_and_docs_use_the_main_compose_validation_gate() -> None:
+@cache
+def _direct_compose_action_patterns() -> tuple[re.Pattern[str], ...]:
     actions = r"build|config|down|exec|logs|ps|pull|restart|run|start|stop|up"
-    direct_actions = (
+    return (
         re.compile(
             rf"\b(?:docker|podman)[ \t]+compose\b"
             rf"(?:[^\n]*\\\r?\n)*[^\n]*\b(?:{actions})\b"
@@ -2245,37 +3476,73 @@ def test_repo_runtime_strings_and_docs_use_the_main_compose_validation_gate() ->
             rf"[^]]{{0,2000}}?['\"](?:{actions})['\"][^]]*]"
         ),
     )
-    excluded_dirs = {
-        ".git",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".venv",
-        "__pycache__",
-        "dist",
-        "node_modules",
-        "target",
-    }
+
+
+def _direct_compose_bypasses(relative: Path, text: str) -> list[str]:
     bypasses: list[str] = []
-    for root, dirs, files in os.walk(_REPO):
-        dirs[:] = [directory for directory in dirs if directory not in excluded_dirs]
-        for filename in files:
-            path = Path(root, filename)
-            try:
-                text = path.read_text(encoding="utf-8")
-            except OSError, UnicodeDecodeError:
+    for pattern in _direct_compose_action_patterns():
+        for match in pattern.finditer(text):
+            line_number = text.count("\n", 0, match.start()) + 1
+            command = " ".join(match.group().split())
+            bypasses.append(f"{relative.as_posix()}:{line_number}: {command}")
+    return bypasses
+
+
+def test_production_wrapper_callsites_use_the_accepted_action_grammar() -> None:
+    call_pattern = re.compile(
+        r"infra/compose/scripts/preflight\.sh(?P<args>[^\n`]*?)\s*(?:$|['\"])",
+        re.MULTILINE,
+    )
+    accepted_actions = {"up", "run", "build", "down", "logs"}
+    rejected_options = {"--no-recreate", "--no-deps", "--env-file", "--env-from-file"}
+    invalid: list[str] = []
+
+    for relative, text in _tracked_repo_text_files():
+        if relative.parts[:3] == ("scripts", "ci", "tests"):
+            continue
+        for match in call_pattern.finditer(text):
+            arguments = match.group("args").strip().removesuffix(".")
+            tokens = arguments.split()
+            if not tokens:
                 continue
-            relative = path.relative_to(_REPO).as_posix()
-            for pattern in direct_actions:
-                for match in pattern.finditer(text):
-                    line_number = text.count("\n", 0, match.start()) + 1
-                    command = " ".join(match.group().split())
-                    bypasses.append(f"{relative}:{line_number}: {command}")
+            action = tokens[0]
+            if action not in accepted_actions or rejected_options.intersection(tokens):
+                invalid.append(f"{relative.as_posix()}: {arguments}")
+                continue
+            for index, token in enumerate(tokens):
+                if token in {"-e", "--env"} and (
+                    index + 1 == len(tokens) or not tokens[index + 1].startswith("REFRESH_REASON=")
+                ):
+                    invalid.append(f"{relative.as_posix()}: {arguments}")
+                    break
+
+    assert invalid == [], "wrapper calls outside accepted grammar:\n" + "\n".join(invalid)
+
+
+def test_repo_runtime_strings_and_docs_use_the_main_compose_validation_gate() -> None:
+    bypasses: list[str] = []
+    for relative, text in _tracked_repo_text_files():
+        bypasses.extend(_direct_compose_bypasses(relative, text))
 
     assert bypasses == [], "direct main-stack Compose bypasses:\n" + "\n".join(bypasses)
     documentation = _ROOT_README.read_text() + _COMPOSE_README.read_text()
     assert "just compose-up" in documentation
     assert "infra/compose/scripts/preflight.sh" in documentation
+
+
+def test_tracked_repo_string_scan_ignores_untracked_files_and_detects_tracked_bypasses(tmp_path: Path) -> None:
+    docker = "docker"
+    podman = "podman"
+    tracked = tmp_path / "tracked.md"
+    tracked.write_text(f"{docker} compose up\n", encoding="utf-8")
+    (tmp_path / "untracked.md").write_text(f"{podman} compose down\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", tracked.name], cwd=tmp_path, check=True)
+
+    scanned = tracked_text_files(tmp_path)
+
+    assert tuple(relative for relative, _ in scanned) == (Path(tracked.name),)
+    assert _direct_compose_bypasses(*scanned[0]) == [f"tracked.md:1: {docker} compose up"]
 
 
 @pytest.mark.parametrize(

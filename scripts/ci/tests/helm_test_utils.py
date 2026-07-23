@@ -13,6 +13,7 @@ from typing import cast
 import yaml
 
 _ORIGINAL_RUN = subprocess.run
+_SAFE_LOADER = yaml.CSafeLoader if yaml.__with_libyaml__ else yaml.SafeLoader
 
 
 _RUNTIME_ENVIRONMENTS = {"dev", "staging", "prod"}
@@ -118,7 +119,9 @@ class RenderCache:
 
     def _run(self, command: tuple[str, ...], cwd: Path) -> tuple[dict[str, object], ...]:
         result = self.run(command, cwd=cwd, capture_output=True, text=True, check=True)
-        return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+        return tuple(
+            document for document in yaml.load_all(result.stdout, Loader=_SAFE_LOADER) if isinstance(document, dict)
+        )
 
     def helm(
         self,

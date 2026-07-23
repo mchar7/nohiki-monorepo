@@ -2,7 +2,7 @@
 
 This module consolidates all template router tests following SOLID principles:
 - Single Responsibility: Each test class focuses on one aspect
-- DRY: Uses shared fixtures from conftest.py
+- DRY: Uses shared factories from ``_helpers.py``
 - Organized: Test classes group related functionality
 """
 
@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from nohiki_db_utils.testing import create_mock_session
 from pydantic import BaseModel
 
-from tests.unit.conftest import make_scalar_all, make_template_version_projection
+from ._helpers import make_scalar_all, make_template_version_projection
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture

@@ -1,4 +1,4 @@
-"""Integration tests for embedding vector event structures.
+"""Unit tests for embedding vector event structures.
 
 Tests the proto structures used in the embedding request/callback pattern
 for ML embeddings, verifying correct oneof arm usage, cross-domain embedding
@@ -10,7 +10,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import pytest
 from nohiki.common.v1 import EventMetadata
 from nohiki.ml.v1 import (
     DenseData,
@@ -83,7 +82,6 @@ def _build_sparse_embedding(
 # EmbeddingVector oneof geometry tests
 
 
-@pytest.mark.integration
 class TestEmbeddingVectorOneofGeometry:
     """Test the EmbeddingVector oneof 'data' arm for each embedding type."""
 
@@ -152,7 +150,6 @@ class TestEmbeddingVectorOneofGeometry:
 # Staleness detection via collection_version + model_id
 
 
-@pytest.mark.integration
 class TestStalenessDetection:
     """Staleness is detected by comparing collection_version or model_id."""
 
@@ -182,7 +179,6 @@ class TestStalenessDetection:
 # Cross-domain: ListingSnapshot with embeddings
 
 
-@pytest.mark.integration
 class TestListingSnapshotEmbeddings:
     """Test embeddings composed within ListingSnapshot."""
 
@@ -267,7 +263,6 @@ class TestListingSnapshotEmbeddings:
 # Cross-domain: SearchPrefSnapshot with embeddings
 
 
-@pytest.mark.integration
 class TestSearchPrefSnapshotEmbeddings:
     """Test embeddings composed within SearchPrefSnapshot."""
 
@@ -323,7 +318,6 @@ class TestSearchPrefSnapshotEmbeddings:
 # Correlation ID propagation
 
 
-@pytest.mark.integration
 class TestCorrelationIdPropagation:
     """Test correlation ID and causation chain through events."""
 
@@ -362,7 +356,6 @@ class TestCorrelationIdPropagation:
 # Embedding saga request/callback pattern
 
 
-@pytest.mark.integration
 class TestEmbeddingSagaPattern:
     """Test the embedding saga request/callback pattern structures."""
 

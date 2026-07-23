@@ -3,7 +3,8 @@ import type { JSX } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, vi } from 'vitest';
 import { axe } from 'vitest-axe';
-import { i18n } from '@/test/setup.ts';
+import '@/test/axe-setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { FeatureErrorBoundary } from './feature-error-boundary.tsx';
 
 /** Throws on render to trigger the error boundary fallback. */

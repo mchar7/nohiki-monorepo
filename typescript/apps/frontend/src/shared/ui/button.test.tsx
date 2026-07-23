@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, vi } from 'vitest';
 import { axe } from 'vitest-axe';
+import '@/test/axe-setup.ts';
 import { Button, buttonVariants } from './button.tsx';
 
 describe('Button rendering', () => {

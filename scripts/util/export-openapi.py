@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, cast
@@ -441,8 +442,8 @@ def main(
 
     console.print("[blue]Exporting OpenAPI specs...[/blue]")
 
-    bff_spec = export_service_spec(BFF_CONFIG)
-    auth_spec = export_service_spec(AUTH_CONFIG)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        bff_spec, auth_spec = executor.map(export_service_spec, (BFF_CONFIG, AUTH_CONFIG))
 
     console.print("[blue]Merging specs...[/blue]")
     merged = merge_specs(bff_spec, auth_spec)

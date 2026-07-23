@@ -10,7 +10,7 @@ from health_check.config.services import CORE_SERVICES
 from health_check.core.models import CheckStatus
 from health_check.platform.models import ServiceStatus
 
-from tests.conftest import MockPlatform, make_service_info
+from .._helpers import MockPlatform, make_service_info
 
 
 class TestCoreServicesCheck:

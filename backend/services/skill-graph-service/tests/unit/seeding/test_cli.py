@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -324,17 +325,17 @@ class TestWaitForSchema:
 
     @pytest.mark.asyncio
     async def test_raises_on_timeout(self) -> None:
-        """_wait_for_schema raises RuntimeError when schema never appears."""
+        """_wait_for_schema does not round the timeout up to the poll interval."""
         mock_conn = AsyncMock()
         mock_conn.execute.side_effect = Exception("relation does not exist")
 
         engine = self._make_engine_with_conn(mock_conn)
 
-        with (
-            patch("skill_graph_service.seeding.cli.asyncio.sleep", new_callable=AsyncMock),
-            pytest.raises(RuntimeError, match="not ready after"),
-        ):
-            await _wait_for_schema(engine, "test_schema", max_wait=0.1)
+        started = time.monotonic()
+        with pytest.raises(RuntimeError, match="not ready after"):
+            await _wait_for_schema(engine, "test_schema", max_wait=0.05)
+
+        assert time.monotonic() - started < 0.2
 
     @pytest.mark.asyncio
     async def test_retries_until_ready(self) -> None:

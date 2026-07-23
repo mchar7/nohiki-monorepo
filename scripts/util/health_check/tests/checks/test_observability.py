@@ -18,7 +18,7 @@ from health_check.config.services import (
 from health_check.core.models import CheckStatus
 from health_check.platform.models import PlatformTarget, ServiceInfo, ServiceStatus
 
-from tests.conftest import MockPlatform, make_service_info
+from .._helpers import MockPlatform, make_service_info
 
 
 def _obs_statuses(

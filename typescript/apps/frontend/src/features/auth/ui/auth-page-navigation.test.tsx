@@ -5,7 +5,7 @@ import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
 
 import { nonNull, wrapWithRouter } from '@/shared/test-utils';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { AuthPage } from './auth-page.tsx';
 
 const SIGN_IN_RE = /sign in/iu;

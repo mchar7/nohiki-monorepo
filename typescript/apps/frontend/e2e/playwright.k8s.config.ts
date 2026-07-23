@@ -30,7 +30,7 @@ export default defineConfig({
     ...baseConfig.use,
     baseURL: PUBLIC_ORIGIN,
     trace: 'retain-on-failure',
-    screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    screenshot: 'only-on-failure',
   },
 });

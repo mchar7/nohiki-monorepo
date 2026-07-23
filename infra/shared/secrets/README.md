@@ -75,7 +75,7 @@ echo -n "postgres" > database/user
 DB_PASSWORD="$(openssl rand -hex 24)"
 echo -n "$DB_PASSWORD" > database/password
 echo -n "nohiki_db" > database/database
-echo -n "postgresql+asyncpg://postgres:${DB_PASSWORD}@nohiki-infra-postgres:5432/nohiki_db" > database/dsn
+echo -n "postgresql+asyncpg://postgres:${DB_PASSWORD}@nohiki-infra-postgres:5432/nohiki_db?sslmode=disable" > database/dsn
 
 # Redis (unauthenticated inside the local compose network)
 touch redis/password
@@ -113,6 +113,11 @@ echo -n "" > oauth/github_client_secret
 echo -n "" > oauth/google_client_id
 echo -n "" > oauth/google_client_secret
 ```
+
+For a local OpenAI-compatible proxy, write its token to `llm/provider/api_keys/openai` and configure its `/v1` endpoint
+in `infra/compose/.env`. HTTPS remains the default. If the local proxy is HTTP-only, set
+`NOHIKI_ALLOW_HTTP_LLM_LOCAL=1` in that `.env`; preflight accepts the exception only for endpoints whose resolved
+addresses are all loopback or RFC1918.
 
 MLflow and Phoenix (`dev` and `observability` profiles) read the database
 password from the environment:

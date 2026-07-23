@@ -8,7 +8,7 @@ from health_check.core.models import CheckCategory, CheckMetadata, CheckResult, 
 from health_check.core.registry import CheckRegistry
 from health_check.platform.models import PlatformTarget
 
-from tests.conftest import make_metadata
+from ._helpers import make_metadata
 
 if __name__ != "__main__":
     from health_check.platform.protocol import Platform

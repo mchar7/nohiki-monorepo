@@ -14,6 +14,7 @@ from user_pref_service.core.embedding import (
     PrefEmbeddingState,
     build_profile_embedding_text,
     get_embedding_publisher,
+    profile_embedding_content_hash,
 )
 
 
@@ -99,6 +100,15 @@ class TestBuildProfileEmbeddingText:
     def test_rejects_empty_semantic_content(self, pref_name: str, keywords: list[str], skills: list[str]) -> None:
         with pytest.raises(ValidationError):
             build_profile_embedding_text(pref_name, keywords, skills)
+
+
+class TestProfileEmbeddingContentHash:
+    """Tests for the cross-service embedding content identity."""
+
+    def test_matches_embedding_pipeline_normalization(self) -> None:
+        assert profile_embedding_content_hash("  Python Developer  ") == profile_embedding_content_hash(
+            "python developer"
+        )
 
 
 class TestGetEmbeddingPublisher:

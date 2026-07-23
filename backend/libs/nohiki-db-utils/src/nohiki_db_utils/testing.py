@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import contextlib
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ def postgres_container() -> Generator[str]:
     # shutdown (ResourceWarning: unclosed socket). Reaper.delete_instance() closes
     # the socket and stops the ryuk container cleanly; we invoke it in the session
     # teardown below.
-    from testcontainers.core.container import Reaper
+    from testcontainers.core.container import DockerContainer, Reaper
     from testcontainers.core.wait_strategies import LogMessageWaitStrategy
     from testcontainers.postgres import PostgresContainer
 
@@ -98,9 +98,22 @@ def postgres_container() -> Generator[str]:
     except (RuntimeError, OSError) as e:
         pytest.skip(f"PostgreSQL container could not be started: {e}")
     finally:
+        # Podman's force-remove path waits its full stop grace for running containers.
+        # Stop PostgreSQL and Ryuk first; dependent engines have already been disposed.
         if container is not None:
+            wrapped_container = container.get_wrapped_container()
+            if wrapped_container is not None:
+                with contextlib.suppress(Exception):
+                    wrapped_container.stop(timeout=1)
             with contextlib.suppress(Exception):
                 container.stop()
+
+        reaper = cast("DockerContainer | None", vars(Reaper).get("_container"))
+        if reaper is not None:
+            wrapped_reaper = reaper.get_wrapped_container()
+            if wrapped_reaper is not None:
+                with contextlib.suppress(Exception):
+                    wrapped_reaper.stop(timeout=1)
         with contextlib.suppress(Exception):
             Reaper.delete_instance()
 

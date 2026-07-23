@@ -15,7 +15,7 @@ from nohiki_kafka_client.config import KafkaClientConfig
 from nohiki_kafka_client.observability.health import KafkaCapability, KafkaHealthProbe
 from nohiki_kafka_client.testing import get_test_consumer_kwargs, get_test_producer_kwargs
 
-pytestmark = pytest.mark.requires_docker
+pytestmark = [pytest.mark.requires_docker, pytest.mark.integration]
 
 
 @dataclass
@@ -96,6 +96,7 @@ class TestKafkaAdminIntegration:
             assert len(result2.created) == 0
 
 
+@pytest.mark.e2e
 class TestKafkaProducerConsumerIntegration:
     """Integration tests for aiokafka producer/consumer roundtrip."""
 

@@ -29,12 +29,12 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/shared/ui/empty.tsx';
-import { CardGridSkeleton } from '@/shared/ui/index.ts';
 import { ListPagination } from '@/shared/ui/list-pagination.tsx';
 import { PanelErrorState } from '@/shared/ui/panel-error-state.tsx';
 import { PendingMutationBadge } from '@/shared/ui/pending-mutation-badge.tsx';
 import { PullIndicator } from '@/shared/ui/pull-indicator.tsx';
 import { Skeleton } from '@/shared/ui/skeleton.tsx';
+import { CardGridSkeleton } from '@/shared/ui/skeleton-layouts.tsx';
 import { SortSelect } from '@/shared/ui/sort-select.tsx';
 import type { SortDirection, SortOption } from '@/shared/ui/sort-select.types.ts';
 import { PageLayout } from '@/widgets/layout/index.ts';

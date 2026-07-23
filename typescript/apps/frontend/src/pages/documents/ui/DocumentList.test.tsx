@@ -5,7 +5,7 @@ import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
 import { nonNull } from '@/shared/test-utils';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { DocumentList } from './DocumentList.tsx';
 
 // Mock data-fetching hooks

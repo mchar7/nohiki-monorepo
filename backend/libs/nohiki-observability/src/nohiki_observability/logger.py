@@ -7,10 +7,8 @@ with explicit typing and a consistent API.
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import structlog
+import structlog
 
 
 class Logger:
@@ -55,3 +53,18 @@ class Logger:
     def bind(self, **kwargs: object) -> Logger:
         """Return a new logger with additional context bound."""
         return Logger(self._logger.bind(**kwargs))
+
+
+def get_logger(name: str) -> Logger:
+    """Get a structured logger instance.
+
+    This function can be used before ``Observability.init()``, though the
+    logger has limited functionality until observability is initialized.
+
+    Args:
+        name: Logger name, typically ``__name__``.
+
+    Returns:
+        Logger instance for structured logging.
+    """
+    return Logger(structlog.get_logger(name))

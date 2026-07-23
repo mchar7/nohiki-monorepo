@@ -59,6 +59,10 @@ async def mock_handler(message: MockProtoMessage, context: MessageContext, /) ->
     """Mock message handler for testing."""
 
 
+async def _complete_sleep(_delay: float) -> None:
+    pass
+
+
 def make_registration(
     topic: str = "test.entity.action.v1",
     group_id: str = "test-group",
@@ -432,11 +436,14 @@ class TestCancelFunctions:
             config=SupervisorConfig(),
         )
 
+        started = asyncio.Event()
+
         async def long_running() -> None:
-            await asyncio.sleep(100)
+            started.set()
+            await asyncio.Event().wait()
 
         supervised.task = asyncio.create_task(long_running())
-        await asyncio.sleep(0.01)
+        await started.wait()
 
         await _cancel_consumer(supervised)
 
@@ -458,11 +465,14 @@ class TestCancelFunctions:
     async def test_cancel_tasks_cancels_all(self) -> None:
         """Test _cancel_tasks cancels all tasks."""
 
-        async def long_running() -> None:
-            await asyncio.sleep(100)
+        async def long_running(started: asyncio.Event) -> None:
+            started.set()
+            await asyncio.Event().wait()
 
-        tasks = [asyncio.create_task(long_running()) for _ in range(3)]
-        await asyncio.sleep(0.01)
+        started_events = [asyncio.Event() for _ in range(3)]
+        tasks = [asyncio.create_task(long_running(started)) for started in started_events]
+        for started in started_events:
+            await started.wait()
 
         await _cancel_tasks(tasks)
 
@@ -593,7 +603,7 @@ class TestConsumerSupervisorAsync:
             initial_backoff_seconds=0.01,
             max_consecutive_failures=3,
         )
-        supervisor = ConsumerSupervisor(config)
+        supervisor = ConsumerSupervisor(config, sleep=_complete_sleep)
         registration = make_registration()
         supervised = supervisor.register(registration)
 
@@ -670,7 +680,7 @@ class TestConsumerSupervisorAsync:
             initial_backoff_seconds=0.01,
             max_consecutive_failures=3,
         )
-        supervisor = ConsumerSupervisor(config)
+        supervisor = ConsumerSupervisor(config, sleep=_complete_sleep)
         registration = make_registration()
         supervised = supervisor.register(registration)
 
@@ -728,11 +738,14 @@ class TestConsumerSupervisorAsync:
         registration = make_registration()
         supervised = supervisor.register(registration)
 
+        started = asyncio.Event()
+
         async def long_running() -> None:
-            await asyncio.sleep(100)
+            started.set()
+            await asyncio.Event().wait()
 
         supervised.task = asyncio.create_task(long_running())
-        await asyncio.sleep(0.01)
+        await started.wait()
 
         await supervisor.stop_consumer(supervised.consumer_key)
 
@@ -756,12 +769,16 @@ class TestConsumerSupervisorAsync:
         sup1 = supervisor.register(reg1)
         sup2 = supervisor.register(reg2)
 
-        async def long_running() -> None:
-            await asyncio.sleep(100)
+        async def long_running(started: asyncio.Event) -> None:
+            started.set()
+            await asyncio.Event().wait()
 
-        sup1.task = asyncio.create_task(long_running())
-        sup2.task = asyncio.create_task(long_running())
-        await asyncio.sleep(0.01)
+        started1 = asyncio.Event()
+        started2 = asyncio.Event()
+        sup1.task = asyncio.create_task(long_running(started1))
+        sup2.task = asyncio.create_task(long_running(started2))
+        await started1.wait()
+        await started2.wait()
 
         await supervisor.stop_all()
 
@@ -789,42 +806,45 @@ class TestBackoffWaiting:
     @pytest.mark.asyncio
     async def test_wait_backoff_completes_on_timeout(self) -> None:
         """Test _wait_backoff completes after timeout."""
-        config = SupervisorConfig(initial_backoff_seconds=0.05)
-        supervisor = ConsumerSupervisor(config)
+        config = SupervisorConfig(initial_backoff_seconds=0.05, jitter_factor=0.0)
+        delays: list[float] = []
+
+        async def record_sleep(delay: float) -> None:
+            delays.append(delay)
+
+        supervisor = ConsumerSupervisor(config, sleep=record_sleep)
         registration = make_registration()
         supervised = supervisor.register(registration)
         supervised.metrics.consecutive_failures = 1
 
-        start = time.time()
         result = await supervisor._wait_backoff(supervised)
-        elapsed = time.time() - start
 
         assert result is False
-        assert elapsed >= 0.04
+        assert delays == pytest.approx([0.1])
         assert supervised.metrics.state == ConsumerState.RECONNECTING
         assert supervised.metrics.total_restarts == 1
 
     @pytest.mark.asyncio
     async def test_wait_backoff_returns_early_on_shutdown(self) -> None:
         """Test _wait_backoff returns early when shutdown requested."""
-        config = SupervisorConfig(initial_backoff_seconds=10.0)
-        supervisor = ConsumerSupervisor(config)
+        config = SupervisorConfig(initial_backoff_seconds=10.0, jitter_factor=0.0)
+        sleep_started = asyncio.Event()
+
+        async def pending_sleep(_delay: float) -> None:
+            sleep_started.set()
+            await asyncio.Event().wait()
+
+        supervisor = ConsumerSupervisor(config, sleep=pending_sleep)
         registration = make_registration()
         supervised = supervisor.register(registration)
         supervised.metrics.consecutive_failures = 1
 
-        async def set_shutdown() -> None:
-            await asyncio.sleep(0.05)
-            supervised.shutdown_event.set()
-
-        task = asyncio.create_task(set_shutdown())
-        start = time.time()
-        result = await supervisor._wait_backoff(supervised)
-        elapsed = time.time() - start
-        await task
+        backoff_task = asyncio.create_task(supervisor._wait_backoff(supervised))
+        await sleep_started.wait()
+        supervised.shutdown_event.set()
+        result = await backoff_task
 
         assert result is True
-        assert elapsed < 1.0
 
 
 class TestConsumerStateTransitions:
@@ -852,7 +872,7 @@ class TestConsumerStateTransitions:
     async def test_state_transitions_on_error_and_recovery(self) -> None:
         """Test state transitions during error and recovery."""
         config = SupervisorConfig(initial_backoff_seconds=0.01)
-        supervisor = ConsumerSupervisor(config)
+        supervisor = ConsumerSupervisor(config, sleep=_complete_sleep)
         registration = make_registration()
         supervised = supervisor.register(registration)
 
@@ -885,7 +905,7 @@ class TestEdgeCases:
             initial_backoff_seconds=0.01,
             max_consecutive_failures=2,
         )
-        supervisor = ConsumerSupervisor(config)
+        supervisor = ConsumerSupervisor(config, sleep=_complete_sleep)
         registration = make_registration()
         supervised = supervisor.register(registration)
 
@@ -912,7 +932,7 @@ class TestEdgeCases:
             initial_backoff_seconds=0.01,
             max_consecutive_failures=5,
         )
-        supervisor = ConsumerSupervisor(config)
+        supervisor = ConsumerSupervisor(config, sleep=_complete_sleep)
         registration = make_registration()
         supervised = supervisor.register(registration)
 

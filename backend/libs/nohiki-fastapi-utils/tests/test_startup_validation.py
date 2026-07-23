@@ -7,6 +7,7 @@ import asyncio
 import pytest
 from nohiki_common_exceptions import HealthProbeResult, HealthStatus
 from nohiki_fastapi_utils.startup_validation import (
+    ProbeTiming,
     StartupValidationResult,
     _collect_results,
     _convert_exception_to_result,
@@ -37,6 +38,19 @@ class MockHealthProbe:
             message="OK" if self._healthy else "Failed",
             latency_ms=1.0,
         )
+
+
+class _FakeTime:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.elapsed
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.elapsed += seconds
 
 
 class TestStartupValidationResult:
@@ -184,26 +198,35 @@ class TestValidateStartupDependencies:
     async def test_unhealthy_probe_returns_failure(self) -> None:
         """Unhealthy probe returns failure after timeout."""
         probes = [MockHealthProbe("db", healthy=False)]
+        fake_time = _FakeTime()
         result = await validate_startup_dependencies(
             probes,
             timeout_seconds=0.1,
             retry_interval_seconds=0.05,
             fail_fast=False,
+            timing=ProbeTiming(clock=fake_time, sleep=fake_time.sleep),
         )
         assert result.success is False
         assert "db" in result.failed_probes
+        assert fake_time.elapsed == pytest.approx(0.1)
+        assert fake_time.sleeps == pytest.approx([0.05, 0.05])
 
     @pytest.mark.asyncio
     async def test_fail_fast_raises(self) -> None:
         """fail_fast=True raises RuntimeError on failure."""
         probes = [MockHealthProbe("db", healthy=False)]
+        fake_time = _FakeTime()
         with pytest.raises(RuntimeError, match="db"):
             await validate_startup_dependencies(
                 probes,
                 timeout_seconds=0.1,
                 retry_interval_seconds=0.05,
                 fail_fast=True,
+                timing=ProbeTiming(clock=fake_time, sleep=fake_time.sleep),
             )
+
+        assert fake_time.elapsed == pytest.approx(0.1)
+        assert fake_time.sleeps == pytest.approx([0.05, 0.05])
 
 
 class TestConvertExceptionToResult:

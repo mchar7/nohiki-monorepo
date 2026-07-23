@@ -2,8 +2,9 @@ import { render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, test } from 'vitest';
 import { axe } from 'vitest-axe';
+import '@/test/axe-setup.ts';
 import type { FitRankingBreakdownResponse } from '@/shared/api';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { ScoreBreakdownCard } from './ScoreBreakdownCard.tsx';
 
 const BREAKDOWN: FitRankingBreakdownResponse = {

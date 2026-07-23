@@ -17,23 +17,16 @@
     "description": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone.",
     "title": "Delete Attachment"
   },
-  "empty": {
-    "noAttachments": "No attachments yet",
-    "noAttachmentsDescription": "Upload your resume, cover letter, or other documents"
-  },
   "pages": {
     "list": {
-      "description": "Manage your uploaded files and documents.",
       "title": "Uploaded Documents"
     }
   },
   "preview": {
-    "close": "Close preview",
     "description": "Previewing {{filename}}",
     "download": "Download file",
     "errorExpired": "The preview link has expired. Close and reopen to refresh.",
-    "notAvailable": "Preview is not available for this file type.",
-    "title": "File Preview"
+    "notAvailable": "Preview is not available for this file type."
   },
   "size": {
     "bytes": "{{size}} B",
@@ -73,8 +66,6 @@
   "linkDialog": {
     "title": "Link to Profile",
     "description": "Select a profile to associate this attachment with.",
-    "noProfiles": "No profiles available. Create a profile first.",
-    "loading": "Loading profiles...",
-    "selectProfile": "Select a profile"
+    "noProfiles": "No profiles available. Create a profile first."
   }
 }

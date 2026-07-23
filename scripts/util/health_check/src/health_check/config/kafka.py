@@ -8,9 +8,13 @@ existence in Kafka without any manual sync.
 
 from __future__ import annotations
 
-from typing import Final
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Final
 
 from nohiki_kafka_client import Topics
+
+if TYPE_CHECKING:
+    from health_check.platform.models import PlatformTarget
 
 
 def get_all_topic_names() -> frozenset[str]:
@@ -93,24 +97,108 @@ DB_TYPE_MISMATCH_PATTERNS: Final[frozenset[str]] = frozenset(
 KAFKA_CONSUMER_GROUP_PREFIX_FILTER: Final[str] = "-service"
 """Consumer group names must contain this substring to be considered Nohiki groups."""
 
-OUTBOX_CONNECTOR_NAMES: Final[tuple[str, ...]] = (
-    # User domain
-    "nohiki-outbox-user_auth",
-    "nohiki-outbox-user_pref",
-    "nohiki-outbox-user_upload",
-    "nohiki-outbox-user_entitlement",
-    # Job domain
-    "nohiki-outbox-job_query",
-    "nohiki-outbox-job_storage",
-    "job-correlation-evaluation-service-wal",
-    "nohiki-outbox-job_ingest_enrichment",
-    # Doc domain
-    "nohiki-outbox-doc_render",
-    "nohiki-outbox-doc_schema",
-    "nohiki-outbox-doc_template",
-    # Skill domain
-    "nohiki-outbox-skill_graph",
-    # Notification
-    "nohiki-outbox-notification",
+
+@dataclass(frozen=True)
+class CdcConnector:
+    """Kafka Connect source identity and its PostgreSQL resources."""
+
+    name: str
+    slot_name: str
+    publication_name: str
+    table_name: str
+    connector_class: str = "io.debezium.connector.postgresql.PostgresConnector"
+
+
+COMPOSE_CDC_CONNECTORS: Final[tuple[CdcConnector, ...]] = (
+    CdcConnector(
+        "user-auth-service-outbox", "user_auth_outbox_slot", "user_auth_outbox_pub", "user_auth_schema.outbox"
+    ),
+    CdcConnector(
+        "user-pref-service-outbox", "user_pref_outbox_slot", "user_pref_outbox_pub", "user_pref_schema.outbox"
+    ),
+    CdcConnector(
+        "user-upload-service-outbox",
+        "user_upload_outbox_slot",
+        "user_upload_outbox_pub",
+        "user_upload_schema.outbox",
+    ),
+    CdcConnector(
+        "user-entitlement-service-outbox",
+        "user_entitlement_outbox_slot",
+        "user_entitlement_outbox_pub",
+        "user_entitlement_schema.outbox",
+    ),
+    CdcConnector(
+        "job-query-composition-service-outbox",
+        "job_query_composition_outbox_slot",
+        "job_query_composition_outbox_pub",
+        "job_query_schema.outbox",
+    ),
+    CdcConnector(
+        "job-ingest-enrichment-service-outbox",
+        "job_ingest_enrichment_outbox_slot",
+        "job_ingest_enrichment_outbox_pub",
+        "job_ingest_enrichment_schema.outbox",
+    ),
+    CdcConnector(
+        "job-storage-service-outbox",
+        "job_storage_outbox_slot",
+        "job_storage_outbox_pub",
+        "job_storage_schema.outbox",
+    ),
+    CdcConnector(
+        "doc-template-service-outbox",
+        "doc_template_outbox_slot",
+        "doc_template_outbox_pub",
+        "doc_template_schema.outbox",
+    ),
+    CdcConnector(
+        "skill-graph-service-outbox",
+        "skill_graph_outbox_slot",
+        "skill_graph_outbox_pub",
+        "skill_graph_schema.outbox",
+    ),
+    CdcConnector("bff-service-outbox", "bff_outbox_slot", "bff_outbox_pub", "bff_schema.outbox"),
+    CdcConnector(
+        "notification-service-outbox",
+        "notification_outbox_slot",
+        "notification_outbox_pub",
+        "notification_schema.outbox",
+    ),
+    CdcConnector(
+        "job-correlation-evaluation-service-wal",
+        "job_correlation_wal_slot",
+        "job_correlation_wal_pub",
+        "job_correlation_schema.processed_events",
+    ),
 )
-"""Kafka Connect source connector names registered per service."""
+"""Compose CDC sources registered by the image startup script."""
+
+KUBERNETES_CDC_CONNECTORS: Final[tuple[CdcConnector, ...]] = (
+    *COMPOSE_CDC_CONNECTORS,
+    CdcConnector(
+        "job-ingest-discovery-service-outbox",
+        "job_ingest_discovery_outbox_slot",
+        "job_ingest_discovery_outbox_pub",
+        "job_ingest_discovery_schema.outbox",
+    ),
+)
+"""Kubernetes CDC sources rendered by the Helm chart."""
+
+KUBERNETES_SINK_CONNECTOR_NAMES: Final[tuple[str, ...]] = ("qdrant-embedding-sink",)
+"""Kubernetes sink connectors rendered when the chart's Kafka Connect stack is enabled."""
+
+
+def cdc_connectors_for(target: PlatformTarget) -> tuple[CdcConnector, ...]:
+    """Return the exact CDC resource inventory for a deployment target."""
+    if target.value == "compose":
+        return COMPOSE_CDC_CONNECTORS
+    return KUBERNETES_CDC_CONNECTORS
+
+
+def connector_names_for(target: PlatformTarget) -> tuple[str, ...]:
+    """Return every Kafka Connect identity expected for a deployment target."""
+    names = tuple(connector.name for connector in cdc_connectors_for(target))
+    if target.value == "kubernetes":
+        return (*names, *KUBERNETES_SINK_CONNECTOR_NAMES)
+    return names

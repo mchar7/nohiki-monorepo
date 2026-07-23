@@ -26,6 +26,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from tenacity import wait_none
 
 
 @dataclass
@@ -398,7 +399,7 @@ class TestLLMClientRun:
         """UnexpectedModelBehavior is wrapped as LLMTransientError and retried."""
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-        client = LLMClient(llm_settings)
+        client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
             Agent[SampleContext, SampleOutput],
@@ -427,7 +428,7 @@ class TestLLMClientRun:
         from nohiki_llm_client.exceptions import LLMTransientError
         from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-        client = LLMClient(llm_settings)
+        client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
             Agent[SampleContext, SampleOutput],
@@ -447,7 +448,7 @@ class TestLLMClientRun:
     @pytest.mark.asyncio
     async def test_run_with_retry(self, llm_settings: LLMSettings) -> None:
         """Retries on LLMTransientError."""
-        client = LLMClient(llm_settings)
+        client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
             Agent[SampleContext, SampleOutput],
@@ -490,7 +491,7 @@ class TestLLMClientRun:
         """Run that retries once reports retry_count=1."""
         from nohiki_llm_client.exceptions import LLMTransientError
 
-        client = LLMClient(llm_settings)
+        client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
             Agent[SampleContext, SampleOutput],
@@ -609,7 +610,7 @@ class TestLLMClientRun:
         from nohiki_llm_client.exceptions import LLMTransientError
         from pydantic_ai.exceptions import ModelHTTPError
 
-        client = LLMClient(llm_settings)
+        client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
             Agent[SampleContext, SampleOutput],

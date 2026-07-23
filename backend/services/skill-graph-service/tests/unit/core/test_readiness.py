@@ -57,13 +57,20 @@ class TestSkillEmbeddingReadinessGateReady:
         """Gate opens once Qdrant count >= min_point_count."""
         gate = _make_gate(count=5, poll_interval=0.0)
         gate.start()
-        await asyncio.sleep(0.05)
-        await gate.stop()
+        assert gate._task is not None
+        await gate._task
         assert gate.is_ready is True
 
     @pytest.mark.asyncio
     async def test_remains_not_ready_when_count_below_threshold(self) -> None:
         """Gate stays closed when count < min_point_count."""
+        poll_paused = asyncio.Event()
+        resume_polling = asyncio.Event()
+
+        async def pause_after_poll(_: float) -> None:
+            poll_paused.set()
+            await resume_polling.wait()
+
         mock_qdrant = AsyncMock()
         mock_qdrant.count_points = AsyncMock(return_value=0)
         gate = SkillEmbeddingReadinessGate(
@@ -71,9 +78,10 @@ class TestSkillEmbeddingReadinessGateReady:
             collection_name="skills_v1",
             poll_interval_seconds=0.05,
             min_point_count=10,
+            poll_sleeper=pause_after_poll,
         )
         gate.start()
-        await asyncio.sleep(0.02)
+        await poll_paused.wait()
         await gate.stop()
         assert gate.is_ready is False
 
@@ -91,15 +99,17 @@ class TestSkillEmbeddingReadinessGateReady:
 
         mock_qdrant = AsyncMock()
         mock_qdrant.count_points = rising_count
+        poll_sleeper = AsyncMock()
         gate = SkillEmbeddingReadinessGate(
             qdrant_client=mock_qdrant,
             collection_name="skills_v1",
             poll_interval_seconds=0.01,
             min_point_count=1,
+            poll_sleeper=poll_sleeper,
         )
         gate.start()
-        await asyncio.sleep(0.1)
-        await gate.stop()
+        assert gate._task is not None
+        await gate._task
         assert gate.is_ready is True
 
     @pytest.mark.asyncio
@@ -107,8 +117,8 @@ class TestSkillEmbeddingReadinessGateReady:
         """Gate opens with min_point_count=1 when Qdrant has 1 point."""
         gate = _make_gate(count=1, poll_interval=0.0)
         gate.start()
-        await asyncio.sleep(0.05)
-        await gate.stop()
+        assert gate._task is not None
+        await gate._task
         assert gate.is_ready is True
 
 
@@ -119,7 +129,6 @@ class TestSkillEmbeddingReadinessGateErrorHandling:
     async def test_poll_survives_qdrant_exception(self) -> None:
         """Poll loop continues after a Qdrant exception and eventually opens."""
         call_count = 0
-        ready_event = asyncio.Event()
 
         async def flaky_count(_: str) -> int:
             nonlocal call_count
@@ -127,7 +136,6 @@ class TestSkillEmbeddingReadinessGateErrorHandling:
             if call_count < 3:
                 msg = "Qdrant connection refused"
                 raise OSError(msg)
-            ready_event.set()
             return 10
 
         mock_qdrant = AsyncMock()
@@ -137,15 +145,23 @@ class TestSkillEmbeddingReadinessGateErrorHandling:
             collection_name="skills_v1",
             poll_interval_seconds=0.0,
             min_point_count=1,
+            poll_sleeper=AsyncMock(),
         )
         gate.start()
-        await asyncio.wait_for(ready_event.wait(), timeout=2.0)
-        await gate.stop()
+        assert gate._task is not None
+        await gate._task
         assert gate.is_ready is True
 
     @pytest.mark.asyncio
     async def test_is_failed_remains_false_during_normal_polling(self) -> None:
         """is_failed stays False even when poll raises intermittent exceptions."""
+        poll_paused = asyncio.Event()
+        resume_polling = asyncio.Event()
+
+        async def pause_after_poll(_: float) -> None:
+            poll_paused.set()
+            await resume_polling.wait()
+
         mock_qdrant = AsyncMock()
         mock_qdrant.count_points = AsyncMock(side_effect=OSError("transient"))
         gate = SkillEmbeddingReadinessGate(
@@ -153,9 +169,10 @@ class TestSkillEmbeddingReadinessGateErrorHandling:
             collection_name="skills_v1",
             poll_interval_seconds=0.01,
             min_point_count=1,
+            poll_sleeper=pause_after_poll,
         )
         gate.start()
-        await asyncio.sleep(0.05)
+        await poll_paused.wait()
         await gate.stop()
         assert gate.is_failed is False
 
@@ -191,25 +208,19 @@ class TestSkillEmbeddingReadinessGateLifecycle:
         """stop() can be safely called after the gate is already open."""
         gate = _make_gate(count=10, poll_interval=0.0)
         gate.start()
-        await asyncio.sleep(0.05)
+        assert gate._task is not None
+        await gate._task
         assert gate.is_ready is True
         await gate.stop()
 
-    def test_start_creates_asyncio_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_start_creates_asyncio_task(self) -> None:
         """start() creates an asyncio Task named skill-readiness-gate."""
-        loop = asyncio.new_event_loop()
-        try:
-            gate = _make_gate(count=0, poll_interval=100.0)
-
-            async def _run() -> None:
-                gate.start()
-                assert gate._task is not None
-                assert isinstance(gate._task, asyncio.Task)
-                await gate.stop()
-
-            loop.run_until_complete(_run())
-        finally:
-            loop.close()
+        gate = _make_gate(count=0, poll_interval=100.0)
+        gate.start()
+        assert gate._task is not None
+        assert isinstance(gate._task, asyncio.Task)
+        await gate.stop()
 
 
 class TestReadinessGateProtocolCompliance:

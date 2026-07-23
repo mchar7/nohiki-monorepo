@@ -563,6 +563,27 @@ class TestLLMSettingsInheritance:
         assert explicit.base_url == "https://explicit.example.test/v1"
         assert cross_provider.base_url is None
 
+    def test_model_specific_key_keeps_provider_sdk_default_endpoint(self) -> None:
+        settings = LLMSettings.model_validate(
+            {
+                "provider": {
+                    "models": [
+                        {
+                            "model": "openai:proxy-primary",
+                            "base_url": "https://primary.example.test/v1",
+                        },
+                        {
+                            "model": "openai:direct-fallback",
+                            "api_key": "direct-openai-key",
+                        },
+                    ]
+                }
+            }
+        )
+
+        assert settings.provider.models[0].base_url == "https://primary.example.test/v1"
+        assert settings.provider.models[1].base_url is None
+
     def test_named_chains_inherit_provider_values_without_overwriting_explicit_values(
         self,
     ) -> None:

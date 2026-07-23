@@ -6,15 +6,21 @@
 x-llm-provider-endpoints:
   NOHIKI_LLM_OPENAI_BASE_URL: "${NOHIKI_LLM_OPENAI_BASE_URL:?set NOHIKI_LLM_OPENAI_BASE_URL}"
   NOHIKI_LLM_ANTHROPIC_BASE_URL: "${NOHIKI_LLM_ANTHROPIC_BASE_URL:-}"
+  NOHIKI_ALLOW_HTTP_LLM_LOCAL: "${NOHIKI_ALLOW_HTTP_LLM_LOCAL:-0}"
+
+x-depends-on-secrets: &depends-on-secrets
+  nohiki-infra-secrets-init: {condition: service_completed_successfully}
 
 x-common-microservice: &common-microservice
   networks: [nohiki-network]
   restart: unless-stopped
   stop_grace_period: 30s
+  depends_on:
+    <<: *depends-on-secrets
   healthcheck:
-    test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=2)\""]
+    test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=15)\""]
     interval: 10s
-    timeout: 5s
+    timeout: 20s
     retries: 5
     start_period: 60s
 
@@ -42,8 +48,6 @@ x-vol-email: &vol-email nohiki-vol-secret-email:/run/secrets/email:ro
 x-vol-qdrant: &vol-qdrant nohiki-vol-secret-qdrant:/run/secrets/qdrant:ro
 x-vol-s3-mlflow: &vol-s3-mlflow nohiki-vol-secret-s3-mlflow:/run/secrets/s3:ro
 
-x-depends-on-secrets: &depends-on-secrets
-  nohiki-infra-secrets-init: {condition: service_completed_successfully}
 
 services:
   nohiki-infra-secrets-init:
@@ -86,12 +90,6 @@ services:
           find "/target/$${category}" -type d -exec chmod 0555 {} \;
           find "/target/$${category}" -type f -exec chmod 0444 {} \;
         done
-    healthcheck:
-      test: ["CMD", "test", "-r", "/target/database/dsn"]
-      interval: 5s
-      timeout: 2s
-      retries: 3
-      start_period: 1s
 
   # Microservices (nohiki-svc-*)
 
@@ -206,6 +204,7 @@ services:
       nohiki-cp-kafka-init: {condition: service_completed_successfully}
       nohiki-infra-valkey: {condition: service_healthy}
       nohiki-infra-qdrant: {condition: service_healthy}
+      nohiki-infra-qdrant-init: {condition: service_completed_successfully}
 
   nohiki-svc-user-entitlement:
     <<: *common-microservice
@@ -301,6 +300,10 @@ services:
       JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__MODEL: openai:gpt-5.6-luna
       JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT: medium
       JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__BASE_URL: "${NOHIKI_LLM_OPENAI_BASE_URL:?set NOHIKI_LLM_OPENAI_BASE_URL}"
+      JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__1__MODEL: openai:gpt-5.6-luna
+      JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__1__REASONING_EFFORT: medium
+      JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__2__MODEL: openrouter:deepseek/deepseek-v4-flash
+      JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__2__REASONING_EFFORT: medium
     depends_on:
       <<: *depends-on-secrets
       nohiki-infra-postgres: {condition: service_healthy}
@@ -332,6 +335,7 @@ services:
       nohiki-infra-postgres: {condition: service_healthy}
       nohiki-cp-kafka-init: {condition: service_completed_successfully}
       nohiki-infra-qdrant: {condition: service_healthy}
+      nohiki-infra-qdrant-init: {condition: service_completed_successfully}
 
   nohiki-svc-skill-graph:
     <<: *common-microservice
@@ -351,6 +355,7 @@ services:
       SKILL_GRAPH_QDRANT__HOST: nohiki-infra-qdrant
       SKILL_GRAPH_QDRANT__GRPC_PORT: "6334"
       SKILL_GRAPH_QDRANT__USE_TLS: "false"
+      SKILL_GRAPH_READINESS_GATE__MIN_POINT_COUNT: "10000"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=2)\""]
       interval: 10s
@@ -361,7 +366,7 @@ services:
       <<: *depends-on-secrets
       nohiki-infra-postgres: {condition: service_healthy}
       nohiki-cp-kafka-init: {condition: service_completed_successfully}
-      nohiki-infra-qdrant: {condition: service_healthy}
+      nohiki-infra-qdrant-init: {condition: service_completed_successfully}
 
   nohiki-svc-job-correlation:
     <<: *common-microservice
@@ -439,9 +444,15 @@ services:
       DOC_CONTENT_LLM__PROVIDER__MODELS__0__MODEL: openai:gpt-5.6-sol
       DOC_CONTENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT: high
       DOC_CONTENT_LLM__PROVIDER__MODELS__0__BASE_URL: "${NOHIKI_LLM_OPENAI_BASE_URL:?set NOHIKI_LLM_OPENAI_BASE_URL}"
+      DOC_CONTENT_LLM__PROVIDER__MODELS__1__MODEL: openai:gpt-5.6-luna
+      DOC_CONTENT_LLM__PROVIDER__MODELS__1__REASONING_EFFORT: medium
+      DOC_CONTENT_LLM__PROVIDER__MODELS__2__MODEL: openrouter:deepseek/deepseek-v4-flash
+      DOC_CONTENT_LLM__PROVIDER__MODELS__2__REASONING_EFFORT: medium
       DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__MODEL: openai:gpt-5.6-sol
       DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__REASONING_EFFORT: high
       DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__BASE_URL: "${NOHIKI_LLM_OPENAI_BASE_URL:?set NOHIKI_LLM_OPENAI_BASE_URL}"
+      DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__1__MODEL: openrouter:deepseek/deepseek-v4-flash
+      DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__1__REASONING_EFFORT: high
     depends_on:
       <<: *depends-on-secrets
       nohiki-cp-kafka-init: {condition: service_completed_successfully}
@@ -608,7 +619,8 @@ services:
       <<: *depends-on-secrets
       nohiki-infra-postgres: {condition: service_healthy}
       nohiki-cp-kafka-init: {condition: service_completed_successfully}
-      nohiki-infra-qdrant: {condition: service_healthy}
+      nohiki-infra-qdrant-init: {condition: service_completed_successfully}
+      nohiki-svc-skill-graph: {condition: service_started}
     restart: "no"
 
   # Infrastructure (nohiki-infra-*)
@@ -846,7 +858,10 @@ services:
     <<: *common-infrastructure
     build: {context: ../k8s/kafka-connect, dockerfile: Dockerfile}
     image: nohiki-kafka-connect:latest
-    volumes: [*vol-database, *vol-qdrant]
+    volumes:
+      - *vol-database
+      - *vol-qdrant
+      - ./scripts/kafka_connect_healthcheck.py:/kafka/scripts/compose-healthcheck.py:ro
     environment:
       BOOTSTRAP_SERVERS: nohiki-cp-kafka:29092
       GROUP_ID: nohiki-connect-cluster
@@ -871,8 +886,20 @@ services:
         condition: service_completed_successfully
       nohiki-infra-postgres:
         condition: service_healthy
+      nohiki-svc-user-auth: {condition: service_healthy}
+      nohiki-svc-user-pref: {condition: service_healthy}
+      nohiki-svc-user-upload: {condition: service_healthy}
+      nohiki-svc-user-entitlement: {condition: service_healthy}
+      nohiki-svc-job-query-composition: {condition: service_healthy}
+      nohiki-svc-job-ingest-enrichment: {condition: service_healthy}
+      nohiki-svc-job-storage: {condition: service_healthy}
+      nohiki-svc-doc-template: {condition: service_healthy}
+      nohiki-job-skill-graph-seed: {condition: service_completed_successfully}
+      nohiki-svc-bff: {condition: service_healthy}
+      nohiki-svc-notification: {condition: service_healthy}
+      nohiki-svc-job-correlation: {condition: service_healthy}
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf 'http://localhost:8083/connectors?expand=status' | python3 -c 'import sys,json; d=json.load(sys.stdin); running=[k for k,v in d.items() if v.get(\"status\",{}).get(\"connector\",{}).get(\"state\")==\"RUNNING\"]; exit(0 if len(running)>0 and len(running)==len(d) else 1)'"]
+      test: ["CMD", "python3", "/kafka/scripts/compose-healthcheck.py"]
       interval: 30s
       timeout: 10s
       retries: 10

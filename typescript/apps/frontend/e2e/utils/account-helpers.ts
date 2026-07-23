@@ -7,7 +7,7 @@ import { AccountSettingsPage } from '../pages/index.ts';
 export async function gotoAccountPage(page: Page): Promise<AccountSettingsPage> {
   const accountPage = new AccountSettingsPage(page);
   await accountPage.goto();
-  await page.waitForLoadState('load');
+
   // Wait for the account API response to populate the form (skeleton disappears)
   await accountPage.saveButton.waitFor({ state: 'visible', timeout: 15_000 });
   return accountPage;

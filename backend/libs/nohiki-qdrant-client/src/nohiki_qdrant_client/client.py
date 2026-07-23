@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import importlib
 import math
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from nohiki.ml.v1 import EmbeddingType, EmbeddingVector
 from nohiki_ml_manifest import QdrantCollectionSchema
 from nohiki_observability import get_logger
-from qdrant_client import AsyncQdrantClient, models
 
 from nohiki_qdrant_client.config import QdrantSettings
-from nohiki_qdrant_client.filter_builder import build_filter
+
+if TYPE_CHECKING:
+    from qdrant_client.async_qdrant_client import AsyncQdrantClient
+    from qdrant_client.http import models
 
 logger = get_logger(__name__)
 
@@ -33,7 +36,12 @@ def create_async_qdrant_client(settings: QdrantSettings) -> AsyncQdrantClient:
         Configured async Qdrant client using gRPC transport.
 
     """
-    return AsyncQdrantClient(
+    client_type = cast(
+        "type[AsyncQdrantClient]",
+        importlib.import_module("qdrant_client.async_qdrant_client").AsyncQdrantClient,
+    )
+
+    return client_type(
         host=settings.host,
         grpc_port=settings.grpc_port,
         prefer_grpc=True,
@@ -169,7 +177,7 @@ class QdrantVectorClient:
     """
 
     __slots__ = (
-        "_client",
+        "_client_instance",
         "_colbert_name",
         "_primary_dense",
         "_schema",
@@ -195,7 +203,13 @@ class QdrantVectorClient:
         self._primary_dense = collection_schema.primary_dense_name
         self._colbert_name = collection_schema.colbert_name
         self._sparse_name: str | None = collection_schema.sparse.name if collection_schema.sparse else None
-        self._client = create_async_qdrant_client(settings)
+        self._client_instance: AsyncQdrantClient | None = None
+
+    @property
+    def _client(self) -> AsyncQdrantClient:
+        if self._client_instance is None:
+            self._client_instance = create_async_qdrant_client(self._settings)
+        return self._client_instance
 
     @property
     def raw_client(self) -> AsyncQdrantClient:
@@ -240,7 +254,9 @@ class QdrantVectorClient:
             List of search results with scores and payloads.
 
         """
-        qdrant_filter = build_filter(params.filters) if params.filters else None
+        filter_builder = importlib.import_module("nohiki_qdrant_client.filter_builder")
+        qdrant_models = importlib.import_module("qdrant_client.models")
+        qdrant_filter = filter_builder.build_filter(params.filters) if params.filters else None
         if self._sparse_name is None:
             msg = "Hybrid search requires a sparse vector in the collection schema"
             raise ValueError(msg)
@@ -248,14 +264,14 @@ class QdrantVectorClient:
         results = await self._client.query_points(
             collection_name=params.collection_name,
             prefetch=[
-                models.Prefetch(
+                qdrant_models.Prefetch(
                     query=query_muvera_fde,
                     using=self._primary_dense,
                     limit=params.limit,
                     filter=qdrant_filter,
                 ),
-                models.Prefetch(
-                    query=models.SparseVector(
+                qdrant_models.Prefetch(
+                    query=qdrant_models.SparseVector(
                         indices=query_sparse_indices,
                         values=query_sparse_values,
                     ),
@@ -264,7 +280,7 @@ class QdrantVectorClient:
                     filter=qdrant_filter,
                 ),
             ],
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            query=qdrant_models.FusionQuery(fusion=qdrant_models.Fusion.RRF),
             limit=params.limit,
             score_threshold=params.score_threshold,
             with_payload=True,
@@ -293,7 +309,8 @@ class QdrantVectorClient:
             List of search results with scores and payloads.
 
         """
-        qdrant_filter = build_filter(filters) if filters else None
+        filter_builder = importlib.import_module("nohiki_qdrant_client.filter_builder")
+        qdrant_filter = filter_builder.build_filter(filters) if filters else None
 
         results = await self._client.query_points(
             collection_name=collection_name,
@@ -340,7 +357,8 @@ class QdrantVectorClient:
             msg = f"sparse indices must be unique and non-negative for {point_id!r}"
             raise ValueError(msg)
         self._validate_finite_vector(values, label=f"sparse embedding for point {point_id!r}")
-        return self._sparse_name, models.SparseVector(indices=indices, values=values)
+        qdrant_models = importlib.import_module("qdrant_client.models")
+        return self._sparse_name, qdrant_models.SparseVector(indices=indices, values=values)
 
     def _colbert_vector_entry(self, emb: EmbeddingVector, point_id: str) -> tuple[str, list[list[float]]]:
         if emb.multi_vector is None:
@@ -402,9 +420,10 @@ class QdrantVectorClient:
                 msg = f"point {point.point_id!r} contains duplicate vector slot {name!r}"
                 raise ValueError(msg)
             vectors[name] = vector
-        return models.PointStruct(
+        qdrant_models = importlib.import_module("qdrant_client.models")
+        return qdrant_models.PointStruct(
             id=point.point_id,
-            vector=cast(models.VectorStruct, vectors),
+            vector=cast("models.VectorStruct", vectors),
             payload=point.payload.to_dict(),
         )
 
@@ -498,7 +517,8 @@ class QdrantVectorClient:
             List of search results with scores and payloads.
 
         """
-        qdrant_filter = build_filter(params.filters) if params.filters else None
+        filter_builder = importlib.import_module("nohiki_qdrant_client.filter_builder")
+        qdrant_filter = filter_builder.build_filter(params.filters) if params.filters else None
         vector_name = params.vector_name or self._primary_dense
 
         results = await self._client.query_points(
@@ -532,9 +552,11 @@ class QdrantVectorClient:
             return []
 
         vector_name = params.vector_name or self._primary_dense
-        qdrant_filter = build_filter(params.filters) if params.filters else None
+        filter_builder = importlib.import_module("nohiki_qdrant_client.filter_builder")
+        qdrant_models = importlib.import_module("qdrant_client.models")
+        qdrant_filter = filter_builder.build_filter(params.filters) if params.filters else None
         requests = [
-            models.QueryRequest(
+            qdrant_models.QueryRequest(
                 query=query,
                 using=vector_name,
                 limit=params.limit,
@@ -632,9 +654,10 @@ class QdrantVectorClient:
             point_ids: List of point IDs to delete.
 
         """
+        qdrant_models = importlib.import_module("qdrant_client.models")
         await self._client.delete(
             collection_name=collection_name,
-            points_selector=models.PointIdsList(points=cast("_PointIds", point_ids)),
+            points_selector=qdrant_models.PointIdsList(points=cast("_PointIds", point_ids)),
         )
         logger.debug("Points deleted", collection_name=collection_name, count=len(point_ids))
 
@@ -650,10 +673,11 @@ class QdrantVectorClient:
             point_ids: List of point IDs to mark inactive.
 
         """
+        qdrant_models = importlib.import_module("qdrant_client.models")
         await self._client.set_payload(
             collection_name=collection_name,
             payload={"is_active": False},
-            points=models.PointIdsList(points=cast("_PointIds", point_ids)),
+            points=qdrant_models.PointIdsList(points=cast("_PointIds", point_ids)),
         )
         logger.debug("Points marked inactive", collection_name=collection_name, count=len(point_ids))
 
@@ -675,7 +699,8 @@ class QdrantVectorClient:
             List of search results, one per group (best match).
 
         """
-        qdrant_filter = build_filter(params.filters) if params.filters else None
+        filter_builder = importlib.import_module("nohiki_qdrant_client.filter_builder")
+        qdrant_filter = filter_builder.build_filter(params.filters) if params.filters else None
         vector_name = params.vector_name or self._primary_dense
 
         results = await self._client.query_points_groups(
@@ -754,7 +779,8 @@ class QdrantVectorClient:
             Number of matching points.
 
         """
-        qdrant_filter = build_filter(filters) if filters else None
+        filter_builder = importlib.import_module("nohiki_qdrant_client.filter_builder")
+        qdrant_filter = filter_builder.build_filter(filters) if filters else None
 
         result = await self._client.count(
             collection_name=collection_name,

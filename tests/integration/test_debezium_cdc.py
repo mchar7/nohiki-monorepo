@@ -31,6 +31,7 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
@@ -38,6 +39,12 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from aiokafka import AIOKafkaConsumer
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.requires_docker,
+    pytest.mark.asyncio(loop_scope="module"),
+]
 
 
 # Test configuration
@@ -48,7 +55,7 @@ TEST_TOPIC_PREFIX = "test.cdc"
 OUTBOX_CONNECTOR_PREFIX = "nohiki-outbox-"
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def async_engine() -> AsyncGenerator[AsyncEngine]:
     """Create async SQLAlchemy engine for tests."""
     engine = create_async_engine(DATABASE_URL, echo=False)
@@ -322,7 +329,7 @@ async def _poll_for_message(
         True if a matching message was found, False if timed out.
 
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_seconds
 
     while loop.time() < deadline:

@@ -10,7 +10,7 @@ import { render } from '@testing-library/react';
 import type { JSX } from 'react';
 import { useForm } from 'react-hook-form';
 import { I18nextProvider } from 'react-i18next';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import type { FormErrors, FormRegisterFunction, JSONSchemaProperty } from '../../model/index.ts';
 import { ArrayField } from './ArrayField.tsx';
 

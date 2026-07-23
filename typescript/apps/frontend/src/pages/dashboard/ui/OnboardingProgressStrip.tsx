@@ -3,7 +3,9 @@ import { ArrowRight, X } from 'lucide-react';
 import { type JSX, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Button, Card, CardContent, Progress } from '@/shared/ui/index.ts';
+import { Button } from '@/shared/ui/button.tsx';
+import { Card, CardContent } from '@/shared/ui/card.tsx';
+import { Progress } from '@/shared/ui/progress.tsx';
 
 /** Multiplier for converting step fraction to percentage */
 const PERCENT_SCALE: number = 100;

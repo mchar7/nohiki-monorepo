@@ -1,4 +1,4 @@
-import { EmptyState } from '@shared/ui/index.ts';
+import { EmptyState } from '@shared/ui/empty-state.tsx';
 import { FileText } from 'lucide-react';
 import type React from 'react';
 import type { JSX } from 'react';

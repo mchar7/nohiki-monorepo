@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Progress } from '@/shared/ui/index.ts';
+import { Progress } from '@/shared/ui/progress.tsx';
 import type { OnboardingProgressBarProps } from './Dashboard.types.ts';
 
 /** Full percentage value used to compute progress indicator width */

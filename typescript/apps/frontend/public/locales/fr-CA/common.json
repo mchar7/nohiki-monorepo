@@ -21,32 +21,25 @@
     "openCommandPalette": "Ouvrir la palette de commandes",
     "pageLoading": "Chargement de la page",
     "skipToContent": "Aller au contenu principal",
-    "fileDropZone": "Zone de d\u00e9p\u00f4t de fichiers"
+    "fileDropZone": "Zone de dépôt de fichiers"
   },
   "actions": {
     "cancel": "Annuler",
     "delete": "Supprimer",
     "deselectAll": "Ne rien sélectionner",
     "downloadPdf": "Télécharger le PDF",
-    "duplicate": "Dupliquer",
-    "edit": "Modifier",
     "export": "Exporter",
     "goBack": "Retour",
-    "more": "Plus",
     "refresh": "Actualiser",
-    "reloadPage": "Recharger la page",
     "retry": "Réessayer",
     "selectAll": "Tout sélectionner",
     "tryAgain": "Essayer à nouveau",
     "copied": "Copié",
     "copyErrorStack": "Copier les détails de l'erreur",
-    "copyRequestId": "Copier l'identifiant",
-    "createNew": "Créer nouveau",
-    "viewAll": "Voir tout"
+    "copyRequestId": "Copier l'identifiant"
   },
   "app": {
     "initFailed": "Échec de l'initialisation de l'application",
-    "initRetry": "Réessayer",
     "storeInitFailed": "Échec de l'initialisation des magasins locaux"
   },
   "appName": "Nohiki",
@@ -78,9 +71,9 @@
     "signOut": "Se déconnecter",
     "keyboardShortcuts": "Raccourcis clavier",
     "searchResultsJobs": "Emplois",
-    "searchResultsSkills": "Comp\u00e9tences",
+    "searchResultsSkills": "Compétences",
     "searching": "Recherche en cours...",
-    "noSearchResults": "Aucun r\u00e9sultat pour \u00ab {{query}} \u00bb"
+    "noSearchResults": "Aucun résultat pour « {{query}} »"
   },
   "shortcuts": {
     "title": "Raccourcis clavier",
@@ -97,8 +90,7 @@
   "columns": "Colonnes",
   "counts": {
     "more": "+{{count}} de plus",
-    "result": "{{count}} résultat",
-    "results": "{{count}} résultats"
+    "result": "{{count}} résultat"
   },
   "direction": "Direction",
   "filters": {
@@ -116,9 +108,6 @@
       "createDescription": "Commencez en créant un nouveau document. Remplissez les champs du formulaire et générez de beaux PDF.",
       "createNewAction": "Créer un nouveau document",
       "createTitle": "Créez votre premier document",
-      "noMatches": "Aucune correspondance pour l'instant",
-      "noMatchesAria": "Aucune correspondance trouvée",
-      "noMatchesDescription": "Créez un profil cible pour commencer à recevoir des correspondances",
       "selectDescription": "Choisissez un document existant dans la barre latérale ou créez-en un nouveau pour commencer l'édition.",
       "selectTitle": "Sélectionnez un document"
     },
@@ -150,23 +139,13 @@
   "fieldNames": "Noms des champs",
   "errorBoundary": {
     "description": "Une erreur inattendue s'est produite dans ce composant",
-    "detailsSummary": "Détails de l'erreur (développement uniquement)",
     "featureError": "La fonctionnalité {{feature}} a rencontré une erreur inattendue.",
     "title": "Une erreur est survenue"
   },
   "errors": {
     "fixIssues": "Veuillez corriger les problèmes suivants :",
     "generic": "Une erreur inattendue est survenue",
-    "genericWithReason": "{{context}} : {{reason}}",
-    "notFound": "Ressource introuvable",
-    "noTemplateSelected": "Aucun modèle sélectionné",
-    "schemaLoadingDescription": "Impossible de charger le schéma du document. Veuillez vérifier votre connexion et réessayer.",
-    "schemaLoadingHint": "Essayez de rafraîchir la page ou de sélectionner un autre modèle.",
-    "schemaLoadingIssue": "Problème de chargement du schéma"
-  },
-  "confirm": {
-    "deleteDescription": "Êtes-vous sûr de vouloir supprimer « {{name}} » ? Cette action est irréversible.",
-    "deleteTitle": "Supprimer"
+    "notFound": "Ressource introuvable"
   },
   "density": {
     "compact": "Compact",
@@ -175,14 +154,13 @@
     "label": "Densité d'affichage"
   },
   "dropZone": {
-    "dropToUpload": "D\u00e9posez pour t\u00e9l\u00e9verser"
+    "dropToUpload": "Déposez pour téléverser"
   },
   "labels": {
     "column": "Colonne",
     "highQuality": "Haute qualité",
     "line": "Ligne",
-    "selected": "{{count}} sélectionné(s)",
-    "version": "Version {{version}}"
+    "selected": "{{count}} sélectionné(s)"
   },
   "modules": {
     "platform": {
@@ -212,16 +190,11 @@
   "placeholder": "Espace réservé",
   "renderAsFields": "Afficher comme champs",
   "nav": {
-    "dashboard": "Tableau de bord",
-    "editor": "Éditeur",
-    "settings": "Paramètres",
-    "templates": "Modèles"
+    "settings": "Paramètres"
   },
   "showItemLabels": "Afficher les étiquettes",
   "sidebar": {
     "account": "Compte",
-    "allSettings": "Tous les paramètres",
-    "attachments": "Pièces jointes",
     "dashboard": "Tableau de bord",
     "docsUrl": "https://www.nohiki.com/docs",
     "jobs": {
@@ -235,9 +208,7 @@
       "list": "Mes profils",
       "title": "Profils"
     },
-    "quickSettings": "Paramètres rapides",
-    "recentDocuments": "Documents récents",
-    "unknownTemplate": "Modèle inconnu"
+    "quickSettings": "Paramètres rapides"
   },
   "skills": {
     "maxReached": "Maximum de {{max}} compétences atteint",
@@ -256,9 +227,7 @@
     "autoRefreshing": "Actualisation automatique...",
     "loading": "Chargement...",
     "processing": "Traitement en cours...",
-    "refreshing": "Actualisation...",
-    "syncing": "Synchronisation...",
-    "lastSynced": "Synchronisé {{time}}"
+    "syncing": "Synchronisation..."
   },
   "unsavedChanges": {
     "title": "Modifications non enregistrées",
@@ -267,7 +236,6 @@
     "leave": "Abandonner les modifications"
   },
   "form": {
-    "optional": "optionnel",
     "optionalLabel": "(optionnel)"
   },
   "status": {

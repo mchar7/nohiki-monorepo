@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, vi } from 'vitest';
 import type { JobListingResponse } from '@/shared/api';
 import { nonNull } from '@/shared/test-utils';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { JobListings } from './JobListings.tsx';
 
 // --- Mock data-fetching hooks ---

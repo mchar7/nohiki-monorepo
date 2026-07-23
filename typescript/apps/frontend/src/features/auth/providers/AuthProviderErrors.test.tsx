@@ -53,11 +53,7 @@ async function renderAuthTest(
     </QueryClientProvider>,
     path,
   );
-  const result = render(jsx);
-  await act(async () => {
-    /* wait for effects */
-  });
-  return result;
+  return render(jsx);
 }
 
 describe('AuthProvider 401 errors', () => {

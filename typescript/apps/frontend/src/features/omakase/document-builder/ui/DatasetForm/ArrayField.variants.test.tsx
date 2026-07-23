@@ -1,7 +1,7 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, vi } from 'vitest';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import type { JSONSchemaProperty } from '../../model/index.ts';
 import { ADD_RE, renderArrayField } from './ArrayField.test-helpers.tsx';
 

@@ -13,7 +13,7 @@ from health_check.checks.vectors.qdrant_dimensions import (
 from health_check.config.thresholds import QDRANT_PORT
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 def _collections_response(names: list[str]) -> str:

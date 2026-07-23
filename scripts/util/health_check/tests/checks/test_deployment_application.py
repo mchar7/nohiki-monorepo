@@ -8,7 +8,7 @@ from health_check.core.models import CheckStatus
 from health_check.platform.kubernetes import KubernetesPlatform
 from health_check.platform.models import PlatformTarget, ServiceInfo, ServiceStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class _ApplicationK8sPlatform(KubernetesPlatform):
@@ -40,7 +40,7 @@ def _assert_no_topology(details: tuple[str, ...]) -> None:
     for private_value in (
         "https://provider.internal.example:9443/v1",
         "provider.internal.example",
-        "10.42.0.19",
+        "192.0.2.19",
         ":9443",
         "sk-live-secret",
     ):
@@ -62,7 +62,7 @@ class TestLLMWorkloadReadinessCheck:
 
     async def test_fails_with_redacted_provider_failure(self) -> None:
         provider_log = (
-            "API key is invalid: sk-live-secret; endpoint https://provider.internal.example:9443/v1 at 10.42.0.19"
+            "API key is invalid: sk-live-secret; endpoint https://provider.internal.example:9443/v1 at 192.0.2.19"
         )
         platform = _ApplicationK8sPlatform(
             {
@@ -81,7 +81,7 @@ class TestLLMWorkloadReadinessCheck:
     async def test_fails_for_missing_workload_without_echoing_topology(self) -> None:
         platform = _ApplicationK8sPlatform(
             {"doc-content-service": _service("doc-content-service")},
-            {"job-ingest-enrichment-service": "connect refused at 10.42.0.19:9443"},
+            {"job-ingest-enrichment-service": "connect refused at 192.0.2.19:9443"},
         )
 
         result = await LLMWorkloadReadinessCheck().execute(platform)

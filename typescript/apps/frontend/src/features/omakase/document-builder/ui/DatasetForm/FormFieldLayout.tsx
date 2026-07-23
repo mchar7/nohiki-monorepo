@@ -1,10 +1,5 @@
-import {
-  Label,
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@shared/ui/index.ts';
+import { Label } from '@shared/ui/label.tsx';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@shared/ui/tooltip.tsx';
 import { HelpCircle } from 'lucide-react';
 import type { JSX } from 'react';
 

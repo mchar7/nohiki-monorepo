@@ -1,5 +1,6 @@
 """Unit tests for LLM health probe."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -1202,7 +1203,7 @@ class TestExactModelReadiness:
                 "nohiki_llm_client.providers.factory._create_retrying_http_client",
                 return_value=owned_client,
             ),
-            patch("nohiki_llm_client.providers.factory.AsyncOpenAI") as sdk_client,
+            patch("openai.AsyncOpenAI") as sdk_client,
             patch(
                 "nohiki_llm_client.observability.health.create_model",
                 side_effect=create_real_model,
@@ -1377,28 +1378,73 @@ class TestNamedChainHealth:
         ]
 
     @pytest.mark.asyncio
-    async def test_any_unhealthy_fallback_fails_readiness(self) -> None:
-        """One failed model makes the selected chain set unhealthy."""
+    async def test_failed_candidate_does_not_fail_a_usable_chain(self) -> None:
+        """A failed model does not mask another usable candidate in its chain."""
         settings = self._settings()
-        with patch.object(
-            LLMHealthProbe,
-            "_check_cloud_endpoint",
-            new=AsyncMock(
-                side_effect=[
-                    (True, None),
-                    (False, "shared unavailable"),
-                    (True, None),
-                ]
-            ),
-        ) as check:
+
+        async def check_model(
+            config: LLMModelConfig,
+            _provider: LLMProviderSettings,
+        ) -> tuple[bool, str | None]:
+            if config.model == "openai:shared":
+                return False, "shared unavailable"
+            return True, None
+
+        with patch.object(LLMHealthProbe, "_check_model", side_effect=check_model):
             result = await LLMHealthProbe(
                 settings,
                 chains=("extraction", "skill_clarification"),
             ).check()
 
+        assert result.is_healthy()
+
+    @pytest.mark.asyncio
+    async def test_hung_primary_does_not_block_healthy_fallback(self) -> None:
+        """Readiness returns on a usable fallback and cancels a hung primary."""
+        settings = self._settings()
+        primary_cancelled = asyncio.Event()
+
+        async def check_model(
+            config: LLMModelConfig,
+            _provider: LLMProviderSettings,
+        ) -> tuple[bool, str | None]:
+            if config.model == "openai:extraction":
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    primary_cancelled.set()
+                    raise
+            return True, None
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with patch.object(LLMHealthProbe, "_check_model", side_effect=check_model):
+            result = await LLMHealthProbe(
+                settings,
+                chains=("extraction",),
+                timeout_seconds=0.5,
+            ).check()
+
+        assert result.is_healthy()
+        assert loop.time() - started < 0.1
+        assert primary_cancelled.is_set()
+
+    @pytest.mark.asyncio
+    async def test_all_candidates_unhealthy_fails_readiness(self) -> None:
+        """A chain is unavailable only when every configured candidate fails."""
+        settings = self._settings()
+        with patch.object(
+            LLMHealthProbe,
+            "_check_model",
+            new=AsyncMock(return_value=(False, "candidate unavailable")),
+        ):
+            result = await LLMHealthProbe(
+                settings,
+                chains=("extraction",),
+            ).check()
+
         assert not result.is_healthy()
-        assert "shared unavailable" in result.message
-        assert check.await_count == 3
+        assert "candidate unavailable" in result.message
 
     @pytest.mark.asyncio
     async def test_unknown_chain_uses_default_provider(self) -> None:
@@ -1620,6 +1666,6 @@ class TestEnsureLLMReady:
                 await ensure_llm_ready(
                     mock_settings,
                     chains=None,
-                    timeout_seconds=0.3,
-                    retry_interval_seconds=0.1,
+                    timeout_seconds=0.01,
+                    retry_interval_seconds=0.001,
                 )

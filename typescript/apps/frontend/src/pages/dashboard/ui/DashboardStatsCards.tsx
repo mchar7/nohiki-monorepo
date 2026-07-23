@@ -3,7 +3,8 @@ import { Bookmark, Briefcase, FileText, User } from 'lucide-react';
 import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Card, Skeleton } from '@/shared/ui/index.ts';
+import { Card } from '@/shared/ui/card.tsx';
+import { Skeleton } from '@/shared/ui/skeleton.tsx';
 import type { StatTrend } from '../lib/index.ts';
 import type { DashboardStatsCardsProps } from './Dashboard.types.ts';
 

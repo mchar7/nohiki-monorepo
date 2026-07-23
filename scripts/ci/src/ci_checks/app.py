@@ -25,6 +25,7 @@ from ci_checks.checks import deptry as _deptry
 from ci_checks.checks import fixtures as _fixtures
 from ci_checks.checks import freshness as _freshness
 from ci_checks.checks import gate as _gate
+from ci_checks.checks import internal_refs as _internal_refs
 from ci_checks.checks import migration_truth as _migration_truth
 from ci_checks.checks.tests import tests_app
 from ci_checks.core.display import console
@@ -44,6 +45,9 @@ app.add_typer(tests_app, name="tests")
 app.command("gate")(_gate.gate_cmd)
 
 # Image freshness: probes pinned base-image digests against their registries.
+
+# Internal references: block repository-private workflow vocabulary.
+app.command("internal-refs")(_internal_refs.internal_refs_cmd)
 app.command("image-freshness")(_freshness.freshness_cmd)
 
 

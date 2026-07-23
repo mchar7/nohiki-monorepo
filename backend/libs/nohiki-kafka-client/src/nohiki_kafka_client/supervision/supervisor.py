@@ -36,8 +36,14 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 type ConsumerFactory = Callable[[HandlerRegistration], Awaitable[None]]
+type AsyncSleeper = Callable[[float], Awaitable[None]]
 type HealthSummaryValue = str | int | float | bool | None
 type HealthSummary = dict[str, dict[str, HealthSummaryValue]]
+
+
+async def _run_sleep(sleep: AsyncSleeper, delay: float) -> None:
+    await sleep(delay)
+
 
 DEFAULT_INITIAL_BACKOFF_SECONDS = 1.0
 DEFAULT_MAX_BACKOFF_SECONDS = 60.0
@@ -208,13 +214,25 @@ class ConsumerSupervisor:
     - Graceful shutdown handling
     """
 
-    __slots__ = ("_config", "_consumers", "_shutdown_event", "_supervisor_task")
+    __slots__ = ("_config", "_consumers", "_shutdown_event", "_sleep", "_supervisor_task")
 
-    def __init__(self, config: SupervisorConfig | None = None) -> None:
-        """Initialize supervisor with optional configuration."""
+    def __init__(
+        self,
+        config: SupervisorConfig | None = None,
+        *,
+        sleep: AsyncSleeper = asyncio.sleep,
+    ) -> None:
+        """Initialize supervisor.
+
+        Args:
+            config: Restart and backoff configuration.
+            sleep: Async sleeper used for restart backoff.
+
+        """
         self._config = config or SupervisorConfig()
         self._consumers: dict[str, SupervisedConsumer] = {}
         self._shutdown_event = asyncio.Event()
+        self._sleep = sleep
         self._supervisor_task: asyncio.Task[None] | None = None
 
     @property
@@ -335,13 +353,18 @@ class ConsumerSupervisor:
             attempt=metrics.consecutive_failures,
         )
 
-        try:
-            await asyncio.wait_for(supervised.shutdown_event.wait(), timeout=backoff)
-        except TimeoutError:
-            metrics.state = ConsumerState.RECONNECTING
-            metrics.total_restarts += 1
-            return False
-        return True
+        async with asyncio.TaskGroup() as tasks:
+            backoff_done = tasks.create_task(_run_sleep(self._sleep, backoff))
+            shutdown_requested = tasks.create_task(supervised.shutdown_event.wait())
+            await asyncio.wait({backoff_done, shutdown_requested}, return_when=asyncio.FIRST_COMPLETED)
+            if supervised.shutdown_event.is_set():
+                backoff_done.cancel()
+                return True
+            shutdown_requested.cancel()
+
+        metrics.state = ConsumerState.RECONNECTING
+        metrics.total_restarts += 1
+        return False
 
     async def _run_consumer(
         self,

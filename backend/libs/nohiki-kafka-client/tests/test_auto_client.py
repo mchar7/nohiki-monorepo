@@ -109,13 +109,13 @@ class TestCloseMethod:
         client._consumer_tasks.append(mock_task)
 
         with patch("asyncio.gather", new_callable=AsyncMock) as mock_gather:
-            await client.close()
+            await client.close(drain_timeout_seconds=0.05)
 
         # Two-phase shutdown: stop() sets event, cancel() breaks iterator
         mock_consumer.stop.assert_called_once()
         # cancel() called in phase 1, then again in phase 2 force-cancel
-        assert mock_task.cancel.call_count >= 1
-        mock_gather.assert_awaited()
+        assert mock_task.cancel.call_count == 2
+        mock_gather.assert_awaited_once_with(mock_task, return_exceptions=True)
 
     @pytest.mark.asyncio
     async def test_close_closes_producer(self) -> None:

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,7 +27,7 @@ from nohiki_kafka_client.observability.metrics import get_kafka_metrics
 from nohiki_kafka_client.producer import KafkaProducer
 from nohiki_kafka_client.testing import get_test_consumer_kwargs, get_test_producer_kwargs
 
-pytestmark = pytest.mark.requires_docker
+pytestmark = [pytest.mark.requires_docker, pytest.mark.integration]
 
 # Exception messages for test handlers (extracted to satisfy EM101/TRY003)
 _FORCE_DLQ_MSG = "force dlq"
@@ -81,10 +80,9 @@ async def _consume_all_from_topic(
     messages: list[ConsumerRecord] = []
     await consumer.start()
     try:
-        start = time.time()
-        while len(messages) < max_messages and (time.time() - start) < timeout_seconds:
-            msg = await asyncio.wait_for(consumer.getone(), timeout=1.0)
-            messages.append(msg)
+        async with asyncio.timeout(timeout_seconds):
+            while len(messages) < max_messages:
+                messages.append(await consumer.getone())
     except TimeoutError:
         pass
     finally:
@@ -92,6 +90,7 @@ async def _consume_all_from_topic(
     return messages
 
 
+@pytest.mark.e2e
 class TestConsumerDlqRoutingE2E:
     """Test A: DLQ routing end-to-end."""
 
@@ -171,20 +170,19 @@ class TestConsumerDlqRoutingE2E:
                 finally:
                     await consumer.__aexit__(None, None, None)
 
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(run_consumer(), timeout=15.0)
-
-            # Wait for DLQ republishing
-            await asyncio.sleep(0.5)
-
-            # Read from dlq.{source_topic}
-            dlq_messages = await _consume_all_from_topic(
-                kafka_container,
-                dlq_topic,
-                "dlq-verify-group",
-                max_messages=1,
-                timeout_seconds=5.0,
-            )
+            main_task = asyncio.create_task(run_consumer())
+            try:
+                dlq_messages = await _consume_all_from_topic(
+                    kafka_container,
+                    dlq_topic,
+                    "dlq-verify-group",
+                    max_messages=1,
+                    timeout_seconds=5.0,
+                )
+            finally:
+                main_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await main_task
 
             # Assert: DLQ has exactly 1 message
             assert len(dlq_messages) == 1
@@ -201,6 +199,7 @@ class TestConsumerDlqRoutingE2E:
             await producer.__aexit__(None, None, None)
 
 
+@pytest.mark.e2e
 class TestConsumerRetryTopicE2E:
     """Test B: Retry topic end-to-end."""
 
@@ -287,39 +286,29 @@ class TestConsumerRetryTopicE2E:
                     await main_consumer.__aexit__(None, None, None)
 
             main_task = asyncio.create_task(run_main())
-
-            # Wait for handler to be called and message to be published to retry topic
-            await asyncio.wait_for(handler_called.wait(), timeout=10.0)
-            await asyncio.sleep(0.5)  # Allow retry publish to complete
-
-            main_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await main_task
-
-            # Verify message was published to retry topic with correct headers
-            from aiokafka import AIOKafkaConsumer as RawConsumer
-
-            raw_consumer = RawConsumer(
-                retry_topic,
-                bootstrap_servers=kafka_container,
-                auto_offset_reset="earliest",
-                consumer_timeout_ms=5000,
-            )
-            await raw_consumer.start()
-
             try:
-                record = await asyncio.wait_for(
-                    raw_consumer.getone(),
-                    timeout=10.0,
+                raw_consumer = AIOKafkaConsumer(
+                    retry_topic,
+                    bootstrap_servers=kafka_container,
+                    auto_offset_reset="earliest",
+                    consumer_timeout_ms=5000,
                 )
+                await raw_consumer.start()
+                try:
+                    record = await asyncio.wait_for(raw_consumer.getone(), timeout=10.0)
+                    assert handler_called.is_set()
 
-                headers = {k: v.decode() for k, v in record.headers}
-                assert headers.get("x-original-topic") == source_topic
-                assert headers.get("x-retry-count") == "1"
-                assert "x-next-retry-at" in headers
-                assert headers.get("x-error-type") == "OSError"
+                    headers = {k: v.decode() for k, v in record.headers}
+                    assert headers.get("x-original-topic") == source_topic
+                    assert headers.get("x-retry-count") == "1"
+                    assert "x-next-retry-at" in headers
+                    assert headers.get("x-error-type") == "OSError"
+                finally:
+                    await raw_consumer.stop()
             finally:
-                await raw_consumer.stop()
+                main_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await main_task
 
         finally:
             await producer.__aexit__(None, None, None)
@@ -431,7 +420,6 @@ class TestConsumerCrashRecovery:
 
             handler_map1 = self._build_handler_map(source_topic, first_handler, consumer_group)
             await self._run_consumer_once(config, dlq_handler, handler_map1, producer, first_event)
-            await asyncio.sleep(0.5)  # Let commit happen
 
             assert len(first_received) == 5
 
@@ -507,19 +495,23 @@ class TestConsumerConcurrentProcessing:
             for i in range(5):
                 await _produce_raw_message(kafka_container, source_topic, f"concurrent-{i}".encode(), key=b"same-key")
 
+            started_count = 0
             processed_count = 0
+            all_started = asyncio.Event()
+            release_handlers = asyncio.Event()
             processed_event = asyncio.Event()
-            processing_times: list[float] = []
             handler_lock = asyncio.Lock()
 
             async def slow_handler(_msg: MockMessage, _ctx: MessageContext) -> None:
-                nonlocal processed_count
-                start = time.perf_counter()
-                await asyncio.sleep(0.2)
-                elapsed = time.perf_counter() - start
+                nonlocal processed_count, started_count
+                async with handler_lock:
+                    started_count += 1
+                    if started_count == 5:
+                        all_started.set()
+
+                await release_handlers.wait()
 
                 async with handler_lock:
-                    processing_times.append(elapsed)
                     processed_count += 1
                     if processed_count == 5:
                         processed_event.set()
@@ -543,23 +535,22 @@ class TestConsumerConcurrentProcessing:
                 finally:
                     await consumer.__aexit__(None, None, None)
 
-            start_time = time.perf_counter()
             consumer_task = asyncio.create_task(run_consumer())
 
             try:
-                await asyncio.wait_for(processed_event.wait(), timeout=10.0)
+                async with asyncio.timeout(10.0):
+                    await all_started.wait()
+                    assert started_count == 5
+                    release_handlers.set()
+                    await processed_event.wait()
             except TimeoutError:
-                consumer_task.cancel()
                 pytest.fail("Consumer timeout")
             finally:
+                release_handlers.set()
                 consumer_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await consumer_task
 
-            elapsed_total = time.perf_counter() - start_time
-
-            # Assert: elapsed < 5 x 0.2 x 0.7 = 0.7s (concurrent vs sequential)
-            assert elapsed_total < 0.7
             assert processed_count == 5
 
         finally:

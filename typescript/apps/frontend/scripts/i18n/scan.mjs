@@ -1,7 +1,11 @@
 /**
  * File scanning logic for i18n validation.
  *
- * Detects hardcoded user-facing strings and checks for unused locale keys.
+ * Unused-key detection is conservative: exact full or relative key literals count as use,
+ * including literals carried through maps and helpers. i18next plural variants count as used
+ * when their base key is referenced. Dynamic translation templates retain keys below their
+ * static dotted prefix; namespace-only prefixes require finite literal carriers. A key is
+ * reported only when none of those source patterns covers it.
  */
 
 import { readFileSync } from 'node:fs';
@@ -14,6 +18,10 @@ const HARDCODED_ISSUE_DISPLAY_LIMIT = 20;
 const HARDCODED_TEXT_DISPLAY_LENGTH = 50;
 const HARDCODED_LINE_DISPLAY_LENGTH = 100;
 const MIN_STRING_LENGTH_TO_CHECK = 3;
+const PLURAL_SUFFIX_RE = /_(?:zero|one|two|few|many|other)$/u;
+const STATIC_KEY_LITERAL_RE = /(?<quote>['"])(?<key>[A-Za-z0-9_.:-]+)\k<quote>/gu;
+const DYNAMIC_TRANSLATION_PREFIX_RE =
+  /(?:\bi18n[.]t|\bt(?:[A-Z][A-Za-z0-9_]*)?)[ \t]*\([ \t\r\n]*`(?<prefix>[A-Za-z0-9_.:-]*)[$][{]/gu;
 
 const HARDCODED_PATTERNS = [
   />(?<text>[A-Z][a-zA-Z\s]{2,50})</gu,
@@ -141,32 +149,119 @@ export function checkHardcodedStrings(getAllFiles, srcDir, rootDir) {
   return reportHardcodedIssues(issues);
 }
 
-/** Check for unused locale keys (best-effort, may have false positives). */
-export function checkUnusedKeys(locales, getAllFiles, srcDir) {
-  const sourceFiles = getAllFiles(srcDir, SOURCE_FILE_RE);
-  const allSource = sourceFiles.map((f) => readFileSync(f, 'utf-8')).join('\n');
+function getTranslationKeys(locales) {
+  const keys = new Set();
 
-  for (const [, files] of Object.entries(locales)) {
-    for (const [, content] of Object.entries(files)) {
-      const keys = getAllKeys(content);
-
-      for (const key of keys) {
-        const keyParts = key.split('.');
-        const lastPart = keyParts.at(-1);
-
-        const _isUsed = [
-          `t('${key}')`,
-          `t("${key}")`,
-          `i18nKey="${key}"`,
-          `i18nKey='${key}'`,
-          `'${key}'`,
-          `"${key}"`,
-          lastPart,
-        ].some((pattern) => allSource.includes(pattern));
+  for (const files of Object.values(locales)) {
+    for (const [file, messages] of Object.entries(files)) {
+      const namespace = file.endsWith('.json') ? file.slice(0, -'.json'.length) : file;
+      for (const key of getAllKeys(messages)) {
+        keys.add(`${namespace}:${key}`);
       }
     }
   }
 
-  success('Key usage check completed (may have false positives)');
-  return true;
+  return keys;
+}
+
+function addReference(index, reference, translationKey) {
+  const matchingKeys = index.get(reference);
+  if (matchingKeys) {
+    matchingKeys.push(translationKey);
+  } else {
+    index.set(reference, [translationKey]);
+  }
+}
+
+function buildReferenceIndex(translationKeys) {
+  const index = new Map();
+
+  for (const translationKey of translationKeys) {
+    const separatorIndex = translationKey.indexOf(':');
+    const relativeKey = translationKey.slice(separatorIndex + 1);
+    addReference(index, translationKey, translationKey);
+    addReference(index, relativeKey, translationKey);
+
+    if (PLURAL_SUFFIX_RE.test(translationKey)) {
+      addReference(index, translationKey.replace(PLURAL_SUFFIX_RE, ''), translationKey);
+      addReference(index, relativeKey.replace(PLURAL_SUFFIX_RE, ''), translationKey);
+    }
+  }
+
+  return index;
+}
+
+function markStaticReference(reference, referenceIndex, usedKeys) {
+  const matchingKeys = referenceIndex.get(reference);
+  if (!matchingKeys) {
+    return;
+  }
+  for (const key of matchingKeys) {
+    usedKeys.add(key);
+  }
+}
+
+function hasMeaningfulDynamicPrefix(prefix) {
+  const relativePrefix = prefix.includes(':') ? prefix.slice(prefix.indexOf(':') + 1) : prefix;
+  return relativePrefix.includes('.');
+}
+
+function scanSourceFile(file, referenceIndex, usedKeys, dynamicPrefixes) {
+  const content = readFileSync(file, 'utf-8');
+
+  for (const match of content.matchAll(STATIC_KEY_LITERAL_RE)) {
+    markStaticReference(match.groups.key, referenceIndex, usedKeys);
+  }
+
+  for (const match of content.matchAll(DYNAMIC_TRANSLATION_PREFIX_RE)) {
+    const { prefix } = match.groups;
+    if (hasMeaningfulDynamicPrefix(prefix)) {
+      dynamicPrefixes.add(prefix);
+    }
+  }
+}
+
+function applyDynamicPrefixes(translationKeys, dynamicPrefixes, usedKeys) {
+  for (const translationKey of translationKeys) {
+    const relativeKey = translationKey.slice(translationKey.indexOf(':') + 1);
+    for (const prefix of dynamicPrefixes) {
+      if (translationKey.startsWith(prefix) || relativeKey.startsWith(prefix)) {
+        usedKeys.add(translationKey);
+        break;
+      }
+    }
+  }
+}
+
+function reportUnusedKeys(unusedKeys) {
+  if (unusedKeys.length === 0) {
+    success('No unused locale keys detected');
+    return true;
+  }
+
+  error(`Found ${unusedKeys.length} unused locale keys:`);
+  for (const key of unusedKeys) {
+    warn(`  ${key}`);
+  }
+  return false;
+}
+
+/** Check for locale keys with no production source reference. */
+export function checkUnusedKeys(locales, getAllFiles, srcDir) {
+  const translationKeys = getTranslationKeys(locales);
+  const referenceIndex = buildReferenceIndex(translationKeys);
+  const usedKeys = new Set();
+  const dynamicPrefixes = new Set();
+  const files = getAllFiles(srcDir, SOURCE_FILE_RE);
+
+  for (const file of files) {
+    if (!EXCLUDED_FILES.some((excluded) => file.includes(excluded))) {
+      scanSourceFile(file, referenceIndex, usedKeys, dynamicPrefixes);
+    }
+  }
+
+  applyDynamicPrefixes(translationKeys, dynamicPrefixes, usedKeys);
+
+  const unusedKeys = [...translationKeys].filter((key) => !usedKeys.has(key)).sort();
+  return reportUnusedKeys(unusedKeys);
 }

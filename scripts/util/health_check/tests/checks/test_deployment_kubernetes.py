@@ -13,7 +13,7 @@ from health_check.core.registry import CheckRegistry
 from health_check.platform.kubernetes import KubernetesPlatform
 from health_check.platform.models import PlatformTarget
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class _ResourcePlatform(KubernetesPlatform):
@@ -70,7 +70,7 @@ def _gateway(name: str, *, programmed: str = "True") -> dict[str, object]:
                 _condition("Accepted"),
                 _condition("Programmed", programmed, "AddressNotAssigned"),
             ],
-            "addresses": [{"value": "10.42.0.19"}],
+            "addresses": [{"value": "192.0.2.19"}],
         },
     }
 
@@ -98,7 +98,7 @@ def _assert_no_topology(details: tuple[str, ...]) -> None:
         "https://registry.internal.example:5443/team/image",
         "registry.internal.example",
         "private.internal.example",
-        "10.42.0.19",
+        "192.0.2.19",
         ":5443",
         "pull-token-secret",
     ):

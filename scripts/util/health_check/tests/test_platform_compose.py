@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from unittest import mock
 
 import pytest
+from health_check.checks.services.stale_services import StaleServicesCheck
+from health_check.core.models import CheckStatus
 from health_check.platform.compose import (
     COMPOSE_NAME_MAP,
     ComposePlatform,
@@ -199,87 +202,203 @@ class TestComposePlatformProperties:
 
 
 class TestComposePlatformContainerName:
-    def test_known_service_returns_compose_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    def test_known_service_returns_unqualified_compose_name(self) -> None:
         platform = ComposePlatform(runtime=ContainerRuntime.DOCKER)
         assert platform._container_name("postgres") == COMPOSE_NAME_MAP["postgres"]
 
-    def test_unknown_service_returns_canonical(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
-        platform = ComposePlatform(runtime=ContainerRuntime.DOCKER)
+    def test_unknown_service_returns_canonical_name(self) -> None:
+        platform = ComposePlatform(runtime=ContainerRuntime.PODMAN)
         assert platform._container_name("unknown-service") == "unknown-service"
-
-    def test_project_qualifies_mapped_and_unknown_services(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("COMPOSE_PROJECT_NAME", "nohiki-test")
-        platform = ComposePlatform(runtime=ContainerRuntime.DOCKER)
-        assert platform._container_name("postgres") == "nohiki-test_nohiki-infra-postgres_1"
-        assert platform._container_name("unknown-service") == "nohiki-test_unknown-service_1"
 
 
 class TestComposePlatformGetServiceStatuses:
-    """Tests for get_service_statuses()."""
+    """Tests for Compose-scoped service discovery."""
 
-    def _platform(self) -> ComposePlatform:
-        return ComposePlatform(runtime=ContainerRuntime.DOCKER)
+    def _platform(self, runtime: ContainerRuntime = ContainerRuntime.DOCKER) -> ComposePlatform:
+        return ComposePlatform(runtime=runtime, compose_dir=Path(__file__).parent)
 
-    def test_returns_empty_on_command_failure(self) -> None:
+    def test_returns_empty_on_docker_compose_failure(self) -> None:
         platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(1, "", "error")):
+        with mock.patch("health_check.platform.compose._run_cmd", return_value=(1, "", "error")) as run:
+            result = platform.get_service_statuses()
+        assert result == {}
+        run.assert_called_once()
+
+    def test_returns_empty_on_empty_json_output(self) -> None:
+        platform = self._platform()
+        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "[]", "")):
             result = platform.get_service_statuses()
         assert result == {}
 
-    def test_returns_empty_on_empty_output(self) -> None:
+    def test_docker_compose_json_maps_service_under_arbitrary_project(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("COMPOSE_PROJECT_NAME", "")
         platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "", "")):
-            result = platform.get_service_statuses()
-        assert result == {}
-
-    def test_parses_healthy_container(self) -> None:
-        platform = self._platform()
-        ps_output = "nohiki-infra-postgres Up 2 hours (healthy)\n"
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, ps_output, "")):
-            result = platform.get_service_statuses()
-        assert "postgres" in result
-        assert result["postgres"].status == ServiceStatus.HEALTHY
-        assert result["postgres"].ready is True
-
-    def test_parses_unhealthy_container(self) -> None:
-        platform = self._platform()
-        ps_output = "nohiki-svc-bff Up 1 hour (unhealthy)\n"
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, ps_output, "")):
-            result = platform.get_service_statuses()
-        assert "bff-service" in result
-        assert result["bff-service"].status == ServiceStatus.CRASHED
-
-    def test_project_container_name_reverse_maps_to_canonical_service(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("COMPOSE_PROJECT_NAME", "nohiki-test")
-        platform = self._platform()
-        ps_output = "nohiki-test_nohiki-svc-bff_1 Up 1 hour (healthy)\n"
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, ps_output, "")):
+        output = json.dumps(
+            [
+                {
+                    "Name": "arbitrary-project-nohiki-svc-bff-1",
+                    "Service": "nohiki-svc-bff",
+                    "Labels": "com.docker.compose.oneoff=False,com.docker.compose.service=nohiki-svc-bff",
+                    "State": "running",
+                    "Health": "healthy",
+                    "RunningFor": "7 hours ago",
+                },
+                {
+                    "Name": "arbitrary-project-nohiki-svc-bff-run-deadbeef",
+                    "Service": "nohiki-svc-bff",
+                    "Labels": "com.docker.compose.oneoff=True,com.docker.compose.service=nohiki-svc-bff",
+                    "State": "exited",
+                    "RunningFor": "1 minute ago",
+                },
+            ]
+        )
+        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, output, "")) as run:
             result = platform.get_service_statuses()
         assert set(result) == {"bff-service"}
         assert result["bff-service"].status == ServiceStatus.HEALTHY
+        assert result["bff-service"].uptime_seconds == pytest.approx(7 * 3600.0)
+        assert platform._container_names["bff-service"] == "arbitrary-project-nohiki-svc-bff-1"
+        assert run.call_args.args[0] == [
+            ContainerRuntime.DOCKER.value,
+            "compose",
+            "-f",
+            str(platform._compose_file),
+            "ps",
+            "--all",
+            "--format",
+            "json",
+        ]
 
-    def test_non_nohiki_containers_filtered(self) -> None:
+    async def test_docker_running_for_drives_aged_service_stale_detection(self) -> None:
         platform = self._platform()
-        ps_output = "some-other-container Up 1 hour (healthy)\n"
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, ps_output, "")):
+        output = json.dumps(
+            {
+                "Name": "arbitrary-project-nohiki-svc-bff-1",
+                "Service": "nohiki-svc-bff",
+                "State": "running",
+                "Health": "healthy",
+                "RunningFor": "7 hours ago",
+            }
+        )
+
+        def run_command(
+            command: list[str],
+            *,
+            cwd: Path | None = None,
+            timeout: int = 30,
+        ) -> tuple[int, str, str]:
+            del cwd, timeout
+            if command[4] == "ps":
+                return 0, output, ""
+            if command[1] == "logs":
+                return 0, "heartbeat failed: coordinator unavailable", ""
+            if command[1] == "exec":
+                return 0, "Consumer group has no active members", ""
+            raise AssertionError(command)
+
+        with mock.patch("health_check.platform.compose._run_cmd", side_effect=run_command):
+            result = await StaleServicesCheck().execute(platform)
+        assert result.status == CheckStatus.FAILED
+        assert any("bff-service" in detail for detail in result.details)
+
+    async def test_recent_restart_status_prevents_creation_age_false_stale_detection(self) -> None:
+        platform = self._platform()
+        output = json.dumps(
+            {
+                "Name": "arbitrary-project-nohiki-svc-bff-1",
+                "Service": "nohiki-svc-bff",
+                "State": "running",
+                "Health": "healthy",
+                "Status": "Up 1 hour (healthy)",
+                "RunningFor": "7 hours ago",
+            }
+        )
+        with mock.patch(
+            "health_check.platform.compose._run_cmd",
+            return_value=(0, output, ""),
+        ) as run:
+            result = await StaleServicesCheck().execute(platform)
+        assert result.status == CheckStatus.PASSED
+        run.assert_called_once()
+
+    def test_podman_compose_retries_without_all_and_includes_exited_services(self) -> None:
+        platform = self._platform(ContainerRuntime.PODMAN)
+        output = json.dumps(
+            [
+                {
+                    "Names": ["arbitrary_project_nohiki-svc-bff_1"],
+                    "Labels": {
+                        "com.docker.compose.service": "nohiki-svc-bff",
+                        "io.podman.compose.service": "nohiki-svc-bff",
+                        "com.docker.compose.project": "arbitrary_project",
+                        "io.podman.compose.project": "arbitrary_project",
+                    },
+                    "State": "exited",
+                    "Status": "Exited (1) 5 minutes ago",
+                    "StartedAt": 1_700_000_000,
+                },
+                {
+                    "Names": ["custom-bff-run"],
+                    "Labels": {
+                        "com.docker.compose.service": "nohiki-svc-bff",
+                        "io.podman.compose.service": "nohiki-svc-bff",
+                        "com.docker.compose.project": "arbitrary_project",
+                        "io.podman.compose.project": "arbitrary_project",
+                    },
+                    "Status": "Up 1 minute (healthy)",
+                },
+            ]
+        )
+        with mock.patch(
+            "health_check.platform.compose._run_cmd",
+            side_effect=[(1, "", "unknown option --all"), (0, output, "")],
+        ) as run:
             result = platform.get_service_statuses()
-        assert result == {}
+        assert result["bff-service"].status == ServiceStatus.CRASHED
+        assert platform._container_names["bff-service"] == "arbitrary_project_nohiki-svc-bff_1"
+        assert "--all" in run.call_args_list[0].args[0]
+        assert run.call_args_list[1].args[0] == [
+            ContainerRuntime.PODMAN.value,
+            "compose",
+            "-f",
+            str(platform._compose_file),
+            "ps",
+            "--format",
+            "json",
+        ]
 
-    def test_uptime_propagated(self) -> None:
+    def test_unqualified_service_name_is_fallback_when_service_field_missing(self) -> None:
         platform = self._platform()
-        ps_output = "nohiki-infra-valkey Up 3 hours (healthy)\n"
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, ps_output, "")):
+        output = json.dumps([{"Name": "nohiki-infra-postgres", "Status": "Up 2 hours (healthy)", "State": "running"}])
+        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, output, "")):
             result = platform.get_service_statuses()
-        assert result["redis"].uptime_seconds == pytest.approx(3 * 3600.0)
+        assert result["postgres"].status == ServiceStatus.HEALTHY
+        assert result["postgres"].uptime_seconds == pytest.approx(2 * 3600.0)
 
-    def test_unmapped_nohiki_container_uses_name_as_key(self) -> None:
+    def test_unknown_compose_service_is_retained_by_service_name(self) -> None:
         platform = self._platform()
-        ps_output = "nohiki-infra-unknown-widget Up 1 hour (healthy)\n"
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, ps_output, "")):
+        output = json.dumps(
+            [
+                {
+                    "Name": "project-nohiki-infra-unknown-widget-1",
+                    "Service": "nohiki-infra-unknown-widget",
+                    "Status": "Up 1 hour (healthy)",
+                }
+            ]
+        )
+        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, output, "")):
             result = platform.get_service_statuses()
         assert "nohiki-infra-unknown-widget" in result
+
+    def test_non_nohiki_compose_service_is_filtered(self) -> None:
+        platform = self._platform()
+        output = json.dumps([{"Name": "other", "Service": "other", "Status": "Up 1 hour (healthy)"}])
+        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, output, "")):
+            result = platform.get_service_statuses()
+        assert result == {}
 
 
 class TestComposePlatformKubernetesOnlyChecks:
@@ -305,101 +424,125 @@ class TestComposePlatformKubernetesOnlyChecks:
 
 
 class TestComposePlatformGetLogs:
-    def _platform(self) -> ComposePlatform:
-        return ComposePlatform(runtime=ContainerRuntime.DOCKER)
+    def _platform(self, runtime: ContainerRuntime = ContainerRuntime.DOCKER) -> ComposePlatform:
+        return ComposePlatform(runtime=runtime, compose_dir=Path(__file__).parent)
 
-    def test_returns_stdout_on_success(self) -> None:
+    def test_docker_logs_use_cached_exact_name_for_exited_container(self) -> None:
         platform = self._platform()
+        exact_name = "arbitrary-project-nohiki-infra-postgres-1"
+        output = json.dumps(
+            {
+                "Name": exact_name,
+                "Service": "nohiki-infra-postgres",
+                "State": "exited",
+                "RunningFor": "7 hours ago",
+            }
+        )
         with mock.patch(
             "health_check.platform.compose._run_cmd",
-            return_value=(0, "log line 1\nlog line 2\n", ""),
-        ):
-            logs = platform.get_logs("postgres")
-        assert "log line 1" in logs
+            side_effect=[(0, output, ""), (0, "logs from exited container", "")],
+        ) as run:
+            platform.get_service_statuses()
+            assert platform.get_logs("postgres") == "logs from exited container"
+        assert run.call_args_list[1].args[0] == ["docker", "logs", "--tail", "50", exact_name]
 
-    def test_returns_empty_on_failure(self) -> None:
-        platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(1, "", "not found")):
-            logs = platform.get_logs("missing-service")
-        assert logs == ""
+    def test_podman_logs_use_cached_exact_name(self) -> None:
+        platform = self._platform(ContainerRuntime.PODMAN)
+        exact_name = "arbitrary_project_nohiki-infra-postgres_1"
+        output = json.dumps(
+            {
+                "Names": [exact_name],
+                "Labels": {
+                    "com.docker.compose.service": "nohiki-infra-postgres",
+                    "com.docker.compose.project": "arbitrary_project",
+                },
+                "State": "running",
+                "Status": "Up 2 hours (healthy)",
+            }
+        )
+        with mock.patch(
+            "health_check.platform.compose._run_cmd",
+            side_effect=[(0, output, ""), (0, "logs", "")],
+        ) as run:
+            platform.get_service_statuses()
+            assert platform.get_logs("postgres", lines=20) == "logs"
+        assert run.call_args_list[1].args[0] == ["podman", "logs", "--tail", "20", exact_name]
 
-    def test_default_tail_lines(self) -> None:
+    def test_missing_mapping_fails_closed_without_runtime_command(self) -> None:
         platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "", "")) as m:
-            platform.get_logs("postgres")
-        cmd_args = m.call_args[0][0]
-        assert "50" in cmd_args
+        with mock.patch("health_check.platform.compose._run_cmd") as run:
+            assert platform.get_logs("postgres") == ""
+        run.assert_not_called()
 
 
 class TestComposePlatformExecMethods:
-    def _platform(self) -> ComposePlatform:
-        return ComposePlatform(runtime=ContainerRuntime.DOCKER)
+    def _platform(self, runtime: ContainerRuntime = ContainerRuntime.DOCKER) -> ComposePlatform:
+        return ComposePlatform(runtime=runtime, compose_dir=Path(__file__).parent)
 
-    def test_exec_in_service_calls_docker_exec(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    def test_docker_exec_uses_cached_exact_name(self) -> None:
         platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "output", "")) as m:
-            code, _, __ = platform.exec_in_service("postgres", ["pg_isready"])
-        assert code == 0
-        cmd = m.call_args[0][0]
-        assert "exec" in cmd
-        assert "nohiki-infra-postgres" in cmd
-
-    def test_exec_in_service_uses_compose_project_container(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("COMPOSE_PROJECT_NAME", "nohiki-test")
-        platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "output", "")) as m:
-            platform.exec_in_service("postgres", ["pg_isready"])
-        assert m.call_args[0][0][:3] == [
-            "docker",
-            "exec",
-            "nohiki-test_nohiki-infra-postgres_1",
-        ]
-
-    def test_exec_psql_without_separator(self) -> None:
-        platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "result", "")) as m:
-            code, _, __ = platform.exec_psql("SELECT 1")
-        assert code == 0
-        cmd = m.call_args[0][0]
-        assert "psql" in cmd
-        assert "-F" not in cmd
-
-    def test_exec_psql_with_separator(self) -> None:
-        platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "a|b", "")) as m:
-            platform.exec_psql("SELECT 1", field_separator="|")
-        cmd = m.call_args[0][0]
-        assert "-F" in cmd
-        assert "|" in cmd
-
-    def test_exec_psql_uses_compose_project_container(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("COMPOSE_PROJECT_NAME", "nohiki-test")
-        platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "result", "")) as m:
-            platform.exec_psql("SELECT 1")
-        cmd = m.call_args[0][0]
-        assert cmd[:3] == ["docker", "exec", "nohiki-test_nohiki-infra-postgres_1"]
-
-    def test_exec_kafka_cmd(self) -> None:
-        platform = self._platform()
+        exact_name = "arbitrary-project-nohiki-infra-postgres-1"
+        output = json.dumps(
+            {
+                "Name": exact_name,
+                "Service": "nohiki-infra-postgres",
+                "State": "running",
+                "Health": "healthy",
+            }
+        )
         with mock.patch(
             "health_check.platform.compose._run_cmd",
-            return_value=(0, "topic1\ntopic2\n", ""),
-        ) as m:
-            code, _, __ = platform.exec_kafka_cmd(["kafka-topics", "--list"])
-        assert code == 0
-        cmd = m.call_args[0][0]
-        assert "nohiki-cp-kafka" in cmd
-        assert "kafka-topics" in cmd
+            side_effect=[(0, output, ""), (0, "output", "")],
+        ) as run:
+            platform.get_service_statuses()
+            assert platform.exec_in_service("postgres", ["pg_isready"])[0] == 0
+        assert run.call_args_list[1].args[0] == ["docker", "exec", exact_name, "pg_isready"]
 
-    def test_exec_kafka_cmd_uses_compose_project_container(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("COMPOSE_PROJECT_NAME", "nohiki-test")
+    def test_podman_exec_uses_cached_exact_name(self) -> None:
+        platform = self._platform(ContainerRuntime.PODMAN)
+        exact_name = "arbitrary_project_nohiki-infra-postgres_1"
+        output = json.dumps(
+            {
+                "Names": [exact_name],
+                "Labels": {
+                    "com.docker.compose.service": "nohiki-infra-postgres",
+                    "com.docker.compose.project": "arbitrary_project",
+                },
+                "State": "running",
+                "Status": "Up 2 hours (healthy)",
+            }
+        )
+        with mock.patch(
+            "health_check.platform.compose._run_cmd",
+            side_effect=[(0, output, ""), (0, "output", "")],
+        ) as run:
+            platform.get_service_statuses()
+            platform.exec_in_service("postgres", ["pg_isready"])
+        assert run.call_args_list[1].args[0] == ["podman", "exec", exact_name, "pg_isready"]
+
+    def test_missing_mapping_fails_closed_without_runtime_command(self) -> None:
         platform = self._platform()
-        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "topic\n", "")) as m:
-            platform.exec_kafka_cmd(["kafka-topics", "--list"])
-        cmd = m.call_args[0][0]
-        assert cmd[:3] == ["docker", "exec", "nohiki-test_nohiki-cp-kafka_1"]
+        with mock.patch("health_check.platform.compose._run_cmd") as run:
+            code, _, error = platform.exec_in_service("postgres", ["pg_isready"])
+        assert code == 1
+        assert "not discovered" in error
+        run.assert_not_called()
+
+    def test_exec_psql_uses_cached_container(self) -> None:
+        platform = self._platform()
+        platform._container_names["postgres"] = "exact-postgres"
+        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "a|b", "")) as run:
+            platform.exec_psql("SELECT 1", field_separator="|")
+        command = run.call_args.args[0]
+        assert command[:3] == ["docker", "exec", "exact-postgres"]
+        assert command[command.index("-F") + 1] == "|"
+
+    def test_exec_kafka_cmd_uses_cached_container(self) -> None:
+        platform = self._platform()
+        platform._container_names["kafka"] = "exact-kafka"
+        with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "topic\n", "")) as run:
+            assert platform.exec_kafka_cmd(["kafka-topics", "--list"])[0] == 0
+        assert run.call_args.args[0] == ["docker", "exec", "exact-kafka", "kafka-topics", "--list"]
 
 
 class TestComposePlatformCheckPort:
@@ -451,9 +594,9 @@ class TestComposePlatformCurl:
 
 class TestComposePlatformRestartKafkaConnector:
     def test_uses_exact_scoped_post_and_timeout(self) -> None:
-        from health_check.config.kafka import OUTBOX_CONNECTOR_NAMES
+        from health_check.config.kafka import connector_names_for
 
-        connector = OUTBOX_CONNECTOR_NAMES[0]
+        connector = connector_names_for(PlatformTarget.COMPOSE)[0]
         platform = ComposePlatform(runtime=ContainerRuntime.DOCKER)
         with mock.patch("health_check.platform.compose._run_cmd", return_value=(0, "ok", "")) as run:
             assert platform.restart_kafka_connector(connector, timeout=7) == (

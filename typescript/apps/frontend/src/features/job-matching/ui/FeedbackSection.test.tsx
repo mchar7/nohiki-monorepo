@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ScoreFeedbackType } from '@/shared/api';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { FeedbackSection } from './FeedbackSection.tsx';
 
 interface RenderFeedbackOptions {

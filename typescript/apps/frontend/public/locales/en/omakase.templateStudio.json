@@ -3,7 +3,6 @@
     "apply": "Apply",
     "cancel": "Cancel",
     "hidePanel": "Hide panel",
-    "newTemplate": "New Template",
     "showPanel": "Show panel"
   },
   "editor": {
@@ -23,38 +22,20 @@
     "renderImage": "Render as Image (WebP)",
     "title": "JavaScript Template Warning"
   },
-  "list": {
-    "createFirst": "Create your first template",
-    "description": "Manage your document templates",
-    "empty": "No templates found",
-    "title": "Templates"
-  },
   "metadata": {
     "description": {
       "label": "Description",
       "placeholder": "Describe what this template is for"
     },
     "name": {
-      "label": "Template Name",
-      "placeholder": "Enter template name"
+      "label": "Template Name"
     },
-    "requiresJs": {
-      "charCount": "{{count}}/140 characters (5-140 required)",
-      "label": "Requires JavaScript",
-      "reasonLabel": "JavaScript Reason",
-      "reasonPlaceholder": "Explain why this template needs JavaScript (e.g., 'Needed for page numbering in PDF footer')"
-    },
-    "subtitle": "Configure basic template metadata",
-    "title": "Template Information",
     "version": {
-      "hint": "Use semantic versioning (e.g., 1.0.0)",
-      "label": "Version",
-      "placeholder": "1.0.0"
+      "label": "Version"
     }
   },
   "labels": {
     "column": "Column",
-    "editingLocked": "Editing locked (in preview)",
     "line": "Line"
   },
   "pageSize": {
@@ -92,13 +73,6 @@
     "formFields": "Form Fields",
     "htmlTemplate": "HTML Template",
     "metadata": "Metadata"
-  },
-  "schema": {
-    "noProperties": "No properties defined",
-    "options": "Options:",
-    "properties": "Properties",
-    "structureTitle": "Schema Structure",
-    "viewRawJson": "View Raw JSON Schema"
   },
   "subtitle": "Create and edit document templates with live validation",
   "title": "Template Studio",

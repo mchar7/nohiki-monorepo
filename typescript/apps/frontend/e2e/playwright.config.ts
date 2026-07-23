@@ -24,7 +24,6 @@ export default defineConfig({
   outputDir: E2E_PATHS.results,
 
   fullyParallel: false,
-  workers: 1,
 
   forbidOnly: E2E_CONFIG.isCI,
   retries,

@@ -22,7 +22,6 @@
     "location": "Location",
     "moreSkills": "+{{count}} more",
     "noDescription": "No description available",
-    "salary": "Salary",
     "viewDetails": "View Details",
     "seniority": {
       "intern": "Intern",
@@ -36,11 +35,6 @@
       "vp": "VP",
       "executive": "Executive"
     },
-    "factors": {
-      "strength": "Strength",
-      "concern": "Concern"
-    },
-    "matchScoreLabel": "Fit index: {{score}} / 100",
     "matchToSave": "Match with a profile to save",
     "dismiss": "Not interested"
   },
@@ -62,8 +56,6 @@
     "noListings": "No job listings found",
     "noListingsDescription": "Try adjusting your filters or check back later",
     "noMatchDetail": "Match not found",
-    "noMatches": "No matches yet",
-    "noMatchesDescription": "Create a job target to start receiving matches",
     "noMatchesNoProfile": "Create a job target to start receiving matches",
     "noMatchesNoProfileDescription": "Set up your first job target profile and we'll start surfacing relevant opportunities.",
     "noMatchesPending": "We're analyzing your profiles",
@@ -80,7 +72,6 @@
     "adjustReasonPlaceholder": "Why do you think the score should be different?",
     "adjustTitle": "Adjust Score",
     "description": "Your feedback helps improve our matching algorithm",
-    "feedbackError": "Could not submit feedback: {{reason}}",
     "feedbackErrorFallback": "Failed to submit feedback. Please try again.",
     "feedbackSuccess": "Thank you for your feedback!",
     "good": "Good match",
@@ -166,20 +157,13 @@
       "description": "We analyze your skills, experience, and preferences against job requirements using multi-stage AI scoring to find the best matches for you.",
       "dismiss": "Got it"
     },
-    "reasoning": {
-      "strengths": "Strengths",
-      "concerns": "Areas to Consider",
-      "whyMatched": "Why this matched",
-      "aiAnalysis": "AI Analysis"
-    },
     "bulk": {
       "selected": "{{count}} selected",
       "saveAll": "Save {{count}}",
       "dismissAll": "Dismiss {{count}}",
       "saveSuccess": "Saved {{count}} matches",
       "dismissSuccess": "Dismissed {{count}} matches",
-      "partialError": "Failed to process {{failed}} of {{total}} matches",
-      "selectAll": "Select all"
+      "partialError": "Failed to process {{failed}} of {{total}} matches"
     }
   },
   "tailoredDocument": {
@@ -205,7 +189,6 @@
   },
   "pages": {
     "detail": {
-      "applyExternal": "Apply on Original Site",
       "title": "Job Details",
       "viewOriginal": "View Original Posting"
     },
@@ -225,9 +208,6 @@
       "title": "My Matches"
     }
   },
-  "sort": {
-    "matchScore": "Fit index"
-  },
   "status": {
     "APPLIED": "Applied",
     "DISMISSED": "Dismissed",
@@ -236,11 +216,5 @@
     "PENDING": "Pending",
     "SAVED": "Saved",
     "VIEWED": "Viewed"
-  },
-  "salary": {
-    "perYear": "/yr",
-    "perMonth": "/mo",
-    "perHour": "/hr",
-    "upTo": "Up to {{amount}}"
   }
 }

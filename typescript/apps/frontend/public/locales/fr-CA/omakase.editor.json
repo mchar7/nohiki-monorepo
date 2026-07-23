@@ -17,7 +17,6 @@
       "ariaLabel": "Jeu de données : {{name}}, créé le {{date}}",
       "ariaLabelWithTemplate": "Jeu de données : {{name}}, utilisant le modèle {{template}}, créé le {{date}}",
       "cancel": "Annuler",
-      "cancelEdit": "Annuler la modification",
       "created": "Créé le {{date}}",
       "delete": "Supprimer",
       "downloadPdf": "Télécharger le PDF",
@@ -26,8 +25,7 @@
       "editName": "Modifier le nom du jeu de données",
       "htmlCached": "HTML en cache",
       "rename": "Renommer",
-      "save": "Enregistrer",
-      "saveName": "Enregistrer le nom du jeu de données"
+      "save": "Enregistrer"
     },
     "create": {
       "cancel": "Annuler",
@@ -64,7 +62,6 @@
   "document": {
     "untitled": "Document sans titre"
   },
-  "editingDocument": "Modification du document : {{id}}",
   "errors": {
     "dataMustBeObject": "Les données doivent être un objet valide",
     "datasetNotFound": "Le jeu de données que vous recherchez n'existe pas.",
@@ -77,7 +74,6 @@
     "schemaFetchFailed": "Échec de la récupération du schéma",
     "schemaProcessingError": "Erreur de traitement du schéma",
     "schemaProcessingErrorDescription": "Impossible de traiter le schéma du modèle. Le format du schéma n'est pas pris en charge ou contient des erreurs.",
-    "schemaValidationFailed": "Échec de la validation du schéma : {{error}}",
     "templateNotFound": "Modèle introuvable",
     "unknownError": "Erreur inconnue",
     "validationFailed": "Échec de la validation : {{error}}"
@@ -103,8 +99,6 @@
   },
   "form": {
     "autoSaved": "Enregistré automatiquement",
-    "description": "Remplissez les champs ci-dessous pour générer votre document.",
-    "placeholder": "Les champs du formulaire seront affichés ici en fonction du schéma du modèle",
     "saving": "Enregistrement...",
     "title": "Données du document"
   },
@@ -142,9 +136,6 @@
       "description": "Vous avez des modifications non enregistrées. Êtes-vous sûr de vouloir changer de jeu de données ? Vos modifications seront perdues.",
       "title": "Modifications non enregistrées"
     }
-  },
-  "labels": {
-    "version": "Version {{version}}"
   },
   "sidebar": {
     "newDocument": "Nouveau document"

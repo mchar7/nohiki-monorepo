@@ -37,8 +37,8 @@ vi.mock('react-i18next', async (importOriginal) => {
     ...actual,
     useTranslation: () => ({
       t: (key: string, options?: string | Record<string, unknown>) => {
-        if (typeof options === 'string') {
-          return options;
+        if (typeof options === 'object' && typeof options.provider === 'string') {
+          return `${key}:${options.provider}`;
         }
         return key;
       },
@@ -214,12 +214,6 @@ describe('OAuthCallbackPage error display', () => {
 
     expect(mockNavigate).toHaveBeenCalledWith({ to: '/auth', replace: true });
   });
-
-  test('shows provider in error description when provider is present', () => {
-    setupMocks({ error: 'access_denied', provider: 'github' });
-    render(<OAuthCallbackPage />);
-    expect(document.querySelector('button')).toBeTruthy();
-  });
 });
 
 describe('OAuthCallbackPage error codes', () => {
@@ -227,33 +221,47 @@ describe('OAuthCallbackPage error codes', () => {
     setupErrorStateMocks();
   });
 
-  test('handles state_mismatch error code', () => {
-    setupMocks({ error: 'state_mismatch', provider: 'google' });
+  test.each([
+    {
+      errorCode: 'access_denied',
+      expectedMessage: 'oauth.errors.accessDenied',
+      provider: 'github',
+    },
+    {
+      errorCode: 'state_mismatch',
+      expectedMessage: 'oauth.errors.stateMismatch',
+      provider: 'google',
+    },
+    {
+      errorCode: 'code_exchange_failed',
+      expectedMessage: 'oauth.errors.codeExchangeFailed',
+      provider: 'github',
+    },
+    {
+      errorCode: 'profile_fetch_failed',
+      expectedMessage: 'oauth.errors.profileFetchFailed',
+      provider: 'google',
+    },
+    {
+      errorCode: 'account_disabled',
+      expectedMessage: 'oauth.errors.accountDisabled',
+      provider: 'github',
+    },
+    {
+      errorCode: 'unknown_error_type',
+      expectedMessage: 'oauth.errors.serverError',
+      provider: 'google',
+    },
+  ])('maps $errorCode to $expectedMessage and identifies $provider', ({
+    errorCode,
+    expectedMessage,
+    provider,
+  }) => {
+    setupMocks({ error: errorCode, provider });
     render(<OAuthCallbackPage />);
-    expect(document.querySelector('button')).toBeTruthy();
-  });
 
-  test('handles code_exchange_failed error code', () => {
-    setupMocks({ error: 'code_exchange_failed' });
-    render(<OAuthCallbackPage />);
-    expect(document.querySelector('button')).toBeTruthy();
-  });
-
-  test('handles profile_fetch_failed error code', () => {
-    setupMocks({ error: 'profile_fetch_failed' });
-    render(<OAuthCallbackPage />);
-    expect(document.querySelector('button')).toBeTruthy();
-  });
-
-  test('handles account_disabled error code', () => {
-    setupMocks({ error: 'account_disabled' });
-    render(<OAuthCallbackPage />);
-    expect(document.querySelector('button')).toBeTruthy();
-  });
-
-  test('handles unknown error codes with generic message', () => {
-    setupMocks({ error: 'unknown_error_type' });
-    render(<OAuthCallbackPage />);
-    expect(document.querySelector('button')).toBeTruthy();
+    expect(screen.getByText(expectedMessage)).toBeInTheDocument();
+    expect(screen.getByText(`oauth.callback.errorDescription:${provider}`)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'oauth.callback.tryAgain' })).toBeInTheDocument();
   });
 });

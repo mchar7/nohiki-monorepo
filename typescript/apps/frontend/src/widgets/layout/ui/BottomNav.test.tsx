@@ -2,8 +2,9 @@ import { render } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, vi } from 'vitest';
 import { axe } from 'vitest-axe';
+import '@/test/axe-setup.ts';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { BottomNav } from './BottomNav.tsx';
 
 vi.mock('@/shared/ui/sidebar.tsx', () => ({

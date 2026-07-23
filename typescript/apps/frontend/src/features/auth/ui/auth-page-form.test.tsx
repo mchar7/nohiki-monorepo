@@ -5,7 +5,7 @@ import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
 
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import authEn from '../../../../public/locales/en/auth.json';
 import authFr from '../../../../public/locales/fr-CA/auth.json';
 import { AuthPage, createAuthSchema } from './auth-page.tsx';

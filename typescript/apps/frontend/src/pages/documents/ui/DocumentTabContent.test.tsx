@@ -3,7 +3,7 @@ import { I18nextProvider } from 'react-i18next';
 import { describe, expect, vi } from 'vitest';
 import type { AttachmentResponse, DocumentStatusResponse } from '@/shared/api';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { EmptyState } from './DocumentEmptyState.tsx';
 import { AllTabContent, GeneratedTabContent, UploadedTabContent } from './DocumentTabContent.tsx';
 import type { QueryResult } from './DocumentTabContentModel.ts';

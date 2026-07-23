@@ -162,6 +162,8 @@ def _validate_reasoning_quality(
     return errors
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.llm_cost
 @pytest.mark.asyncio
 class TestCompensationExtraction:

@@ -1,7 +1,11 @@
-"""Typer CLI for Phoenix LLM tracing integration testing.
+"""Hermetic Phoenix workflow tests plus an explicit external smoke CLI.
 
-Tests real LLM calls with OpenAI and OpenRouter, verifies Phoenix trace collection,
-and validates fallback behavior when API keys are invalid.
+Pytest uses mocked LLM clients and ``httpx.MockTransport``. It never reads API
+keys or contacts Phoenix. Run the external smoke explicitly from the repository
+root with:
+
+    uv run --package nohiki-llm-client \
+        python backend/libs/nohiki-llm-client/tests/integration/test_phoenix_integration.py run
 """
 
 from __future__ import annotations
@@ -11,8 +15,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Final
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import pytest
 import typer
 from nohiki_llm_client import LLMModelConfig, LLMProviderSettings, LLMSettings
 from nohiki_llm_client.client import LLMClient, StructuredAgentConfig
@@ -139,18 +145,55 @@ async def _make_llm_request(
         )
 
 
-def _query_phoenix_projects() -> dict:
+def _query_phoenix_projects(client: httpx.Client | None = None) -> dict:
     """Query Phoenix for project information."""
+    owns_client = client is None
+    query_client = client or httpx.Client()
     try:
-        response = httpx.post(
+        response = query_client.post(
             PHOENIX_GRAPHQL_URL,
             json={"query": "{ projects { edges { node { name id traceCount } } } }"},
             timeout=10.0,
         )
+        response.raise_for_status()
         return response.json()
-    except Exception as e:
-        console.print(f"[yellow]Warning: Could not query Phoenix: {e}[/yellow]")
+    except Exception as error:
+        console.print(f"[yellow]Warning: Could not query Phoenix: {error}[/yellow]")
         return {}
+    finally:
+        if owns_client:
+            query_client.close()
+
+
+def _phoenix_has_exported_traces(project_data: dict) -> bool:
+    """Return whether the configured smoke project has at least one trace."""
+    edges = project_data.get("data", {}).get("projects", {}).get("edges", [])
+    return any(
+        edge.get("node", {}).get("name") == PHOENIX_PROJECT and edge.get("node", {}).get("traceCount", 0) > 0
+        for edge in edges
+    )
+
+
+async def _wait_for_phoenix_traces(
+    *,
+    client: httpx.Client | None = None,
+    timeout_seconds: float = 30.0,
+    poll_interval_seconds: float = 0.25,
+) -> dict:
+    """Poll Phoenix until exported traces are observable."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+
+    while True:
+        project_data = _query_phoenix_projects(client)
+        if _phoenix_has_exported_traces(project_data):
+            return project_data
+
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            msg = f"Phoenix did not expose traces for {PHOENIX_PROJECT}"
+            raise TimeoutError(msg)
+        await asyncio.sleep(min(poll_interval_seconds, remaining))
 
 
 def _display_results(results: list[LLMTestResult]) -> None:
@@ -214,7 +257,7 @@ def _display_phoenix_stats(project_data: dict) -> None:
     console.print(table)
 
 
-def _run_llm_tests(
+async def _run_llm_tests(
     openai_model: str,
     openrouter_model: str,
     openai_key: str,
@@ -226,13 +269,11 @@ def _run_llm_tests(
 
     with console.status("[bold green]Testing OpenAI...", spinner="dots"):
         openai_client = _create_llm_client("openai", openai_model, openai_key, instrumentation)
-        result = asyncio.run(
-            _make_llm_request(
-                openai_client,
-                "openai",
-                openai_model,
-                "What is 2+2? Answer in one word.",
-            )
+        result = await _make_llm_request(
+            openai_client,
+            "openai",
+            openai_model,
+            "What is 2+2? Answer in one word.",
         )
         results.append(result)
         status = "[green]✓[/green]" if result.success else "[red]✗[/red]"
@@ -240,13 +281,11 @@ def _run_llm_tests(
 
     with console.status("[bold green]Testing OpenRouter...", spinner="dots"):
         openrouter_client = _create_llm_client("openrouter", openrouter_model, openrouter_key, instrumentation)
-        result = asyncio.run(
-            _make_llm_request(
-                openrouter_client,
-                "openrouter",
-                openrouter_model,
-                "What is 3+3? Answer in one word.",
-            )
+        result = await _make_llm_request(
+            openrouter_client,
+            "openrouter",
+            openrouter_model,
+            "What is 3+3? Answer in one word.",
         )
         results.append(result)
         status = "[green]✓[/green]" if result.success else "[red]✗[/red]"
@@ -255,7 +294,7 @@ def _run_llm_tests(
     return results
 
 
-def _test_fallback(
+async def _test_fallback(
     openrouter_model: str,
     openai_key: str,
     instrumentation: LLMInstrumentationSettings,
@@ -295,7 +334,7 @@ def _test_fallback(
                 )
             )
 
-            result_obj = asyncio.run(client.run(agent, "What is 5+5?", deps=None))
+            result_obj = await client.run(agent, "What is 5+5?", deps=None)
             result = LLMTestResult(
                 provider="openrouter→openai",
                 model=f"{openrouter_model}→gpt-4o-mini",
@@ -329,6 +368,23 @@ def _test_fallback(
                 )
                 console.print(f"[red]✗[/red] Fallback failed: {error_msg[:60]}")
             results.append(result)
+
+
+async def _run_external_smoke(
+    openai_model: str,
+    openrouter_model: str,
+    openai_key: str,
+    openrouter_key: str,
+    instrumentation: LLMInstrumentationSettings,
+    *,
+    test_fallback: bool,
+) -> tuple[list[LLMTestResult], dict]:
+    """Run paid requests and wait for their Phoenix traces."""
+    results = await _run_llm_tests(openai_model, openrouter_model, openai_key, openrouter_key, instrumentation)
+    if test_fallback:
+        await _test_fallback(openrouter_model, openai_key, instrumentation, results)
+    project_data = await _wait_for_phoenix_traces()
+    return results, project_data
 
 
 @app.command()
@@ -368,22 +424,23 @@ def run(
     console.print("[bold]Running LLM tests...[/bold]")
     console.print()
 
-    results = _run_llm_tests(openai_model, openrouter_model, openai_key, openrouter_key, instrumentation)
-
-    if test_fallback:
-        _test_fallback(openrouter_model, openai_key, instrumentation, results)
-
-    console.print()
-    with console.status("[bold blue]Waiting for traces to export...", spinner="dots"):
-        time.sleep(3)
+    with asyncio.Runner() as runner:
+        results, project_data = runner.run(
+            _run_external_smoke(
+                openai_model,
+                openrouter_model,
+                openai_key,
+                openrouter_key,
+                instrumentation,
+                test_fallback=test_fallback,
+            )
+        )
 
     console.print("[green]✓[/green] Traces exported")
     console.print()
 
     _display_results(results)
     console.print()
-
-    project_data = _query_phoenix_projects()
     _display_phoenix_stats(project_data)
     console.print()
 
@@ -443,6 +500,114 @@ def check() -> None:
         console.print("[green]✓[/green] OpenRouter API key file found")
 
     console.print()
+
+
+@pytest.mark.asyncio
+async def test_llm_workflow_uses_mocked_clients(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preserve both provider request contracts without provider traffic."""
+    clients: dict[str, MagicMock] = {}
+
+    def create_client(
+        provider: str,
+        model: str,
+        api_key: str,
+        instrumentation: LLMInstrumentationSettings,
+    ) -> MagicMock:
+        del model, api_key, instrumentation
+        client = MagicMock(spec=LLMClient)
+        client.run = AsyncMock(
+            return_value=MagicMock(output=SimpleResponse(answer="4" if provider == "openai" else "6"))
+        )
+        clients[provider] = client
+        return client
+
+    monkeypatch.setattr(__name__ + "._create_llm_client", create_client)
+
+    results = await _run_llm_tests("openai-model", "router-model", "openai-key", "router-key", MagicMock())
+
+    assert [(result.provider, result.response, result.success) for result in results] == [
+        ("openai", "4", True),
+        ("openrouter", "6", True),
+    ]
+    clients["openai"].run.assert_awaited_once()
+    clients["openrouter"].run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_llm_request_reports_transport_failure() -> None:
+    """Keep provider failures observable in the workflow report."""
+    client = MagicMock(spec=LLMClient)
+    client.run = AsyncMock(side_effect=httpx.ConnectError("mock transport unavailable"))
+
+    result = await _make_llm_request(client, "openai", "mock-model", "prompt")
+
+    assert result.success is False
+    assert result.response is None
+    assert result.error == "mock transport unavailable"
+
+
+@pytest.mark.asyncio
+async def test_fallback_contract_uses_mocked_llm_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preserve invalid-primary fallback success without paid calls."""
+    client = MagicMock(spec=LLMClient)
+    client.run = AsyncMock(return_value=MagicMock(output=SimpleResponse(answer="10")))
+    monkeypatch.setattr(__name__ + ".LLMClient", MagicMock(return_value=client))
+    results: list[LLMTestResult] = []
+
+    await _test_fallback("router-model", "openai-key", _build_instrumentation(), results)
+
+    assert len(results) == 1
+    assert results[0].success is True
+    assert results[0].provider == "openrouter→openai"
+    assert results[0].response == "10"
+    client.run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_phoenix_transport_is_polled_until_trace_export() -> None:
+    """Preserve Phoenix trace verification with deterministic readiness polling."""
+    request_count = 0
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        assert request.url == PHOENIX_GRAPHQL_URL
+        payload = request.read().decode()
+        assert "traceCount" in payload
+        request_count += 1
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "projects": {
+                        "edges": [
+                            {
+                                "node": {
+                                    "name": PHOENIX_PROJECT,
+                                    "id": "project-id",
+                                    "traceCount": int(request_count > 1),
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handle_request)) as client:
+        project_data = await _wait_for_phoenix_traces(client=client, poll_interval_seconds=0)
+
+    assert request_count == 2
+    assert _phoenix_has_exported_traces(project_data)
+
+
+def test_phoenix_transport_failure_returns_empty_report() -> None:
+    """Keep Phoenix transport failures non-fatal and visible as no data."""
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(handle_request)) as client:
+        assert _query_phoenix_projects(client) == {}
 
 
 if __name__ == "__main__":

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
+
 import pytest
 from nohiki_s3_client import S3Client, S3Settings, _s3_client_cache, get_s3_client
 from pydantic import SecretStr
@@ -60,3 +64,55 @@ class TestGetS3Client:
         client1 = get_s3_client(settings1)
         client2 = get_s3_client(settings2)
         assert client1 is not client2
+
+
+@pytest.mark.parametrize("provider", ["s3", "azure_blob"])
+def test_provider_sdks_load_only_for_the_selected_backend(provider: str) -> None:
+    """Load only the configured provider SDK when object storage is first used."""
+    script = textwrap.dedent(
+        f"""
+        import asyncio
+        import sys
+        from types import SimpleNamespace
+
+        import nohiki_s3_client
+
+        assert "nohiki_s3_client.client" not in sys.modules
+        assert "nohiki_s3_client.health" not in sys.modules
+        assert "nohiki_s3_client.metrics" not in sys.modules
+        assert not any(name.startswith("azure") for name in sys.modules)
+        assert not any(name.startswith(("aiobotocore", "botocore")) for name in sys.modules)
+
+        client_type = nohiki_s3_client.S3Client
+        settings = SimpleNamespace(
+            provider={provider!r},
+            endpoint="https://account.blob.core.windows.net",
+            public_url="",
+            access_key=None,
+            secret_key=None,
+            bucket="bucket",
+        )
+        client = client_type(settings)
+        assert not any(name.startswith("azure") for name in sys.modules)
+        assert not any(name.startswith(("aiobotocore", "botocore")) for name in sys.modules)
+
+        if {provider!r} == "azure_blob":
+            try:
+                asyncio.run(client.object_exists(""))
+            except ValueError:
+                pass
+            assert any(name.startswith("azure") for name in sys.modules)
+            assert not any(name.startswith(("aiobotocore", "botocore")) for name in sys.modules)
+        else:
+            _ = client._backend
+            assert any(name.startswith("aiobotocore") for name in sys.modules)
+            assert not any(name.startswith("azure") for name in sys.modules)
+
+        assert "nohiki_s3_client.health" not in sys.modules
+        assert "nohiki_s3_client.metrics" not in sys.modules
+        """
+    )
+
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr

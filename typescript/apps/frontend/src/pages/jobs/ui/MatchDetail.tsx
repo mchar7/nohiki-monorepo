@@ -17,7 +17,7 @@ import { ROUTE_PATHS } from '@/shared/config/index.ts';
 import { useDocumentTitle } from '@/shared/lib/index.ts';
 import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert.tsx';
 import { Button } from '@/shared/ui/button.tsx';
-import { PageHeader } from '@/shared/ui/index.ts';
+import { PageHeader } from '@/shared/ui/PageHeader.tsx';
 import { Skeleton } from '@/shared/ui/skeleton.tsx';
 import { PageLayout } from '@/widgets/layout/index.ts';
 import { TailoredDocumentAction } from './TailoredDocumentAction.tsx';

@@ -9,6 +9,8 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 
+pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
+
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
 
 

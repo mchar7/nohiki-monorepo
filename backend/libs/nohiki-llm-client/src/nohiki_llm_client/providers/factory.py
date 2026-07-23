@@ -12,50 +12,36 @@ Features:
 - Concurrency limiting support
 """
 
+# Heavy provider dependencies load only when their path is selected.
+# ruff: noqa: PLC0415
+from __future__ import annotations
+
 import asyncio
 import os
 import threading
 from dataclasses import dataclass
-from typing import assert_never
+from typing import TYPE_CHECKING, assert_never
 
 import httpx
-from anthropic import AsyncAnthropic, AsyncAnthropicVertex
-from anthropic.types.beta import (
-    BetaThinkingConfigAdaptiveParam,
-    BetaThinkingConfigEnabledParam,
-)
-from google.genai.types import ThinkingConfigDict, ThinkingLevel
 from httpx import AsyncClient, HTTPStatusError
-from openai import AsyncOpenAI
-from pydantic_ai.models import Model
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-from pydantic_ai.models.openai import (
-    OpenAIChatModel,
-    OpenAIChatModelSettings,
-    OpenAIResponsesModel,
-)
-from pydantic_ai.models.openrouter import (
-    OpenRouterModelSettings,
-    OpenRouterReasoning,
-    OpenRouterUsageConfig,
-)
-from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.anthropic import (
-    ANTHROPIC_THINKING_BUDGET_MAP,
-    anthropic_model_profile,
-)
-from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai.providers.google_cloud import GoogleCloudProvider
-from pydantic_ai.providers.ollama import OllamaProvider
-from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.providers.openrouter import OpenRouterProvider
-from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
-from pydantic_ai.settings import ModelSettings
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
+
+if TYPE_CHECKING:
+    from google.genai.types import ThinkingConfigDict
+    from openai import AsyncOpenAI
+    from pydantic_ai.models import Model
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openrouter import (
+        OpenRouterModelSettings,
+        OpenRouterReasoning,
+    )
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    from nohiki_llm_client.providers.caching import CachingOpenRouterModel
+    from nohiki_llm_client.providers.openrouter import RobustOpenRouterModel
 
 from nohiki_llm_client.client.concurrency import apply_concurrency_limit
 from nohiki_llm_client.config.constants import (
@@ -80,13 +66,6 @@ from nohiki_llm_client.config.settings import (
     LLMProviderSettings,
     LLMSettings,
     OllamaSettings,
-)
-from nohiki_llm_client.providers.caching import CachingConfig, CachingOpenRouterModel
-from nohiki_llm_client.providers.llamacpp import LlamaCppProvider
-from nohiki_llm_client.providers.openrouter import RobustOpenRouterModel
-from nohiki_llm_client.providers.profiles import (
-    OLLAMA_PROFILE,
-    select_openrouter_quirks,
 )
 from nohiki_llm_client.transport import (
     LLAMACPP_API_KEY_PLACEHOLDER,
@@ -277,6 +256,8 @@ def create_full_model_chain(
         )
 
         if len(provider_settings.models) > 1:
+            from pydantic_ai.models.fallback import FallbackModel
+
             rest = [
                 create_model(
                     config,
@@ -342,6 +323,8 @@ def create_caching_openrouter(
     transport_clients: list[AsyncClient],
 ) -> CachingOpenRouterModel:
     """Create an OpenRouter model with prompt caching and owned transport."""
+    from nohiki_llm_client.providers.caching import CachingConfig, CachingOpenRouterModel
+
     ctx = _prepare_openrouter_context(
         config,
         provider_settings,
@@ -358,6 +341,7 @@ def create_caching_openrouter(
 
 def _create_retrying_http_client(tls_ca_file: str | None = None) -> AsyncClient:
     """Create a retrying client using fresh system trust plus a model CA."""
+    from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
     def _is_retryable(response: httpx.Response) -> None:
         if response.status_code in HTTP_RETRYABLE_STATUS_CODES:
@@ -429,6 +413,8 @@ def _resolve_effective_profile(
         Merged ``ModelProfile`` with provider defaults and quirk overrides,
         or ``None`` to use provider's dynamic callable resolution.
     """
+    from pydantic_ai.profiles import ModelProfile
+
     if quirk_profile is None:
         return None
     base = provider.model_profile(model_name)
@@ -460,6 +446,11 @@ def _prepare_openrouter_context(
     Returns:
         Prepared context ready for model instantiation.
     """
+    from openai import AsyncOpenAI
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    from nohiki_llm_client.providers.profiles import select_openrouter_quirks
+
     api_key = _resolve_api_key(config, provider_settings)
     attribution_headers = _openrouter_attribution_headers(config)
     openai_client = AsyncOpenAI(
@@ -529,6 +520,8 @@ def _create_openrouter(
     http_client: AsyncClient,
 ) -> RobustOpenRouterModel:
     """Create OpenRouter model with reasoning, usage tracking, and HTTP retry."""
+    from nohiki_llm_client.providers.openrouter import RobustOpenRouterModel
+
     ctx = _prepare_openrouter_context(config, provider_settings, http_client)
     return RobustOpenRouterModel(
         config.model_name,
@@ -556,6 +549,11 @@ def _build_openrouter_settings(
     Returns:
         Fully configured ``OpenRouterModelSettings``.
     """
+    from pydantic_ai.models.openrouter import (
+        OpenRouterModelSettings,
+        OpenRouterUsageConfig,
+    )
+
     settings = OpenRouterModelSettings(
         temperature=provider_settings.temperature,
         timeout=provider_settings.timeout_seconds,
@@ -581,6 +579,8 @@ def _build_openrouter_reasoning(
     Returns:
         ``OpenRouterReasoning`` dict for non-disabled efforts, ``None`` otherwise.
     """
+    from pydantic_ai.models.openrouter import OpenRouterReasoning
+
     match effort:
         case "disabled":
             return None
@@ -605,7 +605,20 @@ def _create_openai(
 
     Supports custom ``base_url`` for OpenAI-compatible APIs (llama.cpp, vLLM, etc.).
     """
+    from openai import AsyncOpenAI
+    from pydantic_ai.models.openai import (
+        OpenAIChatModelSettings,
+        OpenAIResponsesModel,
+    )
+    from pydantic_ai.profiles.openai import openai_model_profile
+    from pydantic_ai.providers.openai import OpenAIProvider
+
     fixed_reasoning = uses_fixed_openai_reasoning(config.model_name)
+    profile = openai_model_profile(config.model_name)
+    reasoning_enabled = fixed_reasoning or (
+        profile.get("openai_reasoning_enabled_by_default", False)
+        and not (config.reasoning_effort == "disabled" and profile.get("openai_supports_reasoning_effort_none", False))
+    )
     if fixed_reasoning and config.reasoning_effort != "medium":
         message = f"OpenAI model '{config.model_name}' requires reasoning effort 'medium'"
         raise ValueError(message)
@@ -621,15 +634,13 @@ def _create_openai(
     _seal_openai_routing_headers(openai_client)
     provider = OpenAIProvider(openai_client=openai_client)
 
-    settings = OpenAIChatModelSettings(
-        temperature=provider_settings.temperature,
-        timeout=provider_settings.timeout_seconds,
-    )
+    settings = OpenAIChatModelSettings(timeout=provider_settings.timeout_seconds)
+    if not reasoning_enabled:
+        settings["temperature"] = provider_settings.temperature
     if provider_settings.max_tokens is not None:
         settings["max_tokens"] = provider_settings.max_tokens
 
     if not fixed_reasoning:
-        profile = openai_model_profile(config.model_name)
         if config.reasoning_effort == "disabled":
             if profile.get("openai_supports_reasoning_effort_none", False):
                 settings["openai_reasoning_effort"] = "none"
@@ -653,6 +664,12 @@ def _create_ollama(
     ``extra_body.options``. The ``think`` parameter is a TOP-LEVEL request
     parameter per Ollama's API specification.
     """
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.ollama import OllamaProvider
+    from pydantic_ai.settings import ModelSettings
+
+    from nohiki_llm_client.providers.profiles import OLLAMA_PROFILE
+
     provider = OllamaProvider(
         base_url=config.base_url,
         api_key=resolve_local_api_key(
@@ -692,6 +709,11 @@ def _create_llamacpp(
     returns reasoning in the ``reasoning_content`` message field. The provider
     profile configures PydanticAI to parse this into ``ThinkingPart`` objects.
     """
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.settings import ModelSettings
+
+    from nohiki_llm_client.providers.llamacpp import LlamaCppProvider
+
     base_url = config.base_url
     if base_url is None or not base_url.strip():
         msg = "llamacpp provider requires base_url to be nonempty"
@@ -737,6 +759,15 @@ def _apply_anthropic_reasoning(
     effort: ReasoningEffort,
 ) -> bool:
     """Apply source-profiled Anthropic thinking and return whether it is active."""
+    from anthropic.types.beta import (
+        BetaThinkingConfigAdaptiveParam,
+        BetaThinkingConfigEnabledParam,
+    )
+    from pydantic_ai.profiles.anthropic import (
+        ANTHROPIC_THINKING_BUDGET_MAP,
+        anthropic_model_profile,
+    )
+
     if effort == "disabled":
         return False
     profile = anthropic_model_profile(model_name)
@@ -811,6 +842,11 @@ def _create_anthropic(
     Returns:
         Configured ``AnthropicModel`` with retrying HTTP transport.
     """
+    from anthropic import AsyncAnthropic
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
     api_key = _resolve_api_key(config, provider_settings)
     anthropic_client = AsyncAnthropic(
         api_key=api_key,
@@ -856,6 +892,9 @@ def _build_google_thinking_config(
     effort: ReasoningEffort,
 ) -> ThinkingConfigDict | None:
     """Translate configured effort using the installed Google model profile."""
+    from google.genai.types import ThinkingConfigDict, ThinkingLevel
+    from pydantic_ai.profiles.google import google_model_profile
+
     profile = google_model_profile(model_name)
     if profile is None or not profile.get("supports_thinking", False):
         return None
@@ -902,6 +941,9 @@ def _create_google_vertex(
     Returns:
         Configured ``GoogleModel`` or ``AnthropicModel`` targeting Vertex AI.
     """
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
     if config.model_name.startswith("claude"):
         return _create_vertex_anthropic(config, provider_settings, http_client)
 
@@ -974,6 +1016,10 @@ def _create_vertex_anthropic(
     Returns:
         Configured ``AnthropicModel`` backed by ``AsyncAnthropicVertex``.
     """
+    from anthropic import AsyncAnthropicVertex
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
     project = config.google_project
     region = config.google_location
     if project is None or region is None:

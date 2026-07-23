@@ -2,7 +2,7 @@
 
 This module consolidates all profile service tests following SOLID principles:
 - Single Responsibility: Each test class focuses on one aspect of the service
-- DRY: Uses shared fixtures from conftest.py
+- DRY: Uses shared factories from ``_helpers.py``
 - Organized: Test classes group related functionality
 """
 
@@ -15,7 +15,7 @@ import pytest
 from nohiki.common.v1 import CurrencyCode, PaymentFrequency, SeniorityLevel, WorkArrangement
 from nohiki_db_utils.testing import create_mock_session
 
-from tests.unit.conftest import (
+from .._helpers import (
     make_command_status_projection,
     make_profile_projection,
     make_scalar_all,

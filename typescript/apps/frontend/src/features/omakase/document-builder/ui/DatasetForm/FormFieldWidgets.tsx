@@ -1,14 +1,14 @@
+import { Checkbox } from '@shared/ui/checkbox.tsx';
+import { Input } from '@shared/ui/input.tsx';
+import { Label } from '@shared/ui/label.tsx';
 import {
-  Checkbox,
-  Input,
-  Label,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Textarea,
-} from '@shared/ui/index.ts';
+} from '@shared/ui/select.tsx';
+import { Textarea } from '@shared/ui/textarea.tsx';
 import type { JSX } from 'react';
 import type { UseFormRegisterReturn } from 'react-hook-form';
 import type { AriaAttributes, CommonFormProps } from './FormFieldWidgetModel.ts';

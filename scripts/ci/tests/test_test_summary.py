@@ -23,6 +23,8 @@ from ci_checks.checks.tests import (
 from ci_checks.core.packages import Package, PackageType
 from rich.console import Console
 
+pytest_plugins = ("pytester",)
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CHECKS_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "checks.yml"
 
@@ -48,6 +50,45 @@ def _package(tmp_path: Path, name: str = "example") -> Package:
     path = tmp_path / name
     (path / "tests").mkdir(parents=True)
     return Package(name=name, path=path, pkg_type=PackageType.OTHER)
+
+
+def test_marker_expressions_keep_slow_tests_out_of_unit_lane(pytester: pytest.Pytester) -> None:
+    assert test_checks._UNIT_TEST_MARKERS == "not integration and not e2e and not requires_docker and not slow"
+    assert test_checks._build_markers(integration=False) == test_checks._UNIT_TEST_MARKERS
+    assert test_checks._build_markers(integration=True) == "integration"
+
+    pytester.makeini(
+        """
+        [pytest]
+        asyncio_default_fixture_loop_scope = function
+        markers =
+            integration: integration test
+            slow: slow test
+        """
+    )
+    pytester.makepyfile(
+        """
+        import pytest
+
+        def test_unit():
+            pass
+
+        @pytest.mark.slow
+        def test_slow_only():
+            pass
+
+        @pytest.mark.integration
+        @pytest.mark.slow
+        def test_slow_integration():
+            pass
+        """
+    )
+
+    unit_result = pytester.runpytest("-q", "-m", test_checks._build_markers(integration=False))
+    unit_result.assert_outcomes(passed=1, deselected=2)
+
+    integration_result = pytester.runpytest("-q", "-m", test_checks._build_markers(integration=True))
+    integration_result.assert_outcomes(passed=1, deselected=2)
 
 
 def test_summary_honors_exempt_package_coverage_policy() -> None:
@@ -133,7 +174,23 @@ async def test_parallel_runner_syncs_frozen_workspace_once_before_tests(
         with_coverage=False,
     )
 
-    assert sync_commands == [["uv", "sync", "--all-packages", "--frozen"]]
+    assert sync_commands == [
+        [
+            "scripts/dev/env-lock.sh",
+            "exclusive",
+            "venv",
+            "--",
+            "uv",
+            "sync",
+            "--all-packages",
+            "--all-extras",
+            "--no-extra",
+            "cuda",
+            "--group",
+            "deadcode",
+            "--frozen",
+        ]
+    ]
     assert events[0] == "sync"
     assert set(events[1:]) == {"pytest:first", "pytest:second"}
     assert package_args == [("-n", "4"), ("-n", "4")]

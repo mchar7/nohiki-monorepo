@@ -22,6 +22,8 @@ from sqlalchemy import select
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+pytestmark = pytest.mark.requires_docker
+
 
 def _create_profile_snapshot(
     *,

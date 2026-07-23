@@ -12,17 +12,11 @@ import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { JobCorrelationResponse } from '@/shared/api';
-import {
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Progress,
-  Skeleton,
-} from '@/shared/ui/index.ts';
+import { Badge } from '@/shared/ui/badge.tsx';
+import { Button } from '@/shared/ui/button.tsx';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card.tsx';
+import { Progress } from '@/shared/ui/progress.tsx';
+import { Skeleton } from '@/shared/ui/skeleton.tsx';
 import {
   formatRelativeTime,
   getProgressClassName,

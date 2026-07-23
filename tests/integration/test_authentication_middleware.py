@@ -1,18 +1,12 @@
-"""Integration tests for shared authentication middleware across services."""
+"""Unit tests for shared JWT authentication helpers."""
 
-import asyncio
 import uuid
-from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING
 
 import jwt
 import pytest
 from nohiki_test_utils import create_jwt, create_user_jwt
 
-from tests.conftest import TEST_JWT_SECRET, TEST_USER_ID, TestJWTHandler
-
-if TYPE_CHECKING:
-    from httpx import AsyncClient
+from tests._helpers import TEST_JWT_SECRET, TEST_USER_ID, TestJWTHandler
 
 
 def _create_user_token(
@@ -38,25 +32,13 @@ def _create_internal_token(service: str) -> str:
 
 
 @pytest.fixture
-async def authenticated_client(
-    http_client: AsyncClient,
-    jwt_handler: TestJWTHandler,
-) -> AsyncGenerator[tuple[AsyncClient, TestJWTHandler]]:
-    """Provide an authenticated HTTP client for middleware tests."""
-    # This fixture can be expanded to simulate a service with the middleware applied
-    return http_client, jwt_handler
-
-
-@pytest.fixture
 def jwt_handler() -> TestJWTHandler:
     """Provide a simple JWT handler backed by test secrets."""
     return TestJWTHandler()
 
 
-@pytest.mark.integration
-@pytest.mark.requires_docker
-class TestAuthenticationMiddleware:
-    """Test suite for shared authentication middleware usage across services."""
+class TestAuthenticationHelpers:
+    """Test suite for shared JWT authentication helpers."""
 
     def test_jwt_token_validation_consistency(self, jwt_handler: TestJWTHandler) -> None:
         """Test that JWT token validation works consistently via the handler."""
@@ -135,20 +117,13 @@ class TestAuthenticationMiddleware:
         assert decoded.get("roles") == user_context["roles"]
         assert decoded.get("permissions") == user_context["permissions"]
 
-    async def test_concurrent_token_validation(self, jwt_handler: TestJWTHandler) -> None:
-        """Test that token validation works correctly under concurrent access."""
+    def test_repeated_token_validation(self, jwt_handler: TestJWTHandler) -> None:
+        """Test that repeated token validation returns each token's subject."""
+        user_ids = [str(uuid.uuid4()) for _ in range(10)]
 
-        async def validate_token(token: str) -> bool:
-            try:
-                jwt_handler.decode_jwt(token)
-            except jwt.ExpiredSignatureError, jwt.InvalidTokenError:
-                return False
-            else:
-                return True
-
-        tokens = [_create_user_token(str(uuid.uuid4())) for _ in range(10)]
-        results = await asyncio.gather(*[validate_token(token) for token in tokens])
-        assert all(results)
+        for user_id in user_ids:
+            decoded = jwt_handler.decode_jwt(_create_user_token(user_id))
+            assert decoded["sub"] == user_id
 
     def test_role_based_access_patterns(self, jwt_handler: TestJWTHandler) -> None:
         """Test role-based access control patterns used across services."""

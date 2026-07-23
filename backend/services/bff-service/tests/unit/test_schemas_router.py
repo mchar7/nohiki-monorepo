@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from nohiki_db_utils.testing import create_mock_session
 from pydantic import BaseModel
 
-from tests.unit.conftest import (
+from ._helpers import (
     make_scalar_all,
     make_schema_family_projection,
     make_schema_version_projection,

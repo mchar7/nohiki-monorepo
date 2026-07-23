@@ -42,7 +42,7 @@ test.describe.serial('Profile Management - CRUD', () => {
   test('2. User sees create button', async ({ page }) => {
     const profilesPage = new ProfilesPage(page);
     await profilesPage.goto();
-    await page.waitForLoadState('load');
+
     await expect(profilesPage.createButton).toBeVisible({ timeout: 10_000 });
   });
   test('3. User creates a new profile', async ({ page }) => {
@@ -82,14 +82,14 @@ test.describe.serial('Profile Management - CRUD', () => {
     // Now verify the UI reflects the projection
     const profilesPage = new ProfilesPage(page);
     await profilesPage.goto();
-    await page.waitForLoadState('load');
-    await waitForTextOnPage(page, shared.profileName, { timeout: TIMEOUTS.elementVisible });
+
+    await waitForTextOnPage(page, shared.profileName, { timeout: TIMEOUTS.cqrsProjection });
     const uiProfileId = await extractProfileId(page, shared.profileName);
     expect(uiProfileId).toBe(shared.profileId);
   });
   test('5. User can view profile details', async ({ page }) => {
     await page.goto(`/profiles/${shared.profileId}`);
-    await page.waitForLoadState('load');
+
     await expect(page.getByRole('heading', { level: 1 })).toContainText(shared.profileName, { timeout: 10_000 });
     // Skills resolved asynchronously - use retry
     await expect(async () => {
@@ -117,26 +117,26 @@ test.describe.serial('Profile Management - CRUD', () => {
       { timeout: CQRS_UPDATE_TIMEOUT_MS - TIMEOUTS.elementVisible },
     );
     await page.goto(`/profiles/${shared.profileId}`);
-    await page.waitForLoadState('load');
+
     await expect(page.getByRole('heading', { level: 1 })).toContainText(shared.updatedProfileName, { timeout: TIMEOUTS.elementVisible });
   });
 
   test('7. Updated name appears in profiles list', async ({ page }) => {
     const profilesPage = new ProfilesPage(page);
     await profilesPage.goto();
-    await page.waitForLoadState('load');
+
     await expect(page.getByText(shared.updatedProfileName)).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(shared.profileName, { exact: true }).first()).not.toBeVisible();
   });
 
   test('8. User can delete profile', async ({ page }) => {
     await page.goto(`/profiles/${shared.profileId}`);
-    await page.waitForLoadState('load');
+
     await deleteCurrentProfile(page);
     await expect(page).toHaveURL(LIST_URL_PATTERNS.profiles, { timeout: 10_000 });
     await expect(async () => {
       await page.reload();
-      await page.waitForLoadState('load');
+
       await expect(page.getByText(shared.updatedProfileName, { exact: true })).not.toBeVisible();
     }).toPass({ intervals: [CQRS_POLL_INTERVAL_MS], timeout: TIMEOUTS.cqrsProjection });
     await expectNoA11yViolations(page);

@@ -13,6 +13,19 @@ from nohiki_kafka_client.supervision.lifecycle import (
 )
 
 
+class _FakeClock:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.delays: list[float] = []
+
+    def __call__(self) -> float:
+        return self.elapsed
+
+    async def sleep(self, delay: float) -> None:
+        self.delays.append(delay)
+        self.elapsed += delay
+
+
 class TestKafkaConnectionState:
     """Tests for KafkaConnectionState enum."""
 
@@ -286,7 +299,8 @@ class TestKafkaLifecycleManager:
             startup_timeout_seconds=0.2,
             startup_retry_interval_seconds=0.1,
         )
-        manager = KafkaLifecycleManager("localhost:29092", config)
+        clock = _FakeClock()
+        manager = KafkaLifecycleManager("localhost:29092", config, monotonic=clock, sleep=clock.sleep)
 
         with patch(
             "nohiki_kafka_client.supervision.lifecycle.check_broker_connectivity",
@@ -295,6 +309,7 @@ class TestKafkaLifecycleManager:
         ):
             result = await manager.wait_for_kafka()
             assert result is False
+            assert clock.delays == pytest.approx([0.1, 0.1])
             assert manager.health_state.state == KafkaConnectionState.FAILED
 
     @pytest.mark.asyncio
@@ -305,7 +320,8 @@ class TestKafkaLifecycleManager:
             startup_retry_interval_seconds=0.1,
             fail_fast_on_startup=True,
         )
-        manager = KafkaLifecycleManager("localhost:29092", config)
+        clock = _FakeClock()
+        manager = KafkaLifecycleManager("localhost:29092", config, monotonic=clock, sleep=clock.sleep)
 
         with (
             patch(
@@ -316,6 +332,8 @@ class TestKafkaLifecycleManager:
             pytest.raises(RuntimeError, match="unavailable"),
         ):
             await manager.wait_for_kafka()
+
+        assert clock.delays == pytest.approx([0.1, 0.1])
 
 
 class TestEnsureKafkaReady:
@@ -351,7 +369,7 @@ class TestEnsureKafkaReady:
                 return_value=(True, 3, None),
             ),
             patch(
-                "nohiki_kafka_client.supervision.lifecycle.KafkaAdmin",
+                "nohiki_kafka_client.admin.KafkaAdmin",
             ) as mock_admin_cls,
         ):
             mock_admin_cls.return_value.__aenter__ = AsyncMock(return_value=mock_admin)
@@ -380,7 +398,7 @@ class TestEnsureKafkaReady:
                 return_value=(True, 3, None),
             ),
             patch(
-                "nohiki_kafka_client.supervision.lifecycle.KafkaAdmin",
+                "nohiki_kafka_client.admin.KafkaAdmin",
             ) as mock_admin_cls,
         ):
             mock_admin_cls.return_value.__aenter__ = AsyncMock(return_value=mock_admin)

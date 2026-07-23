@@ -22,6 +22,7 @@ from requests.exceptions import RequestException
 
 from tests.utils.deployment_platform import get_platform
 
+from ._helpers import _is_profile_data_complete
 from .client import NohikiClient
 from .config import E2EConfig
 
@@ -49,41 +50,6 @@ _RICH_EXPERIENCE_PREFERENCE = {
 }
 
 
-def _is_profile_data_complete(profile: dict) -> bool:
-    """Check if profile has required data for meaningful ML scoring."""
-    salary = profile.get("salary_preference") or {}
-    experience = profile.get("experience_preference") or {}
-    return bool(
-        salary.get("min_salary") is not None
-        and experience.get("experience_years") is not None
-        and profile.get("work_arrangements"),
-    )
-
-
-def _poll_for_complete_profile(
-    client: NohikiClient,
-    pref_id: str,
-    timeout: int = 30,
-) -> dict | None:
-    """Poll until profile update propagates through the CDC pipeline."""
-    import time
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            profile = client.get_profile(pref_id)
-        except (RequestException, KeyError, ValueError) as exc:
-            # Transient projection lag during CDC propagation; keep polling.
-            logger.debug("Profile fetch transient error: %s", exc)
-        else:
-            if _is_profile_data_complete(profile):
-                logger.info("Profile update propagated: %s", pref_id)
-                return profile
-        time.sleep(1.0)
-    logger.warning("Timed out waiting for profile update: %s", pref_id)
-    return None
-
-
 @pytest.fixture(scope="session")
 def e2e_config() -> E2EConfig:
     """Session-scoped configuration."""
@@ -91,16 +57,22 @@ def e2e_config() -> E2EConfig:
 
 
 @pytest.fixture(scope="session")
-def session_client() -> NohikiClient:
+def healthy_base_url() -> str:
+    """Return the base URL after one bounded health verdict per test session."""
+    client = NohikiClient(BASE_URL)
+    if not client.wait_for_healthy():
+        pytest.skip("Services not healthy - is the deployment running?")
+    return BASE_URL
+
+
+@pytest.fixture(scope="session")
+def session_client(healthy_base_url: str) -> NohikiClient:
     """Session-scoped authenticated client.
 
     Creates user once at session start, reuses for all tests.
     Idempotent: tries login first, registers only if needed.
     """
-    client = NohikiClient(BASE_URL)
-
-    if not client.wait_for_healthy(timeout=60):
-        pytest.skip("Services not healthy - is the deployment running?")
+    client = NohikiClient(healthy_base_url)
 
     try:
         client.login(SESSION_USER_EMAIL, SESSION_USER_PASSWORD)
@@ -185,14 +157,12 @@ def authenticated_client(session_client: NohikiClient) -> NohikiClient:
 
 
 @pytest.fixture
-def fresh_client() -> Generator[NohikiClient]:
+def fresh_client(healthy_base_url: str) -> Generator[NohikiClient]:
     """Get a fresh unauthenticated client.
 
     Use for testing auth flows that need unauthenticated state.
     """
-    client = NohikiClient(BASE_URL)
-    if not client.check_ping():
-        pytest.skip("Services not healthy - BFF not responding (check deployment)")
+    client = NohikiClient(healthy_base_url)
     yield client
     client.clear_session()
 
@@ -264,6 +234,7 @@ def ml_pipeline_ready() -> bool:
     Works for both Docker Compose and Kubernetes targets.
     """
     platform = get_platform()
+    platform.get_service_statuses()
     code, stdout, _ = platform.exec_kafka_cmd(
         [
             "kafka-consumer-groups",

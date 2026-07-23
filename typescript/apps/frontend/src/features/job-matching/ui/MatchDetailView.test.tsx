@@ -4,7 +4,7 @@ import type { JSX, ReactNode } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, vi } from 'vitest';
 import type { JobCorrelationResponse } from '@/shared/api';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { MatchDetailView } from './MatchDetailView.tsx';
 
 vi.mock('@tanstack/react-router', () => ({

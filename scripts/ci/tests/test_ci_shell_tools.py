@@ -207,7 +207,7 @@ def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -
     local_command = next(
         str(nested["run"])
         for phase in _mapping_list(pre_push["jobs"])
-        for nested in _mapping_list(_mapping(phase.get("group", {}))["jobs"])
+        for nested in (_mapping_list(_mapping(phase["group"])["jobs"]) if "group" in phase else [phase])
         if nested.get("name") == "python-tests"
     )
     assert "--no-coverage" not in hosted_command

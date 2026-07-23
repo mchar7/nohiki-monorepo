@@ -4,14 +4,8 @@ import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ROUTE_PATHS } from '@/shared/config';
-import {
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/shared/ui/index.ts';
+import { Button } from '@/shared/ui/button.tsx';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card.tsx';
 import type { CommonMissingSkillsWidgetProps } from './Dashboard.types.ts';
 
 /**

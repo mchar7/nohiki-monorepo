@@ -1,20 +1,16 @@
 import { cn } from '@shared/lib/index.ts';
+import { Badge } from '@shared/ui/badge.tsx';
+import { Button } from '@shared/ui/button.tsx';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@shared/ui/card.tsx';
 import {
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  Input,
-} from '@shared/ui/index.ts';
+} from '@shared/ui/dialog.tsx';
+import { Input } from '@shared/ui/input.tsx';
 import { Calendar } from 'lucide-react';
 import type React from 'react';
 import type { JSX } from 'react';

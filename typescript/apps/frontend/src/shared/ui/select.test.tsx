@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react';
 import { describe, expect } from 'vitest';
 import { configureAxe } from 'vitest-axe';
+import '@/test/axe-setup.ts';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select.tsx';
 
 describe('Select - accessibility', () => {

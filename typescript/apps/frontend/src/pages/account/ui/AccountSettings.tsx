@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ROUTE_PATHS } from '@/shared/config/index.ts';
 import { useDocumentTitle } from '@/shared/lib/index.ts';
 import { Card, CardContent } from '@/shared/ui/card.tsx';
-import { PageHeader } from '@/shared/ui/index.ts';
+import { PageHeader } from '@/shared/ui/PageHeader.tsx';
 import { PanelErrorState } from '@/shared/ui/panel-error-state.tsx';
 import { Skeleton } from '@/shared/ui/skeleton.tsx';
 import { PageLayout } from '@/widgets/layout/index.ts';

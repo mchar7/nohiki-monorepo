@@ -16,10 +16,10 @@ import {
 import { Checkbox } from '@/shared/ui/checkbox.tsx';
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/shared/ui/form.tsx';
 import { FormRootError } from '@/shared/ui/form-root-error.tsx';
-import { PasswordStrength } from '@/shared/ui/index.ts';
 import { Input } from '@/shared/ui/input.tsx';
 import { Label } from '@/shared/ui/label.tsx';
 import { PasswordInput } from '@/shared/ui/password-input.tsx';
+import { PasswordStrength } from '@/shared/ui/password-strength.tsx';
 import type { FormValues } from './auth-page.types.ts';
 
 interface AuthFormFieldsProps {

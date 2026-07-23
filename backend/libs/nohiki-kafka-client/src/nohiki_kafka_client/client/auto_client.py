@@ -744,13 +744,18 @@ class AutoKafkaClient(HandlerRegistryMixin):
         self._sync_lifecycle_consumer_state()
         logger.info("Kafka consumers stopped")
 
-    async def close(self) -> None:
+    async def close(self, drain_timeout_seconds: float = 30.0) -> None:
         """Close all Kafka client resources gracefully.
 
         This method should be called from the FastAPI lifespan shutdown phase.
         It stops all consumers and closes producer connections.
 
         Safe to call multiple times - subsequent calls are no-ops.
+
+        Args:
+            drain_timeout_seconds: Maximum time to wait for in-flight
+                messages before force-cancelling. Defaults to 30s to align
+                with Kubernetes' ``terminationGracePeriodSeconds``.
         """
         if self._shutdown_requested:
             return
@@ -758,7 +763,7 @@ class AutoKafkaClient(HandlerRegistryMixin):
         self._shutdown_requested = True
         logger.info("Starting Kafka client cleanup")
 
-        await self.stop_consumers()
+        await self.stop_consumers(drain_timeout_seconds=drain_timeout_seconds)
 
         if self._producer is not None:
             try:

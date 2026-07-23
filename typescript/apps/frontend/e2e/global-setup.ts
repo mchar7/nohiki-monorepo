@@ -26,7 +26,6 @@ setup('authenticate', async ({ page }) => {
   const uniqueEmail = generateUniqueEmail();
 
   await page.goto(AUTH_PATHS.register);
-  await page.waitForLoadState('load');
 
   await navigateToSignUpTab(page);
   await fillRegistrationForm(page, uniqueEmail);

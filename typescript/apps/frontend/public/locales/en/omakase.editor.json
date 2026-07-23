@@ -17,7 +17,6 @@
       "ariaLabel": "Dataset: {{name}}, created {{date}}",
       "ariaLabelWithTemplate": "Dataset: {{name}}, using {{template}} template, created {{date}}",
       "cancel": "Cancel",
-      "cancelEdit": "Cancel editing",
       "created": "Created: {{date}}",
       "delete": "Delete",
       "downloadPdf": "Download PDF",
@@ -26,8 +25,7 @@
       "editName": "Edit dataset name",
       "htmlCached": "HTML Cached",
       "rename": "Rename",
-      "save": "Save",
-      "saveName": "Save dataset name"
+      "save": "Save"
     },
     "create": {
       "cancel": "Cancel",
@@ -64,7 +62,6 @@
   "document": {
     "untitled": "Untitled Document"
   },
-  "editingDocument": "Editing document: {{id}}",
   "errors": {
     "dataMustBeObject": "Data must be a valid object",
     "datasetNotFound": "The dataset you are looking for does not exist.",
@@ -77,7 +74,6 @@
     "schemaFetchFailed": "Failed to fetch schema",
     "schemaProcessingError": "Schema Processing Error",
     "schemaProcessingErrorDescription": "Unable to process template schema. The template schema format is not supported or contains errors.",
-    "schemaValidationFailed": "Schema validation failed: {{error}}",
     "templateNotFound": "Template not found",
     "unknownError": "Unknown error",
     "validationFailed": "Validation failed: {{error}}"
@@ -103,8 +99,6 @@
   },
   "form": {
     "autoSaved": "Auto-saved",
-    "description": "Fill in the fields below to populate your document.",
-    "placeholder": "Form fields will be rendered here based on template schema",
     "saving": "Saving...",
     "title": "Document Data"
   },
@@ -142,9 +136,6 @@
       "description": "You have unsaved changes. Are you sure you want to switch datasets? Your changes will be lost.",
       "title": "Unsaved Changes"
     }
-  },
-  "labels": {
-    "version": "Version {{version}}"
   },
   "sidebar": {
     "newDocument": "New Document"

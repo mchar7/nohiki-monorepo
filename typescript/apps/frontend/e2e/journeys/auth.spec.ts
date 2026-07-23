@@ -28,7 +28,6 @@ const NOT_YET_AVAILABLE_RE = /not yet available/iu;
 const CLOSE_RE = /close/iu;
 const TOO_MANY_ATTEMPTS_RE = /too many attempts/iu;
 const ERROR_PERSIST_TIMEOUT_MS = 10_000;
-const SPINNER_DELAY_MS = 2000;
 test.describe('Authentication - Unified Auth Page', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
@@ -275,22 +274,21 @@ test.describe('Authentication - Error Persistence', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test('error persists beyond 10 seconds until user edits a field', async ({ page }) => {
+    await page.clock.install();
     const loginPage = new LoginPage(page);
     await loginPage.goto();
     await loginPage.login('wrong@example.com', 'WrongPassword123!');
 
-    await expect(page.locator('[role="alert"]')).toBeVisible({
+    const alert = page.locator('[role="alert"]');
+    await expect(alert).toBeVisible({
       timeout: TIMEOUTS.shortAction,
     });
 
-    // Wait 10 seconds and verify error is still visible
-    // biome-ignore lint/nursery/noPlaywrightWaitForTimeout: intentional 10s wait to verify error persistence
-    await page.waitForTimeout(ERROR_PERSIST_TIMEOUT_MS);
-    await expect(page.locator('[role="alert"]')).toBeVisible();
+    await page.clock.fastForward(ERROR_PERSIST_TIMEOUT_MS);
+    await expect(alert).toBeVisible();
 
-    // Editing a field clears the error
     await loginPage.passwordInput.fill('corrected');
-    await expect(page.locator('[role="alert"]')).toBeHidden();
+    await expect(alert).toBeHidden();
   });
 
   test('error clears immediately on resubmit', async ({ page }) => {
@@ -298,13 +296,22 @@ test.describe('Authentication - Error Persistence', () => {
     await loginPage.goto();
     await loginPage.login('wrong@example.com', 'WrongPassword123!');
 
-    await expect(page.locator('[role="alert"]')).toBeVisible({
+    const alert = page.locator('[role="alert"]');
+    await expect(alert).toBeVisible({
       timeout: TIMEOUTS.shortAction,
     });
 
-    // Resubmit - error should disappear immediately (before API response)
+    const responseReleased = Promise.withResolvers<void>();
+    await page.route('**/api/v1/auth/login', async (route) => {
+      await responseReleased.promise;
+      await route.continue();
+    });
+
     await loginPage.submitButton.click();
-    // The error may briefly reappear after API failure, but it should have cleared on click
+    await expect(alert).toBeHidden();
+
+    responseReleased.resolve();
+    await expect(alert).toBeVisible({ timeout: TIMEOUTS.shortAction });
   });
 });
 
@@ -323,10 +330,9 @@ test.describe('Authentication - Visual Emphasis', () => {
   });
 
   test('submit button shows spinner during API call', async ({ page }) => {
+    const responseReleased = Promise.withResolvers<void>();
     await page.route('**/api/v1/auth/login', async (route) => {
-      await new Promise((r) => {
-        setTimeout(r, SPINNER_DELAY_MS);
-      });
+      await responseReleased.promise;
       await route.continue();
     });
 
@@ -336,7 +342,11 @@ test.describe('Authentication - Visual Emphasis', () => {
     await loginPage.passwordInput.fill('Password123!');
     await loginPage.submitButton.click();
 
-    await expect(page.locator('.animate-spin')).toBeVisible();
+    const spinner = page.locator('.animate-spin');
+    await expect(spinner).toBeVisible();
+
+    responseReleased.resolve();
+    await expect(spinner).toBeHidden({ timeout: TIMEOUTS.shortAction });
   });
 });
 

@@ -3,7 +3,6 @@
     "apply": "Appliquer",
     "cancel": "Annuler",
     "hidePanel": "Masquer le panneau",
-    "newTemplate": "Nouveau modèle",
     "showPanel": "Afficher le panneau"
   },
   "editor": {
@@ -23,38 +22,20 @@
     "renderImage": "Rendu en image (WebP)",
     "title": "Avertissement de modèle JavaScript"
   },
-  "list": {
-    "createFirst": "Créez votre premier modèle",
-    "description": "Gérez vos modèles de documents",
-    "empty": "Aucun modèle trouvé",
-    "title": "Modèles"
-  },
   "metadata": {
     "description": {
       "label": "Description",
       "placeholder": "Décrivez l'utilité de ce modèle"
     },
     "name": {
-      "label": "Nom du modèle",
-      "placeholder": "Entrez le nom du modèle"
+      "label": "Nom du modèle"
     },
-    "requiresJs": {
-      "charCount": "{{count}}/140 caractères (5-140 requis)",
-      "label": "Nécessite JavaScript",
-      "reasonLabel": "Raison JavaScript",
-      "reasonPlaceholder": "Expliquez pourquoi ce modèle a besoin de JavaScript (ex: 'Nécessaire pour la numérotation des pages dans le pied de page PDF')"
-    },
-    "subtitle": "Configurez les métadonnées de base du modèle",
-    "title": "Informations du modèle",
     "version": {
-      "hint": "Utilisez le versionnage sémantique (ex: 1.0.0)",
-      "label": "Version",
-      "placeholder": "1.0.0"
+      "label": "Version"
     }
   },
   "labels": {
     "column": "Colonne",
-    "editingLocked": "Édition verrouillée (en aperçu)",
     "line": "Ligne"
   },
   "pageSize": {
@@ -92,13 +73,6 @@
     "formFields": "Champs du formulaire",
     "htmlTemplate": "Modèle HTML",
     "metadata": "Métadonnées"
-  },
-  "schema": {
-    "noProperties": "Aucune propriété définie",
-    "options": "Options :",
-    "properties": "Propriétés",
-    "structureTitle": "Structure du schéma",
-    "viewRawJson": "Voir le schéma JSON brut"
   },
   "subtitle": "Créez et modifiez des modèles de documents avec validation en direct",
   "title": "Studio de modèles",

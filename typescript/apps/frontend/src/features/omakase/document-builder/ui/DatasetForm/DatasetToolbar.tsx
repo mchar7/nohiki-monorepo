@@ -1,12 +1,12 @@
+import { Button } from '@shared/ui/button.tsx';
+import { Input } from '@shared/ui/input.tsx';
 import {
-  Button,
-  Input,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@shared/ui/index.ts';
+} from '@shared/ui/select.tsx';
 import { Search } from 'lucide-react';
 import type React from 'react';
 import type { JSX } from 'react';

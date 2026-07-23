@@ -11,7 +11,7 @@ from health_check.checks.messaging.topics import KafkaTopicsCheck
 from health_check.config.thresholds import KAFKA_CONNECT_DEFAULT_PORT
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class TestKafkaTopicsCheck:
@@ -61,13 +61,34 @@ class TestKafkaConsumersCheck:
 
 
 class TestConsumerLagCheck:
-    async def test_passes_when_no_lag(self) -> None:
+    async def test_passes_when_ml_compute_backlog_is_drained(self) -> None:
         # Output with all zero lag values
         stdout = "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG\nmy-group my-topic 0 100 100 0\n"
         platform = MockPlatform(_kafka_cmd_result=(0, stdout, ""))
         result = await ConsumerLagCheck().execute(platform)
         assert result.status == CheckStatus.PASSED
         assert "acceptable lag" in result.summary
+
+    async def test_fails_when_ml_compute_has_any_backlog(self) -> None:
+        stdout = "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG\nmy-group my-topic 0 99 100 1\n"
+        platform = MockPlatform(_kafka_cmd_result=(0, stdout, ""))
+        result = await ConsumerLagCheck().execute(platform)
+        assert result.status == CheckStatus.FAILED
+        assert result.details == ("ml-compute-service-consumer: LAG=1 (threshold=0)",)
+
+    async def test_fails_when_ml_compute_has_uncommitted_backlog(self) -> None:
+        stdout = "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG\nmy-group my-topic 0 - 42 -\n"
+        platform = MockPlatform(_kafka_cmd_result=(0, stdout, ""))
+        result = await ConsumerLagCheck().execute(platform)
+        assert result.status == CheckStatus.FAILED
+        assert result.details == ("ml-compute-service-consumer: LAG=42 (threshold=0)",)
+
+    async def test_fails_when_ml_compute_has_no_partition_offsets(self) -> None:
+        stdout = "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG\n"
+        platform = MockPlatform(_kafka_cmd_result=(0, stdout, ""))
+        result = await ConsumerLagCheck().execute(platform)
+        assert result.status == CheckStatus.FAILED
+        assert result.details == ("ml-compute-service-consumer: no partition offsets",)
 
     async def test_fails_when_excessive_lag(self) -> None:
         stdout = "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG\nmy-group my-topic 0 0 10000 10000\n"

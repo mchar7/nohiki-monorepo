@@ -1,4 +1,4 @@
-import { PanelHeader } from '@shared/ui/index.ts';
+import { PanelHeader } from '@shared/ui/panel-header.tsx';
 import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 

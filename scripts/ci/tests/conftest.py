@@ -4,6 +4,7 @@ import subprocess
 from collections.abc import Iterator
 
 import pytest
+import yaml
 from helm_test_utils import RenderCache
 
 
@@ -37,6 +38,8 @@ def _scrub_git_discovery_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(scope="session", autouse=True)
 def _cache_manifest_subprocesses(render_cache: RenderCache) -> Iterator[None]:
     patch = pytest.MonkeyPatch()
+    if yaml.__with_libyaml__:
+        patch.setattr(yaml, "SafeLoader", yaml.CSafeLoader)
     patch.setattr(subprocess, "run", render_cache.run)
     yield
     patch.undo()

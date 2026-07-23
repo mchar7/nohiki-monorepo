@@ -30,8 +30,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ._helpers import poll_for_complete_profile
+from .client import poll_until
+
 if TYPE_CHECKING:
     from .client import NohikiClient
+
+pytestmark = pytest.mark.integration
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("nohiki-pipeline-e2e")
@@ -132,9 +137,7 @@ class TestCompletePipelineFlow:
                 # Poll the projection rather than a magic sleep, CDC propagation
                 # latency varies by infrastructure pressure, and a fixed 5s is
                 # both flakey and slower than necessary on healthy clusters.
-                from .conftest import _poll_for_complete_profile
-
-                updated = _poll_for_complete_profile(client, profile["id"], timeout=30)
+                updated = poll_for_complete_profile(client, profile["id"], timeout=30)
                 return updated or profile
 
         profile_name = f"Pipeline Test {uuid.uuid4().hex[:6]}"
@@ -167,15 +170,16 @@ class TestCompletePipelineFlow:
     def _verify_job_listings_exist(self, client: NohikiClient) -> list[dict]:
         """Verify job listings exist and pipeline processed them."""
         logger.info("Verifying job listings exist...")
-        start = time.time()
 
-        while time.time() - start < DISCOVERY_TIMEOUT:
+        def get_listings() -> list[dict] | None:
             result = client.list_job_listings(page_size=100)
-            if result["total"] > 0:
-                listings = result["items"]
-                logger.info("Found %d job listings", len(listings))
-                return listings
-            time.sleep(10)
+            if result["total"] <= 0:
+                return None
+            logger.info("Found %d job listings", result["total"])
+            return result["items"]
+
+        if listings := poll_until(get_listings, timeout=DISCOVERY_TIMEOUT):
+            return listings
 
         pytest.fail(
             f"No job listings found after {DISCOVERY_TIMEOUT}s. "
@@ -187,9 +191,9 @@ class TestCompletePipelineFlow:
     def _verify_listings_are_enriched(self, client: NohikiClient) -> list[dict]:
         """Poll until at least one enriched listing with skills appears in BFF."""
         logger.info("Verifying listings are LLM-enriched...")
-        start = time.time()
+        start = time.monotonic()
 
-        while time.time() - start < ENRICHMENT_TIMEOUT:
+        def get_enriched_listings() -> list[dict] | None:
             result = client.list_job_listings(page_size=100)
             listings = result.get("items", [])
             enriched = [
@@ -205,13 +209,15 @@ class TestCompletePipelineFlow:
                     )
                 logger.info("Verified %d/%d listings are enriched", len(enriched), len(listings))
                 return listings
-            elapsed = time.time() - start
             logger.info(
                 "Waiting for enriched listings... (%.0fs elapsed, %d listings found)",
-                elapsed,
+                time.monotonic() - start,
                 len(listings),
             )
-            time.sleep(10)
+            return None
+
+        if listings := poll_until(get_enriched_listings, timeout=ENRICHMENT_TIMEOUT):
+            return listings
 
         pytest.fail(
             f"No enriched listings found after {ENRICHMENT_TIMEOUT}s. "
@@ -246,84 +252,53 @@ class TestCompletePipelineFlow:
         return correlations
 
     def _verify_ml_scores_are_real(self, correlations: list[dict]) -> None:
-        """Verify correlations have REAL ML scores from ColBERT/MUVERA.
-
-        CRITICAL: This test FAILS if scores are from fallback (maxsim_score=0).
-        Real ML scoring must be working for tests to pass.
-        """
+        """Verify correlations expose non-zero semantic role relevance."""
         logger.info("Verifying ML scores are REAL (not fallback)...")
 
-        real_ml_scores: list[dict] = []
-        fallback_scores: list[dict] = []
-
-        for corr in correlations:
-            breakdown = corr.get("score_breakdown", {})
-
-            # Convert maxsim_score to float (may be string from JSON)
-            maxsim_raw = breakdown.get("maxsim_score", 0)
-            maxsim = float(maxsim_raw) if maxsim_raw else 0.0
-
-            if maxsim > 0:
-                real_ml_scores.append(corr)
-                logger.info(
-                    "  REAL ML: %s (maxsim=%.4f, fit=%d)",
-                    corr.get("listing_title", "Unknown")[:40],
-                    maxsim,
-                    corr.get("fit_score", 0),
-                )
-            else:
-                fallback_scores.append(corr)
-
+        real_ml_scores = [
+            corr
+            for corr in correlations
+            if any(
+                factor.get("factor") == "ROLE_RELEVANCE" and float(factor.get("compatibility_score", 0)) > 0
+                for factor in (corr.get("fit_ranking_breakdown") or {}).get("factors", [])
+            )
+        ]
         if not real_ml_scores:
             pytest.fail(
-                f"ALL {len(correlations)} correlations have maxsim_score=0. "
-                "This indicates ML scoring is using fallback, not real ColBERT/MUVERA. "
-                "Check:\n"
+                f"ALL {len(correlations)} correlations have zero or missing ROLE_RELEVANCE. "
+                "This indicates ML scoring is not producing semantic relevance. Check:\n"
                 "  1. ml-compute-service is processing embedding requests\n"
-                "  2. Qdrant collections exist (jobs_v1, profiles_v1)\n"
+                "  2. profile and listing embedding artifacts are populated\n"
                 "  3. L2R model files are available\n"
                 "  4. No 'MLScoringRequiredError' in job-correlation service logs",
             )
 
         logger.info(
-            "ML scoring verified: %d real scores, %d fallback scores",
+            "ML scoring verified: %d/%d correlations have semantic role relevance",
             len(real_ml_scores),
-            len(fallback_scores),
+            len(correlations),
         )
 
     def _verify_score_breakdown_complete(self, correlations: list[dict]) -> None:
-        """Verify score breakdowns have all required L2R components.
+        """Verify the versioned human-facing fit-ranking contract."""
+        logger.info("Verifying fit ranking breakdown completeness...")
 
-        Required keys come from JobMatcherService._build_scoring_breakdown:
-        ml_score, ml_confidence, scoring_method are always present;
-        maxsim_score is promoted from feature_importances when ML produced
-        a real feature vector. Any missing key indicates degraded scoring.
-        """
-        logger.info("Verifying score breakdown completeness...")
-
-        required_fields = {
-            "ml_score",
-            "ml_confidence",
-            "scoring_method",
-            "maxsim_score",
-        }
-
-        problems: list[tuple[str, set[str]]] = []
+        problems: list[tuple[str, str]] = []
         for corr in correlations[:5]:
-            breakdown = corr.get("score_breakdown", {})
-            present_fields = set(breakdown.keys())
-            missing = required_fields - present_fields
-            if missing:
-                problems.append((str(corr.get("id")), missing))
+            breakdown = corr.get("fit_ranking_breakdown")
+            if not isinstance(breakdown, dict):
+                problems.append((str(corr.get("id")), "missing fit_ranking_breakdown"))
+                continue
+            if not breakdown.get("method_version"):
+                problems.append((str(corr.get("id")), "missing method_version"))
+            if not breakdown.get("factors"):
+                problems.append((str(corr.get("id")), "missing factors"))
 
         if problems:
-            summary = "\n".join(f"  {cid}: missing {sorted(missing)}" for cid, missing in problems)
-            pytest.fail(
-                f"Found {len(problems)} correlations with incomplete score_breakdown:\n{summary}\n"
-                "score_breakdown must include ml_score, ml_confidence, scoring_method, maxsim_score.",
-            )
+            summary = "\n".join(f"  {cid}: {problem}" for cid, problem in problems)
+            pytest.fail(f"Found {len(problems)} incomplete fit_ranking_breakdown objects:\n{summary}")
 
-        logger.info("Score breakdown verification complete")
+        logger.info("Fit ranking breakdown verification complete")
 
 
 class TestMLScoringIntegrity:
@@ -362,13 +337,18 @@ class TestMLScoringIntegrity:
         if not correlations:
             pytest.fail("No correlations found - ML pipeline not processing")
 
-        # Verify at least one has real ML score
-        has_real_score = any(float(c.get("score_breakdown", {}).get("maxsim_score", 0) or 0) > 0 for c in correlations)
+        # Technical MaxSim internals are intentionally no longer exposed in the
+        # legacy score_breakdown. The versioned fit explanation is the public
+        # proof that correlations completed the current scoring path.
+        has_real_score = any(
+            (breakdown := correlation.get("fit_ranking_breakdown"))
+            and breakdown.get("method_version")
+            and breakdown.get("factors")
+            for correlation in correlations
+        )
 
         if not has_real_score:
-            pytest.fail(
-                "All correlations have maxsim_score=0 - ML compute not working",
-            )
+            pytest.fail("All correlations lack a versioned fit ranking breakdown")
 
 
 class TestDocumentGenerationFlow:
@@ -512,21 +492,19 @@ class TestEnrichmentPipeline:
         """
         _ = session_profile  # Ensures pipeline has run
 
-        start = time.time()
-        while time.time() - start < ENRICHMENT_TIMEOUT:
+        start = time.monotonic()
+
+        def listings_have_skills() -> bool | None:
             result = session_client.list_job_listings(page_size=50)
             listings = result.get("items", [])
-
             if not listings:
-                time.sleep(10)
-                continue
+                return None
 
             listings_with_skills = [
                 listing
                 for listing in listings
                 if listing.get("required_skills") and len(listing["required_skills"]) > 0
             ]
-
             if listings_with_skills:
                 logger.info(
                     "%d/%d listings have LLM-extracted skills",
@@ -539,15 +517,17 @@ class TestEnrichmentPipeline:
                         listing.get("title", "Unknown")[:40],
                         listing.get("required_skills", [])[:5],
                     )
-                return
+                return True
 
-            elapsed = time.time() - start
             logger.info(
                 "Waiting for listings with skills... (%.0fs elapsed, %d listings found)",
-                elapsed,
+                time.monotonic() - start,
                 len(listings),
             )
-            time.sleep(10)
+            return None
+
+        if poll_until(listings_have_skills, timeout=ENRICHMENT_TIMEOUT):
+            return
 
         result = session_client.list_job_listings(page_size=50)
         listings = result.get("items", [])
@@ -756,28 +736,21 @@ class TestCorrelationScoreQuality:
         )
 
     @pytest.mark.timeout(180)
-    def test_score_breakdown_contains_real_values(
+    def test_fit_ranking_breakdown_contains_real_values(
         self,
         session_client: NohikiClient,
         session_profile: dict,
         *,
         ml_pipeline_ready: bool,
     ) -> None:
-        """Assert that score_breakdown contains required fields with real values.
-
-        Score breakdown should include:
-        - ml_score: Final ML ranking score
-        - maxsim_score: ColBERT semantic matching score
-        - scoring_method: Method used (e.g., "L2R", "FALLBACK")
-        - ml_score should match fit_score (the final correlation score)
-        """
+        """Assert that the versioned fit-ranking explanation contains real values."""
         if not ml_pipeline_ready:
             pytest.fail(
-                "ML pipeline NOT ready. Cannot validate score breakdown. Check ml-compute-service health.",
+                "ML pipeline NOT ready. Cannot validate fit ranking breakdown. Check ml-compute-service health.",
             )
 
         pref_id = session_profile["id"]
-        logger.info("Testing score breakdown for profile %s...", pref_id)
+        logger.info("Testing fit ranking breakdown for profile %s...", pref_id)
 
         correlations = session_client.poll_for_correlations(
             pref_id=pref_id,
@@ -785,71 +758,43 @@ class TestCorrelationScoreQuality:
             timeout=120,
             interval=10.0,
         )
-
         if not correlations:
-            pytest.fail("No correlations found - cannot validate score breakdown")
+            pytest.fail("No correlations found - cannot validate fit ranking breakdown")
 
-        required_fields = {"maxsim_score", "scoring_method"}
-        problems = []
-
+        problems: list[tuple[str, str]] = []
+        has_positive_role_relevance = False
         for corr in correlations:
-            breakdown = corr.get("score_breakdown", {})
-            if not breakdown:
-                problems.append(
-                    (
-                        corr.get("id", "unknown"),
-                        "Missing score_breakdown object",
-                    ),
-                )
+            correlation_id = str(corr.get("id", "unknown"))
+            breakdown = corr.get("fit_ranking_breakdown")
+            if not isinstance(breakdown, dict):
+                problems.append((correlation_id, "Missing fit_ranking_breakdown object"))
                 continue
+            if not breakdown.get("method_version"):
+                problems.append((correlation_id, "Missing method_version"))
 
-            # Check required fields exist
-            problems.extend(
-                (corr.get("id", "unknown"), f"Missing field: {field}")
-                for field in required_fields
-                if field not in breakdown
+            factors = breakdown.get("factors")
+            if not isinstance(factors, list) or not factors:
+                problems.append((correlation_id, "Missing factors"))
+                continue
+            role_relevance = next(
+                (factor for factor in factors if factor.get("factor") == "ROLE_RELEVANCE"),
+                None,
             )
+            if role_relevance is None:
+                problems.append((correlation_id, "Missing ROLE_RELEVANCE factor"))
+            else:
+                has_positive_role_relevance |= float(role_relevance.get("compatibility_score", 0)) > 0
 
-            # Validate ml_score exists and matches fit_score for real scoring
-            ml_score = breakdown.get("ml_score")
-            fit_score = corr.get("fit_score", 0)
-
-            if ml_score is not None and fit_score > 0:
-                # For non-zero scores, ml_score should match or be close to fit_score
-                try:
-                    ml_score_val = float(ml_score) if ml_score else 0.0
-                    if ml_score_val > 0 and abs(int(ml_score_val) - fit_score) > 2:
-                        logger.warning(
-                            "Score mismatch for %s: ml_score=%.1f, fit_score=%d",
-                            corr.get("listing_title", "Unknown")[:40],
-                            ml_score_val,
-                            fit_score,
-                        )
-                except TypeError, ValueError:
-                    problems.append(
-                        (
-                            corr.get("id", "unknown"),
-                            f"Invalid ml_score format: {ml_score}",
-                        ),
-                    )
-
-            logger.info(
-                "  Breakdown for %s: maxsim=%.2f, method=%s",
-                corr.get("listing_title", "Unknown")[:40],
-                float(breakdown.get("maxsim_score", 0) or 0),
-                breakdown.get("scoring_method", "UNKNOWN"),
-            )
+        if not has_positive_role_relevance:
+            problems.append(("all", "No correlation has positive ROLE_RELEVANCE"))
 
         if problems:
-            problem_summary = "\n".join([f"  {cid}: {msg}" for cid, msg in problems[:5]])
+            problem_summary = "\n".join(f"  {cid}: {message}" for cid, message in problems[:5])
             pytest.fail(
-                f"Found {len(problems)} correlations with incomplete score_breakdown: "
-                f"\n{problem_summary}\n"
-                "score_breakdown must have maxsim_score and scoring_method. "
-                "Check job-correlation-evaluation-service scoring logic.",
+                f"Found {len(problems)} invalid fit_ranking_breakdown objects:\n{problem_summary}",
             )
 
         logger.info(
-            "✓ Score breakdown validation passed: ALL %d correlations have required fields",
+            "Fit ranking validation passed: all %d correlations expose real factors",
             len(correlations),
         )

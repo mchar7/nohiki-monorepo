@@ -1,9 +1,9 @@
+import { Button } from '@shared/ui/button.tsx';
 import {
-  Button,
   ResponsiveMenu,
   ResponsiveMenuItem,
   ResponsiveMenuSeparator,
-} from '@shared/ui/index.ts';
+} from '@shared/ui/responsive-menu.tsx';
 import { Copy, Download, Edit, MoreHorizontal, Trash2 } from 'lucide-react';
 import type React from 'react';
 import type { JSX } from 'react';

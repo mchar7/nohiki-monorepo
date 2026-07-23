@@ -7,7 +7,7 @@ const NO_UPLOADS_RE = /no uploaded documents/iu;
 const UPLOADED_TAB_RE = /tab=uploaded/u;
 
 test.describe
-  .serial('Uploaded Documents Management Journey', () => {
+  .parallel('Uploaded Documents Management Journey', () => {
     test('1. User navigates to uploaded documents tab', async ({ page }) => {
       const documentsPage = new DocumentsPage(page);
       await documentsPage.goto();
@@ -33,16 +33,12 @@ test.describe
       const documentsPage = new DocumentsPage(page);
       await documentsPage.goto();
 
-      await page.waitForLoadState('load');
-
       await expect(documentsPage.uploadButton).toBeEnabled();
     });
 
     test('4. User can see file input for uploads', async ({ page }) => {
       const documentsPage = new DocumentsPage(page);
       await documentsPage.goto();
-
-      await page.waitForLoadState('load');
 
       const fileInput = page.locator('input[type="file"]');
 

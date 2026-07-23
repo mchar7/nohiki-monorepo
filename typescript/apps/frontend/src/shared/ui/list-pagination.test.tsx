@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { JSX } from 'react';
 import { describe, expect, vi } from 'vitest';
 import { axe } from 'vitest-axe';
+import '@/test/axe-setup.ts';
 import { ListPagination } from './list-pagination.tsx';
 
 const PAGE_SIZE = 20;

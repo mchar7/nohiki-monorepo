@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type React from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import type { DatasetData } from '../../model/index.ts';
 import { ImportJSON } from './ImportJSON.tsx';
 

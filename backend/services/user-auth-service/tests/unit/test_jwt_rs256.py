@@ -31,9 +31,9 @@ def jwt_config() -> JWTConfig:
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def private_key_pem() -> str:
-    """Generate a test RSA private key."""
+    """Generate one immutable test RSA private key for this module."""
     private_pem, _ = generate_rsa_keypair()
     return private_pem
 

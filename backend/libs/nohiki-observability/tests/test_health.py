@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -64,10 +63,7 @@ class TestOTelHealthProbeCheck:
         """Returns degraded on connection timeout."""
         probe = OTelHealthProbe("http://collector:4317", timeout_seconds=0.1)
 
-        async def slow_connect(*_args: object, **_kwargs: object) -> None:
-            await asyncio.sleep(10)
-
-        with patch("asyncio.open_connection", side_effect=slow_connect):
+        with patch("asyncio.open_connection", side_effect=TimeoutError):
             result = await probe.check()
 
         assert result.status.value == "degraded"

@@ -83,6 +83,7 @@
           ripgrep # Deterministic Skylos grep verification
           gitleaks # Secret detection for git hooks
           lefthookPackage # Git hook manager
+          util-linux # flock for environment locks
         ];
 
         pythonTools = with pkgs; [
@@ -154,13 +155,21 @@
           # Export LD_LIBRARY_PATH explicitly for subshells and uv run
           export LD_LIBRARY_PATH="${libPath}:$LD_LIBRARY_PATH"
 
-          if [ ! -x ".venv/bin/python" ]; then
-            uv venv --python ${python}/bin/python --quiet
+          if ! scripts/dev/env-lock.sh exclusive venv -- sh -c '
+            if [ ! -x ".venv/bin/python" ]; then
+              uv venv --python ${python}/bin/python --quiet
+            fi
+          '; then
+            echo "ERROR: unable to create the Python environment." >&2
+            return 1
           fi
           source .venv/bin/activate
 
           if [ -f "uv.lock" ]; then
-            uv sync --all-packages --all-extras --no-extra cuda --group deadcode --locked --quiet
+            if ! scripts/dev/env-lock.sh exclusive venv -- uv sync --all-packages --all-extras --no-extra cuda --group deadcode --locked; then
+              echo "ERROR: uv sync --locked failed; refusing to use an incomplete environment." >&2
+              return 1
+            fi
           fi
         '';
 
@@ -168,7 +177,10 @@
           ${baseHook}
 
           if [ -f "pnpm-lock.yaml" ]; then
-            corepack pnpm install --frozen-lockfile --silent
+            if ! scripts/dev/env-lock.sh exclusive node_modules -- corepack pnpm install --frozen-lockfile --silent; then
+              echo "ERROR: pnpm install failed; refusing to use an incomplete frontend environment." >&2
+              return 1
+            fi
           fi
 
           echo "Nohiki Dev Environment"

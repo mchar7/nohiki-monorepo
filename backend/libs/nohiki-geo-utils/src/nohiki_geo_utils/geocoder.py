@@ -8,13 +8,10 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Final
 
 from geopy.adapters import AioHTTPAdapter
-from geopy.exc import GeocoderServiceError, GeocoderTimedOut, GeocoderUnavailable
-from geopy.geocoders import Nominatim
 from nohiki.common.v1 import CountryCode, GeoCoordinates, Location
-from nohiki_redis_utils import cached
-from nohiki_redis_utils.rate_limit_decorator import rate_limited
 
 if TYPE_CHECKING:
+    from geopy.geocoders import Nominatim
     from nohiki_redis_utils import RedisCache
 
 logger = logging.getLogger(__name__)
@@ -82,6 +79,8 @@ def _create_geocoder() -> Nominatim:
     Each instance should be used as an async context manager
     to ensure the underlying aiohttp session is properly closed.
     """
+    from geopy.geocoders import Nominatim  # noqa: PLC0415 -- Load GeoPy on first geocode.
+
     return Nominatim(
         user_agent="nohiki-job-platform/1.0",
         adapter_factory=AioHTTPAdapter,
@@ -103,6 +102,11 @@ async def geocode_query(query: str) -> GeoCoordinates | None:
     query = query.strip()
     if len(query) < MIN_QUERY_LENGTH or len(query) > MAX_QUERY_LENGTH:
         return None
+    from geopy.exc import (  # noqa: PLC0415 -- Load GeoPy on first geocode.
+        GeocoderServiceError,
+        GeocoderTimedOut,
+        GeocoderUnavailable,
+    )
 
     async with _create_geocoder() as geocoder:
         try:
@@ -191,6 +195,10 @@ def create_cached_geocoder(
         location = await cached_location(location_proto)
 
     """
+    from nohiki_redis_utils import cached  # noqa: PLC0415 -- Load Redis support on cached geocoder creation.
+    from nohiki_redis_utils.rate_limit_decorator import (  # noqa: PLC0415 -- Load Redis support on demand.
+        rate_limited,
+    )
 
     @cached(
         key_prefix="geo:query",

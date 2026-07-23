@@ -14,7 +14,7 @@ from typing import cast
 
 from ci_checks.checks.build_backend import BackendStatus, _classify
 
-from .conftest import render
+from ._helpers import render
 from .factories import (
     http_and_kafka_ml,
     http_only_producer,

@@ -19,6 +19,8 @@ from requests.exceptions import HTTPError
 if TYPE_CHECKING:
     from .client import NohikiClient
 
+pytestmark = pytest.mark.integration
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("nohiki-e2e")
 

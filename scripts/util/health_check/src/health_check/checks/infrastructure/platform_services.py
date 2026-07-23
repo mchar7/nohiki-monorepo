@@ -86,15 +86,17 @@ async def _probe_endpoint(platform: Platform, endpoint: _ServiceEndpoint) -> str
         Failure description string if unreachable, else ``None``.
     """
     if endpoint.exec_service is not None:
-        code, _, _ = await asyncio.to_thread(
+        code, _, stderr = await asyncio.to_thread(
             platform.exec_in_service,
             endpoint.exec_service,
             ["curl", "-sf", "--connect-timeout", "5", endpoint.url],
             timeout=_HTTP_TIMEOUT,
         )
     else:
-        code, _, _ = await asyncio.to_thread(platform.curl, endpoint.url, timeout=_HTTP_TIMEOUT)
-    if code != 0:
+        code, _, stderr = await asyncio.to_thread(platform.curl, endpoint.url, timeout=_HTTP_TIMEOUT)
+    error = stderr.casefold()
+    rustfs_forbidden = endpoint.name == "RustFS" and ("error: 403" in error or "403 forbidden" in error)
+    if code != 0 and not rustfs_forbidden:
         return f"{endpoint.name}: unreachable at {endpoint.url}"
     return None
 

@@ -10,8 +10,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/shared/ui/empty.tsx';
-import { CardGridSkeleton } from '@/shared/ui/index.ts';
 import { Skeleton } from '@/shared/ui/skeleton.tsx';
+import { CardGridSkeleton } from '@/shared/ui/skeleton-layouts.tsx';
 import { JobListingCard } from './JobListingCard.tsx';
 
 interface CorrelationInfo {

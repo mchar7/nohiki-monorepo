@@ -45,7 +45,6 @@ async function renderProvider(queryClient: QueryClient): Promise<void> {
     '/dashboard',
   );
   render(jsx);
-  await act(async () => undefined);
 }
 
 beforeEach(() => {

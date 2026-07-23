@@ -1,11 +1,18 @@
-import { afterEach, describe, expect, vi } from 'vitest';
+import { beforeEach, describe, expect, vi } from 'vitest';
 import { useAppStore } from './appStore.ts';
 
 /** Number of pending commands added in the clearPendingCommands test */
 const TEST_PENDING_COMMAND_COUNT: number = 3;
 
-afterEach(() => {
+beforeEach(() => {
   vi.clearAllMocks();
+  useAppStore.setState(
+    {
+      ...useAppStore.getInitialState(),
+      pendingCommands: new Map(),
+    },
+    true,
+  );
 });
 
 describe('appStore - UISlice', () => {

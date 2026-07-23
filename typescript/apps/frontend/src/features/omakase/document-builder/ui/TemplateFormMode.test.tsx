@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, vi } from 'vitest';
 import { nonNull } from '@/shared/test-utils';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import type { ContentSchema, FieldDescriptor } from '../lib/TemplateFormModeModel.ts';
 import { flattenSchema } from '../lib/TemplateFormModeModel.ts';
 import { TemplateFormMode } from './TemplateFormMode.tsx';

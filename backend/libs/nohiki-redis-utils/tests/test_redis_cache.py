@@ -2,13 +2,47 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import timedelta
+from unittest.mock import AsyncMock, Mock
+
 import pytest
 from nohiki_redis_utils.redis_cache import RedisCache
+from redis.asyncio import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
+
+
+@pytest.fixture
+def _redis_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace Redis construction with a deterministic failing client."""
+    monkeypatch.setattr("socket.getaddrinfo", Mock(side_effect=AssertionError("Unexpected DNS lookup")))
+    client = AsyncMock(spec=Redis)
+    error = RedisConnectionError("Redis unavailable")
+    for operation in (
+        "execute_command",
+        "expire",
+        "get",
+        "sadd",
+        "set",
+        "setnx",
+        "sismember",
+        "smembers",
+        "srem",
+        "ttl",
+        "zadd",
+        "zcard",
+        "zrange",
+        "zrangebyscore",
+        "zrem",
+    ):
+        getattr(client, operation).side_effect = error
+    monkeypatch.setattr(Redis, "from_url", Mock(return_value=client))
 
 
 class TestRedisCacheBinaryOperations:
     """Tests for binary data operations (get_bytes/set_bytes)."""
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_set_and_get_bytes(self, redis_container: str) -> None:
         """Verify basic set_bytes and get_bytes operations."""
@@ -21,6 +55,7 @@ class TestRedisCacheBinaryOperations:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_get_bytes_nonexistent_returns_none(self, redis_container: str) -> None:
         """Verify get_bytes returns None for nonexistent key."""
@@ -31,26 +66,27 @@ class TestRedisCacheBinaryOperations:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_set_bytes_with_ttl(self, redis_container: str) -> None:
         """Verify set_bytes respects TTL."""
         cache = RedisCache(redis_url=redis_container, service_name="test")
         try:
             test_data = b"expiring data"
-            await cache.set_bytes("ttl_key", test_data, ttl=1)
+            await cache.set_bytes("ttl_key", test_data, ttl=timedelta(milliseconds=50))
             result = await cache.get_bytes("ttl_key")
             assert result == test_data
 
-            # Wait for expiration
-            import asyncio
-
-            await asyncio.sleep(1.1)
+            async with asyncio.timeout(0.5):
+                while await cache.get_bytes("ttl_key") is not None:  # noqa: ASYNC110 -- Redis TTL expiry has no event.
+                    await asyncio.sleep(0.005)
 
             result_after_ttl = await cache.get_bytes("ttl_key")
             assert result_after_ttl is None
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_set_bytes_overwrites_existing(self, redis_container: str) -> None:
         """Verify set_bytes overwrites existing value."""
@@ -63,6 +99,7 @@ class TestRedisCacheBinaryOperations:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_binary_data_preserves_null_bytes(self, redis_container: str) -> None:
         """Verify binary data with null bytes is preserved correctly."""
@@ -75,6 +112,7 @@ class TestRedisCacheBinaryOperations:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_large_binary_data(self, redis_container: str) -> None:
         """Verify large binary data can be stored and retrieved."""
@@ -88,6 +126,7 @@ class TestRedisCacheBinaryOperations:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_service_name_isolation_for_binary(self, redis_container: str) -> None:
         """Verify service name provides key isolation for binary data."""
@@ -106,6 +145,7 @@ class TestRedisCacheBinaryOperations:
             await cache1.close()
             await cache2.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_delete_binary_data(self, redis_container: str) -> None:
         """Verify delete works with binary data."""
@@ -118,6 +158,7 @@ class TestRedisCacheBinaryOperations:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_exists_with_binary_data(self, redis_container: str) -> None:
         """Verify exists works with binary data."""
@@ -134,6 +175,7 @@ class TestRedisCacheBinaryOperations:
 class TestRedisCacheCircuitBreakerWithBinary:
     """Tests for circuit breaker behavior with binary operations."""
 
+    @pytest.mark.usefixtures("_redis_connection_error")
     @pytest.mark.asyncio
     async def test_circuit_breaker_fallback_on_error(self) -> None:
         """Verify circuit breaker provides fallback on connection error."""
@@ -145,6 +187,7 @@ class TestRedisCacheCircuitBreakerWithBinary:
         finally:
             await cache.close()
 
+    @pytest.mark.usefixtures("_redis_connection_error")
     @pytest.mark.asyncio
     async def test_set_bytes_handles_connection_error_gracefully(self) -> None:
         """Verify set_bytes handles connection errors gracefully."""
@@ -159,6 +202,7 @@ class TestRedisCacheCircuitBreakerWithBinary:
 class TestRedisCacheIncrExpireTtl:
     """Tests for incr, expire, and ttl operations."""
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_incr_creates_key_with_one(self, redis_container: str) -> None:
         """Verify incr creates key with value 1 if doesn't exist."""
@@ -169,6 +213,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_incr_increments_existing_value(self, redis_container: str) -> None:
         """Verify incr increments existing integer value."""
@@ -181,6 +226,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.usefixtures("_redis_connection_error")
     @pytest.mark.asyncio
     async def test_incr_handles_connection_error(self) -> None:
         """Verify incr returns 0 on connection error."""
@@ -191,6 +237,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_expire_sets_ttl_on_key(self, redis_container: str) -> None:
         """Verify expire sets TTL on existing key."""
@@ -205,6 +252,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_expire_returns_false_for_nonexistent_key(self, redis_container: str) -> None:
         """Verify expire returns False for nonexistent key."""
@@ -215,6 +263,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.usefixtures("_redis_connection_error")
     @pytest.mark.asyncio
     async def test_expire_handles_connection_error(self) -> None:
         """Verify expire returns False on connection error."""
@@ -225,6 +274,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_ttl_returns_remaining_time(self, redis_container: str) -> None:
         """Verify ttl returns remaining time for key with expiry."""
@@ -236,6 +286,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_ttl_returns_minus_two_for_nonexistent(self, redis_container: str) -> None:
         """Verify ttl returns -2 for nonexistent key."""
@@ -246,6 +297,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_ttl_returns_minus_one_for_no_expiry(self, redis_container: str) -> None:
         """Verify ttl returns -1 for key without expiry."""
@@ -257,6 +309,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.usefixtures("_redis_connection_error")
     @pytest.mark.asyncio
     async def test_ttl_handles_connection_error(self) -> None:
         """Verify ttl returns -2 on connection error."""
@@ -267,6 +320,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_incr_and_expire_workflow(self, redis_container: str) -> None:
         """Verify incr and expire work together for rate limiting pattern."""
@@ -290,6 +344,7 @@ class TestRedisCacheIncrExpireTtl:
         finally:
             await cache.close()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_incr_with_ttl_strict_sets_ttl_only_on_first_increment(self, redis_cache: RedisCache) -> None:
         """The fixed-window counter gets a TTL atomically and preserves an existing window."""
@@ -313,6 +368,7 @@ class TestRedisCacheIncrExpireTtl:
 class TestRedisCacheSetnx:
     """Tests for setnx operation."""
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_setnx_sets_new_key(self, redis_cache: RedisCache) -> None:
         """Verify setnx sets value for new key."""
@@ -321,6 +377,7 @@ class TestRedisCacheSetnx:
         val = await redis_cache.get("new_setnx_key")
         assert val == "value"
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_setnx_does_not_overwrite(self, redis_cache: RedisCache) -> None:
         """Verify setnx does not overwrite existing key."""
@@ -330,6 +387,7 @@ class TestRedisCacheSetnx:
         val = await redis_cache.get("existing_key")
         assert val == "original"
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_setnx_with_ttl(self, redis_cache: RedisCache) -> None:
         """Verify setnx respects TTL."""
@@ -338,6 +396,7 @@ class TestRedisCacheSetnx:
         ttl = await redis_cache.ttl("setnx_ttl_key")
         assert 0 < ttl <= 60
 
+    @pytest.mark.usefixtures("_redis_connection_error")
     @pytest.mark.asyncio
     async def test_setnx_handles_connection_error(self) -> None:
         """Verify setnx returns False on connection error."""
@@ -352,12 +411,14 @@ class TestRedisCacheSetnx:
 class TestRedisCacheSetOperations:
     """Tests for set operations (sadd, srem, smembers, sismember)."""
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_sadd_adds_members(self, redis_cache: RedisCache) -> None:
         """Verify sadd adds members to set."""
         result = await redis_cache.sadd("myset", "member1", "member2")
         assert result == 2
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_sadd_returns_count_of_new_members(self, redis_cache: RedisCache) -> None:
         """Verify sadd returns count of newly added members."""
@@ -365,6 +426,7 @@ class TestRedisCacheSetOperations:
         result = await redis_cache.sadd("myset2", "member1", "member2")
         assert result == 1
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_srem_removes_members(self, redis_cache: RedisCache) -> None:
         """Verify srem removes members from set."""
@@ -374,6 +436,7 @@ class TestRedisCacheSetOperations:
         members = await redis_cache.smembers("myset3")
         assert members == {"c"}
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_smembers_returns_all_members(self, redis_cache: RedisCache) -> None:
         """Verify smembers returns all set members."""
@@ -381,12 +444,14 @@ class TestRedisCacheSetOperations:
         members = await redis_cache.smembers("myset4")
         assert members == {"x", "y", "z"}
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_smembers_empty_set(self, redis_cache: RedisCache) -> None:
         """Verify smembers returns empty set for nonexistent key."""
         members = await redis_cache.smembers("nonexistent_set")
         assert members == set()
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_sismember_checks_membership(self, redis_cache: RedisCache) -> None:
         """Verify sismember checks set membership."""
@@ -394,6 +459,7 @@ class TestRedisCacheSetOperations:
         assert await redis_cache.sismember("myset5", "member") is True
         assert await redis_cache.sismember("myset5", "nonmember") is False
 
+    @pytest.mark.usefixtures("_redis_connection_error")
     @pytest.mark.asyncio
     async def test_set_ops_handle_connection_error(self) -> None:
         """Verify set operations handle connection errors."""
@@ -410,12 +476,14 @@ class TestRedisCacheSetOperations:
 class TestRedisCacheSortedSetOperations:
     """Tests for sorted set operations (zadd, zrem, zrange, zrangebyscore, zcard)."""
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_zadd_adds_member_with_score(self, redis_cache: RedisCache) -> None:
         """Verify zadd adds member with score."""
         result = await redis_cache.zadd("zset1", "member1", 1.0)
         assert result == 1
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_zadd_updates_score(self, redis_cache: RedisCache) -> None:
         """Verify zadd updates score for existing member."""
@@ -423,6 +491,7 @@ class TestRedisCacheSortedSetOperations:
         result = await redis_cache.zadd("zset2", "member", 2.0)
         assert result == 0  # No new members added
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_zrem_removes_member(self, redis_cache: RedisCache) -> None:
         """Verify zrem removes member from sorted set."""
@@ -430,6 +499,7 @@ class TestRedisCacheSortedSetOperations:
         result = await redis_cache.zrem("zset3", "member")
         assert result == 1
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_zrange_returns_members_by_index(self, redis_cache: RedisCache) -> None:
         """Verify zrange returns members by index range."""
@@ -439,6 +509,7 @@ class TestRedisCacheSortedSetOperations:
         result = await redis_cache.zrange("zset4", 0, 1)
         assert result == ["a", "b"]
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_zrangebyscore_returns_members_by_score(self, redis_cache: RedisCache) -> None:
         """Verify zrangebyscore returns members within score range."""
@@ -448,6 +519,7 @@ class TestRedisCacheSortedSetOperations:
         result = await redis_cache.zrangebyscore("zset5", 2.0, 8.0)
         assert result == ["mid"]
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_zcard_returns_cardinality(self, redis_cache: RedisCache) -> None:
         """Verify zcard returns sorted set size."""
@@ -456,12 +528,14 @@ class TestRedisCacheSortedSetOperations:
         result = await redis_cache.zcard("zset6")
         assert result == 2
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_zcard_nonexistent(self, redis_cache: RedisCache) -> None:
         """Verify zcard returns 0 for nonexistent key."""
         result = await redis_cache.zcard("nonexistent_zset")
         assert result == 0
 
+    @pytest.mark.usefixtures("_redis_connection_error")
     @pytest.mark.asyncio
     async def test_sorted_set_ops_handle_connection_error(self) -> None:
         """Verify sorted set operations handle connection errors."""
@@ -479,19 +553,22 @@ class TestRedisCacheSortedSetOperations:
 class TestRedisCacheDistributedLock:
     """Tests for distributed lock operations."""
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_acquire_lock_success(self, redis_cache: RedisCache) -> None:
         """Verify acquire_lock returns True for new lock."""
         result = await redis_cache.acquire_lock("mylock", "owner1", ttl_seconds=10, timeout_seconds=1)
         assert result is True
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_acquire_lock_fails_when_held(self, redis_cache: RedisCache) -> None:
         """Verify acquire_lock returns False when lock is already held."""
-        await redis_cache.acquire_lock("held_lock", "owner1", ttl_seconds=60, timeout_seconds=1)
-        result = await redis_cache.acquire_lock("held_lock", "owner2", ttl_seconds=60, timeout_seconds=1)
+        await redis_cache.acquire_lock("held_lock", "owner1", ttl_seconds=60, timeout_seconds=0.05)
+        result = await redis_cache.acquire_lock("held_lock", "owner2", ttl_seconds=60, timeout_seconds=0.05)
         assert result is False
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_release_lock_success(self, redis_cache: RedisCache) -> None:
         """Verify release_lock releases owned lock."""
@@ -501,6 +578,7 @@ class TestRedisCacheDistributedLock:
         # Lock should be released
         assert await redis_cache.is_locked("release_lock") is False
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_release_lock_wrong_owner(self, redis_cache: RedisCache) -> None:
         """Verify release_lock fails for wrong owner."""
@@ -508,6 +586,7 @@ class TestRedisCacheDistributedLock:
         result = await redis_cache.release_lock("owned_lock", "owner2")
         assert result is False
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_is_locked(self, redis_cache: RedisCache) -> None:
         """Verify is_locked returns correct state."""
@@ -515,6 +594,7 @@ class TestRedisCacheDistributedLock:
         await redis_cache.acquire_lock("locked_key", "owner", ttl_seconds=60, timeout_seconds=1)
         assert await redis_cache.is_locked("locked_key") is True
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_distributed_lock_context_manager(self, redis_cache: RedisCache) -> None:
         """Verify distributed_lock context manager acquires and releases."""

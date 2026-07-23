@@ -62,7 +62,6 @@ export class DocumentsPage extends BasePage {
     if (isSpinnerVisible) {
       await this.loadingSpinner.waitFor({ state: 'hidden', timeout: 30_000 });
     }
-    await this.page.waitForLoadState('load');
   }
 
   async getDocumentCount(): Promise<number> {

@@ -1,4 +1,4 @@
-import { PanelErrorState } from '@shared/ui/index.ts';
+import { PanelErrorState } from '@shared/ui/panel-error-state.tsx';
 import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDocumentForm } from '../../lib/useDocumentForm.ts';

@@ -22,8 +22,8 @@ import {
   usePullToRefresh,
 } from '@/shared/lib/index.ts';
 import { DensityToggle } from '@/shared/ui/density-toggle.tsx';
-import { PageHeader } from '@/shared/ui/index.ts';
 import { ListPagination } from '@/shared/ui/list-pagination.tsx';
+import { PageHeader } from '@/shared/ui/PageHeader.tsx';
 import { PullIndicator } from '@/shared/ui/pull-indicator.tsx';
 import { SortSelect } from '@/shared/ui/sort-select.tsx';
 import type { SortDirection, SortOption } from '@/shared/ui/sort-select.types.ts';

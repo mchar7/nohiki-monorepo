@@ -12,7 +12,7 @@ from health_check.checks._utils import (
     fetch_connector_status,
 )
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class TestConnectorStatus:

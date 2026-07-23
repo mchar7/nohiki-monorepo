@@ -4,24 +4,21 @@ Thread-safe correlation ID handling using contextvars
 and FastAPI middleware for automatic correlation ID injection.
 """
 
+from __future__ import annotations
+
+import importlib
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
-from uuid_utils.compat import uuid7
-
 if TYPE_CHECKING:
-    from fastapi import Request, Response
-    from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+    from ._correlation_middleware import CorrelationIdMiddleware
 
-_FASTAPI_AVAILABLE = False
-try:
-    from fastapi import Request, Response
-    from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-
-    _FASTAPI_AVAILABLE = True
-except ModuleNotFoundError:
-    pass
-
+__all__ = [
+    "CORRELATION_ID_HEADER",
+    "CorrelationIdMiddleware",
+    "get_correlation_id",
+    "set_correlation_id",
+]
 
 # Standard header name for correlation ID
 CORRELATION_ID_HEADER = "X-Correlation-ID"
@@ -60,38 +57,16 @@ def set_correlation_id(correlation_id: str) -> None:
     _correlation_id_ctx_var.set(correlation_id)
 
 
-if _FASTAPI_AVAILABLE:
+_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "CorrelationIdMiddleware": ("nohiki_observability._correlation_middleware", "CorrelationIdMiddleware"),
+}
 
-    class CorrelationIdMiddleware(BaseHTTPMiddleware):
-        """FastAPI middleware that extracts or generates correlation IDs for requests.
 
-        This middleware:
-        1. Extracts correlation ID from X-Correlation-ID header if present
-        2. Generates a new UUID if no correlation ID is provided
-        3. Sets the correlation ID in the context variable
-        4. Adds the correlation ID to the response headers
-        """
-
-        async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-            """Process the request and handle correlation ID."""
-            correlation_id = request.headers.get(CORRELATION_ID_HEADER, "")
-            if not _is_valid_correlation_id(correlation_id):
-                correlation_id = str(uuid7())
-
-            token = _correlation_id_ctx_var.set(correlation_id)
-            try:
-                response: Response = await call_next(request)
-                response.headers[CORRELATION_ID_HEADER] = correlation_id
-                return response
-            finally:
-                _correlation_id_ctx_var.reset(token)
-
-else:
-
-    class CorrelationIdMiddleware:
-        """Raises helpful error if used without FastAPI extra."""
-
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            """Initialize middleware with helpful error message."""
-            msg = "FastAPI not installed. Install nohiki-observability[fastapi] to use CorrelationIdMiddleware."
-            raise ImportError(msg)
+def __getattr__(name: str) -> object:
+    """Lazy-import FastAPI middleware on first use (PEP 562)."""
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
+        module = importlib.import_module(module_path)
+        return getattr(module, attr_name)
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)

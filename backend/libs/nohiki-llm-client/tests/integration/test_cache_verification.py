@@ -1,29 +1,25 @@
-"""Real API test to verify LLM provider caching via OpenRouter.
+"""Hermetic cache-report tests plus an explicit OpenRouter billing smoke.
 
-Uses OpenRouter's /generation API to verify actual cache usage by checking
-the `native_tokens_cached` field in generation details.
+Pytest exercises all cache and report behavior with ``httpx.MockTransport``.
+No provider request is made during collection or a normal test run.
 
-Results (as of 2026-01-16):
-- anthropic/claude-haiku-4.5: ✅ Caching works via Amazon Bedrock
-- openai/gpt-5-mini: ✅ Caching works via OpenAI
-- google/gemini-2.5-flash: ❌ No caching reported via OpenRouter
+To run the paid provider smoke explicitly from the repository root:
 
-Note: Gemini models via OpenRouter do not appear to support/report caching,
-even with large contexts (7000+ tokens) and cache_control breakpoints.
-
-Usage:
-    cd <repo-root>
-    uv run python backend/libs/nohiki-llm-client/tests/integration/test_cache_verification.py
+    NOHIKI_RUN_OPENROUTER_SMOKE=1 uv run --package nohiki-llm-client \
+        python backend/libs/nohiki-llm-client/tests/integration/test_cache_verification.py
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
 import httpx
+import pytest
 from nohiki_test_utils import get_test_secrets_dir
 from rich.console import Console
 from rich.panel import Panel
@@ -34,6 +30,13 @@ OPENROUTER_KEY_PATH: Final[Path] = get_test_secrets_dir() / "llm" / "provider" /
 OPENROUTER_BASE_URL: Final[str] = "https://openrouter.ai/api/v1"
 
 console = Console(stderr=True)
+
+OPENROUTER_SMOKE_ENV: Final[str] = "NOHIKI_RUN_OPENROUTER_SMOKE"
+QUESTIONS: Final[tuple[str, ...]] = (
+    "What is microservices architecture? One sentence.",
+    "What is event-driven architecture? One sentence.",
+    "What are the key database indexing strategies? List briefly.",
+)
 
 
 def _generate_large_context(min_tokens: int = 2000) -> str:
@@ -206,23 +209,48 @@ async def _get_generation_details(
     return response.json()
 
 
+async def _wait_for_generation_details(
+    client: httpx.AsyncClient,
+    api_key: str,
+    generation_id: str,
+    *,
+    timeout_seconds: float = 30.0,
+    poll_interval_seconds: float = 0.25,
+) -> dict[str, Any]:
+    """Poll until OpenRouter publishes generation accounting details."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+
+    while True:
+        try:
+            details = await _get_generation_details(client, api_key, generation_id)
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != httpx.codes.NOT_FOUND:
+                raise
+        else:
+            data = details.get("data", details)
+            if data.get("native_tokens_prompt") is not None:
+                return details
+
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            msg = f"Generation details were not ready for {generation_id}"
+            raise TimeoutError(msg)
+        await asyncio.sleep(min(poll_interval_seconds, remaining))
+
+
 async def _test_model_caching(
     client: httpx.AsyncClient,
     api_key: str,
     model: str,
     *,
     use_cache_control: bool,
+    poll_interval_seconds: float = 0.25,
 ) -> ModelCacheReport:
     """Test caching for a specific model by checking generation API."""
     report = ModelCacheReport(model=model)
 
-    questions = [
-        "What is microservices architecture? One sentence.",
-        "What is event-driven architecture? One sentence.",
-        "What are the key database indexing strategies? List briefly.",
-    ]
-
-    for question in questions:
+    for question in QUESTIONS:
         if use_cache_control:
             messages = _build_messages_with_cache_control(LARGE_CACHED_CONTEXT, question)
         else:
@@ -231,10 +259,12 @@ async def _test_model_caching(
         try:
             completion = await _make_completion_request(client, api_key, model, messages)
             generation_id = completion.get("id", "")
-
-            await asyncio.sleep(1.0)
-
-            gen_details = await _get_generation_details(client, api_key, generation_id)
+            gen_details = await _wait_for_generation_details(
+                client,
+                api_key,
+                generation_id,
+                poll_interval_seconds=poll_interval_seconds,
+            )
             data = gen_details.get("data", gen_details)
 
             result = GenerationResult(
@@ -250,7 +280,7 @@ async def _test_model_caching(
             if result.native_tokens_cached > 0:
                 report.cache_working = True
 
-        except Exception as e:
+        except Exception as error:
             report.results.append(
                 GenerationResult(
                     generation_id="",
@@ -259,11 +289,9 @@ async def _test_model_caching(
                     native_tokens_completion=0,
                     provider_name="error",
                     success=False,
-                    error=str(e)[:100],
+                    error=str(error)[:100],
                 )
             )
-
-        await asyncio.sleep(0.5)
 
     return report
 
@@ -349,5 +377,107 @@ async def run_cache_verification() -> None:
         console.print(f"[bold red]✗ No caching detected for: {', '.join(failed)}[/bold red]")
 
 
+@pytest.mark.parametrize(
+    ("model", "use_cache_control", "cached_tokens"),
+    [
+        ("google/gemini-3-flash-preview", False, 0),
+        ("anthropic/claude-haiku-4.5", True, 512),
+        ("openai/gpt-5-mini", False, 512),
+    ],
+)
+@pytest.mark.asyncio
+async def test_cache_report_uses_mocked_openrouter_transport(
+    model: str,
+    *,
+    use_cache_control: bool,
+    cached_tokens: int,
+) -> None:
+    """Preserve the three-model, three-question cache contract without billing."""
+    completion_count = 0
+    generation_attempts: dict[str, int] = {}
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        nonlocal completion_count
+        assert request.headers["Authorization"] == "Bearer test-key"
+
+        if request.url.path.endswith("/chat/completions"):
+            payload = json.loads(request.content)
+            assert payload["model"] == model
+            assert payload["messages"][-1]["content"] == QUESTIONS[completion_count]
+            if use_cache_control:
+                assert payload["messages"][0]["content"][1]["cache_control"] == {"type": "ephemeral"}
+            generation_id = f"generation-{completion_count}"
+            completion_count += 1
+            return httpx.Response(200, json={"id": generation_id})
+
+        generation_id = request.url.params["id"]
+        attempts = generation_attempts.get(generation_id, 0)
+        generation_attempts[generation_id] = attempts + 1
+        if generation_id == "generation-0" and attempts == 0:
+            return httpx.Response(404, json={"error": "not ready"})
+
+        index = int(generation_id.rsplit("-", maxsplit=1)[1])
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "native_tokens_prompt": 5000,
+                    "native_tokens_cached": cached_tokens if index else 0,
+                    "native_tokens_completion": 20,
+                    "provider_name": "mock-provider",
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle_request)) as client:
+        report = await _test_model_caching(
+            client,
+            "test-key",
+            model,
+            use_cache_control=use_cache_control,
+            poll_interval_seconds=0,
+        )
+
+    assert completion_count == len(QUESTIONS)
+    assert generation_attempts["generation-0"] == 2
+    assert len(report.results) == len(QUESTIONS)
+    assert all(result.success for result in report.results)
+    assert report.cache_working is (cached_tokens > 0)
+    assert report.total_cached_tokens == cached_tokens * 2
+
+
+def test_print_model_report_renders_cache_accounting(capsys: pytest.CaptureFixture[str]) -> None:
+    """Render generation accounting rather than merely exercising Rich."""
+    report = ModelCacheReport(
+        model="openai/mock",
+        results=[
+            GenerationResult(
+                generation_id="generation-1",
+                native_tokens_prompt=5000,
+                native_tokens_cached=512,
+                native_tokens_completion=20,
+                provider_name="mock-provider",
+                success=True,
+            )
+        ],
+        cache_working=True,
+    )
+
+    _print_model_report(report)
+
+    rendered = capsys.readouterr().err
+    assert "openai/mock" in rendered
+    assert "CACHED" in rendered
+    assert "512" in rendered
+
+
+def _require_explicit_openrouter_smoke() -> None:
+    """Refuse paid traffic unless the operator explicitly opts in."""
+    if os.environ.get(OPENROUTER_SMOKE_ENV) != "1":
+        msg = f"Set {OPENROUTER_SMOKE_ENV}=1 to run the paid OpenRouter smoke"
+        raise SystemExit(msg)
+
+
 if __name__ == "__main__":
+    _require_explicit_openrouter_smoke()
     asyncio.run(run_cache_verification())

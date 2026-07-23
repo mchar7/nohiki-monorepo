@@ -2,17 +2,40 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Literal
+
 import httpx
 import numpy as np
 from nohiki_ml_manifest import InferenceBackend, SemanticRepresentationManifest
 from nohiki_observability import get_logger
-from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 logger = get_logger(__name__)
 
 NORM_EPSILON: float = 1e-9
 DENSE_VECTOR_NDIM = 1
 DENSE_BATCH_NDIM = 2
+
+
+def _create_sentence_transformer(
+    model_id: str,
+    *,
+    backend: Literal["torch", "onnx", "openvino"],
+    trust_remote_code: bool,
+    model_kwargs: dict[str, str | bool | None] | None,
+    device: str,
+) -> SentenceTransformer:
+    from sentence_transformers import SentenceTransformer  # noqa: PLC0415 -- Keep inference off the import-only path.
+
+    return SentenceTransformer(
+        model_id,
+        backend=backend,
+        trust_remote_code=trust_remote_code,
+        model_kwargs=model_kwargs,
+        device=device,
+    )
 
 
 class DenseEncoder:
@@ -96,7 +119,7 @@ class DenseEncoder:
                 model_kwargs["low_cpu_mem_usage"] = False
 
             try:
-                self._model = SentenceTransformer(
+                self._model = _create_sentence_transformer(
                     self.model_id,
                     backend=backend,
                     trust_remote_code=self._config.trust_remote_code,

@@ -5,30 +5,24 @@ import { useTranslation } from 'react-i18next';
 import { Area, AreaChart, CartesianGrid, Line, XAxis } from 'recharts';
 
 import { exportToCsv } from '@/shared/lib/index.ts';
+import { Button } from '@/shared/ui/button.tsx';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card.tsx';
 import {
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   type ChartConfig,
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
+} from '@/shared/ui/chart.tsx';
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Skeleton,
-  ToggleGroup,
-  ToggleGroupItem,
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/shared/ui/index.ts';
+} from '@/shared/ui/select.tsx';
+import { Skeleton } from '@/shared/ui/skeleton.tsx';
+import { ToggleGroup, ToggleGroupItem } from '@/shared/ui/toggle-group.tsx';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/shared/ui/tooltip.tsx';
 import {
   type ActivityDataPoint,
   aggregateCorrelationsByDate,

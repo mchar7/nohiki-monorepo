@@ -83,9 +83,15 @@ async def release_lock(conn: AsyncConnection, lock_id: int) -> None:
     await conn.execute(stmt)
 
 
-async def wait_for_lock_release(conn: AsyncConnection, lock_id: int, max_wait_seconds: int, service_name: str) -> None:
+async def wait_for_lock_release(
+    conn: AsyncConnection,
+    lock_id: int,
+    max_wait_seconds: float,
+    service_name: str,
+) -> None:
     """Wait for another pod to finish migrations by polling for lock availability."""
     start_time = time.monotonic()
+    deadline = start_time + max_wait_seconds
     elapsed = 0.0
     poll_count = 0
 
@@ -100,7 +106,7 @@ async def wait_for_lock_release(conn: AsyncConnection, lock_id: int, max_wait_se
             )
             return
 
-        await asyncio.sleep(LOCK_POLL_INTERVAL)
+        await asyncio.sleep(min(LOCK_POLL_INTERVAL, max(0.0, deadline - time.monotonic())))
         elapsed = time.monotonic() - start_time
 
         if poll_count % 10 == 0:

@@ -85,12 +85,16 @@ KAFKA_CONSUMER_GROUPS: Final[MappingProxyType[str, tuple[str, ...]]] = MappingPr
     }
 )
 
+ZERO_LAG_CONSUMER_GROUPS: Final[frozenset[str]] = frozenset({"ml-compute-service-consumer"})
+
+
 CRITICAL_CONSUMER_GROUPS_LAG: Final[tuple[str, ...]] = (
     "bff-service-consumer-projections",
     "job-storage-service-consumer",
     "job-ingest-enrichment-service-skill-callback",
     "job-correlation-evaluation-service-consumer",
     "job-correlation-evaluation-service-consumer-projection",
+    *ZERO_LAG_CONSUMER_GROUPS,
 )
 
 REQUIRED_SYSTEM_TEMPLATES: Final[frozenset[tuple[str, str]]] = frozenset(
