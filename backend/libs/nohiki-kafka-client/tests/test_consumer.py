@@ -813,19 +813,25 @@ class TestDrainInflight:
         consumer._consumer = MagicMock()
         consumer._consumer.commit = AsyncMock()
 
-        completed = []
+        completed: list[bool] = []
+        started = asyncio.Event()
+        release = asyncio.Event()
 
-        async def slow_task() -> None:
-            await asyncio.sleep(0.01)
+        async def inflight_task() -> None:
+            started.set()
+            await release.wait()
             completed.append(True)
 
-        task = asyncio.create_task(slow_task())
+        task = asyncio.create_task(inflight_task())
         consumer._inflight_tasks.add(task)
         task.add_done_callback(consumer._inflight_tasks.discard)
+        await started.wait()
 
-        await consumer._drain_inflight()
+        drain_task = asyncio.create_task(consumer._drain_inflight())
+        asyncio.get_running_loop().call_soon(release.set)
+        await drain_task
 
-        assert len(completed) == 1
+        assert completed == [True]
         assert len(consumer._inflight_tasks) == 0
 
 
