@@ -28,6 +28,10 @@ rejected.
 under `infra/shared/secrets/` and mount read-only into `/run/secrets/<category>/` in the containers that need
 them. See [`infra/shared/secrets/README.md`](../shared/secrets/README.md) for provisioning.
 
+LLM provider endpoints require HTTPS by default. A local proxy that exposes only HTTP requires the explicit
+`NOHIKI_ALLOW_HTTP_LLM_LOCAL=1` opt-in in this checkout's `.env`; validation resolves the endpoint and accepts it only
+when every address is loopback or RFC1918. The opt-in never permits plaintext transport to an external address.
+
 ### Isolated startup and profiles
 
 For dependency work that does not need application containers, start only the stateful platform with

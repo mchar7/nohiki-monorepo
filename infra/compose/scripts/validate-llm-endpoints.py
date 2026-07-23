@@ -6,6 +6,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
+import socket
 import sys
 from pathlib import Path
 from typing import Never
@@ -13,7 +14,10 @@ from urllib.parse import urlsplit
 
 _MODEL_KEY = re.compile(r"^[A-Z0-9_]+_LLM__.*__MODELS__[0-9]+__MODEL$")
 _BASE_URL_KEY = re.compile(r"^[A-Z0-9_]+_LLM__.*__MODELS__[0-9]+__BASE_URL$")
-_LLM_BINDING_KEY = re.compile(r"^(?:NOHIKI_LLM_[A-Z0-9_]+|[A-Z0-9_]+_LLM__.+)$", re.IGNORECASE)
+_LLM_BINDING_KEY = re.compile(
+    r"^(?:NOHIKI_ALLOW_HTTP_LLM_LOCAL|NOHIKI_LLM_[A-Z0-9_]+|[A-Z0-9_]+_LLM__.+)$",
+    re.IGNORECASE,
+)
 _ENVIRONMENT_LINE = re.compile(r"^\s+([A-Za-z_][A-Za-z0-9_]*):(?:\s+(.*))?$")
 _DOUBLE_QUOTED_YAML_SCALAR = r'"(?:[^"\\]|\\(?:\r?\n[ \t]*|.))*"'
 _DOUBLE_QUOTED_SCALAR_PATTERN = re.compile(_DOUBLE_QUOTED_YAML_SCALAR)
@@ -24,6 +28,12 @@ _MIN_PORT = 1
 _MAX_PORT = 65535
 _MAX_DNS_LENGTH = 253
 _DEFAULT_HTTPS_PORT = 443
+_DEFAULT_HTTP_PORT = 80
+_LOCAL_HTTP_OPT_IN = "NOHIKI_ALLOW_HTTP_LLM_LOCAL"
+_LOCAL_HTTP_OPT_IN_BINDING = "${NOHIKI_ALLOW_HTTP_LLM_LOCAL:-0}"
+_RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
 _MIN_VALIDATE_ARG_COUNT = 3
 _ENCODE_ACTION_ARG_COUNT = 4
 _VALIDATE_SOURCES_MIN_ARG_COUNT = 3
@@ -102,9 +112,9 @@ def _provider(model_key: str, model: str) -> str:
     return provider
 
 
-def _port(port_text: str | None, variable: str) -> int:
+def _port(port_text: str | None, variable: str, default: int) -> int:
     if port_text is None:
-        return _DEFAULT_HTTPS_PORT
+        return default
     if not port_text.isascii() or not port_text.isdigit():
         _invalid(f"{variable} port must be numeric")
     port = int(port_text)
@@ -113,7 +123,7 @@ def _port(port_text: str | None, variable: str) -> int:
     return port
 
 
-def _bracketed_host(authority: str, variable: str) -> tuple[str, int]:
+def _bracketed_host(authority: str, variable: str, default_port: int) -> tuple[str, int]:
     match = _BRACKETED_AUTHORITY.fullmatch(authority)
     if match is None:
         _invalid(f"{variable} has malformed bracketed authority")
@@ -122,7 +132,7 @@ def _bracketed_host(authority: str, variable: str) -> tuple[str, int]:
         host = ipaddress.IPv6Address(literal).compressed
     except ipaddress.AddressValueError:
         _invalid(f"{variable} has invalid IPv6 authority")
-    return host.lower(), _port(port_text, variable)
+    return host.lower(), _port(port_text, variable, default_port)
 
 
 def _dns_or_ipv4_host(host_text: str, variable: str) -> str:
@@ -139,16 +149,20 @@ def _dns_or_ipv4_host(host_text: str, variable: str) -> str:
     return host_text.lower()
 
 
-def _normalized_host(authority: str, variable: str) -> tuple[str, int]:
-    """Validate an HTTPS authority and return a canonical host/port pair."""
+def _normalized_host(authority: str, variable: str, default_port: int) -> tuple[str, int]:
+    """Validate an endpoint authority and return a canonical host/port pair."""
     if authority.startswith("["):
-        return _bracketed_host(authority, variable)
+        return _bracketed_host(authority, variable, default_port)
     if "[" in authority or "]" in authority or authority.count(":") > 1:
         _invalid(f"{variable} must bracket IPv6 authorities")
     host_text, separator, port_text = authority.partition(":")
     if not host_text:
         _invalid(f"{variable} has empty authority")
-    return _dns_or_ipv4_host(host_text, variable), _port(port_text if separator else None, variable)
+    return _dns_or_ipv4_host(host_text, variable), _port(
+        port_text if separator else None,
+        variable,
+        default_port,
+    )
 
 
 def _validate_url_characters(variable: str, value: str) -> None:
@@ -162,34 +176,84 @@ def _validate_url_characters(variable: str, value: str) -> None:
         _invalid(f"{variable} must be an absolute HTTPS URL without whitespace")
 
 
-def _validate_url(variable: str, value: str, provider: str) -> tuple[str, str, int]:
-    """Validate one provider URL and return its normalized HTTPS origin."""
+def _is_loopback_or_rfc1918(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if address.is_loopback:
+        return True
+    if isinstance(address, ipaddress.IPv6Address):
+        return address.ipv4_mapped is not None and any(address.ipv4_mapped in network for network in _RFC1918_NETWORKS)
+    return any(address in network for network in _RFC1918_NETWORKS)
+
+
+def _require_local_http_host(host: str, port: int, variable: str) -> None:
+    try:
+        addresses = {
+            ipaddress.ip_address(sockaddr[0])
+            for _, _, _, _, sockaddr in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        }
+    except OSError, ValueError:
+        _invalid(f"{variable} HTTP host could not be resolved")
+    if not addresses or any(not _is_loopback_or_rfc1918(address) for address in addresses):
+        _invalid(f"{variable} HTTP host must resolve only to loopback or RFC1918 addresses")
+
+
+def _validate_url(
+    variable: str,
+    value: str,
+    provider: str,
+    *,
+    allow_http_local: bool,
+) -> tuple[str, str, int]:
+    """Validate one provider URL and return its normalized origin."""
     _validate_url_characters(variable, value)
     try:
         parsed = urlsplit(value)
         parsed_port = parsed.port
     except ValueError:
         _invalid(f"{variable} has malformed authority")
-    if parsed.scheme.lower() != "https" or not parsed.netloc:
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"} or not parsed.netloc:
         _invalid(f"{variable} must be an absolute HTTPS URL")
+    if scheme == "http" and not allow_http_local:
+        _invalid(f"{variable} must use HTTPS; set {_LOCAL_HTTP_OPT_IN}=1 only for a loopback/RFC1918 local proxy")
     if parsed.username is not None or parsed.password is not None:
         _invalid(f"{variable} must not contain user information")
     if parsed.query or parsed.fragment:
         _invalid(f"{variable} must not contain a query or fragment")
 
-    host, port = _normalized_host(parsed.netloc, variable)
+    default_port = _DEFAULT_HTTP_PORT if scheme == "http" else _DEFAULT_HTTPS_PORT
+    host, port = _normalized_host(parsed.netloc, variable, default_port)
     if parsed_port is not None and parsed_port != port:
         _invalid(f"{variable} has inconsistent port")
+    if scheme == "http":
+        _require_local_http_host(host, port, variable)
     route = parsed.path.rstrip("/")
     if provider == "openai" and not route.endswith("/v1"):
         _invalid("NOHIKI_LLM_OPENAI_BASE_URL must end in /v1")
     if provider == "anthropic" and route.endswith("/v1"):
         _invalid("NOHIKI_LLM_ANTHROPIC_BASE_URL must not end in /v1")
-    return "https", host, port
+    return scheme, host, port
+
+
+def _allow_local_http(
+    source_bindings: dict[str, str],
+    rendered_bindings: dict[str, str],
+) -> bool:
+    source_value = source_bindings.get(_LOCAL_HTTP_OPT_IN)
+    if source_value is None:
+        return False
+    if source_value != _LOCAL_HTTP_OPT_IN_BINDING:
+        _invalid(f"Compose must declare {_LOCAL_HTTP_OPT_IN} with a fail-closed default")
+    rendered_value = rendered_bindings.get(_LOCAL_HTTP_OPT_IN)
+    if rendered_value not in {"0", "1"}:
+        _invalid(f"{_LOCAL_HTTP_OPT_IN} must render as 0 or 1")
+    return rendered_value == "1"
 
 
 def _provider_inputs(
-    source_bindings: dict[str, str], rendered_bindings: dict[str, str]
+    source_bindings: dict[str, str],
+    rendered_bindings: dict[str, str],
+    *,
+    allow_http_local: bool,
 ) -> tuple[dict[str, str], dict[str, set[tuple[str, str, int]]]]:
     endpoints: dict[str, str] = {}
     origins: dict[str, set[tuple[str, str, int]]] = {provider: set() for provider in _BASE_BINDINGS}
@@ -198,9 +262,9 @@ def _provider_inputs(
             _invalid(f"Compose must declare provider input {variable}")
         provider = variable.removeprefix("NOHIKI_LLM_").removesuffix("_BASE_URL").lower()
         endpoint = rendered_bindings.get(variable, "")
+        endpoints[provider] = endpoint
         if provider == "openai" or endpoint:
-            endpoints[provider] = endpoint
-            origins[provider].add(_validate_url(variable, endpoint, provider))
+            origins[provider].add(_validate_url(variable, endpoint, provider, allow_http_local=allow_http_local))
     return endpoints, origins
 
 
@@ -245,10 +309,11 @@ def _validate_models(
         )
         if rendered_provider != source_provider:
             _invalid(f"rendered provider changed for {model_key}")
-        if source_provider == "openrouter":
-            if base_key in source_bindings or base_key in rendered_bindings:
-                _invalid(f"public OpenRouter model {model_key} must omit BASE_URL")
+        base_url_omitted = base_key not in source_bindings and base_key not in rendered_bindings
+        if base_url_omitted and source_provider in {"openai", "openrouter"}:
             continue
+        if source_provider == "openrouter":
+            _invalid(f"public OpenRouter model {model_key} must omit BASE_URL")
         if source_bindings.get(base_key) != _BASE_BINDINGS[source_provider]:
             _invalid(f"{model_key} must use its provider-scoped BASE_URL binding")
         if rendered_bindings.get(base_key) != provider_endpoints.get(source_provider):
@@ -313,7 +378,11 @@ def validate(sources: list[str], rendered: str) -> None:
     rendered_bindings = {key.upper(): value for key, value in rendered_collected.items()}
     if rendered_only:
         _invalid(f"rendered LLM binding has no validated source: {rendered_only[0]}")
-    provider_endpoints, origins = _provider_inputs(source_bindings, rendered_bindings)
+    provider_endpoints, origins = _provider_inputs(
+        source_bindings,
+        rendered_bindings,
+        allow_http_local=_allow_local_http(source_bindings, rendered_bindings),
+    )
     _validate_models(source_bindings, rendered_bindings, provider_endpoints)
     if origins["openai"] & origins["anthropic"]:
         _invalid("OpenAI and Anthropic endpoints must use separate HTTPS origins")

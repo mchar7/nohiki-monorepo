@@ -128,6 +128,7 @@ result
 test_results.txt
 test_mig_failures.txt
 
+infra/compose/.nohiki-compose-*
 # Benchmark results
 scripts/benchmark/results/
 
