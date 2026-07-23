@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +12,18 @@ from user_pref_service.services.geo_integration import (
     _get_cached_geocoder,
     geocode_locations,
 )
+
+
+def test_import_does_not_load_geopy() -> None:
+    """Keep geopy off the service module's import path."""
+    script = """
+import sys
+import user_pref_service.services.geo_integration
+
+assert not any(name == "geopy" or name.startswith("geopy.") for name in sys.modules)
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +35,7 @@ def _reset_geocoder_cache() -> None:
 class TestGetCachedGeocoder:
     """Tests for _get_cached_geocoder function."""
 
-    @patch("user_pref_service.services.geo_integration.create_cached_geocoder")
+    @patch("nohiki_geo_utils.create_cached_geocoder")
     @patch("user_pref_service.services.geo_integration.get_settings")
     def test_creates_cached_geocoder_on_first_call(
         self, mock_get_settings: MagicMock, mock_create_geocoder: MagicMock
@@ -40,7 +54,7 @@ class TestGetCachedGeocoder:
         assert result is mock_geocoder
         mock_create_geocoder.assert_called_once()
 
-    @patch("user_pref_service.services.geo_integration.create_cached_geocoder")
+    @patch("nohiki_geo_utils.create_cached_geocoder")
     @patch("user_pref_service.services.geo_integration.get_settings")
     def test_returns_cached_geocoder_on_subsequent_calls(
         self, mock_get_settings: MagicMock, mock_create_geocoder: MagicMock

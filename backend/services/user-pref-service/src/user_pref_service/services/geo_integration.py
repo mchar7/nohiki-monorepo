@@ -8,7 +8,6 @@ from functools import cache
 from typing import TYPE_CHECKING
 
 from nohiki.common.v1 import Location
-from nohiki_geo_utils import create_cached_geocoder
 from nohiki_observability import get_logger
 from nohiki_redis_utils import RedisCache, create_cache
 
@@ -28,6 +27,8 @@ def _get_cached_geocoder() -> Callable[[Location], Awaitable[Location]]:
         Async callable that geocodes a single Location.
 
     """
+    from nohiki_geo_utils import create_cached_geocoder  # noqa: PLC0415 -- Load GeoPy on first geocode.
+
     settings = get_settings()
 
     def cache_factory() -> RedisCache:
