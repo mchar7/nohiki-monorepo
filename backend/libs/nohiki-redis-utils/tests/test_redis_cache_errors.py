@@ -383,7 +383,7 @@ class TestRedisCacheLockTimeout:
         """acquire_lock() returns False on timeout."""
         cache._redis.set = AsyncMock(return_value=False)
 
-        result = await cache.acquire_lock("lock_key", "value", ttl_seconds=60, timeout_seconds=0.1)
+        result = await cache.acquire_lock("lock_key", "value", ttl_seconds=60, timeout_seconds=0.01)
 
         assert result is False
 

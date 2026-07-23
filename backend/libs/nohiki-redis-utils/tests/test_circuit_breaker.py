@@ -357,8 +357,9 @@ class TestCircuitBreakerThreadSafety:
             return "result"
 
         # Run many concurrent calls
-        tasks = [cb.call(slow_fn) for _ in range(50)]
-        results = await asyncio.gather(*tasks)
+        async with asyncio.TaskGroup() as task_group:
+            tasks = [task_group.create_task(cb.call(slow_fn)) for _ in range(50)]
+        results = [task.result() for task in tasks]
 
         assert all(r == "result" for r in results)
         assert call_count == 50
@@ -375,8 +376,10 @@ class TestCircuitBreakerThreadSafety:
             raise RuntimeError(_TEST_ERROR_MSG)
 
         # Run concurrent failures
-        tasks = [cb.call(failing_fn, fallback=None) for _ in range(25)]
-        await asyncio.gather(*tasks)
+        async with asyncio.TaskGroup() as task_group:
+            tasks = [task_group.create_task(cb.call(failing_fn, fallback=None)) for _ in range(25)]
+
+        assert all(task.result() is None for task in tasks)
 
         # Circuit should be open (we exceeded threshold)
         assert cb.state is CircuitState.OPEN

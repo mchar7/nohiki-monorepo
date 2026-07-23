@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+pytestmark = pytest.mark.requires_docker
+
 if TYPE_CHECKING:
     from nohiki_redis_utils.redis_cache import RedisCache
     from redis.asyncio import Redis
