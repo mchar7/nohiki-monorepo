@@ -18,7 +18,6 @@ from nohiki_db_utils.idempotency_migrations import (
     get_create_processed_events_index_sql,
     get_create_processed_events_sql,
 )
-from nohiki_wal_emitter import grant_emit_execute_sql
 from sqlalchemy.dialects import postgresql
 
 revision: str = "001"
@@ -27,6 +26,22 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 SCHEMA_NAME = "job_correlation_schema"
+_GRANT_EMIT_EXECUTE_SQL = """
+DO $wal_emit$
+BEGIN
+    BEGIN
+        REVOKE EXECUTE ON FUNCTION pg_catalog.pg_logical_emit_message(boolean, text, bytea) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION pg_catalog.pg_logical_emit_message(boolean, text, bytea) TO CURRENT_USER;
+    EXCEPTION WHEN undefined_function THEN NULL;
+    END;
+    BEGIN
+        REVOKE EXECUTE ON FUNCTION pg_catalog.pg_logical_emit_message(boolean, text, bytea, boolean) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION pg_catalog.pg_logical_emit_message(boolean, text, bytea, boolean) TO CURRENT_USER;
+    EXCEPTION WHEN undefined_function THEN NULL;
+    END;
+END
+$wal_emit$;
+"""
 
 
 def upgrade() -> None:
@@ -267,7 +282,7 @@ def upgrade() -> None:
 
     op.execute(get_create_processed_events_sql(SCHEMA_NAME))
     op.execute(get_create_processed_events_index_sql(SCHEMA_NAME))
-    op.execute(grant_emit_execute_sql("CURRENT_USER"))
+    op.execute(_GRANT_EMIT_EXECUTE_SQL)
 
 
 def downgrade() -> None:
