@@ -37,6 +37,7 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+from tenacity.wait import WaitBaseT
 
 from nohiki_llm_client.config.constants import (
     HTTP_RETRYABLE_STATUS_CODES,
@@ -104,19 +105,21 @@ class _RetryState:
     count: int = 0
 
 
-_APPLICATION_RETRY_WAIT = wait_exponential(
-    multiplier=RETRY_MULTIPLIER,
-    min=RETRY_MIN_WAIT_SECONDS,
-    max=RETRY_MAX_WAIT_SECONDS,
-)
+def _create_default_retry_wait() -> WaitBaseT:
+    """Build the production wait strategy, including embedded rate-limit hints."""
+    exponential_wait = wait_exponential(
+        multiplier=RETRY_MULTIPLIER,
+        min=RETRY_MIN_WAIT_SECONDS,
+        max=RETRY_MAX_WAIT_SECONDS,
+    )
 
+    def _wait_for_retry(state: RetryCallState) -> float:
+        exception = state.outcome.exception() if state.outcome else None
+        if isinstance(exception, LLMRateLimitError) and exception.retry_after is not None:
+            return min(float(exception.retry_after), RETRY_MAX_WAIT_SECONDS)
+        return exponential_wait(state)
 
-def _wait_for_retry(state: RetryCallState) -> float:
-    """Use an embedded rate-limit hint, otherwise the normal exponential wait."""
-    exception = state.outcome.exception() if state.outcome else None
-    if isinstance(exception, LLMRateLimitError) and exception.retry_after is not None:
-        return min(float(exception.retry_after), RETRY_MAX_WAIT_SECONDS)
-    return _APPLICATION_RETRY_WAIT(state)
+    return _wait_for_retry
 
 
 def _extract_provider_cost(messages: tuple[ModelMessage, ...]) -> float | None:
@@ -252,18 +255,27 @@ class LLMClient:
         print(result.usage.input_tokens)
     """
 
-    __slots__ = ("_metrics", "_model", "_provider", "_settings", "_transport_clients")
+    __slots__ = ("_metrics", "_model", "_provider", "_retry_wait", "_settings", "_transport_clients")
 
-    def __init__(self, settings: LLMSettings, *, chain: str | None = None) -> None:
+    def __init__(
+        self,
+        settings: LLMSettings,
+        *,
+        chain: str | None = None,
+        retry_wait: WaitBaseT | None = None,
+    ) -> None:
         """Initialize the LLM client.
 
         Args:
             settings: Complete LLM configuration from ``LLMMixin``.
             chain: Named use-case chain from ``settings.chains``. Falls back to
                 ``settings.provider`` when ``None`` or the name is not found.
+            retry_wait: Wait strategy for application-level retries. Defaults to
+                the production exponential backoff.
         """
         self._settings = settings
         self._provider = resolve_chain(chain, settings)
+        self._retry_wait = _create_default_retry_wait() if retry_wait is None else retry_wait
         self._model: Model | None = None
         self._metrics: LLMMetrics = get_llm_metrics()
         self._transport_clients: list[AsyncClient] = []
@@ -508,7 +520,7 @@ class LLMClient:
                     | (retry_if_exception_type(LLMTransientError) & retry_if_not_exception_type(LLMRateLimitError))
                 ),
                 stop=stop_after_attempt(MAX_RETRY_ATTEMPTS),
-                wait=_wait_for_retry,
+                wait=self._retry_wait,
                 reraise=True,
                 before_sleep=_before_sleep,
             ):
