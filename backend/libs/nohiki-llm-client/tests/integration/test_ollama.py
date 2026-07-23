@@ -1,21 +1,14 @@
-"""Integration tests for Ollama provider via nohiki-llm-client.
+"""Explicit opt-in integration tests for the Ollama provider.
 
-These tests require a running Ollama server. They are skipped by default
-unless OLLAMA_BASE_URL is set in the environment.
+Setting ``OLLAMA_BASE_URL`` alone never performs network I/O. To run the live
+lane explicitly:
 
-Tests validate:
-- Basic structured output with Pydantic models
-- Thinking/reasoning extraction via ThinkingPart
-- Complex nested schemas (resume-level complexity)
-- OllamaSettings configuration (num_ctx, top_k, think toggle)
-- Token usage tracking
+    NOHIKI_RUN_OLLAMA_SMOKE=1 OLLAMA_BASE_URL=http://localhost:11434 \
+        uv run --package nohiki-llm-client pytest \
+        backend/libs/nohiki-llm-client/tests/integration/test_ollama.py -m integration -v
 
-Usage:
-    # Run with real Ollama server
-    OLLAMA_BASE_URL=http://localhost:11434 pytest tests/integration/test_ollama.py -v
-
-    # Skip Ollama tests (default behavior when env var not set)
-    pytest tests/integration/test_ollama.py -v
+The readiness fixture runs after collection. All live tests execute once;
+none claim or depend on a repeated-run stability property.
 """
 
 from __future__ import annotations
@@ -40,6 +33,7 @@ from pydantic_ai.messages import ModelMessage
 
 OLLAMA_BASE_URL_ENV: Final[str] = "OLLAMA_BASE_URL"
 OLLAMA_MODEL_ENV: Final[str] = "OLLAMA_MODEL"
+OLLAMA_SMOKE_ENV: Final[str] = "NOHIKI_RUN_OLLAMA_SMOKE"
 DEFAULT_OLLAMA_MODEL: Final[str] = "glm-4.7-flash:latest"
 
 
@@ -53,25 +47,22 @@ def _get_ollama_model() -> str:
     return os.environ.get(OLLAMA_MODEL_ENV, DEFAULT_OLLAMA_MODEL)
 
 
-def _ollama_available() -> bool:
-    """Check if Ollama server is reachable."""
+@pytest.fixture(scope="module")
+def ollama_server() -> None:
+    """Require an explicit opt-in and a ready Ollama server after collection."""
+    if os.environ.get(OLLAMA_SMOKE_ENV) != "1":
+        pytest.skip(f"Set {OLLAMA_SMOKE_ENV}=1 to run live Ollama integration tests.")
+
     base_url = _get_ollama_base_url()
     if not base_url:
-        return False
+        pytest.skip(f"Set {OLLAMA_BASE_URL_ENV} to run live Ollama integration tests.")
 
     try:
-        url = f"{base_url.rstrip('/')}/api/tags"
-        response = httpx.get(url, timeout=5.0)
-    except httpx.ConnectError, httpx.TimeoutException:
-        return False
-    else:
-        return response.status_code == 200
-
-
-skip_without_ollama = pytest.mark.skipif(
-    not _ollama_available(),
-    reason=f"Ollama not available. Set {OLLAMA_BASE_URL_ENV} to enable.",
-)
+        response = httpx.get(f"{base_url.rstrip('/')}/api/tags", timeout=5.0)
+    except httpx.HTTPError as error:
+        pytest.skip(f"Ollama is not ready: {error}")
+    if response.status_code != httpx.codes.OK:
+        pytest.skip(f"Ollama readiness returned HTTP {response.status_code}.")
 
 
 class SimpleOutput(BaseModel):
@@ -151,8 +142,8 @@ def _extract_thinking_parts(messages: tuple[ModelMessage, ...]) -> list[Thinking
     return [part for msg in messages if hasattr(msg, "parts") for part in msg.parts if isinstance(part, ThinkingPart)]
 
 
-@pytest.mark.repeat(3)
-@skip_without_ollama
+@pytest.mark.integration
+@pytest.mark.usefixtures("ollama_server")
 class TestOllamaBasicConnectivity:
     """Test basic Ollama connectivity and simple LLM calls."""
 
@@ -202,8 +193,8 @@ class TestOllamaBasicConnectivity:
         assert len(result.output.explanation) > 0
 
 
-@pytest.mark.repeat(3)
-@skip_without_ollama
+@pytest.mark.integration
+@pytest.mark.usefixtures("ollama_server")
 class TestOllamaExtraction:
     """Test extraction capabilities with Ollama."""
 
@@ -259,8 +250,8 @@ class TestOllamaExtraction:
         assert "jane" in result.output.name.lower()
 
 
-@pytest.mark.repeat(3)
-@skip_without_ollama
+@pytest.mark.integration
+@pytest.mark.usefixtures("ollama_server")
 class TestOllamaHealthCheck:
     """Test Ollama health check functionality."""
 
@@ -278,8 +269,8 @@ class TestOllamaHealthCheck:
         assert "ollama" in result.message.lower()
 
 
-@pytest.mark.repeat(3)
-@skip_without_ollama
+@pytest.mark.integration
+@pytest.mark.usefixtures("ollama_server")
 class TestOllamaMetrics:
     """Test that metrics are recorded correctly for Ollama calls."""
 
@@ -344,8 +335,8 @@ class ResumeSection(BaseModel):
     summary: str = Field(min_length=10, max_length=500)
 
 
-@pytest.mark.repeat(3)
-@skip_without_ollama
+@pytest.mark.integration
+@pytest.mark.usefixtures("ollama_server")
 class TestOllamaComplexSchema:
     """Test complex nested schema extraction matching resume-level complexity."""
 
@@ -415,8 +406,8 @@ class TestOllamaComplexSchema:
 # Thinking/Reasoning Validation Tests
 
 
-@pytest.mark.repeat(3)
-@skip_without_ollama
+@pytest.mark.integration
+@pytest.mark.usefixtures("ollama_server")
 class TestOllamaThinking:
     """Test thinking/reasoning extraction from Ollama responses."""
 
@@ -502,8 +493,8 @@ class TestOllamaThinking:
 # OllamaSettings Configuration Tests
 
 
-@pytest.mark.repeat(3)
-@skip_without_ollama
+@pytest.mark.integration
+@pytest.mark.usefixtures("ollama_server")
 class TestOllamaSettingsConfiguration:
     """Test OllamaSettings are properly applied."""
 
