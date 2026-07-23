@@ -135,8 +135,9 @@ scripts/benchmark/results/
 # MLflow tracking artifacts
 mlruns/
 
-# ─── AI / LLM tool workspace artifacts ───────────────────────────────────────
+# Local tool caches
 .pylate-local
+skills-lock.json
 
 # Frontend build/test artifacts
 *.log
