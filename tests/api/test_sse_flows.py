@@ -460,8 +460,7 @@ FULL_RESUME_DATA = {
 @pytest.fixture(scope="module")
 def client(healthy_base_url: str) -> NohikiClient:
     """Create E2E client."""
-    c = NohikiClient(healthy_base_url)
-    return c
+    return NohikiClient(healthy_base_url)
 
 
 @pytest.fixture

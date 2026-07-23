@@ -88,9 +88,9 @@ fix: lint format
 # Lint and format entire monorepo
 check-all: lint fe-check lint-md
 
-# Run ruff check with auto-fix on entire backend
+# Run ruff check with auto-fix repo-wide (same surface as the CI lint lane)
 lint:
-    {{ env_lock }} shared venv -- uv run --no-sync ruff check --config pyproject.toml --fix --output-format=concise backend/
+    {{ env_lock }} shared venv -- uv run --no-sync ruff check --config pyproject.toml --fix --output-format=concise --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
 
 # Run ruff check on a specific service
 lint-service service:
@@ -100,9 +100,9 @@ lint-service service:
 lint-libs:
     {{ env_lock }} shared venv -- uv run --no-sync ruff check --config pyproject.toml --fix --output-format=concise backend/libs/
 
-# Format all Python files
+# Format all Python files (same surface as the CI lint lane)
 format:
-    {{ env_lock }} shared venv -- uv run --no-sync ruff format --config pyproject.toml backend/
+    {{ env_lock }} shared venv -- uv run --no-sync ruff format --config pyproject.toml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
 
 # Format a specific service
 format-service service:
