@@ -28,7 +28,7 @@ vi.mock('@tanstack/react-router', () => ({
 }));
 
 import type { JobListingResponse } from '@/shared/api';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 
 import { JobDetailView } from './JobDetailView.tsx';
 

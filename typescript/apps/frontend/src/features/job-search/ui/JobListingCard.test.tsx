@@ -4,7 +4,7 @@ import { I18nextProvider } from 'react-i18next';
 import { describe, expect, vi } from 'vitest';
 
 import type { JobListingResponse } from '@/shared/api';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 
 // Mock router - Link renders as plain anchor for test inspectability
 vi.mock('@tanstack/react-router', () => ({

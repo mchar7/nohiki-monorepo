@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
 import { Command } from '@/shared/ui/command.tsx';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import type { UseGlobalSearchResult } from '../lib/types.ts';
 import { SearchResults } from './SearchResults.tsx';
 

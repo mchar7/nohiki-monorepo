@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, vi } from 'vitest';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { UnifiedDocumentCard } from './UnifiedDocumentCard.tsx';
 import type { UnifiedDocument } from './UnifiedDocumentCard.types.ts';
 

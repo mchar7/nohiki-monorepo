@@ -5,7 +5,7 @@ import type { JSX } from 'react';
 import { useForm } from 'react-hook-form';
 import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import type { UIHints } from '../../lib/template.ts';
 import type { FormErrors, FormRegisterFunction } from '../../model/index.ts';
 import { FormField } from './FormField.tsx';

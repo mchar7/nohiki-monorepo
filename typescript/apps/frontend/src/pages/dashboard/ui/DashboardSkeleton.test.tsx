@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect } from 'vitest';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { DashboardSkeleton } from './DashboardSkeleton.tsx';
 
 /** Number of stat card placeholders expected in the skeleton */

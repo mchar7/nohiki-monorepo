@@ -5,7 +5,7 @@ import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
 import type { TemplateFamilyResponse } from '@/shared/api';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import type { Dataset, DatasetData } from '../../model/index.ts';
 import { useDocumentBuilderStore } from '../../model/index.ts';
 import { DatasetCard } from './DatasetCard.tsx';

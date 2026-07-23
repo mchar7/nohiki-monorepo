@@ -12,7 +12,7 @@ import {
   makeQuerySuccess,
 } from '@/shared/test-utils';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { TemplateGallery } from './TemplateGallery.tsx';
 
 vi.mock('@/features/omakase/document-builder');

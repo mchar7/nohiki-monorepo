@@ -7,7 +7,7 @@ import type * as ProfileManagement from '@/features/profile-management/index.ts'
 import type * as SharedApi from '@/shared/api';
 import { nonNull } from '@/shared/test-utils';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { ProfileList } from './ProfileList.tsx';
 
 // --- Mock data-fetching hooks ---

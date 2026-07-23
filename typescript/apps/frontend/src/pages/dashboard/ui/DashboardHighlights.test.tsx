@@ -5,7 +5,7 @@ const FIT_SCORE_EXCELLENT: number = 90;
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect } from 'vitest';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { DashboardHighlights } from './DashboardHighlights.tsx';
 import { LatestDocumentCard } from './LatestDocumentCard.tsx';
 import { TopMatchCard } from './TopMatchCard.tsx';

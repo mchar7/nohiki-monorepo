@@ -9,7 +9,7 @@ import { I18nextProvider } from 'react-i18next';
 import { describe, expect } from 'vitest';
 import type { JobCorrelationResponse } from '@/shared/api';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { DashboardRecentMatches } from './DashboardRecentMatches.tsx';
 
 const CREATE_RE = /create/iu;

@@ -14,7 +14,7 @@ import { I18nextProvider, useTranslation } from 'react-i18next';
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest';
 import type { FeedbackType, JobCorrelationResponse } from '@/shared/api';
 import { TooltipProvider } from '@/shared/ui/tooltip.tsx';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { createColumns } from './matchesTableColumns.tsx';
 
 // Mock useIsMobileLayout

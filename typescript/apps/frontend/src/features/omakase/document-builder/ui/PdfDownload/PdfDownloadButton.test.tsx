@@ -4,7 +4,7 @@ import type { JSX } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest';
 import type { TemplateResponse } from '@/shared/api';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import type { Dataset } from '../../model/index.ts';
 import { PdfDownloadButton } from './PdfDownloadButton.tsx';
 

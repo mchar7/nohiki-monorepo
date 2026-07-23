@@ -4,7 +4,7 @@ import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { UserResponse } from '@/shared/api';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { ProfileSection } from './ProfileSection.tsx';
 
 const mockUpdateAccount = vi.hoisted(() => vi.fn().mockResolvedValue({}));

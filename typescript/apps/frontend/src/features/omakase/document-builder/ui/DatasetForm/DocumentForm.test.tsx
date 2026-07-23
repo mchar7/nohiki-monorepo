@@ -4,7 +4,7 @@ import type React from 'react';
 import type { Control, UseFormHandleSubmit, UseFormRegister } from 'react-hook-form';
 import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
-import { i18n } from '@/test/setup.ts';
+import { i18n } from '@/test/i18n-setup.ts';
 import { DocumentForm } from './DocumentForm.tsx';
 
 function renderWithProviders(ui: React.ReactElement): RenderResult {
