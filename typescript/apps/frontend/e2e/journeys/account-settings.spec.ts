@@ -14,7 +14,7 @@ test.describe.serial('Account Settings Journey', () => {
     const accountPage = new AccountSettingsPage(page);
     await accountPage.goto();
     await expect(page).toHaveURL('/account');
-    
+
   });
 
   test('2. User sees account information fields', async ({ page }) => {

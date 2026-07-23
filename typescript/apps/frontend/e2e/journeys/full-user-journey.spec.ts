@@ -55,7 +55,7 @@ const regState = { email: '', password: '', profileName: '', profileId: '' };
 test.describe.serial('User Journey: Registration', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test.beforeAll((_fixtures, testInfo) => {
+  test.beforeAll(({ browserName: _browserName }, testInfo) => {
     const ts = Date.now();
     regState.email = `e2e-full-journey-${ts}@example.com`;
     regState.password = 'FullJourneyP@ss123!';
@@ -85,7 +85,7 @@ test.describe.serial('User Journey: Registration', () => {
 test.describe.serial('User Journey: Profile Creation', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test.beforeAll((_fixtures, testInfo) => hydrateJourneyUser(regState, testInfo));
+  test.beforeAll(({ browserName: _browserName }, testInfo) => hydrateJourneyUser(regState, testInfo));
 
   test('3. User creates profile with real skills', async ({ page }) => {
     await loginAndNavigate(page, regState.email, regState.password, '/profiles/new');
@@ -105,7 +105,7 @@ test.describe.serial('User Journey: Profile Creation', () => {
     await loginAndWaitForDashboard(page, regState.email, regState.password);
     const profilesPage = new ProfilesPage(page);
     await profilesPage.goto();
-    
+
     await waitForTextOnPage(page, regState.profileName);
     const profileLink = page.getByRole('link', { name: new RegExp(regState.profileName, 'u') });
     const href = await profileLink.getAttribute('href');
@@ -127,14 +127,14 @@ test.describe.serial('User Journey: Profile Creation', () => {
 test.describe.serial('User Journey: Jobs & Matches', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test.beforeAll((_fixtures, testInfo) => hydrateJourneyUser(regState, testInfo));
+  test.beforeAll(({ browserName: _browserName }, testInfo) => hydrateJourneyUser(regState, testInfo));
 
   test('6. User navigates to job matches', async ({ page }) => {
     await loginAndWaitForDashboard(page, regState.email, regState.password);
     const matchesPage = new MatchesListPage(page);
     await matchesPage.goto();
     await expect(page).toHaveURL(LIST_URL_PATTERNS.jobMatches);
-    
+
     // Mixed check: match count is async (not a Locator), so use inline .or() for the locator-based checks
     const matchCountOrUI = matchesPage.emptyState.or(matchesPage.statsCards).or(matchesPage.matchesTable);
     await expect(matchCountOrUI.first()).toBeVisible({ timeout: TIMEOUTS.cqrsProjection });
@@ -154,7 +154,7 @@ test.describe.serial('User Journey: Jobs & Matches', () => {
     const documentsPage = new DocumentsPage(page);
     await documentsPage.goto();
     await expect(page).toHaveURL(LIST_URL_PATTERNS.documents);
-    
+
     // Documents page: show document list, empty state, or main content
     const documentsOrEmpty = documentsPage.emptyState.or(documentsPage.documentList).or(page.locator('main').first());
     await expect(documentsOrEmpty.first()).toBeVisible({ timeout: TIMEOUTS.cqrsProjection });
@@ -165,7 +165,7 @@ test.describe.serial('User Journey: Jobs & Matches', () => {
 test.describe.serial('User Journey: Auth Cycle & Cleanup', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test.beforeAll((_fixtures, testInfo) => hydrateJourneyUser(regState, testInfo));
+  test.beforeAll(({ browserName: _browserName }, testInfo) => hydrateJourneyUser(regState, testInfo));
 
   test('10. User can logout and login again', async ({ page }) => {
     await loginAndWaitForDashboard(page, regState.email, regState.password);
@@ -184,7 +184,7 @@ test.describe.serial('Job Matching Detail Journey', () => {
   // Journey user owns a profile the pipeline correlates; the fresh setup user has no matches
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test.beforeAll((_fixtures, testInfo) => hydrateJourneyUser(regState, testInfo));
+  test.beforeAll(({ browserName: _browserName }, testInfo) => hydrateJourneyUser(regState, testInfo));
 
 
   test('1. User can access match detail page', async ({ page }) => {
@@ -192,7 +192,7 @@ test.describe.serial('Job Matching Detail Journey', () => {
     await loginAndWaitForDashboard(page, regState.email, regState.password);
     const matchesPage = new MatchesListPage(page);
     await matchesPage.goto();
-    
+
     // Retry assertion: match data arrives via CQRS projection with eventual consistency
     await expect(async () => {
       expect(await matchesPage.getMatchCount()).toBeGreaterThan(0);
