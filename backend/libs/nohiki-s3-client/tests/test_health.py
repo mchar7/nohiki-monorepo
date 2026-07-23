@@ -2,20 +2,38 @@
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from nohiki_common_exceptions import HealthProbeResult, HealthStatus
 from nohiki_s3_client import S3Settings
 from nohiki_s3_client.client import S3Client
 from nohiki_s3_client.exceptions import S3ConnectionError, S3PermissionError
-from nohiki_s3_client.health import S3Capability, S3HealthProbe, ensure_s3_ready
+from nohiki_s3_client.health import (
+    ProbeTiming,
+    S3Capability,
+    S3HealthProbe,
+    ensure_s3_ready,
+)
 from pydantic import SecretStr
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+
+class _FakeTime:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.elapsed
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.elapsed += seconds
 
 
 @pytest.fixture
@@ -299,24 +317,16 @@ class TestS3HealthProbeTimeout:
     """Tests for health check timeout."""
 
     async def test_timeout_error(self, s3_client: S3Client) -> None:
-        """Health check times out."""
-        mock_s3 = AsyncMock()
+        """Health check reports a timeout from the capability boundary."""
+        probe = S3HealthProbe(s3_client, timeout_seconds=0.1)
+        check_capabilities = AsyncMock(side_effect=TimeoutError)
 
-        async def slow_head_bucket(*_args: object, **_kwargs: object) -> None:
-            await asyncio.sleep(2.0)
-
-        mock_s3.head_bucket = slow_head_bucket
-
-        @asynccontextmanager
-        async def mock_create_client(*_args: object, **_kwargs: object) -> AsyncIterator[AsyncMock]:
-            yield mock_s3
-
-        with patch.object(s3_client._session, "create_client", mock_create_client):
-            probe = S3HealthProbe(s3_client, timeout_seconds=0.1)
+        with patch.object(S3HealthProbe, "_check_all_capabilities", check_capabilities):
             result = await probe.check()
 
         assert not result.is_healthy()
         assert "timeout" in result.message.lower()
+        check_capabilities.assert_awaited_once_with()
 
     async def test_unexpected_exception(self, s3_client: S3Client) -> None:
         """Unexpected exception during health check."""
@@ -355,41 +365,57 @@ class TestEnsureS3Ready:
 
     async def test_s3_ready_after_retries(self, s3_client: S3Client) -> None:
         """S3 becomes ready after retries."""
-        mock_s3 = AsyncMock()
-        call_count = 0
+        unavailable = HealthProbeResult(
+            name="s3",
+            status=HealthStatus.UNHEALTHY,
+            message="Not ready yet",
+            latency_ms=0.0,
+        )
+        healthy = HealthProbeResult(
+            name="s3",
+            status=HealthStatus.HEALTHY,
+            message="Ready",
+            latency_ms=0.0,
+        )
+        check = AsyncMock(side_effect=[unavailable, unavailable, healthy])
+        fake_time = _FakeTime()
 
-        async def head_bucket_with_retries(*_args: object, **_kwargs: object) -> None:
-            nonlocal call_count
-            call_count += 1
-            if call_count < 3:
-                error_msg = "Not ready yet"
-                raise S3ConnectionError(error_msg)
+        with patch.object(S3HealthProbe, "check", check):
+            await ensure_s3_ready(
+                s3_client,
+                timeout_seconds=10.0,
+                retry_interval_seconds=0.1,
+                timing=ProbeTiming(clock=fake_time, sleep=fake_time.sleep),
+            )
 
-        mock_s3.head_bucket = head_bucket_with_retries
-
-        @asynccontextmanager
-        async def mock_create_client(*_args: object, **_kwargs: object) -> AsyncIterator[AsyncMock]:
-            yield mock_s3
-
-        with patch.object(s3_client._session, "create_client", mock_create_client):
-            await ensure_s3_ready(s3_client, timeout_seconds=10.0, retry_interval_seconds=0.1)
-
-        assert call_count == 3
+        assert check.await_count == 3
+        assert fake_time.sleeps == pytest.approx([0.1, 0.1])
 
     async def test_s3_timeout(self, s3_client: S3Client) -> None:
         """S3 never becomes ready, raises RuntimeError."""
-        mock_s3 = AsyncMock()
-        mock_s3.head_bucket = AsyncMock(side_effect=S3ConnectionError("Never ready"))
-
-        @asynccontextmanager
-        async def mock_create_client(*_args: object, **_kwargs: object) -> AsyncIterator[AsyncMock]:
-            yield mock_s3
+        unavailable = HealthProbeResult(
+            name="s3",
+            status=HealthStatus.UNHEALTHY,
+            message="Never ready",
+            latency_ms=0.0,
+        )
+        check = AsyncMock(return_value=unavailable)
+        fake_time = _FakeTime()
 
         with (
-            patch.object(s3_client._session, "create_client", mock_create_client),
+            patch.object(S3HealthProbe, "check", check),
             pytest.raises(RuntimeError, match="S3 unavailable after"),
         ):
-            await ensure_s3_ready(s3_client, timeout_seconds=0.5, retry_interval_seconds=0.1)
+            await ensure_s3_ready(
+                s3_client,
+                timeout_seconds=0.5,
+                retry_interval_seconds=0.1,
+                timing=ProbeTiming(clock=fake_time, sleep=fake_time.sleep),
+            )
+
+        assert check.await_count == 5
+        assert fake_time.elapsed == pytest.approx(0.5)
+        assert fake_time.sleeps == pytest.approx([0.1] * 5)
 
 
 class TestS3HealthProbeErrorPaths:
