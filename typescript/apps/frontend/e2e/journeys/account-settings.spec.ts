@@ -14,13 +14,12 @@ test.describe.serial('Account Settings Journey', () => {
     const accountPage = new AccountSettingsPage(page);
     await accountPage.goto();
     await expect(page).toHaveURL('/account');
-    await page.waitForLoadState('load');
+    
   });
 
   test('2. User sees account information fields', async ({ page }) => {
     const accountPage = await gotoAccountPage(page);
     await assertAccountFieldsVisible(accountPage);
-    expect(true).toBeTruthy();
   });
 
   test('3. User can edit display name', async ({ page }) => {

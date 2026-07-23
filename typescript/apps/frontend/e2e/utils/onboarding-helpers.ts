@@ -17,6 +17,6 @@ export async function loginAndGoToProfiles(
 
   const profilesPage = new ProfilesPage(page);
   await profilesPage.goto();
-  await page.waitForLoadState('load');
+
   return profilesPage;
 }

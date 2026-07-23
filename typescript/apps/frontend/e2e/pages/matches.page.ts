@@ -55,7 +55,6 @@ export class MatchesListPage extends BasePage {
   }
 
   async waitForMatchesLoaded(): Promise<void> {
-    await this.page.waitForLoadState('load');
     await this.loadingState.waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => {
       // Spinner may not appear if data loads immediately
     });

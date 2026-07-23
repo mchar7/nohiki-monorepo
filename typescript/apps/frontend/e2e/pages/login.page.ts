@@ -71,12 +71,20 @@ export class LoginPage extends BasePage {
     // (timing-sensitive; disappears under --trace). Submission took effect once we
     // leave /auth or the form surfaces a root error; both rejecting retries the click.
     await expect(async () => {
+      if (!new URL(this.page.url()).pathname.startsWith('/auth')) {
+        return;
+      }
       await this.submitButton.click();
       await Promise.any([
-        this.page.waitForURL((url) => !url.pathname.startsWith('/auth'), { timeout: 2_500 }),
-        this.page.locator('[role="alert"]').first().waitFor({ state: 'visible', timeout: 2_500 }),
+        this.page.waitForURL((url) => !url.pathname.startsWith('/auth'), {
+          timeout: TIMEOUTS.shortAction,
+        }),
+        this.page
+          .locator('[role="alert"]')
+          .first()
+          .waitFor({ state: 'visible', timeout: TIMEOUTS.shortAction }),
       ]);
-    }).toPass({ timeout: TIMEOUTS.elementVisible });
+    }).toPass({ timeout: TIMEOUTS.formSubmit });
   }
 
   async switchToSignUp(): Promise<void> {

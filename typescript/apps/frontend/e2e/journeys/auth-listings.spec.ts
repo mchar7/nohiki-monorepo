@@ -1,4 +1,4 @@
-import { expect, type Page, type TestInfo, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 import { E2E_CONFIG, TIMEOUTS } from '../constants.ts';
 
@@ -59,92 +59,49 @@ async function waitForCanvasReady(page: Page): Promise<void> {
     .waitFor({ state: 'attached', timeout: TIMEOUTS.networkIdle });
 }
 
-async function attachScreenshot(
-  page: Page,
-  testInfo: TestInfo,
-  name: string,
-  fullPage = false,
-): Promise<void> {
-  const body = await page.screenshot({ fullPage });
-  await testInfo.attach(name, { body, contentType: 'image/png' });
-}
+test.describe
+  .parallel('auth-listings canvas (feature flag ON)', () => {
+    test.beforeEach(async ({ page }) => {
+      await mockListings(page);
+    });
 
-test.describe('auth-listings canvas (feature flag ON)', () => {
-  test.beforeEach(async ({ page }) => {
-    await mockListings(page);
+    test('renders an accessible, bounded, non-interactive canvas from the edge worker', async ({
+      page,
+    }) => {
+      const MAX_CARDS = 30;
+
+      await page.goto(AUTH_PATH);
+      await waitForCanvasReady(page);
+
+      const canvas = page.locator(CANVAS_LOCATOR);
+      const cards = page.locator(CARD_LOCATOR);
+      const cardCount = await cards.count();
+      await expect(canvas).toBeAttached();
+      await expect(canvas).toHaveAttribute('aria-hidden', 'true');
+      await expect(canvas).toHaveCSS('pointer-events', 'none');
+      expect(cardCount, 'card pool must stay within its documented bounds').toBeGreaterThan(0);
+      expect(cardCount).toBeLessThanOrEqual(MAX_CARDS);
+      await expect(page.locator(`${CANVAS_LOCATOR} a`)).toHaveCount(0);
+      await expect(page.locator(`${CANVAS_LOCATOR} button`)).toHaveCount(0);
+    });
+
+    test('prefers-reduced-motion disables the drift keyframe animation', async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.goto(AUTH_PATH);
+      await waitForCanvasReady(page);
+
+      await expect(page.locator(CARD_LOCATOR).first()).toHaveCSS('animation-name', 'none');
+    });
+
+    test('auth form still renders when the edge worker is unreachable', async ({ page }) => {
+      await page.route(WORKER_ENDPOINT, (route) => route.abort('failed'));
+      const uncaughtErrors: string[] = [];
+      page.on('pageerror', (error) => uncaughtErrors.push(error.message));
+
+      await page.goto(AUTH_PATH);
+
+      await expect(page.locator('form').first()).toBeVisible();
+      await expect(page.locator(CARD_LOCATOR)).toHaveCount(0);
+      expect(uncaughtErrors).toEqual([]);
+    });
   });
-
-  test('renders drifting cards sourced from the edge worker', async ({ page }, testInfo) => {
-    await page.goto(AUTH_PATH);
-    await waitForCanvasReady(page);
-
-    await expect(page.locator(CANVAS_LOCATOR)).toBeAttached();
-    const cardCount = await page.locator(CARD_LOCATOR).count();
-    expect(cardCount, 'at least one card must render').toBeGreaterThan(0);
-
-    await attachScreenshot(page, testInfo, 'canvas-rendered.png', true);
-  });
-
-  test('canvas root is aria-hidden and non-interactive', async ({ page }, testInfo) => {
-    await page.goto(AUTH_PATH);
-    await waitForCanvasReady(page);
-
-    const canvas = page.locator(CANVAS_LOCATOR);
-    await expect(canvas).toHaveAttribute('aria-hidden', 'true');
-    await expect(canvas).toHaveCSS('pointer-events', 'none');
-
-    await attachScreenshot(page, testInfo, 'a11y-attributes.png');
-  });
-
-  test('pool manager keeps DOM card count at or below the documented ceiling', async ({
-    page,
-  }, testInfo) => {
-    const MAX_CARDS = 30;
-
-    await page.goto(AUTH_PATH);
-    await waitForCanvasReady(page);
-
-    const cardCount = await page.locator(CARD_LOCATOR).count();
-    expect(cardCount).toBeLessThanOrEqual(MAX_CARDS);
-
-    await attachScreenshot(page, testInfo, 'card-count.png');
-  });
-
-  test('prefers-reduced-motion disables the drift keyframe animation', async ({
-    page,
-  }, testInfo) => {
-    await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.goto(AUTH_PATH);
-    await waitForCanvasReady(page);
-
-    await expect(page.locator(CARD_LOCATOR).first()).toHaveCSS('animation-name', 'none');
-
-    await attachScreenshot(page, testInfo, 'reduced-motion.png', true);
-  });
-
-  test('auth form still renders when the edge worker is unreachable', async ({
-    page,
-  }, testInfo) => {
-    await page.route(WORKER_ENDPOINT, (route) => route.abort('failed'));
-    const uncaughtErrors: string[] = [];
-    page.on('pageerror', (error) => uncaughtErrors.push(error.message));
-
-    await page.goto(AUTH_PATH);
-
-    await expect(page.locator('form').first()).toBeVisible();
-    await expect(page.locator(CARD_LOCATOR)).toHaveCount(0);
-    expect(uncaughtErrors).toEqual([]);
-
-    await attachScreenshot(page, testInfo, 'worker-unreachable.png', true);
-  });
-
-  test('cards expose no interactive controls', async ({ page }, testInfo) => {
-    await page.goto(AUTH_PATH);
-    await waitForCanvasReady(page);
-
-    await expect(page.locator(`${CANVAS_LOCATOR} a`)).toHaveCount(0);
-    await expect(page.locator(`${CANVAS_LOCATOR} button`)).toHaveCount(0);
-
-    await attachScreenshot(page, testInfo, 'non-interactive.png');
-  });
-});

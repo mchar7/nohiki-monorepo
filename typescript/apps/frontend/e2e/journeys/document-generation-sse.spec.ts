@@ -24,7 +24,7 @@ const RUN_ID = Date.now();
 const TEMPLATE_NAME = `e2e-sse-${RUN_ID}`;
 const PROFILE_NAME = `E2E SSE Profile ${RUN_ID}`;
 
-const DOCUMENTS_EVENTS_PATH = '/api/v1/documents/events';
+const DOCUMENTS_EVENTS_PATH_RE = /^\/api\/documents\/[^/]+\/events$/u;
 const GENERATE_DOCUMENT_PATH = '/api/v1/documents/generate';
 const HTTP_ACCEPTED = 202;
 const HTTP_CLIENT_ERROR_MIN = 400;
@@ -44,6 +44,10 @@ interface PaginatedTemplateFamilies {
 
 interface GenerateDocumentResult {
   request_id: string;
+}
+
+function documentEventsPath(requestId: string): string {
+  return `/api/documents/${encodeURIComponent(requestId)}/events`;
 }
 
 // biome-ignore format: Playwright test.describe.serial requires single-line syntax
@@ -97,7 +101,7 @@ test.describe.serial('Document Generation SSE Journey', () => {
           response.request().method() === 'POST',
       );
       const sseRequestPromise = page.waitForRequest(
-        (request) => new URL(request.url()).pathname === DOCUMENTS_EVENTS_PATH,
+        (request) => DOCUMENTS_EVENTS_PATH_RE.test(new URL(request.url()).pathname),
       );
 
       await wizard.clickGenerate();
@@ -107,7 +111,7 @@ test.describe.serial('Document Generation SSE Journey', () => {
       generatedRequestIds.push(generation.request_id);
 
       const sseRequest = await sseRequestPromise;
-      expect(sseRequest.url()).toContain(DOCUMENTS_EVENTS_PATH);
+      expect(new URL(sseRequest.url()).pathname).toBe(documentEventsPath(generation.request_id));
       expect(sseRequest.headers().accept).toContain('text/event-stream');
 
       sseMock.push({
@@ -135,7 +139,7 @@ test.describe.serial('Document Generation SSE Journey', () => {
           response.request().method() === 'POST',
       );
       const sseRequestPromise = page.waitForRequest(
-        (request) => new URL(request.url()).pathname === DOCUMENTS_EVENTS_PATH,
+        (request) => DOCUMENTS_EVENTS_PATH_RE.test(new URL(request.url()).pathname),
       );
 
       await wizard.clickGenerate();
@@ -175,7 +179,9 @@ test.describe.serial('Document Generation SSE Journey', () => {
     const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
     const unauthPage = await context.newPage();
     const baseUrl = process.env.E2E_BASE_URL ?? E2E_CONFIG.baseUrl;
-    const response = await unauthPage.request.get(`${baseUrl}${DOCUMENTS_EVENTS_PATH}`);
+    const response = await unauthPage.request.get(
+      `${baseUrl}${documentEventsPath('00000000-0000-4000-8000-000000000000')}`,
+    );
     expect(response.status()).toBeGreaterThanOrEqual(HTTP_CLIENT_ERROR_MIN);
     expect(response.status()).toBeLessThan(HTTP_SERVER_ERROR_MIN);
     await context.close();

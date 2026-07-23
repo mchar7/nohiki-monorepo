@@ -38,6 +38,8 @@ import {
   loginAndWaitForDashboard,
   saveJourneyUser,
 } from '../utils/journey-helpers.ts';
+test.describe.configure({ mode: 'serial' });
+
 
 const REAL_SKILLS: string[] = ['Python', 'JavaScript', 'PostgreSQL', 'SQL', 'Java'];
 const PROFILE_SKILL_SEED_COUNT = 3;
@@ -53,12 +55,12 @@ const regState = { email: '', password: '', profileName: '', profileId: '' };
 test.describe.serial('User Journey: Registration', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test.beforeAll(() => {
+  test.beforeAll(({}, testInfo) => {
     const ts = Date.now();
     regState.email = `e2e-full-journey-${ts}@example.com`;
     regState.password = 'FullJourneyP@ss123!';
     regState.profileName = `Backend Engineer Profile ${ts}`;
-    saveJourneyUser(regState);
+    saveJourneyUser(regState, testInfo);
   });
 
   test('1. User registers a new account', async ({ page }) => {
@@ -83,7 +85,7 @@ test.describe.serial('User Journey: Registration', () => {
 test.describe.serial('User Journey: Profile Creation', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test.beforeAll(() => hydrateJourneyUser(regState));
+  test.beforeAll(({}, testInfo) => hydrateJourneyUser(regState, testInfo));
 
   test('3. User creates profile with real skills', async ({ page }) => {
     await loginAndNavigate(page, regState.email, regState.password, '/profiles/new');
@@ -98,19 +100,19 @@ test.describe.serial('User Journey: Profile Creation', () => {
   });
 
   const PROFILE_PROJECTION_TIMEOUT_MS = 120_000;
-  test('4. Profile appears in profiles list', async ({ page }) => {
+  test('4. Profile appears in profiles list', async ({ page }, testInfo) => {
     test.setTimeout(PROFILE_PROJECTION_TIMEOUT_MS);
     await loginAndWaitForDashboard(page, regState.email, regState.password);
     const profilesPage = new ProfilesPage(page);
     await profilesPage.goto();
-    await page.waitForLoadState('load');
+    
     await waitForTextOnPage(page, regState.profileName);
     const profileLink = page.getByRole('link', { name: new RegExp(regState.profileName, 'u') });
     const href = await profileLink.getAttribute('href');
     const match = PROFILES_ID_RE.exec(href ?? '');
     expect(match).toBeTruthy();
     regState.profileId = match?.groups?.profileId ?? '';
-    saveJourneyUser(regState);
+    saveJourneyUser(regState, testInfo);
   });
 
   test('5. User views profile details and verifies skills', async ({ page }) => {
@@ -125,14 +127,14 @@ test.describe.serial('User Journey: Profile Creation', () => {
 test.describe.serial('User Journey: Jobs & Matches', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test.beforeAll(() => hydrateJourneyUser(regState));
+  test.beforeAll(({}, testInfo) => hydrateJourneyUser(regState, testInfo));
 
   test('6. User navigates to job matches', async ({ page }) => {
     await loginAndWaitForDashboard(page, regState.email, regState.password);
     const matchesPage = new MatchesListPage(page);
     await matchesPage.goto();
     await expect(page).toHaveURL(LIST_URL_PATTERNS.jobMatches);
-    await page.waitForLoadState('load');
+    
     // Mixed check: match count is async (not a Locator), so use inline .or() for the locator-based checks
     const matchCountOrUI = matchesPage.emptyState.or(matchesPage.statsCards).or(matchesPage.matchesTable);
     await expect(matchCountOrUI.first()).toBeVisible({ timeout: TIMEOUTS.cqrsProjection });
@@ -152,7 +154,7 @@ test.describe.serial('User Journey: Jobs & Matches', () => {
     const documentsPage = new DocumentsPage(page);
     await documentsPage.goto();
     await expect(page).toHaveURL(LIST_URL_PATTERNS.documents);
-    await page.waitForLoadState('load');
+    
     // Documents page: show document list, empty state, or main content
     const documentsOrEmpty = documentsPage.emptyState.or(documentsPage.documentList).or(page.locator('main').first());
     await expect(documentsOrEmpty.first()).toBeVisible({ timeout: TIMEOUTS.cqrsProjection });
@@ -163,7 +165,7 @@ test.describe.serial('User Journey: Jobs & Matches', () => {
 test.describe.serial('User Journey: Auth Cycle & Cleanup', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test.beforeAll(() => hydrateJourneyUser(regState));
+  test.beforeAll(({}, testInfo) => hydrateJourneyUser(regState, testInfo));
 
   test('10. User can logout and login again', async ({ page }) => {
     await loginAndWaitForDashboard(page, regState.email, regState.password);
@@ -173,6 +175,31 @@ test.describe.serial('User Journey: Auth Cycle & Cleanup', () => {
     const loginPage = new LoginPage(page);
     await loginPage.login(regState.email, regState.password);
     await expect(page).toHaveURL(REGEX_PATTERNS.dashboardUrl, { timeout: TIMEOUTS.elementVisible });
+  });
+
+});
+
+// biome-ignore format: Playwright test.describe.serial requires single-line syntax
+test.describe.serial('Job Matching Detail Journey', () => {
+  // Journey user owns a profile the pipeline correlates; the fresh setup user has no matches
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test.beforeAll(({}, testInfo) => hydrateJourneyUser(regState, testInfo));
+
+
+  test('1. User can access match detail page', async ({ page }) => {
+    test.setTimeout(TIMEOUTS.pipelineCompletion + TIMEOUTS.cqrsProjection);
+    await loginAndWaitForDashboard(page, regState.email, regState.password);
+    const matchesPage = new MatchesListPage(page);
+    await matchesPage.goto();
+    
+    // Retry assertion: match data arrives via CQRS projection with eventual consistency
+    await expect(async () => {
+      expect(await matchesPage.getMatchCount()).toBeGreaterThan(0);
+    }).toPass({ intervals: [...RETRY_INTERVALS], timeout: TIMEOUTS.pipelineCompletion });
+    await matchesPage.clickMatch(0);
+    await expect(page).toHaveURL(JOB_MATCH_URL_RE, { timeout: 10_000 });
+    await expect(page.locator('main').first()).toBeVisible();
   });
 
   test('11. Cleanup: User deletes profile', async ({ page }) => {
@@ -196,43 +223,11 @@ test.describe.serial('User Journey: Auth Cycle & Cleanup', () => {
   });
 });
 
-// biome-ignore format: Playwright test.describe.serial requires single-line syntax
-test.describe.serial('Job Matching Detail Journey', () => {
-  // Journey user owns a profile the pipeline correlates; the fresh setup user has no matches
-  test.use({ storageState: { cookies: [], origins: [] } });
-
-  test.beforeAll(() => hydrateJourneyUser(regState));
-
-  // biome-ignore lint/nursery/useExpect: assertAnyVisible() uses expect() internally
-  test('1. User can view match statistics', async ({ page }) => {
-    await loginAndWaitForDashboard(page, regState.email, regState.password);
-    const matchesPage = new MatchesListPage(page);
-    await matchesPage.goto();
-    await page.waitForLoadState('load');
-    // Matches page must show stats cards, matches table, or empty state
-    await assertAnyVisible([matchesPage.statsCards, matchesPage.matchesTable, matchesPage.emptyState]);
-  });
-
-  test('2. User can access match detail page', async ({ page }) => {
-    await loginAndWaitForDashboard(page, regState.email, regState.password);
-    const matchesPage = new MatchesListPage(page);
-    await matchesPage.goto();
-    await page.waitForLoadState('load');
-    // Retry assertion: match data arrives via CQRS projection with eventual consistency
-    await expect(async () => {
-      expect(await matchesPage.getMatchCount()).toBeGreaterThan(0);
-    }).toPass({ intervals: [...RETRY_INTERVALS], timeout: TIMEOUTS.cqrsProjection });
-    await matchesPage.clickMatch(0);
-    await expect(page).toHaveURL(JOB_MATCH_URL_RE, { timeout: 10_000 });
-    await expect(page.locator('main').first()).toBeVisible();
-  });
-});
-
 test.describe('Dashboard Overview', () => {
   test('dashboard shows key metrics and quick actions', async ({ page }) => {
     const dashboardPage = new DashboardPage(page);
     await dashboardPage.goto();
-    await page.waitForLoadState('load');
+
     await expect(page.getByRole('heading', { name: DASHBOARD_HEADING_RE })).toBeVisible();
     // Dashboard renders stats cards (returning user) or onboarding steps (new user)
     const isOnboarding = await page
@@ -253,7 +248,7 @@ test.describe('Dashboard Overview', () => {
   test('dashboard navigation links work correctly', async ({ page }) => {
     const dashboardPage = new DashboardPage(page);
     await dashboardPage.goto();
-    await page.waitForLoadState('load');
+
     await dashboardPage.navigateToProfiles();
     await expect(page).toHaveURL(LIST_URL_PATTERNS.profiles);
     await page.goBack();

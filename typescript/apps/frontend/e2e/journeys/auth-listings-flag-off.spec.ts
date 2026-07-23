@@ -19,9 +19,7 @@ test.skip(E2E_CONFIG.authListingsLane === 'on', 'Incompatible with the feature-o
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
-test('auth page omits the listings canvas when the feature flag is off', async ({
-  page,
-}, testInfo) => {
+test('auth page omits the listings canvas when the feature flag is off', async ({ page }) => {
   await page.goto(AUTH_PATH);
 
   // Login form must always be present.
@@ -29,7 +27,4 @@ test('auth page omits the listings canvas when the feature flag is off', async (
 
   // Canvas must be completely absent from the DOM.
   await expect(page.locator(CANVAS_LOCATOR)).toHaveCount(0);
-
-  const screenshot = await page.screenshot({ fullPage: true });
-  await testInfo.attach('flag-off.png', { body: screenshot, contentType: 'image/png' });
 });

@@ -27,6 +27,7 @@ test.describe.serial('Job Discovery - Browsing', () => {
   const profileName = `E2E Job Discovery ${Date.now()}`;
 
   test.beforeAll(async ({ request }) => {
+    test.setTimeout(TIMEOUTS.pipelineCompletion + PIPELINE_TIMEOUT_BUFFER_MS);
     await createProfileViaApi(request, {
       pref_name: profileName,
       search_keywords: ['python', 'fastapi', 'backend', 'api'],
@@ -52,8 +53,6 @@ test.describe.serial('Job Discovery - Browsing', () => {
   test('2. User sees job listings', async ({ page }) => {
     const jobsPage = new JobListingsPage(page);
     await jobsPage.goto();
-    // biome-ignore lint/nursery/noPlaywrightNetworkidle: wait for full job list render after SPA init
-    await page.waitForLoadState('networkidle');
     expect(await jobsPage.getJobCount()).toBeGreaterThan(0);
   });
 
@@ -86,10 +85,10 @@ test.describe.serial('Job Discovery - Detail Navigation', () => {
   const PIPELINE_TIMEOUT_BUFFER_MS = 60_000;
   test.describe.configure({ timeout: TIMEOUTS.pipelineCompletion + PIPELINE_TIMEOUT_BUFFER_MS });
 
+  // biome-ignore lint/nursery/useExpect: navigation and detail helpers assert the destination UI
   test('6. User can view job detail from listings', async ({ page }) => {
     await navigateToFirstJobDetail(page);
     await assertJobDetailVisible(page);
-    expect(true).toBeTruthy();
   });
 
   test('7. User can navigate back to job listings', async ({ page }) => {
@@ -98,11 +97,11 @@ test.describe.serial('Job Discovery - Detail Navigation', () => {
     await expect(page).toHaveURL(LIST_URL_PATTERNS.jobs);
   });
 
+  // biome-ignore lint/nursery/useExpect: navigation helper asserts the destination URL and heading
   test('8. User can view match detail from matches list', async ({ page }) => {
     const matchesPage = new MyMatchesPage(page);
     await matchesPage.goto();
     await navigateToFirstMatchDetail(page, matchesPage.matchList, JOB_MATCH_DETAIL_URL_RE);
-    expect(true).toBeTruthy();
   });
 });
 

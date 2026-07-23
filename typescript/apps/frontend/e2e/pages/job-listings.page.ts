@@ -29,7 +29,6 @@ export class JobListingsPage extends BasePage {
   }
 
   async waitForJobsLoaded(): Promise<void> {
-    await this.page.waitForLoadState('load');
     // Wait for either job list content or explicit empty state to appear
     await this.jobList.or(this.emptyState).waitFor({ state: 'visible', timeout: 30_000 });
   }

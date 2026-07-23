@@ -27,7 +27,7 @@ export async function waitForTextOnPage(
       .catch(() => false);
     if (!isVisible) {
       await page.reload();
-      await page.waitForLoadState('load');
+
       throw new Error(`Text "${text}" not yet visible - retrying after reload`);
     }
   }).toPass({

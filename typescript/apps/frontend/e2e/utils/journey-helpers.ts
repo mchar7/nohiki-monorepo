@@ -1,12 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { Locator, Page } from '@playwright/test';
+import process from 'node:process';
+import type { Locator, Page, TestInfo } from '@playwright/test';
 import { expect } from '@playwright/test';
 
 import { REGEX_PATTERNS, TIMEOUTS } from '../constants.ts';
 import { LoginPage } from '../pages/index.ts';
 
-const JOURNEY_USER_FILE: string = join(import.meta.dirname, '..', '.output', 'journey-user.json');
+function getJourneyUserFile(): string {
+  return join(import.meta.dirname, '..', '.output', `journey-user-${process.ppid}.json`);
+}
 
 interface JourneyUser {
   email: string;
@@ -15,25 +18,27 @@ interface JourneyUser {
   profileId: string;
 }
 
-/** Persist journey credentials so fresh workers and scoped runs can log in. */
-export function saveJourneyUser(state: JourneyUser): void {
-  mkdirSync(dirname(JOURNEY_USER_FILE), { recursive: true });
-  writeFileSync(JOURNEY_USER_FILE, JSON.stringify(state, null, 2));
+/** Persist journey credentials within this run. */
+export function saveJourneyUser(state: JourneyUser, _testInfo: TestInfo): void {
+  const journeyUserFile = getJourneyUserFile();
+  mkdirSync(dirname(journeyUserFile), { recursive: true });
+  writeFileSync(journeyUserFile, JSON.stringify(state, null, 2));
 }
 
-/** Fill empty journey state from disk; module state dies with every worker restart. */
-export function hydrateJourneyUser(state: JourneyUser): void {
+/** Fill empty journey state from this run's handoff. */
+export function hydrateJourneyUser(state: JourneyUser, _testInfo: TestInfo): void {
   if (state.email) {
     return;
   }
-  if (!existsSync(JOURNEY_USER_FILE)) {
+  const journeyUserFile = getJourneyUserFile();
+  if (!existsSync(journeyUserFile)) {
     throw new Error(
-      `No journey user available: the Registration block has not run and ${JOURNEY_USER_FILE} does not exist. Run the full journey spec unfiltered first.`,
+      `No journey user available: the Registration block has not run and ${journeyUserFile} does not exist. Run the full journey spec unfiltered first.`,
     );
   }
-  Object.assign(state, JSON.parse(readFileSync(JOURNEY_USER_FILE, 'utf8')));
+  Object.assign(state, JSON.parse(readFileSync(journeyUserFile, 'utf8')));
   if (!(state.email && state.password)) {
-    throw new Error(`${JOURNEY_USER_FILE} is incomplete; rerun the full journey spec unfiltered.`);
+    throw new Error(`${journeyUserFile} is incomplete; rerun the full journey spec unfiltered.`);
   }
 }
 
@@ -59,7 +64,6 @@ export async function loginAndNavigate(
 ): Promise<void> {
   await loginAndWaitForDashboard(page, email, password);
   await page.goto(path);
-  await page.waitForLoadState('load');
 }
 
 /**

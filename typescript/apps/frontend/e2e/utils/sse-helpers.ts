@@ -12,7 +12,7 @@ interface SSEMock {
   cleanup: () => Promise<void>;
 }
 
-const SSE_ROUTE_PATTERN = '**/api/v1/documents/events';
+const SSE_ROUTE_PATTERN = '**/api/documents/*/events';
 
 function formatSSEMessage(event: SSEEventData): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
