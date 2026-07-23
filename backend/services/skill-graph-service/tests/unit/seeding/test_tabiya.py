@@ -314,10 +314,15 @@ class TestTabiyaIterSkills:
         assert python_record.description == "Programming in Python"
         assert python_record.external_id == "skill-001"
 
+    _REPOSITORY_DATASET = Path(__file__).resolve().parents[6] / "data" / "tabiya" / "skills.csv"
+
+    @pytest.mark.skipif(
+        not _REPOSITORY_DATASET.is_file(),
+        reason="pinned Tabiya dataset is provisioned locally, not tracked in the repository",
+    )
     def test_repository_dataset_has_expected_canonical_cardinality(self) -> None:
         """The pinned Tabiya dataset yields one unique canonical row per source skill."""
-        dataset = Path(__file__).resolve().parents[6] / "data" / "tabiya" / "skills.csv"
-        records = list(TabiyaDataSource(skills_csv_path=dataset).iter_skills())
+        records = list(TabiyaDataSource(skills_csv_path=self._REPOSITORY_DATASET).iter_skills())
 
         assert len(records) == 13_896
         assert len({record.normalized_text for record in records}) == 13_896
