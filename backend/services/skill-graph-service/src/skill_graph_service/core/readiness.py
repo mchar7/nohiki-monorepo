@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 from nohiki_observability import get_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from nohiki_qdrant_client import QdrantVectorClient
 
 logger = get_logger(__name__)
@@ -33,7 +35,7 @@ class SkillEmbeddingReadinessGate:
         _poll_interval: Seconds between Qdrant polls.
         _min_point_count: Minimum points required to be considered ready.
         _is_ready: Set to True once the count threshold is reached.
-        _is_failed: Set to True if polling encounters a permanent failure.
+        _poll_sleeper: Async callable used to wait between Qdrant polls.
         _task: Background asyncio polling task.
 
     """
@@ -44,6 +46,7 @@ class SkillEmbeddingReadinessGate:
         collection_name: str,
         poll_interval_seconds: float = 5.0,
         min_point_count: int = 1,
+        poll_sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         """Initialize the readiness gate.
 
@@ -52,12 +55,15 @@ class SkillEmbeddingReadinessGate:
             collection_name: Name of the skill embedding collection to check.
             poll_interval_seconds: Seconds between Qdrant count polls. Default 5.
             min_point_count: Minimum number of points to consider ready. Default 1.
+            poll_sleeper: Async callable used to wait between polls. Defaults to
+                :func:`asyncio.sleep`.
 
         """
         self._qdrant = qdrant_client
         self._collection_name = collection_name
         self._poll_interval = poll_interval_seconds
         self._min_point_count = min_point_count
+        self._poll_sleeper = poll_sleeper
         self._is_ready = False
         self._is_failed = False
         self._task: asyncio.Task[None] | None = None
@@ -122,4 +128,4 @@ class SkillEmbeddingReadinessGate:
                     collection=self._collection_name,
                     exc_info=True,
                 )
-            await asyncio.sleep(self._poll_interval)
+            await self._poll_sleeper(self._poll_interval)
