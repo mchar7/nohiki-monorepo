@@ -151,7 +151,7 @@ class TestDoclingClient:
         mock_get.return_value.json.return_value = {"task_status": "success"}
 
         with patch.object(DoclingClient, "_fetch_result", return_value={"doc": 1}):
-            result = docling_client._poll_once(httpx.Client(), "url", "task_123", {})
+            result = docling_client._poll_once(httpx.Client(), "url", "task_123", {}, float("inf"))
             assert result == {"doc": 1}
 
     @patch("httpx.Client.get")
@@ -161,7 +161,7 @@ class TestDoclingClient:
         mock_get.return_value.json.return_value = {"task_status": "failure", "error_message": "crash"}
 
         with pytest.raises(ValueError, match="Task failed: crash"):
-            docling_client._poll_once(httpx.Client(), "url", "task_123", {})
+            docling_client._poll_once(httpx.Client(), "url", "task_123", {}, float("inf"))
 
     @pytest.mark.usefixtures("_mock_sleep")
     @patch("httpx.Client.get")
@@ -272,7 +272,7 @@ class TestDoclingClient:
         mock_get.return_value = MagicMock(status_code=200)
         mock_get.return_value.json.return_value = {"task_status": "unknown_status"}
 
-        result = docling_client._poll_once(httpx.Client(), "url", "task_123", {})
+        result = docling_client._poll_once(httpx.Client(), "url", "task_123", {}, float("inf"))
         assert result is None
 
     @pytest.mark.usefixtures("_mock_sleep")
@@ -289,8 +289,31 @@ class TestDoclingClient:
             "doc_process_service.providers.docling.client.DoclingClient._try_fetch_result",
             return_value={"doc": 1},
         ):
-            result = docling_client._poll_once(httpx.Client(), "url", "task_123", {})
+            result = docling_client._poll_once(httpx.Client(), "url", "task_123", {}, float("inf"))
             assert result == {"doc": 1}
+
+    @patch("httpx.Client.get")
+    def test_poll_404_respects_deadline(
+        self,
+        mock_get: MagicMock,
+        docling_client: DoclingClient,
+    ) -> None:
+        """Test that server and local waits use only the remaining deadline."""
+        mock_get.return_value = MagicMock(status_code=404)
+
+        with (
+            patch.object(DoclingClient, "_try_fetch_result", return_value=None),
+            patch(
+                "doc_process_service.providers.docling.client.time.monotonic",
+                side_effect=[10.0, 10.03],
+            ),
+            patch("doc_process_service.providers.docling.client.time.sleep") as mock_sleep,
+        ):
+            result = docling_client._poll_once(httpx.Client(), "url", "task_123", {}, 10.05)
+
+        assert result is None
+        assert mock_get.call_args.kwargs["params"]["wait"] == pytest.approx(0.05)
+        assert mock_sleep.call_args.args[0] == pytest.approx(0.02)
 
     @patch("httpx.Client.get")
     def test_try_fetch_result_success(self, mock_get: MagicMock, docling_client: DoclingClient) -> None:

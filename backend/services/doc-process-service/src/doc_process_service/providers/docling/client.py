@@ -233,7 +233,7 @@ class DoclingClient:
         for _ in range(self._config.max_poll_attempts):
             if time.monotonic() >= deadline:
                 break
-            if result := self._poll_once(client, poll_url, task_id, headers):
+            if result := self._poll_once(client, poll_url, task_id, headers, deadline):
                 return result
 
         msg = f"Timeout waiting for task {task_id}"
@@ -245,20 +245,28 @@ class DoclingClient:
         poll_url: str,
         task_id: str,
         headers: dict[str, str],
+        deadline: float,
     ) -> dict | None:
         """Execute single poll attempt."""
         try:
-            response = client.get(poll_url, headers=headers, params={"wait": self._config.poll_interval})
-            return self._handle_poll_response(client, response, task_id)
+            wait_seconds = min(self._config.poll_interval, max(0.0, deadline - time.monotonic()))
+            response = client.get(poll_url, headers=headers, params={"wait": wait_seconds})
+            return self._handle_poll_response(client, response, task_id, deadline)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == _HTTP_NOT_FOUND:
-                return self._handle_404_during_poll(client, task_id)
+                return self._handle_404_during_poll(client, task_id, deadline)
             raise
 
-    def _handle_poll_response(self, client: httpx.Client, response: httpx.Response, task_id: str) -> dict | None:
+    def _handle_poll_response(
+        self,
+        client: httpx.Client,
+        response: httpx.Response,
+        task_id: str,
+        deadline: float,
+    ) -> dict | None:
         """Handle poll response and return result if ready."""
         if response.status_code == _HTTP_NOT_FOUND:
-            return self._handle_404_during_poll(client, task_id)
+            return self._handle_404_during_poll(client, task_id, deadline)
 
         response.raise_for_status()
         data = response.json()
@@ -277,11 +285,11 @@ class DoclingClient:
         # PENDING, QUEUED, STARTED
         return None
 
-    def _handle_404_during_poll(self, client: httpx.Client, task_id: str) -> dict | None:
+    def _handle_404_during_poll(self, client: httpx.Client, task_id: str, deadline: float) -> dict | None:
         """Handle 404 by checking if result is available directly."""
         if result := self._try_fetch_result(client, task_id):
             return result
-        time.sleep(self._config.poll_interval)
+        time.sleep(min(self._config.poll_interval, max(0.0, deadline - time.monotonic())))
         return None
 
     def _try_fetch_result(self, client: httpx.Client, task_id: str) -> dict | None:
