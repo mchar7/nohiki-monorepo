@@ -259,11 +259,12 @@ async def _release_lock(conn: AsyncConnection, lock_id: int) -> None:
 async def _wait_for_lock_release(
     conn: AsyncConnection,
     lock_id: int,
-    max_wait_seconds: int,
+    max_wait_seconds: float,
     ctx: SeedContext,
 ) -> None:
     """Wait for another pod to finish seeding by polling for lock availability."""
     start_time = time.monotonic()
+    deadline = start_time + max_wait_seconds
     elapsed = 0.0
     poll_count = 0
 
@@ -279,7 +280,7 @@ async def _wait_for_lock_release(
             )
             return
 
-        await asyncio.sleep(SEEDING_POLL_INTERVAL)
+        await asyncio.sleep(min(SEEDING_POLL_INTERVAL, max(0.0, deadline - time.monotonic())))
         elapsed = time.monotonic() - start_time
 
         # Log progress every 10 polls

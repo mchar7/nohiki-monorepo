@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -175,9 +176,11 @@ class TestLockOperations:
 
     @pytest.mark.asyncio
     async def test_wait_for_lock_release_timeout(self) -> None:
-        """Test waiting for lock release - timeout case."""
+        """Test that timeout is not rounded up to the polling interval."""
         mock_conn = AsyncMock()
-        mock_conn.execute.return_value.scalar.return_value = False
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = False
+        mock_conn.execute.return_value = mock_result
 
         ctx = SeedContext(
             service_name="test-svc",
@@ -188,11 +191,11 @@ class TestLockOperations:
             timeout_seconds=5,
         )
 
-        with (
-            patch("asyncio.sleep", new_callable=AsyncMock),
-            pytest.raises(SeedingError, match="Timeout waiting"),
-        ):
-            await _wait_for_lock_release(mock_conn, 12345, 0, ctx)
+        started = time.monotonic()
+        with pytest.raises(SeedingError, match="Timeout waiting"):
+            await _wait_for_lock_release(mock_conn, 12345, 0.05, ctx)
+
+        assert time.monotonic() - started < 0.2
 
 
 class TestSeedVersionOperations:

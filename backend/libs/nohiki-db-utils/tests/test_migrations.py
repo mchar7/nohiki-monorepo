@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections.abc import Awaitable
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -255,15 +256,17 @@ class TestLockOperations:
 
     @pytest.mark.asyncio
     async def test_wait_for_lock_release_timeout(self) -> None:
-        """Test waiting for lock release - timeout case."""
+        """Test that timeout is not rounded up to the polling interval."""
         mock_conn = AsyncMock()
-        mock_conn.execute.return_value.scalar.return_value = False
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = False
+        mock_conn.execute.return_value = mock_result
 
-        with (
-            patch("asyncio.sleep", new_callable=AsyncMock),
-            pytest.raises(MigrationError, match="Timeout waiting"),
-        ):
-            await _wait_for_lock_release(mock_conn, 12345, 0, "test-service")
+        started = time.monotonic()
+        with pytest.raises(MigrationError, match="Timeout waiting"):
+            await _wait_for_lock_release(mock_conn, 12345, 0.05, "test-service")
+
+        assert time.monotonic() - started < 0.2
 
 
 class TestLockMetadataOperations:
