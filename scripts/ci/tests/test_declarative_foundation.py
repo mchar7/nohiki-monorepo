@@ -9,6 +9,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -71,14 +72,22 @@ def _render_foundation() -> tuple[dict[str, Any], ...]:
             "foundation",
             str(_FOUNDATION_CHART),
             "--namespace",
-            "foundation-contract-test",
+            "nohiki-foundation",
         ],
         cwd=_ROOT,
         check=True,
         capture_output=True,
         text=True,
     )
-    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+    return tuple(
+        document for document in yaml.load_all(result.stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict)
+    )
+
+
+@pytest.fixture(scope="module")
+def foundation_documents() -> tuple[dict[str, Any], ...]:
+    """Render the immutable foundation chart once for this module."""
+    return _render_foundation()
 
 
 def test_gateway_dependency_coordinates_lock_and_archives_are_exact() -> None:
@@ -116,7 +125,9 @@ def test_gateway_api_bundle_matches_upstream_standard_schema_and_digest() -> Non
     assert hashlib.sha256(content).hexdigest() == _GATEWAY_API_BUNDLE_EXPECTED_HEX
     assert _GATEWAY_API_VERSION.encode() in header
 
-    documents = tuple(document for document in yaml.safe_load_all(content) if isinstance(document, dict))
+    documents = tuple(
+        document for document in yaml.load_all(content, Loader=yaml.CSafeLoader) if isinstance(document, dict)
+    )
     assert {document.get("kind") for document in documents} == {
         "CustomResourceDefinition",
         "ValidatingAdmissionPolicy",
@@ -130,7 +141,9 @@ def test_gateway_api_bundle_matches_upstream_standard_schema_and_digest() -> Non
         assert annotations["gateway.networking.k8s.io/channel"] == "standard"
 
 
-def test_foundation_is_the_only_gateway_controller_and_crd_owner() -> None:
+def test_foundation_is_the_only_gateway_controller_and_crd_owner(
+    foundation_documents: tuple[dict[str, Any], ...],
+) -> None:
     owners: dict[Path, set[str]] = {}
     for chart_path in _K8S.rglob("Chart.yaml"):
         gateway_dependencies = {
@@ -142,7 +155,7 @@ def test_foundation_is_the_only_gateway_controller_and_crd_owner() -> None:
             owners[chart_path.relative_to(_ROOT)] = gateway_dependencies
     assert owners == {Path("infra/k8s/helm-foundation/Chart.yaml"): set(_GATEWAY_DEPENDENCIES)}
 
-    documents = _render_foundation()
+    documents = foundation_documents
     controller_counts = Counter(
         document.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/name")
         for document in documents

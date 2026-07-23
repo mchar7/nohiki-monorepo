@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 import yaml
+from helm_test_utils import runtime_eso_args
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
@@ -86,25 +87,20 @@ def _render_platform(environment: str, namespace: str, *, eso_identity: bool) ->
         "helm",
         "template",
         "nohiki",
-        str(_CHART),
-        "--namespace",
+        ".",
+        "-f",
+        "values.yaml",
+        "-f",
+        f"values.{environment}.yaml",
+        "-n",
         namespace,
-        "-f",
-        str(_CHART / "values.yaml"),
-        "-f",
-        str(_CHART / f"values.{environment}.yaml"),
     ]
     if eso_identity:
-        command += [
-            "--set",
-            "global.eso.azure.keyVaultUrl=https://nohiki-test-kv.vault.azure.net",
-            "--set",
-            "global.eso.azure.clientId=00000000-0000-4000-8000-000000000000",
-            "--set",
-            "global.eso.azure.tenantId=11111111-1111-4111-8111-111111111111",
-        ]
-    result = subprocess.run(command, cwd=_ROOT, capture_output=True, text=True, check=True)
-    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+        command.extend(runtime_eso_args(environment))
+    result = subprocess.run(command, cwd=_CHART, capture_output=True, text=True, check=True)
+    return tuple(
+        document for document in yaml.load_all(result.stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict)
+    )
 
 
 def _kustomize(overlay: str) -> tuple[dict[str, Any], ...]:
@@ -118,10 +114,12 @@ def _kustomize(overlay: str) -> tuple[dict[str, Any], ...]:
         text=True,
         check=True,
     )
-    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+    return tuple(
+        document for document in yaml.load_all(result.stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict)
+    )
 
 
-class _HelmLoader(yaml.SafeLoader):
+class _HelmLoader(yaml.CSafeLoader):
     pass
 
 
@@ -136,6 +134,28 @@ def _render_foundation(*, include_crds: bool = False) -> tuple[dict[str, Any], .
     return tuple(
         document for document in yaml.load_all(result.stdout, Loader=_HelmLoader) if isinstance(document, dict)
     )
+
+
+@pytest.fixture(scope="module")
+def foundation_documents() -> tuple[dict[str, Any], ...]:
+    """Render foundation workloads and CRDs once."""
+    return _render_foundation(include_crds=True)
+
+
+@pytest.fixture(scope="module")
+def platform_documents() -> dict[str, tuple[dict[str, Any], ...]]:
+    """Render each immutable platform values variant once."""
+    return {
+        "dev": _render_platform("dev", "nohiki-dev", eso_identity=True),
+        "staging": _render_platform("staging", "nohiki-staging", eso_identity=True),
+        "local": _render_platform("local", "nohiki", eso_identity=False),
+    }
+
+
+@pytest.fixture(scope="module")
+def observability_documents() -> dict[str, tuple[dict[str, Any], ...]]:
+    """Render each immutable observability overlay once."""
+    return {overlay: _kustomize(overlay) for overlay in ("dev", "staging", "prod", "local")}
 
 
 def _named(documents: tuple[dict[str, Any], ...], kind: str, name: str) -> dict[str, Any]:
@@ -193,8 +213,10 @@ def test_umbrella_no_longer_owns_external_secrets() -> None:
     assert not list((_CHART / "charts").glob("external-secrets-*.tgz"))
 
 
-def test_foundation_operator_workloads_are_exact_and_pinned() -> None:
-    documents = _render_foundation()
+def test_foundation_operator_workloads_are_exact_and_pinned(
+    foundation_documents: tuple[dict[str, Any], ...],
+) -> None:
+    documents = foundation_documents
     workloads = {
         doc["metadata"]["name"]: doc
         for doc in documents
@@ -212,11 +234,11 @@ def test_foundation_operator_workloads_are_exact_and_pinned() -> None:
         assert containers[0]["image"] == _ESO_IMAGE
 
 
-def test_foundation_external_secrets_crds_are_stable_v1_only() -> None:
+def test_foundation_external_secrets_crds_are_stable_v1_only(
+    foundation_documents: tuple[dict[str, Any], ...],
+) -> None:
     crds = {
-        doc["metadata"]["name"]: doc
-        for doc in _render_foundation(include_crds=True)
-        if doc.get("kind") == "CustomResourceDefinition"
+        doc["metadata"]["name"]: doc for doc in foundation_documents if doc.get("kind") == "CustomResourceDefinition"
     }
     required_crds = {
         "externalsecrets.external-secrets.io",
@@ -236,9 +258,11 @@ def test_foundation_external_secrets_crds_are_stable_v1_only() -> None:
 
 @pytest.mark.parametrize(("environment", "namespace"), [("dev", "nohiki-dev"), ("staging", "nohiki-staging")])
 def test_dev_staging_platform_emit_chart_managed_service_account_store_and_secrets(
-    environment: str, namespace: str
+    environment: str,
+    namespace: str,
+    platform_documents: dict[str, tuple[dict[str, Any], ...]],
 ) -> None:
-    documents = _render_platform(environment, namespace, eso_identity=True)
+    documents = platform_documents[environment]
     expected_model_secrets = _model_egress_external_secrets(f"values.{environment}.yaml")
 
     service_account = _named(documents, "ServiceAccount", _SA_NAME)
@@ -279,8 +303,10 @@ def test_dev_staging_disable_the_in_cluster_cnpg_cluster(environment: str) -> No
     assert values["cnpgCluster"]["enabled"] is False
 
 
-def test_local_platform_chart_emits_exact_split_external_secrets() -> None:
-    documents = _render_platform("local", "nohiki", eso_identity=False)
+def test_local_platform_chart_emits_exact_split_external_secrets(
+    platform_documents: dict[str, tuple[dict[str, Any], ...]],
+) -> None:
+    documents = platform_documents["local"]
     external = {
         document["metadata"]["name"]: document for document in documents if document.get("kind") == "ExternalSecret"
     }
@@ -307,8 +333,9 @@ def test_local_platform_chart_emits_exact_split_external_secrets() -> None:
 @pytest.mark.parametrize("overlay", ["dev", "staging", "prod"])
 def test_shared_observability_overlays_reuse_platform_store_without_defining_one(
     overlay: str,
+    observability_documents: dict[str, tuple[dict[str, Any], ...]],
 ) -> None:
-    documents = _kustomize(overlay)
+    documents = observability_documents[overlay]
     assert not any(document.get("kind") == "ClusterSecretStore" for document in documents)
 
     external_secrets = [document for document in documents if document.get("kind") == "ExternalSecret"]
@@ -325,8 +352,10 @@ def test_shared_observability_base_does_not_ship_a_cluster_secret_store() -> Non
     assert not any("cluster-secret-store" in resource for resource in base["resources"])
 
 
-def test_local_observability_overlay_defines_no_secret_delivery_fallback() -> None:
-    documents = _kustomize("local")
+def test_local_observability_overlay_defines_no_secret_delivery_fallback(
+    observability_documents: dict[str, tuple[dict[str, Any], ...]],
+) -> None:
+    documents = observability_documents["local"]
     secret_resources = {
         (document["kind"], document["metadata"]["name"])
         for document in documents

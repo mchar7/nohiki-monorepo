@@ -1,8 +1,8 @@
 import subprocess
 import tarfile
-from functools import cache
 from pathlib import Path
 
+import pytest
 import yaml
 from helm_test_utils import runtime_eso_args
 
@@ -33,10 +33,9 @@ def _load(path: Path) -> Manifest:
 
 
 def _documents(stdout: str) -> tuple[Manifest, ...]:
-    return tuple(document for document in yaml.safe_load_all(stdout) if isinstance(document, dict))
+    return tuple(document for document in yaml.load_all(stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict))
 
 
-@cache
 def _render_platform() -> tuple[Manifest, ...]:
     command = [
         "helm",
@@ -55,7 +54,6 @@ def _render_platform() -> tuple[Manifest, ...]:
     return _documents(result.stdout)
 
 
-@cache
 def _render_foundation() -> tuple[Manifest, ...]:
     result = subprocess.run(
         ["helm", "template", "foundation", ".", "--namespace", "nohiki-foundation"],
@@ -67,7 +65,6 @@ def _render_foundation() -> tuple[Manifest, ...]:
     return _documents(result.stdout)
 
 
-@cache
 def _render_observability() -> tuple[Manifest, ...]:
     result = subprocess.run(
         ["kubectl", "kustomize", str(_OBSERVABILITY_OVERLAY)],
@@ -77,6 +74,16 @@ def _render_observability() -> tuple[Manifest, ...]:
         check=True,
     )
     return _documents(result.stdout)
+
+
+@pytest.fixture(scope="module")
+def rendered_manifests() -> dict[str, tuple[Manifest, ...]]:
+    """Render each immutable manifest source once."""
+    return {
+        "foundation": _render_foundation(),
+        "platform": _render_platform(),
+        "observability": _render_observability(),
+    }
 
 
 def _operator_resources(documents: tuple[Manifest, ...], kind: str) -> tuple[Manifest, ...]:
@@ -121,9 +128,11 @@ def test_foundation_values_pin_manager_and_preserve_metric_shape() -> None:
     assert values["manager"]["serviceMonitor"]["enabled"] is False
 
 
-def test_operator_renders_single_manager_with_secure_metrics() -> None:
-    foundation = _render_foundation()
-    platform = _render_platform()
+def test_operator_renders_single_manager_with_secure_metrics(
+    rendered_manifests: dict[str, tuple[Manifest, ...]],
+) -> None:
+    foundation = rendered_manifests["foundation"]
+    platform = rendered_manifests["platform"]
 
     deployments = _operator_resources(foundation, "Deployment")
     assert len(deployments) == 1
@@ -171,16 +180,18 @@ def test_operator_renders_single_manager_with_secure_metrics() -> None:
     assert _operator_resources(platform, "ServiceMonitor") == ()
 
 
-def test_operator_renders_current_collector_crd_api() -> None:
+def test_operator_renders_current_collector_crd_api(
+    rendered_manifests: dict[str, tuple[Manifest, ...]],
+) -> None:
     foundation_crds = {
         document["metadata"]["name"]
-        for document in _render_foundation()
+        for document in rendered_manifests["foundation"]
         if document.get("kind") == "CustomResourceDefinition"
         and document.get("metadata", {}).get("name", "").endswith(".opentelemetry.io")
     }
     platform_crds = {
         document["metadata"]["name"]
-        for document in _render_platform()
+        for document in rendered_manifests["platform"]
         if document.get("kind") == "CustomResourceDefinition"
         and document.get("metadata", {}).get("name", "").endswith(".opentelemetry.io")
     }
@@ -189,7 +200,7 @@ def test_operator_renders_current_collector_crd_api() -> None:
 
     collector_crds = [
         document
-        for document in _render_foundation()
+        for document in rendered_manifests["foundation"]
         if document.get("kind") == "CustomResourceDefinition"
         and document.get("metadata", {}).get("name") == "opentelemetrycollectors.opentelemetry.io"
     ]
@@ -202,7 +213,7 @@ def test_operator_renders_current_collector_crd_api() -> None:
 
     collectors = [
         document
-        for document in _render_observability()
+        for document in rendered_manifests["observability"]
         if document.get("kind") == "OpenTelemetryCollector"
         and document.get("metadata", {}).get("name") == "nohiki-collector"
     ]

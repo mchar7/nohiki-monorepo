@@ -78,7 +78,23 @@ def _render(values_file: str, tmp_path: Path) -> list[dict[str, Any]]:
         ]
     command.extend(runtime_eso_args(values_file.removeprefix("values.").removesuffix(".yaml")))
     result = subprocess.run(command, cwd=_CHART, capture_output=True, text=True, check=True)
-    return [document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict)]
+    return [
+        document for document in yaml.load_all(result.stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict)
+    ]
+
+
+@pytest.fixture(scope="module")
+def rendered_environments(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[dict[str, Any]]]:
+    """Render each immutable environment values variant once."""
+    tmp_path = tmp_path_factory.mktemp("gpu-helm-renders")
+    return {
+        values_file: _render(values_file, tmp_path)
+        for values_file in (
+            "values.prod.yaml",
+            "values.local.yaml",
+            "values.staging.yaml",
+        )
+    }
 
 
 def _deployment(documents: list[dict[str, Any]], name: str) -> dict[str, Any]:
@@ -130,8 +146,10 @@ def test_base_values_pin_device_plugin_and_default_to_no_gpu() -> None:
     assert "gpu" not in values.get("resources", {})
 
 
-def test_production_advertises_gpu_via_pinned_device_plugin(tmp_path: Path) -> None:
-    documents = _render("values.prod.yaml", tmp_path)
+def test_production_advertises_gpu_via_pinned_device_plugin(
+    rendered_environments: dict[str, list[dict[str, Any]]],
+) -> None:
+    documents = rendered_environments["values.prod.yaml"]
     label, taint_key, taint_value = _terraform_label_and_taint()
     daemonsets = _device_plugin_daemonsets(documents)
     assert len(daemonsets) == 1, "exactly one NVIDIA device plugin DaemonSet expected in prod"
@@ -154,8 +172,10 @@ def test_production_advertises_gpu_via_pinned_device_plugin(tmp_path: Path) -> N
     assert security.get("capabilities", {}).get("drop") == ["ALL"]
 
 
-def test_production_ml_compute_requests_exactly_one_gpu(tmp_path: Path) -> None:
-    documents = _render("values.prod.yaml", tmp_path)
+def test_production_ml_compute_requests_exactly_one_gpu(
+    rendered_environments: dict[str, list[dict[str, Any]]],
+) -> None:
+    documents = rendered_environments["values.prod.yaml"]
     label, taint_key, taint_value = _terraform_label_and_taint()
 
     pod = _pod_spec(_deployment(documents, _ML_COMPUTE))
@@ -174,9 +194,11 @@ def test_production_ml_compute_requests_exactly_one_gpu(tmp_path: Path) -> None:
     assert _tolerates_gpu(pod.get("tolerations"), taint_key, taint_value)
 
 
-def test_scheduling_matches_terraform_gpu_pool_label_and_taint(tmp_path: Path) -> None:
+def test_scheduling_matches_terraform_gpu_pool_label_and_taint(
+    rendered_environments: dict[str, list[dict[str, Any]]],
+) -> None:
     """The workload's selector/toleration must match the Terraform pool label/taint."""
-    documents = _render("values.prod.yaml", tmp_path)
+    documents = rendered_environments["values.prod.yaml"]
     label, taint_key, taint_value = _terraform_label_and_taint()
 
     ml_compute = _pod_spec(_deployment(documents, _ML_COMPUTE))
@@ -188,8 +210,11 @@ def test_scheduling_matches_terraform_gpu_pool_label_and_taint(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("values_file", ["values.local.yaml", "values.staging.yaml"])
-def test_local_and_staging_schedule_no_gpu(values_file: str, tmp_path: Path) -> None:
-    documents = _render(values_file, tmp_path)
+def test_local_and_staging_schedule_no_gpu(
+    values_file: str,
+    rendered_environments: dict[str, list[dict[str, Any]]],
+) -> None:
+    documents = rendered_environments[values_file]
 
     assert _device_plugin_daemonsets(documents) == [], "no device plugin outside prod"
     assert not any(_GPU_RESOURCE in yaml.safe_dump(document) for document in documents), "no GPU requested outside prod"
@@ -252,7 +277,9 @@ def _render_prod_result(
 
 
 def _docs(result: subprocess.CompletedProcess[str]) -> list[dict[str, Any]]:
-    return [document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict)]
+    return [
+        document for document in yaml.load_all(result.stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict)
+    ]
 
 
 def test_base_values_default_accelerator_mode_is_cpu() -> None:
@@ -264,7 +291,10 @@ def test_base_values_default_accelerator_mode_is_cpu() -> None:
     assert accelerator["gpuImageName"] == "ml-compute-service-gpu"
 
 
-def test_single_accelerator_switch_flips_all_or_nothing(tmp_path: Path) -> None:
+def test_single_accelerator_switch_flips_all_or_nothing(
+    tmp_path: Path,
+    rendered_environments: dict[str, list[dict[str, Any]]],
+) -> None:
     """Flipping only accelerator.mode toggles every GPU contract, all or nothing.
 
     The same production environment is rendered twice, changing exactly one field.
@@ -276,7 +306,7 @@ def test_single_accelerator_switch_flips_all_or_nothing(tmp_path: Path) -> None:
     label, taint_key, taint_value = _terraform_label_and_taint()
 
     # mode=cuda: the full GPU contract renders coherently.
-    cuda_docs = _docs(_render_prod_result(tmp_path, check=True))
+    cuda_docs = rendered_environments["values.prod.yaml"]
     cuda_pod = _pod_spec(_deployment(cuda_docs, _ML_COMPUTE))
     cuda_container = cuda_pod["containers"][0]
     assert re.search(r"/ml-compute-service-gpu@sha256:[0-9a-f]{64}$", cuda_container["image"]), cuda_container["image"]
