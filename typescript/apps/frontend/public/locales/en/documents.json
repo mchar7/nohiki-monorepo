@@ -4,8 +4,7 @@
   },
   "card": {
     "createdAt": "Created {{time}}",
-    "outputFormat": "{{format}} format",
-    "processing": "Processing..."
+    "outputFormat": "{{format}} format"
   },
   "empty": {
     "createFirst": "Generate your first document",
@@ -17,17 +16,7 @@
     "noUploadedDescription": "Upload your resume, cover letter, or other documents"
   },
   "generation": {
-    "completed": "Document generated successfully!",
-    "failed": "Document generation failed: {{reason}}",
-    "failedFallback": "Document generation failed. Please try again.",
-    "generating": "Generating document...",
-    "progress": "{{progress}}% complete",
-    "timedOut": "Generation timed out. Please try again."
-  },
-  "mobile": {
-    "errorLabel": "Error:",
-    "requestId": "Request ID",
-    "status": "Status"
+    "generating": "Generating document..."
   },
   "pages": {
     "list": {
@@ -40,11 +29,6 @@
     "failed": "Failed",
     "pending": "Pending",
     "processing": "Processing"
-  },
-  "table": {
-    "actions": "Actions",
-    "requestId": "Request ID",
-    "status": "Status"
   },
   "tabs": {
     "all": "All",
@@ -118,9 +102,7 @@
       "generationFailed": "Failed to start generation",
       "nameRequired": "Set your Display Name in Account Settings before generating this document."
     },
-    "loading": "Loading...",
     "errorTitle": "Failed to load",
-    "retry": "Retry",
     "a11y": {
       "progress": "Wizard progress",
       "loading": "Loading content"
@@ -139,7 +121,6 @@
     "retry": "Try Again",
     "a11y": {
       "progressBar": "Document generation progress",
-      "elapsedTime": "Time elapsed",
       "downloadPdf": "Download generated PDF document",
       "viewDocuments": "Navigate to documents list",
       "retry": "Retry document generation"

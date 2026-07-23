@@ -28,25 +28,18 @@
     "delete": "Delete",
     "deselectAll": "Select None",
     "downloadPdf": "Download PDF",
-    "duplicate": "Duplicate",
-    "edit": "Edit",
     "export": "Export",
     "goBack": "Go Back",
-    "more": "More",
     "refresh": "Refresh",
-    "reloadPage": "Reload Page",
     "retry": "Retry",
     "selectAll": "Select All",
     "tryAgain": "Try Again",
     "copied": "Copied",
     "copyErrorStack": "Copy error details",
-    "copyRequestId": "Copy request ID",
-    "createNew": "Create New",
-    "viewAll": "View All"
+    "copyRequestId": "Copy request ID"
   },
   "app": {
     "initFailed": "Failed to initialize application",
-    "initRetry": "Retry",
     "storeInitFailed": "Failed to initialize local stores"
   },
   "appName": "Nohiki",
@@ -97,8 +90,7 @@
   "columns": "Columns",
   "counts": {
     "more": "+{{count}} more",
-    "result": "{{count}} result",
-    "results": "{{count}} results"
+    "result": "{{count}} result"
   },
   "direction": "Direction",
   "filters": {
@@ -116,9 +108,6 @@
       "createDescription": "Get started by creating a new document. Fill in the form fields and generate beautiful PDFs.",
       "createNewAction": "Create New Document",
       "createTitle": "Create Your First Document",
-      "noMatches": "No matches yet",
-      "noMatchesAria": "No matches found",
-      "noMatchesDescription": "Create a job target to start receiving matches",
       "selectDescription": "Choose an existing document from the sidebar or create a new one to start editing.",
       "selectTitle": "Select a Document"
     },
@@ -150,19 +139,13 @@
   "fieldNames": "Field Names",
   "errorBoundary": {
     "description": "An unexpected error occurred in this component",
-    "detailsSummary": "Error Details (Development Only)",
     "featureError": "The {{feature}} encountered an unexpected error.",
     "title": "Something went wrong"
   },
   "errors": {
     "fixIssues": "Please fix the following issues:",
     "generic": "An unexpected error occurred",
-    "genericWithReason": "{{context}}: {{reason}}",
-    "notFound": "Resource not found",
-    "noTemplateSelected": "No template selected",
-    "schemaLoadingDescription": "Unable to load the document schema. Please check your connection and try again.",
-    "schemaLoadingHint": "Try refreshing the page or selecting a different template.",
-    "schemaLoadingIssue": "Schema Loading Issue"
+    "notFound": "Resource not found"
   },
   "density": {
     "compact": "Compact",
@@ -173,16 +156,11 @@
   "dropZone": {
     "dropToUpload": "Drop to upload"
   },
-  "confirm": {
-    "deleteDescription": "Are you sure you want to delete '{{name}}'? This action cannot be undone.",
-    "deleteTitle": "Delete"
-  },
   "labels": {
     "column": "Column",
     "highQuality": "High Quality",
     "line": "Line",
-    "selected": "{{count}} selected",
-    "version": "Version {{version}}"
+    "selected": "{{count}} selected"
   },
   "modules": {
     "platform": {
@@ -212,16 +190,11 @@
   "placeholder": "Placeholder",
   "renderAsFields": "Render as fields",
   "nav": {
-    "dashboard": "Dashboard",
-    "editor": "Editor",
-    "settings": "Settings",
-    "templates": "Templates"
+    "settings": "Settings"
   },
   "showItemLabels": "Show item labels",
   "sidebar": {
     "account": "Account",
-    "allSettings": "All Settings",
-    "attachments": "Attachments",
     "dashboard": "Dashboard",
     "docsUrl": "https://www.nohiki.com/docs",
     "jobs": {
@@ -235,9 +208,7 @@
       "list": "My Profiles",
       "title": "Profiles"
     },
-    "quickSettings": "Quick Settings",
-    "recentDocuments": "Recent Documents",
-    "unknownTemplate": "Unknown Template"
+    "quickSettings": "Quick Settings"
   },
   "skills": {
     "maxReached": "Maximum of {{max}} skills reached",
@@ -256,9 +227,7 @@
     "autoRefreshing": "Auto-refreshing...",
     "loading": "Loading...",
     "processing": "Processing...",
-    "refreshing": "Refreshing...",
-    "syncing": "Syncing...",
-    "lastSynced": "Synced {{time}}"
+    "syncing": "Syncing..."
   },
   "unsavedChanges": {
     "title": "Unsaved Changes",
@@ -267,7 +236,6 @@
     "leave": "Discard Changes"
   },
   "form": {
-    "optional": "optional",
     "optionalLabel": "(optional)"
   },
   "status": {

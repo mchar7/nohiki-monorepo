@@ -24,7 +24,6 @@ const supportedLngs = ['en', 'fr-CA'] as const;
  * - navigation: App-wide navigation
  * - auth: Authentication flows
  * - settings: Settings page
- * - validation: Form validation messages
  * - legal: Terms, privacy policy, licenses
  *
  * Omakase feature namespaces (document generation):
@@ -46,7 +45,6 @@ const namespaces = [
   'navigation',
   'auth',
   'settings',
-  'validation',
   'legal',
   'omakase.editor',
   'omakase.preview',

@@ -15,13 +15,10 @@
   },
   "errors": {
     "dataValidationFailed": "Échec de la validation des données",
-    "failedToLoadImage": "Échec du chargement de l'image générée",
     "generationFailed": "Échec de la génération de l'aperçu",
     "networkError": "Erreur réseau - vérifiez votre connexion",
-    "noTemplateVersionSelected": "Aucune version de modèle sélectionnée",
     "pdfDownloadFailed": "Échec du téléchargement du PDF",
     "serverError": "Erreur serveur - veuillez réessayer",
-    "templateFamilyRequired": "L'identifiant de famille de modèle est requis",
     "templateVersionRequired": "L'identifiant de version de modèle est requis",
     "timeout": "La génération de l'aperçu a expiré"
   },
@@ -38,7 +35,6 @@
     "fullscreen": "Plein écran",
     "generate": "Générer"
   },
-  "livePreview": "Aperçu en direct",
   "mobilePreview": {
     "close": "Fermer l'aperçu",
     "description": "Aperçu du document sur mobile"

@@ -31,8 +31,6 @@
       "matches": "Correspondances d'emploi",
       "trend": "Tendance"
     },
-    "subtitle": "Correspondances et candidatures dans le temps",
-    "subtitleShort": "Tendances d'activité",
     "timeRange": {
       "days30": "30 jours",
       "days7": "7 jours",
@@ -95,12 +93,10 @@
     }
   },
   "onboarding": {
-    "cta": "Commencer",
     "progress": {
       "label": "{{completed}} de {{total}} étapes complétées",
       "percent": "{{value}} % complété"
     },
-    "step": "Étape {{number}}",
     "stepState": {
       "active": "Étape en cours",
       "completed": "Complétée",
@@ -130,8 +126,6 @@
       }
     },
     "stepsAriaLabel": "Étapes d'intégration",
-    "subtitle": "Commencez par créer votre profil de recherche d'emploi",
-    "title": "Bienvenue sur Nohiki",
     "welcome": {
       "greeting": "Bon retour, {{name}} !",
       "greetingGeneric": "Bienvenue sur Nohiki !",

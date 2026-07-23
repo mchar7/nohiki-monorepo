@@ -4,8 +4,7 @@
   },
   "card": {
     "createdAt": "Créé {{time}}",
-    "outputFormat": "Format {{format}}",
-    "processing": "Traitement en cours..."
+    "outputFormat": "Format {{format}}"
   },
   "empty": {
     "createFirst": "Générez votre premier document",
@@ -17,17 +16,7 @@
     "noUploadedDescription": "Téléversez votre CV, lettre de motivation ou autres documents"
   },
   "generation": {
-    "completed": "Document généré avec succès !",
-    "failed": "Échec de la génération du document : {{reason}}",
-    "failedFallback": "Échec de la génération du document. Veuillez réessayer.",
-    "generating": "Génération du document...",
-    "progress": "{{progress}} % terminé",
-    "timedOut": "La génération a expiré. Veuillez réessayer."
-  },
-  "mobile": {
-    "errorLabel": "Erreur :",
-    "requestId": "ID de requête",
-    "status": "Statut"
+    "generating": "Génération du document..."
   },
   "pages": {
     "list": {
@@ -40,11 +29,6 @@
     "failed": "Échoué",
     "pending": "En attente",
     "processing": "En cours"
-  },
-  "table": {
-    "actions": "Actions",
-    "requestId": "ID de requête",
-    "status": "Statut"
   },
   "tabs": {
     "all": "Tous",
@@ -118,9 +102,7 @@
       "generationFailed": "Échec du lancement de la génération",
       "nameRequired": "Définissez votre nom d’affichage dans les paramètres du compte avant de générer ce document."
     },
-    "loading": "Chargement...",
     "errorTitle": "Échec du chargement",
-    "retry": "Réessayer",
     "a11y": {
       "progress": "Progression de l'assistant",
       "loading": "Chargement du contenu"
@@ -139,7 +121,6 @@
     "retry": "Réessayer",
     "a11y": {
       "progressBar": "Progression de la génération du document",
-      "elapsedTime": "Temps écoulé",
       "downloadPdf": "Télécharger le document PDF généré",
       "viewDocuments": "Naviguer vers la liste des documents",
       "retry": "Réessayer la génération du document"

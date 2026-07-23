@@ -22,7 +22,6 @@
     "location": "Lieu",
     "moreSkills": "+{{count}} de plus",
     "noDescription": "Aucune description disponible",
-    "salary": "Salaire",
     "viewDetails": "Voir les détails",
     "seniority": {
       "intern": "Stagiaire",
@@ -36,11 +35,6 @@
       "vp": "VP",
       "executive": "Cadre"
     },
-    "factors": {
-      "strength": "Atout",
-      "concern": "Préoccupation"
-    },
-    "matchScoreLabel": "Indice d’adéquation : {{score}} / 100",
     "matchToSave": "Associez un profil pour enregistrer",
     "dismiss": "Pas intéressé"
   },
@@ -62,8 +56,6 @@
     "noListings": "Aucune offre d'emploi trouvée",
     "noListingsDescription": "Essayez d'ajuster vos filtres ou revenez plus tard",
     "noMatchDetail": "Correspondance introuvable",
-    "noMatches": "Aucune correspondance",
-    "noMatchesDescription": "Créez un profil cible pour commencer à recevoir des correspondances",
     "noMatchesNoProfile": "Créez un profil cible pour commencer à recevoir des correspondances",
     "noMatchesNoProfileDescription": "Configurez votre premier profil cible et nous commencerons à vous proposer des offres pertinentes.",
     "noMatchesPending": "Nous analysons vos profils",
@@ -80,7 +72,6 @@
     "adjustReasonPlaceholder": "Pourquoi pensez-vous que le score devrait être différent ?",
     "adjustTitle": "Ajuster le score",
     "description": "Vos commentaires nous aident à améliorer notre algorithme de correspondance",
-    "feedbackError": "Impossible d'envoyer les commentaires : {{reason}}",
     "feedbackErrorFallback": "Échec de l'envoi des commentaires. Veuillez réessayer.",
     "feedbackSuccess": "Merci pour vos commentaires !",
     "good": "Bonne correspondance",
@@ -166,20 +157,13 @@
       "description": "Nous analysons vos compétences, votre expérience et vos préférences par rapport aux exigences des postes grâce à un système de notation IA à plusieurs étapes pour trouver les meilleures correspondances pour vous.",
       "dismiss": "Compris"
     },
-    "reasoning": {
-      "strengths": "Points forts",
-      "concerns": "Points à considérer",
-      "whyMatched": "Pourquoi cette correspondance",
-      "aiAnalysis": "Analyse IA"
-    },
     "bulk": {
       "selected": "{{count}} sélectionné(s)",
       "saveAll": "Enregistrer {{count}}",
       "dismissAll": "Ignorer {{count}}",
       "saveSuccess": "{{count}} correspondances enregistrées",
       "dismissSuccess": "{{count}} correspondances ignorées",
-      "partialError": "Échec du traitement de {{failed}} sur {{total}} correspondances",
-      "selectAll": "Tout sélectionner"
+      "partialError": "Échec du traitement de {{failed}} sur {{total}} correspondances"
     }
   },
   "tailoredDocument": {
@@ -205,7 +189,6 @@
   },
   "pages": {
     "detail": {
-      "applyExternal": "Postuler sur le site original",
       "title": "Détails de l'emploi",
       "viewOriginal": "Voir l'offre originale"
     },
@@ -225,9 +208,6 @@
       "title": "Mes correspondances"
     }
   },
-  "sort": {
-    "matchScore": "Indice d’adéquation"
-  },
   "status": {
     "APPLIED": "Postulé",
     "DISMISSED": "Ignoré",
@@ -236,11 +216,5 @@
     "PENDING": "En attente",
     "SAVED": "Enregistré",
     "VIEWED": "Consulté"
-  },
-  "salary": {
-    "perYear": "/an",
-    "perMonth": "/mois",
-    "perHour": "/h",
-    "upTo": "Jusqu'à {{amount}}"
   }
 }
