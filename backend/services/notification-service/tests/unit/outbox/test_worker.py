@@ -194,26 +194,23 @@ class TestCooperativeShutdown:
 
     @pytest.mark.asyncio
     async def test_wait_or_shutdown_returns_false_on_timeout(self) -> None:
-        """The wait helper returns False after the full timeout elapses."""
+        """The wait helper returns False when its timeout expires."""
         worker = OutboxWorker(provider_router=_make_router())
-        result = await worker._wait_or_shutdown(seconds=0.05)
+        wait = AsyncMock(side_effect=TimeoutError)
+        with patch.object(worker._shutdown, "wait", wait):
+            result = await worker._wait_or_shutdown(seconds=10.0)
         assert result is False
+        wait.assert_awaited_once_with()
 
     @pytest.mark.asyncio
     async def test_wait_or_shutdown_returns_true_when_set_during_wait(self) -> None:
         """If shutdown fires mid-wait, the helper returns True."""
         worker = OutboxWorker(provider_router=_make_router())
+        asyncio.get_running_loop().call_soon(worker.stop)
 
-        async def _fire_shutdown() -> None:
-            await asyncio.sleep(0.02)
-            worker.stop()
+        result = await worker._wait_or_shutdown(seconds=1.0)
 
-        async with asyncio.TaskGroup() as tg:
-            t_setter = tg.create_task(_fire_shutdown())
-            t_waiter = tg.create_task(worker._wait_or_shutdown(seconds=1.0))
-
-        assert t_setter.result() is None
-        assert t_waiter.result() is True
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_poll_loop_exits_promptly_when_stopped(self) -> None:
@@ -229,18 +226,25 @@ class TestCooperativeShutdown:
     async def test_poll_loop_does_not_cancel_in_flight_drain(self) -> None:
         """In-flight drain completes even after stop() fires."""
         worker = OutboxWorker(provider_router=_make_router())
-        drain_finished = False
+        drain_started = asyncio.Event()
+        release_drain = asyncio.Event()
+        drain_finished = asyncio.Event()
 
-        async def _slow_drain() -> None:
-            nonlocal drain_finished
-            await asyncio.sleep(0.05)
-            drain_finished = True
-            worker.stop()
+        async def _in_flight_drain() -> None:
+            drain_started.set()
+            await release_drain.wait()
+            drain_finished.set()
 
-        with patch.object(worker, "_drain_batch", side_effect=_slow_drain):
-            await asyncio.wait_for(worker.start(), timeout=2.0)
+        with patch.object(worker, "_drain_batch", side_effect=_in_flight_drain):
+            async with asyncio.TaskGroup() as tg:
+                worker_task = tg.create_task(worker.start())
+                await drain_started.wait()
+                worker.stop()
+                assert not drain_finished.is_set()
+                release_drain.set()
 
-        assert drain_finished, "Drain must finish before the loop exits"
+        assert worker_task.result() is None
+        assert drain_finished.is_set(), "Drain must finish before the loop exits"
 
 
 class TestHandleMessageSuccess:
