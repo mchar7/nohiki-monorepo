@@ -278,7 +278,7 @@ def display_suite_results_boring(
 
     Outputs the same information as ``display_suite_results`` but with no
     Rich markup, no box-drawing characters, and minimal whitespace -- optimised
-    for CI logs, LLM agentic consumption, and ``--no-color`` environments.
+    for CI logs, programmatic consumption, and ``--no-color`` environments.
 
     Args:
         suite: Completed check suite result.

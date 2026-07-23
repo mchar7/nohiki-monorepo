@@ -1,17 +1,17 @@
 # AST Explorer
 
-Tree-sitter based codebase AST generation tool for AI-assisted code navigation and refactoring.
+Tree-sitter based codebase AST generation tool for structural code navigation and refactoring.
 
 ## Purpose
 
 Generates a queryable structural map of Python codebases using tree-sitter for parsing.
-The output is optimized for LLM context consumption, enabling AI assistants like Claude to
-understand codebase structure without reading entire files.
+The output is a compact structural summary, making it possible to understand codebase
+structure without reading entire files.
 
 ## Features
 
 - **Fast parsing** using tree-sitter for accurate AST generation
-- **Multiple export formats**: JSON, YAML, Markdown (optimized for LLM context)
+- **Multiple export formats**: JSON, YAML, Markdown (compact structural summaries)
 - **Queryable symbols**: Filter by kind, name pattern, visibility, file location
 - **Rich CLI**: Progress bars, tables, trees, and panels via Rich + Typer
 - **Extensible**: Language parser registry supports adding new languages
@@ -31,7 +31,7 @@ uv sync
 # Basic scan with summary
 ast-explorer scan ./src
 
-# Export to markdown (best for Claude)
+# Export to markdown (most compact summary format)
 ast-explorer scan ./src -o codebase.md -f markdown
 
 # Show file tree with symbols
@@ -57,16 +57,16 @@ ast-explorer query ./src --public
 ast-explorer inspect MyClassName --path ./src
 ```
 
-### Export for LLM context
+### Export a structural summary
 
 ```bash
-# Markdown format is optimized for LLM consumption
+# Markdown format produces the most compact summary
 ast-explorer export ./src -o context.md -f markdown
 ```
 
 ## Output Formats
 
-### Markdown (Recommended for LLMs)
+### Markdown (Recommended)
 
 Produces a hierarchical view with signatures, docstring previews, and line numbers:
 
