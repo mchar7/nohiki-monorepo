@@ -36,10 +36,11 @@ first_party_image_specs := "user-auth-service|.|backend/services/user-auth-servi
 local_image_names := "user-auth-service user-pref-service user-upload-service user-entitlement-service job-storage-service job-ingest-discovery-service job-ingest-schedule-service job-ingest-enrichment-service job-query-composition-service job-correlation-evaluation-service skill-graph-service doc-template-service doc-content-service doc-process-service notification-service bff-service ml-gateway-service ml-compute-service sys-tick-job snapshot-refresh-job qdrant-init frontend"
 
 # Common commands
+env_lock := monorepo_root + "/scripts/dev/env-lock.sh"
 pnpm := "corepack pnpm"
-playwright := pnpm + " --filter nohiki-frontend exec playwright"
+playwright := env_lock + " shared node_modules -- " + pnpm + " --filter nohiki-frontend exec playwright"
 playwright_test := playwright + " test --config=e2e/playwright.config.ts"
-ast_cmd := "cd scripts/util/ast_explorer && uv run ast-explorer"
+ast_cmd := "cd scripts/util/ast_explorer && " + env_lock + " shared venv -- uv run --no-sync ast-explorer"
 
 # Aliases and defaults
 
@@ -57,11 +58,11 @@ s: sync
 
 # Sync all workspace dependencies
 sync:
-    uv sync --all-packages
+    {{ env_lock }} exclusive venv -- uv sync --all-packages --all-extras --no-extra cuda --group deadcode
 
 # Sync with all non-conflicting development extras
 sync-dev:
-    uv sync --all-packages --all-extras --no-extra cuda --group deadcode
+    {{ env_lock }} exclusive venv -- uv sync --all-packages --all-extras --no-extra cuda --group deadcode
 
 # Lock dependencies without installing
 lock:
@@ -89,44 +90,44 @@ check-all: lint fe-check lint-md
 
 # Run ruff check with auto-fix on entire backend
 lint:
-    uv run ruff check --config pyproject.toml --fix --output-format=concise backend/
+    {{ env_lock }} shared venv -- uv run --no-sync ruff check --config pyproject.toml --fix --output-format=concise backend/
 
 # Run ruff check on a specific service
 lint-service service:
-    uv run ruff check --config pyproject.toml --fix --output-format=concise backend/services/{{ service }}/
+    {{ env_lock }} shared venv -- uv run --no-sync ruff check --config pyproject.toml --fix --output-format=concise backend/services/{{ service }}/
 
 # Run ruff check on shared libraries
 lint-libs:
-    uv run ruff check --config pyproject.toml --fix --output-format=concise backend/libs/
+    {{ env_lock }} shared venv -- uv run --no-sync ruff check --config pyproject.toml --fix --output-format=concise backend/libs/
 
 # Format all Python files
 format:
-    uv run ruff format --config pyproject.toml backend/
+    {{ env_lock }} shared venv -- uv run --no-sync ruff format --config pyproject.toml backend/
 
 # Format a specific service
 format-service service:
-    uv run ruff format --config pyproject.toml backend/services/{{ service }}/
+    {{ env_lock }} shared venv -- uv run --no-sync ruff format --config pyproject.toml backend/services/{{ service }}/
 
 # Lint and fix markdown files
 lint-md:
-    {{ pnpm }} exec markdownlint-cli2 --fix "**/*.md"
+    {{ env_lock }} shared node_modules -- {{ pnpm }} exec markdownlint-cli2 --fix "**/*.md"
 # Type checking
 
 # Run ty on all backend code
 typecheck-all:
-    uv run ty check backend/ --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
+    {{ env_lock }} shared venv -- uv run --no-sync ty check backend/ --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
 
 # Run ty on a specific backend service
 typecheck service:
-    cd backend/services/{{ service }} && uv run --package {{ service }} ty check src/
+    {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} ty check src/
 
 # Run ty on a specific shared library
 typecheck-lib lib:
-    cd backend/libs/{{ lib }} && uv run --package {{ lib }} ty check src/
+    {{ env_lock }} shared venv -- uv run --no-sync --package {{ lib }} ty check src/
 
 # Run ty on a job
 typecheck-job job:
-    cd backend/jobs/{{ job }} && uv run --package {{ job }} ty check src/
+    {{ env_lock }} shared venv -- uv run --no-sync --package {{ job }} ty check src/
 
 # Code hygiene
 
@@ -137,13 +138,13 @@ check-strict: lint typecheck-all hygiene
 hygiene: hygiene-deps hygiene-arch hygiene-deadcode hygiene-fixtures hygiene-build-backend-strict
 
 hygiene-deps:
-    uv run --package ci-checks ci-checks deptry --scope all --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope all --ci
 
 hygiene-deps-backend:
-    uv run --package ci-checks ci-checks deptry --scope services --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope services --ci
 
 hygiene-deps-libs:
-    uv run --package ci-checks ci-checks deptry --scope libs --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope libs --ci
 
 hygiene-arch:
     uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --error --no-git-ignore backend/
@@ -152,76 +153,76 @@ hygiene-arch-report:
     uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --no-git-ignore backend/
 
 hygiene-deadcode:
-    uv run --package ci-checks --group deadcode ci-checks deadcode --scope all --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks --group deadcode ci-checks deadcode --scope all --ci
 
 hygiene-deadcode-strict:
-    uv run --package ci-checks --group deadcode ci-checks deadcode --scope all --ci --fail
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks --group deadcode ci-checks deadcode --scope all --ci --fail
 
 hygiene-deadcode-llm:
-    uv run --package ci-checks --group deadcode ci-checks deadcode --scope all --ci --llm
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks --group deadcode ci-checks deadcode --scope all --ci --llm
 
 hygiene-fixtures:
-    uv run --package ci-checks ci-checks fixtures --scope all --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks fixtures --scope all --ci
 
 hygiene-fixtures-strict:
-    uv run --package ci-checks ci-checks fixtures --scope all --ci --fail
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks fixtures --scope all --ci --fail
 
 hygiene-fixtures-services:
-    uv run --package ci-checks ci-checks fixtures --scope services --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks fixtures --scope services --ci
 
 hygiene-fixtures-libs:
-    uv run --package ci-checks ci-checks fixtures --scope libs --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks fixtures --scope libs --ci
 
 # Validate migrated packages against the canonical uv_build settings.
 hygiene-build-backend:
-    uv run --package ci-checks ci-checks build-backend --scope all --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --ci
 
 # Require every buildable workspace package to use canonical uv_build settings.
 hygiene-build-backend-strict:
-    uv run --package ci-checks ci-checks build-backend --scope all --ci --strict
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --ci --strict
 
 # Scaffold CLI
 
 # Scaffold a new backend service.
 new-service *ARGS:
-    uv run --package nohiki-scaffold nohiki-scaffold new service {{ ARGS }}
+    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-scaffold nohiki-scaffold new service {{ ARGS }}
 
 # Scaffold a new shared library.
 new-lib *ARGS:
-    uv run --package nohiki-scaffold nohiki-scaffold new lib {{ ARGS }}
+    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-scaffold nohiki-scaffold new lib {{ ARGS }}
 
 # Preview a service scaffold without writing files.
 preview-service *ARGS:
-    uv run --package nohiki-scaffold nohiki-scaffold preview service {{ ARGS }}
+    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-scaffold nohiki-scaffold preview service {{ ARGS }}
 
 # Preview a library scaffold plan without writing anything.
 preview-lib *ARGS:
-    uv run --package nohiki-scaffold nohiki-scaffold preview lib {{ ARGS }}
+    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-scaffold nohiki-scaffold preview lib {{ ARGS }}
 
 # Run the scaffolder's own test suite (unit + invariant + integration).
 test-scaffold:
-    uv run --package nohiki-scaffold pytest scripts/util/scaffold/tests -q
+    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-scaffold pytest scripts/util/scaffold/tests -q
 
 # Testing
 
 # Run package-aware unit tests across uv workspace members
 test-all-packages:
-    uv run --package ci-checks ci-checks tests all --scope all --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope all --ci
 
 # Run package-aware unit tests for backend services only
 test-backend-packages:
-    uv run --package ci-checks ci-checks tests all --scope services --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope services --ci
 
 # Run package-aware unit tests for shared libraries only
 test-libs-packages:
-    uv run --package ci-checks ci-checks tests all --scope libs --ci
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope libs --ci
 
 # Run tests for a specific service
 test service:
     #!/usr/bin/env bash
     set -euo pipefail
     dir=$(find backend/services backend/libs backend/jobs -maxdepth 1 -type d -name "{{ service }}" | head -1)
-    uv run --package {{ service }} pytest "$dir/tests/" --tb=short
+    {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} pytest "$dir/tests/" --tb=short
 
 # Run tests with coverage for a specific service
 test-cov service:
@@ -230,19 +231,19 @@ test-cov service:
     dir=$(find backend/services backend/libs backend/jobs -maxdepth 1 -type d -name "{{ service }}" | head -1)
     # Coverage instruments the service's src tree; --cov=src failed because
     # pytest runs from the monorepo root where no top-level src/ exists.
-    uv run --package {{ service }} pytest "$dir/tests/" --tb=short --cov="$dir/src" --cov-report=term-missing
+    {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} pytest "$dir/tests/" --tb=short --cov="$dir/src" --cov-report=term-missing
 
 # Run monorepo integration tests
 test-integration:
-    uv run --package nohiki-integration-tests pytest tests/integration --tb=short
+    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/integration --tb=short
 
 # Run API contract tests
 test-api:
-    uv run --package nohiki-integration-tests pytest tests/api --tb=short
+    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/api --tb=short
 
 # Run API tests with coverage
 test-api-cov:
-    uv run --package nohiki-integration-tests pytest tests/api --tb=short --cov=backend/services/bff-service --cov-report=term-missing
+    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/api --tb=short --cov=backend/services/bff-service --cov-report=term-missing
 
 # --- E2E Playwright Tests ---
 
@@ -255,7 +256,7 @@ test-e2e:
 
 # Run auth-listings tests with the feature enabled and deterministic worker routing
 test-e2e-auth-listings:
-    {{ pnpm }} --filter nohiki-frontend run test:e2e:auth-listings
+    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run test:e2e:auth-listings
 
 # Run specific Playwright journey test
 test-e2e-journey journey:
@@ -281,19 +282,19 @@ test-e2e-report:
 
 # Run frontend dev server
 fe-dev:
-    {{ pnpm }} --filter nohiki-frontend run dev
+    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run dev
 
 # Build frontend for production
 fe-build:
-    {{ pnpm }} --filter nohiki-frontend run build
+    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run build
 
 # Build frontend and open bundle analyzer
 fe-analyze:
-    {{ pnpm }} --filter nohiki-frontend run analyze
+    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run analyze
 
 # Run all frontend checks (type-check, biome lint, vitest)
 fe-check:
-    {{ pnpm }} --filter nohiki-frontend run check:all
+    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run check:all
 
 # Service development
 
@@ -301,19 +302,19 @@ fe-check:
 dev service port="8000":
     #!/usr/bin/env bash
     pkg_name=$(echo "{{ service }}" | tr '-' '_')
-    cd backend/services/{{ service }} && uv run --package {{ service }} uvicorn "src.${pkg_name}.main:app" --reload --port {{ port }}
+    cd backend/services/{{ service }} && {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} uvicorn "src.${pkg_name}.main:app" --reload --port {{ port }}
 
 # Run database migrations for a service
 migrate service:
-    cd backend/services/{{ service }} && uv run alembic upgrade head
+    cd backend/services/{{ service }} && {{ env_lock }} shared venv -- uv run --no-sync alembic upgrade head
 
 # Create a new migration for a service
 migrate-new service message:
-    cd backend/services/{{ service }} && uv run alembic revision --autogenerate -m "{{ message }}"
+    cd backend/services/{{ service }} && {{ env_lock }} shared venv -- uv run --no-sync alembic revision --autogenerate -m "{{ message }}"
 
 # Generate protobuf stubs from proto files
 proto-gen:
-    PYTHONPATH=scripts uv run python -m proto_gen generate
+    PYTHONPATH=scripts {{ env_lock }} shared venv -- uv run --no-sync python -m proto_gen generate
 
 # Verify committed OpenAPI and frontend types match the canonical service exports
 api-schema-check:
@@ -321,10 +322,8 @@ api-schema-check:
     set -euo pipefail
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
-    uv run --no-sync python scripts/util/export-openapi.py --output "$tmpdir/nohiki.openapi.json"
-    test -x typescript/apps/frontend/node_modules/.bin/openapi-typescript || { echo "error: openapi-typescript is not installed; run pnpm install" >&2; exit 1; }
-    typescript/apps/frontend/node_modules/.bin/openapi-typescript "$tmpdir/nohiki.openapi.json" -o "$tmpdir/schema.d.ts"
-    diff -u docs/api/nohiki.openapi.json "$tmpdir/nohiki.openapi.json"
+    {{ env_lock }} shared venv -- uv run --no-sync python scripts/util/export-openapi.py --output "$tmpdir/nohiki.openapi.json"
+    {{ env_lock }} shared node_modules -- sh -c 'test -x "$1" || { echo "error: openapi-typescript is not installed; run pnpm install" >&2; exit 1; }; "$1" "$2" -o "$3"' _ typescript/apps/frontend/node_modules/.bin/openapi-typescript "$tmpdir/nohiki.openapi.json" "$tmpdir/schema.d.ts"
     diff -u typescript/apps/frontend/src/api/schema.d.ts "$tmpdir/schema.d.ts"
 
 # Lint proto files
@@ -500,7 +499,7 @@ k8s-factory-reset-local *args:
     infra/k8s/local/lifecycle.sh factory-reset {{ args }}
 
 compose-health *args:
-    uv run --package health-check health-check run --target compose {{ args }}
+    {{ env_lock }} shared venv -- uv run --no-sync --package health-check health-check run --target compose {{ args }}
 
 # Observability
 
@@ -559,16 +558,16 @@ ast-query kind:
 # Git hooks
 
 hooks-install:
-    {{ pnpm }} exec lefthook install
+    {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook install
 
 hooks-uninstall:
-    {{ pnpm }} exec lefthook uninstall
+    {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook uninstall
 
 hooks-precommit:
-    {{ pnpm }} exec lefthook run pre-commit --force
+    {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook run pre-commit --force
 
 hooks-prepush:
-    {{ pnpm }} exec lefthook run pre-push --force
+    {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook run pre-push --force
 
 hooks-test-msg message:
-    echo "{{ message }}" | {{ pnpm }} exec commitlint
+    echo "{{ message }}" | {{ env_lock }} shared node_modules -- {{ pnpm }} exec commitlint

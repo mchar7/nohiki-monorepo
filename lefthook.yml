@@ -25,7 +25,7 @@ colors: true
 commit-msg:
   commands:
     commitlint:
-      run: pnpm exec commitlint --edit {1}
+      run: scripts/dev/env-lock.sh shared node_modules -- pnpm exec commitlint --edit {1}
 
 # PRE-COMMIT: Fast checks on staged files (~5-15s)
 # All commands run in parallel, auto-fix where possible
@@ -60,8 +60,8 @@ pre-commit:
           ':(glob)**/*.py' \
           ':(exclude,glob)**/alembic/**' \
           ':(exclude,glob)**/nohiki-domain-models/**' > "$paths"
-        xargs -0 -r uv run --no-sync ruff check --fix -- < "$paths"
-        xargs -0 -r uv run --no-sync ruff format -- < "$paths"
+        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff check --fix -- < "$paths"
+        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff format -- < "$paths"
       stage_fixed: true
 
     # Frontend: Biome lint/format with auto-fix
@@ -73,7 +73,7 @@ pre-commit:
       root: typescript/apps/frontend/
       run: |
         if [ -n "{staged_files}" ]; then
-          pnpm exec biome check --write {staged_files}
+          ../../../scripts/dev/env-lock.sh shared node_modules -- pnpm exec biome check --write {staged_files}
         fi
       stage_fixed: true
 
@@ -101,7 +101,7 @@ pre-commit:
         - "**/node_modules/**"
       run: |
         if [ -n "{staged_files}" ]; then
-          pnpm exec markdownlint-cli2 --fix {staged_files}
+          scripts/dev/env-lock.sh shared node_modules -- pnpm exec markdownlint-cli2 --fix {staged_files}
         fi
       stage_fixed: true
 
@@ -111,7 +111,7 @@ pre-commit:
         - "typescript/apps/frontend/src/**/*.{ts,tsx}"
         - "typescript/apps/frontend/public/locales/**"
       root: typescript/apps/frontend/
-      run: pnpm run i18n:check
+      run: ../../../scripts/dev/env-lock.sh shared node_modules -- pnpm run i18n:check
 
     # Secrets: gitleaks - detect secrets in staged files
     # https://github.com/gitleaks/gitleaks
@@ -166,7 +166,7 @@ pre-push:
         jobs:
           - name: python-typecheck
             glob: "backend/**/*.py"
-            run: uv run --no-sync ty check backend/ --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
 
           - name: frontend-typecheck
             glob:
@@ -174,7 +174,7 @@ pre-push:
               - "typescript/apps/frontend/package.json"
               - "typescript/apps/frontend/tsconfig*.json"
               - "typescript/apps/frontend/vite.config.*"
-            run: cd typescript/apps/frontend && pnpm type-check
+            run: scripts/dev/env-lock.sh shared node_modules -- sh -c 'cd typescript/apps/frontend && pnpm type-check'
 
     # Phase 2: Unit Tests (parallel, runs after typecheck)
     # Uses package-aware runner to avoid pytest plugin collisions
@@ -184,7 +184,7 @@ pre-push:
         jobs:
           - name: python-tests
             glob: "backend/**/*.py"
-            run: uv run --no-sync ci-checks tests affected --mode push --ci
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks tests affected --mode push --ci
             env:
               OTEL_SDK_DISABLED: "true"
               UV_NO_SYNC: "1"
@@ -195,7 +195,7 @@ pre-push:
               - "typescript/apps/frontend/package.json"
               - "typescript/apps/frontend/vitest.config.*"
               - "typescript/apps/frontend/vite.config.*"
-            run: cd typescript/apps/frontend && pnpm test --run --maxWorkers=25%
+            run: scripts/dev/env-lock.sh shared node_modules -- sh -c 'cd typescript/apps/frontend && pnpm test --run --maxWorkers=25%'
 
     # Phase 3: Code Hygiene (parallel, runs after tests)
     - group:
@@ -203,11 +203,11 @@ pre-push:
         jobs:
           - name: deadcode
             glob: "backend/**/*.py"
-            run: uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
 
           - name: deptry
             glob: "backend/**/*.py"
-            run: uv run --no-sync ci-checks deptry --scope all --ci
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deptry --scope all --ci
 
           - name: semgrep
             glob: "backend/**/*.py"
@@ -215,7 +215,7 @@ pre-push:
 
           - name: build-backend
             glob: "**/pyproject.toml"
-            run: uv run --no-sync ci-checks build-backend --scope all --ci --strict
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks build-backend --scope all --ci --strict
 
     # Phase 4: Generated API artifacts
     - name: api-schema-freshness
