@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from geopy.distance import geodesic
-
 if TYPE_CHECKING:
     from nohiki.common.v1 import Location
 
@@ -129,6 +127,8 @@ def _cached_geodesic_distance(
         Tuple of (distance_km, distance_miles)
 
     """
+    from geopy.distance import geodesic  # noqa: PLC0415 -- Keep GeoPy off the import-only path.
+
     dist = geodesic((lat1, lon1), (lat2, lon2))
     return (dist.kilometers, dist.miles)
 
