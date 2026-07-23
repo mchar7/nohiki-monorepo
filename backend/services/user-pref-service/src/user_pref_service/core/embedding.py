@@ -87,8 +87,8 @@ class PrefEmbeddingState(CallbackStateMixin):
 
 
 def profile_embedding_content_hash(embedded_text: str) -> str:
-    """Return the stable identity for the exact text sent to embedding."""
-    return sha256(embedded_text.encode("utf-8")).hexdigest()
+    """Return the embedding pipeline's normalized content identity."""
+    return sha256(embedded_text.strip().lower().encode("utf-8")).hexdigest()
 
 
 @cache
