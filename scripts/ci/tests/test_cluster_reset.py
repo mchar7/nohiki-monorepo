@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 import runpy
@@ -15,11 +17,16 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import FunctionType, SimpleNamespace
 
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT = _ROOT / "infra" / "k8s" / "local" / "cluster_reset.py"
+_RESET_MODULE = runpy.run_path(str(_SCRIPT))
+_RESET_MAIN = _RESET_MODULE["main"]
+assert isinstance(_RESET_MAIN, FunctionType)
+_RESET_GLOBALS = _RESET_MAIN.__globals__
 _CONTEXT = "k3s-nohiki-test"
 _OLD_UID = "11111111-1111-1111-1111-111111111111"
 _NEW_UID = "22222222-2222-2222-2222-222222222222"
@@ -46,158 +53,161 @@ _PHASES = (
     "absence",
 )
 
-_FAKE_TOOL = r"""#!/usr/bin/env python3
-import json
-import os
-import pathlib
-import sys
-import time
+_FAKE_TOOL = r"""#!/bin/sh
+name=${0##*/}
+{
+    printf '%s' "$name"
+    for argument in "$@"; do
+        printf '\t%s' "$argument"
+    done
+    printf '\n'
+} >> "$FAKE_TOOL_LOG"
 
-name = pathlib.Path(sys.argv[0]).name
-args = sys.argv[1:]
-log = pathlib.Path(os.environ["FAKE_TOOL_LOG"])
-with log.open("a", encoding="utf-8") as stream:
-    stream.write("\t".join((name, *args)) + "\n")
+fail() {
+    printf '%s\n' "$1" >&2
+    exit "${2:-1}"
+}
 
-def calls(tool, prefix=()):
-    if not log.exists():
-        return []
-    rows = [line.split("\t") for line in log.read_text(encoding="utf-8").splitlines()]
-    return [row for row in rows if row and row[0] == tool and row[1:1 + len(prefix)] == list(prefix)]
+case "$name" in
+    purge-adapter|start-adapter)
+        phase=${name%-adapter}
+        upper=$(printf '%s' "$phase" | tr '[:lower:]' '[:upper:]')
+        eval "block=\${FAKE_${upper}_BLOCK:-}"
+        if [ -n "$block" ]; then
+            while [ ! -e "$block" ]; do
+                sleep 0.001
+            done
+        fi
+        eval "delay=\${FAKE_${upper}_SLEEP:-0}"
+        if [ "$delay" != 0 ]; then
+            sleep "$delay"
+        fi
+        if [ "$phase" = purge ] && [ -n "${FAKE_PURGE_LOCK_EVIDENCE_DIR:-}" ]; then
+            chmod 0500 "$FAKE_PURGE_LOCK_EVIDENCE_DIR"
+        fi
+        if [ "$phase" = start ] && { [ -n "${FAKE_POST_CONTEXT:-}" ] || [ -n "${FAKE_POST_ENDPOINT:-}" ]; }; then
+            python3 -S -c 'import json,os,pathlib
+p=pathlib.Path(os.environ["KUBECONFIG"]); d=json.loads(p.read_text())
+if os.environ.get("FAKE_POST_CONTEXT"): d["current-context"]=os.environ["FAKE_POST_CONTEXT"]
+if os.environ.get("FAKE_POST_ENDPOINT"): d["clusters"][0]["cluster"]["server"]=os.environ["FAKE_POST_ENDPOINT"]
+p.write_text(json.dumps(d))'
+        fi
+        eval "invalid=\${FAKE_${upper}_INVALID_UTF8:-}"
+        if [ -n "$invalid" ]; then
+            printf '\377'
+        fi
+        eval "code=\${FAKE_${upper}_EXIT:-0}"
+        if [ "$code" -ne 0 ]; then
+            fail "$phase adapter synthetic failure secret-token" "$code"
+        fi
+        exit 0
+        ;;
+    flux|helm|sops|age)
+        printf '%s test-version\n' "$name"
+        exit 0
+        ;;
+    kubectl) ;;
+    *) fail "unexpected fake tool: $name" 97 ;;
+esac
 
-def fail(message, code=1):
-    print(message, file=sys.stderr)
-    raise SystemExit(code)
+context=${FAKE_CONTEXT:-k3s-nohiki-test}
+endpoint=${FAKE_ENDPOINT:-https://127.0.0.1:6443}
+started=
+if grep -q '^start-adapter' "$FAKE_TOOL_LOG"; then
+    started=1
+    context=${FAKE_POST_CONTEXT:-$context}
+    endpoint=${FAKE_POST_ENDPOINT:-$endpoint}
+fi
 
-CHECKPOINT_INVENTORY = [
-    ["get", "namespaces", "-o", "custom-columns=NAME:.metadata.name,PHASE:.status.phase,CREATED:.metadata.creationTimestamp"],  # noqa: E501
-    ["get", "customresourcedefinitions", "-o", "custom-columns=NAME:.metadata.name,ESTABLISHED:.status.conditions[?(@.type=='Established')].status,STORED_VERSIONS:.status.storedVersions"],  # noqa: E501
-    ["get", "persistentvolumeclaims", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,STATUS:.status.phase,VOLUME:.spec.volumeName,CLASS:.spec.storageClassName,CAPACITY:.status.capacity.storage"],  # noqa: E501
-    ["get", "persistentvolumes", "-o", "custom-columns=NAME:.metadata.name,STATUS:.status.phase,CLAIM:.spec.claimRef.name,CLAIM_NAMESPACE:.spec.claimRef.namespace,CLASS:.spec.storageClassName,CAPACITY:.spec.capacity.storage,RECLAIM:.spec.persistentVolumeReclaimPolicy"],  # noqa: E501
-    ["get", "storageclasses", "-o", "custom-columns=NAME:.metadata.name,PROVISIONER:.provisioner,RECLAIM:.reclaimPolicy,BINDING:.volumeBindingMode"],  # noqa: E501
-    ["get", "kustomizations.kustomize.toolkit.fluxcd.io", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,SUSPENDED:.spec.suspend,REVISION:.status.lastAppliedRevision,READY:.status.conditions[?(@.type=='Ready')].status"],  # noqa: E501
-    ["get", "gitrepositories.source.toolkit.fluxcd.io,ocirepositories.source.toolkit.fluxcd.io", "--all-namespaces", "-o", "custom-columns=KIND:.kind,NAMESPACE:.metadata.namespace,NAME:.metadata.name,REVISION:.status.artifact.revision,READY:.status.conditions[?(@.type=='Ready')].status"],  # noqa: E501
-    ["get", "helmreleases.helm.toolkit.fluxcd.io", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,REVISION:.status.history[0].chartVersion,READY:.status.conditions[?(@.type=='Ready')].status"],  # noqa: E501
-    ["get", "pods", "-n", "registry", "-o", "custom-columns=POD:.metadata.name,IMAGES:.spec.containers[*].image,IMAGE_IDS:.status.containerStatuses[*].imageID"],  # noqa: E501
-    ["get", "pods", "--all-namespaces", "-o", "custom-columns=NAMESPACE:.metadata.namespace,POD:.metadata.name,IMAGES:.spec.containers[*].image,IMAGE_IDS:.status.containerStatuses[*].imageID"],  # noqa: E501
-]
-
-def request_timeout(value):
-    return value.startswith("--request-timeout=") and value.endswith("s")
-
-
-if name in {"purge-adapter", "start-adapter"}:
-    phase = name.removesuffix("-adapter").upper()
-    block = os.environ.get(f"FAKE_{phase}_BLOCK")
-    if block:
-        release = pathlib.Path(block)
-        while not release.exists():
-            time.sleep(0.01)
-    delay = float(os.environ.get(f"FAKE_{phase}_SLEEP", "0"))
-    if delay:
-        time.sleep(delay)
-    if phase == "PURGE" and (evidence_dir := os.environ.get("FAKE_PURGE_LOCK_EVIDENCE_DIR")):
-        pathlib.Path(evidence_dir).chmod(0o500)
-    if phase == "START":
-        config_path = pathlib.Path(os.environ["KUBECONFIG"])
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        if os.environ.get("FAKE_POST_CONTEXT"):
-            config["current-context"] = os.environ["FAKE_POST_CONTEXT"]
-        if os.environ.get("FAKE_POST_ENDPOINT"):
-            config["clusters"][0]["cluster"]["server"] = os.environ["FAKE_POST_ENDPOINT"]
-        config_path.write_text(json.dumps(config), encoding="utf-8")
-    if os.environ.get(f"FAKE_{phase}_INVALID_UTF8"):
-        os.write(1, b"\xff")
-    code = int(os.environ.get(f"FAKE_{phase}_EXIT", "0"))
-    if code:
-        fail(f"{phase.lower()} adapter synthetic failure secret-token", code)
-    raise SystemExit(0)
-
-if name in {"flux", "helm", "sops", "age"}:
-    print(f"{name} test-version")
-    raise SystemExit(0)
-
-if name != "kubectl":
-    fail(f"unexpected fake tool: {name}", 97)
-
-context = os.environ.get("FAKE_CONTEXT", "k3s-nohiki-test")
-started = bool(calls("start-adapter"))
-if started and os.environ.get("FAKE_POST_CONTEXT"):
-    context = os.environ["FAKE_POST_CONTEXT"]
-endpoint = os.environ.get("FAKE_ENDPOINT", "https://127.0.0.1:6443")
-if started and os.environ.get("FAKE_POST_ENDPOINT"):
-    endpoint = os.environ["FAKE_POST_ENDPOINT"]
-
-if args == ["config", "current-context"]:
-    print(context)
-elif args == ["config", "view", "--minify", "--context", context, "-o", "json"]:
-    if raw := os.environ.get("FAKE_KUBECONFIG_JSON"):
-        print(raw)
-    else:
-        print(json.dumps({
-            "current-context": context,
-            "clusters": [{"name": "cluster", "cluster": {
-                "server": endpoint,
-                "certificate-authority-data": "TOP-SECRET-CA",
-            }}],
-            "contexts": [{"name": context, "context": {"cluster": "cluster", "user": "owner"}}],
-            "users": [{"name": "owner", "user": {"token": "TOP-SECRET-TOKEN"}}],
-        }))
-elif args == ["get", "namespace", "kube-system", "-o", "json", "--context", context]:
-    if started and os.environ.get("FAKE_NEW_IDENTITY_MALFORMED"):
-        print(os.environ["FAKE_NEW_IDENTITY_MALFORMED"])
-    elif not started and os.environ.get("FAKE_OLD_IDENTITY_JSON"):
-        print(os.environ["FAKE_OLD_IDENTITY_JSON"])
-    else:
-        uid = os.environ.get("FAKE_OLD_UID", "11111111-1111-1111-1111-111111111111")
-        created = os.environ.get("FAKE_OLD_CREATED", "2026-07-20T10:00:00Z")
-        if started:
-            uid = os.environ.get("FAKE_NEW_UID", "22222222-2222-2222-2222-222222222222")
-            created = os.environ.get("FAKE_NEW_CREATED", "2099-07-20T10:01:00Z")
-        print(json.dumps({"metadata": {"uid": uid, "creationTimestamp": created}}))
-elif len(args) == 6 and args[:5] == ["get", "--raw", "/readyz", "--context", context] and request_timeout(args[5]):  # noqa: E501
-    time.sleep(float(os.environ.get("FAKE_READYZ_PROCESS_SLEEP", "0")))
-    attempt = len(calls("kubectl", ("get", "--raw", "/readyz")))
-    failures = int(os.environ.get("FAKE_READYZ_FAILURES", "0"))
-    if os.environ.get("FAKE_READYZ_TLS") or attempt <= failures:
-        fail("TLS handshake failed: stale kubeconfig secret-token")
-    print("ok")
-elif len(args) == 7 and args[:6] == ["wait", "--for=condition=Ready", "node", "--all", "--context", context] and args[6].startswith("--timeout="):  # noqa: E501
-    if os.environ.get("FAKE_NODE_WAIT_NEAR_TIMEOUT"):
-        remaining = float(args[6].removeprefix("--timeout=").removesuffix("s"))
-        time.sleep(max(0.0, remaining - 0.05))
-    time.sleep(float(os.environ.get("FAKE_NODE_WAIT_SLEEP", "0")))
-    if os.environ.get("FAKE_NODE_WAIT_FAIL"):
-        fail("timed out waiting for nodes")
-    print("node/all condition met")
-elif len(args) == 7 and args[:6] == ["get", "nodes", "-o", "json", "--context", context] and request_timeout(args[6]):  # noqa: E501
-    count = int(os.environ.get("FAKE_NODE_COUNT", "1"))
-    ready = os.environ.get("FAKE_NODE_READY", "True")
-    items = [{"metadata": {"name": f"node-{index}"}, "status": {"conditions": [
-        {"type": "Ready", "status": ready}
-    ]}} for index in range(count)]
-    print(json.dumps({"items": items}))
-elif len(args) == 7 and args[:6] == ["get", "customresourcedefinitions", "-o", "json", "--context", context] and request_timeout(args[6]):  # noqa: E501
-    residue = os.environ.get("FAKE_FLUX_CRD", "")
-    print(json.dumps({"items": [] if not residue else [{"metadata": {"name": residue}}]}))
-elif len(args) == 8 and args[:2] == ["get", "namespace"] and args[2] in {
-    "nohiki", "nohiki-foundation", "nohiki-registry", "nohiki-verification", "flux-system"
-} and args[3:7] == ["--context", context, "-o", "json"] and request_timeout(args[7]):
-    synthetic_error = os.environ.get("FAKE_NAMESPACE_ERROR")
-    if synthetic_error:
-        fail(synthetic_error)
-    if os.environ.get("FAKE_RESIDUAL_NAMESPACE") == args[2]:
-        print(json.dumps({"metadata": {"name": args[2]}}))
-    else:
-        fail("NotFound")
-elif args == ["auth", "whoami", "-o", "json"]:
-    print('{"status":{"userInfo":{"username":"release-owner"}}}')
-elif args in (["version", "-o", "json"], ["version", "--client", "-o", "json"]):
-    print('{"clientVersion":{"gitVersion":"v1.test"}}')
-elif args in CHECKPOINT_INVENTORY:
-    print("synthetic checkpoint inventory")
-else:
-    fail("UNEXPECTED KUBECTL ARGV: " + json.dumps(args), 97)
+case "$*" in
+    "config current-context")
+        printf '%s\n' "$context"
+        ;;
+    "config view --minify --context $context -o json")
+        if [ -n "${FAKE_KUBECONFIG_JSON:-}" ]; then
+            printf '%s\n' "$FAKE_KUBECONFIG_JSON"
+        else
+            printf '{"current-context":"%s","clusters":[{"name":"cluster","cluster":{"server":"%s","certificate-authority-data":"TOP-SECRET-CA"}}],"contexts":[{"name":"%s","context":{"cluster":"cluster","user":"owner"}}],"users":[{"name":"owner","user":{"token":"TOP-SECRET-TOKEN"}}]}\n' "$context" "$endpoint" "$context"
+        fi
+        ;;
+    "get namespace kube-system -o json --context $context")
+        if [ -n "$started" ] && [ -n "${FAKE_NEW_IDENTITY_MALFORMED:-}" ]; then
+            printf '%s\n' "$FAKE_NEW_IDENTITY_MALFORMED"
+        elif [ -z "$started" ] && [ -n "${FAKE_OLD_IDENTITY_JSON:-}" ]; then
+            printf '%s\n' "$FAKE_OLD_IDENTITY_JSON"
+        else
+            uid=${FAKE_OLD_UID:-11111111-1111-1111-1111-111111111111}
+            created=${FAKE_OLD_CREATED:-2026-07-20T10:00:00Z}
+            if [ -n "$started" ]; then
+                uid=${FAKE_NEW_UID:-22222222-2222-2222-2222-222222222222}
+                created=${FAKE_NEW_CREATED:-2099-07-20T10:01:00Z}
+            fi
+            printf '{"metadata":{"uid":"%s","creationTimestamp":"%s"}}\n' "$uid" "$created"
+        fi
+        ;;
+    "get --raw /readyz --context $context --request-timeout="*"s")
+        if [ "${FAKE_READYZ_PROCESS_SLEEP:-0}" != 0 ]; then
+            sleep "$FAKE_READYZ_PROCESS_SLEEP"
+        fi
+        attempt=$(grep -c "^kubectl	get	--raw	/readyz" "$FAKE_TOOL_LOG")
+        if [ -n "${FAKE_READYZ_TLS:-}" ] || [ "$attempt" -le "${FAKE_READYZ_FAILURES:-0}" ]; then
+            fail "TLS handshake failed: stale kubeconfig"
+        fi
+        printf 'ok\n'
+        ;;
+    "wait --for=condition=Ready node --all --context $context --timeout="*"s")
+        if [ -n "${FAKE_NODE_WAIT_NEAR_TIMEOUT:-}" ]; then
+            remaining=${7#--timeout=}
+            remaining=${remaining%s}
+            sleep "$(printf '%s\n' "$remaining" | awk '{ print ($1 > 0.05) ? $1 - 0.05 : 0 }')"
+        fi
+        if [ "${FAKE_NODE_WAIT_SLEEP:-0}" != 0 ]; then
+            sleep "$FAKE_NODE_WAIT_SLEEP"
+        fi
+        if [ -n "${FAKE_NODE_WAIT_FAIL:-}" ]; then
+            fail "timed out waiting for nodes"
+        fi
+        printf 'node/all condition met\n'
+        ;;
+    "get nodes -o json --context $context --request-timeout="*"s")
+        if [ "${FAKE_NODE_COUNT:-1}" -eq 0 ]; then
+            printf '{"items":[]}\n'
+        else
+            printf '{"items":[{"metadata":{"name":"node-0"},"status":{"conditions":[{"type":"Ready","status":"%s"}]}}]}\n' "${FAKE_NODE_READY:-True}"
+        fi
+        ;;
+    "get customresourcedefinitions -o json --context $context --request-timeout="*"s")
+        if [ -n "${FAKE_FLUX_CRD:-}" ]; then
+            printf '{"items":[{"metadata":{"name":"%s"}}]}\n' "$FAKE_FLUX_CRD"
+        else
+            printf '{"items":[]}\n'
+        fi
+        ;;
+    "get namespace "*" --context $context -o json --request-timeout="*"s")
+        namespace=$3
+        case "$namespace" in
+            nohiki|nohiki-foundation|nohiki-registry|nohiki-verification|flux-system) ;;
+            *) fail "UNEXPECTED KUBECTL ARGV: $*" 97 ;;
+        esac
+        if [ -n "${FAKE_NAMESPACE_ERROR:-}" ]; then
+            fail "$FAKE_NAMESPACE_ERROR"
+        elif [ "${FAKE_RESIDUAL_NAMESPACE:-}" = "$namespace" ]; then
+            printf '{"metadata":{"name":"%s"}}\n' "$namespace"
+        else
+            fail "NotFound"
+        fi
+        ;;
+    "auth whoami -o json")
+        printf '{"status":{"userInfo":{"username":"release-owner"}}}\n'
+        ;;
+    "version -o json"|"version --client -o json")
+        printf '{"clientVersion":{"gitVersion":"v1.test"}}\n'
+        ;;
+    "get namespaces -o custom-columns="*|"get customresourcedefinitions -o custom-columns="*|"get persistentvolumeclaims --all-namespaces -o custom-columns="*|"get persistentvolumes -o custom-columns="*|"get storageclasses -o custom-columns="*|"get kustomizations.kustomize.toolkit.fluxcd.io --all-namespaces -o custom-columns="*|"get gitrepositories.source.toolkit.fluxcd.io,ocirepositories.source.toolkit.fluxcd.io --all-namespaces -o custom-columns="*|"get helmreleases.helm.toolkit.fluxcd.io --all-namespaces -o custom-columns="*|"get pods -n registry -o custom-columns="*|"get pods --all-namespaces -o custom-columns="*)
+        printf 'synthetic checkpoint inventory\n'
+        ;;
+    *) fail "UNEXPECTED KUBECTL ARGV: $*" 97 ;;
+esac
 """
 
 
@@ -208,6 +218,7 @@ class Harness:
     log: Path
     bindir: Path
     endpoint: str
+    checkpoint: bytes
 
 
 def _sha256(path: Path) -> str:
@@ -220,8 +231,9 @@ def _commands(harness: Harness) -> list[list[str]]:
     return [line.split("\t") for line in harness.log.read_text(encoding="utf-8").splitlines()]
 
 
-@pytest.fixture
-def harness(tmp_path: Path) -> Harness:
+@pytest.fixture(scope="module")
+def harness_base(tmp_path_factory: pytest.TempPathFactory) -> Harness:
+    tmp_path = tmp_path_factory.mktemp("cluster-reset")
     repository = tmp_path / "repo"
     repository.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
@@ -284,7 +296,45 @@ def harness(tmp_path: Path) -> Harness:
         "NOHIKI_LOCAL_CLUSTER_PURGE_CMD": "purge-adapter",
         "NOHIKI_LOCAL_CLUSTER_START_CMD": "start-adapter",
     }
-    return Harness(repository, environment, log, bindir, endpoint)
+    return Harness(repository, environment, log, bindir, endpoint, b"")
+
+
+@pytest.fixture(scope="module")
+def checkpoint_template(harness_base: Harness, tmp_path_factory: pytest.TempPathFactory) -> bytes:
+    path = tmp_path_factory.mktemp("cluster-reset-checkpoint") / "checkpoint.json"
+    result = _capture_checkpoint(harness_base, path)
+    assert result.returncode == 0, result.stderr
+    return path.read_bytes()
+
+
+@pytest.fixture
+def harness(harness_base: Harness, checkpoint_template: bytes, tmp_path: Path) -> Harness:
+    log = tmp_path / "commands.log"
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text(
+        json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Config",
+                "current-context": _CONTEXT,
+                "clusters": [{"name": "cluster", "cluster": {"server": harness_base.endpoint}}],
+                "contexts": [{"name": _CONTEXT, "context": {"cluster": "cluster"}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    environment = harness_base.env | {
+        "FAKE_TOOL_LOG": str(log),
+        "KUBECONFIG": str(kubeconfig),
+    }
+    return Harness(
+        harness_base.repo,
+        environment,
+        log,
+        harness_base.bindir,
+        harness_base.endpoint,
+        checkpoint_template,
+    )
 
 
 def _run(
@@ -292,35 +342,81 @@ def _run(
     *arguments: str,
     env: dict[str, str] | None = None,
     timeout_constants: dict[str, float] | None = None,
+    monotonic_values: tuple[float, ...] | None = None,
+    timeout_probe: Path | None = None,
     killpg_process_lookup: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     environment = dict(harness.env if env is None else env)
-    if timeout_constants is None and not killpg_process_lookup:
-        command = [sys.executable, str(_SCRIPT), *arguments]
-    else:
+    if killpg_process_lookup or monotonic_values is not None or timeout_probe is not None:
         launcher = (
-            "import importlib.util,sys;"
+            "import importlib.util,itertools,pathlib,sys;"
             "p=sys.argv.pop(1);s=importlib.util.spec_from_file_location('cluster_reset_under_test',p);"
             "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+            "m.os.fsync=lambda *_:None;"
             + "".join(f"setattr(m,{name!r},{value!r});" for name, value in (timeout_constants or {}).items())
+            + (
+                "m.time.monotonic=itertools.chain("
+                f"{monotonic_values!r},itertools.repeat({monotonic_values[-1]!r})"
+                ").__next__;m.time.sleep=lambda _:None;"
+                if monotonic_values
+                else ""
+            )
+            + (
+                "o=m.subprocess.run;E=m.subprocess.TimeoutExpired;"
+                "m.subprocess.run=lambda *a,**k:"
+                f"(pathlib.Path({str(timeout_probe)!r}).write_text(str(k['timeout'])),"
+                "(_ for _ in ()).throw(E(a[0],k['timeout'])))[1]"
+                " if a and '/readyz' in a[0] else o(*a,**k);"
+                if timeout_probe is not None
+                else ""
+            )
             + ("m.os.killpg=lambda *_:(_ for _ in ()).throw(ProcessLookupError());" if killpg_process_lookup else "")
             + "raise SystemExit(m.main())"
         )
-        command = [sys.executable, "-c", launcher, str(_SCRIPT), *arguments]
-    return subprocess.run(
-        command,
-        cwd=harness.repo,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=10,
-    )
+        command = [sys.executable, "-S", "-c", launcher, str(_SCRIPT), *arguments]
+        return subprocess.run(
+            command,
+            cwd=harness.repo,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    command = [sys.executable, str(_SCRIPT), *arguments]
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    original_argv = sys.argv
+    original_cwd = Path.cwd()
+    original_environment = dict(os.environ)
+    original_sleep = time.sleep
+    patcher = pytest.MonkeyPatch()
+    try:
+        sys.argv = [str(_SCRIPT), *arguments]
+        os.chdir(harness.repo)
+        os.environ.clear()
+        os.environ.update(environment)
+        patcher.setattr(os, "fsync", lambda _descriptor: None)
+        patcher.setattr(time, "sleep", lambda seconds: original_sleep(min(seconds, 0.001)))
+        for name, value in (timeout_constants or {}).items():
+            patcher.setitem(_RESET_GLOBALS, name, value)
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                return_code = _RESET_MAIN()
+            except SystemExit as error:
+                return_code = error.code or 0
+        assert isinstance(return_code, int)
+    finally:
+        patcher.undo()
+        os.environ.clear()
+        os.environ.update(original_environment)
+        os.chdir(original_cwd)
+        sys.argv = original_argv
+    return subprocess.CompletedProcess(command, return_code, stdout.getvalue(), stderr.getvalue())
 
 
-def _checkpoint(harness: Harness, tmp_path: Path) -> tuple[Path, str]:
-    path = tmp_path / "checkpoint.json"
-    result = _run(
+def _capture_checkpoint(harness: Harness, path: Path) -> subprocess.CompletedProcess[str]:
+    return _run(
         harness,
         "checkpoint",
         "--expected-context",
@@ -334,7 +430,20 @@ def _checkpoint(harness: Harness, tmp_path: Path) -> tuple[Path, str]:
         "--reviewed-topic",
         "runtime=reviewed/topic",
     )
-    assert result.returncode == 0, result.stderr
+
+
+def _checkpoint(harness: Harness, tmp_path: Path) -> tuple[Path, str]:
+    path = tmp_path / "checkpoint.json"
+    if any(command[0] == "start-adapter" for command in _commands(harness)):
+        result = _capture_checkpoint(harness, path)
+        assert result.returncode == 0, result.stderr
+    else:
+        path.write_bytes(harness.checkpoint)
+        path.chmod(0o600)
+        checksum = _sha256(path)
+        sidecar = path.with_name(path.name + ".sha256")
+        sidecar.write_text(f"{checksum}  {path.name}\n", encoding="utf-8")
+        sidecar.chmod(0o600)
     return path, _sha256(path)
 
 
@@ -399,6 +508,7 @@ def test_checkpoint_endpoint_path_imports_with_stdlib_only(harness: Harness, tmp
     result = subprocess.run(
         [
             sys.executable,
+            "-S",
             "-c",
             launcher,
             str(_SCRIPT),
@@ -754,9 +864,9 @@ def test_prepurge_identity_mismatch_refuses_before_adapter(harness: Harness, tmp
     ("phase", "environment_update", "timeouts"),
     [
         ("purge", {"FAKE_PURGE_EXIT": "9"}, None),
-        ("purge", {"FAKE_PURGE_SLEEP": "2"}, {"PURGE_TIMEOUT_SECONDS": 0.5}),
+        ("purge", {"FAKE_PURGE_SLEEP": "2"}, {"PURGE_TIMEOUT_SECONDS": 0.1}),
         ("start", {"FAKE_START_EXIT": "8"}, None),
-        ("start", {"FAKE_START_SLEEP": "2"}, {"START_TIMEOUT_SECONDS": 0.5}),
+        ("start", {"FAKE_START_SLEEP": "2"}, {"START_TIMEOUT_SECONDS": 0.1}),
     ],
 )
 def test_adapter_failure_and_timeout_leave_failed_evidence(
@@ -821,20 +931,34 @@ def test_evidence_write_failure_after_purge_stops_and_preserves_last_boundary(ha
     _assert_sidecar(evidence)
 
 
-def test_readyz_retries_then_succeeds_with_explicit_context_and_request_timeout(
-    harness: Harness, tmp_path: Path
-) -> None:
-    checkpoint, checksum = _checkpoint(harness, tmp_path)
-    result = _run(
-        harness,
-        *_factory_arguments(checkpoint, checksum, tmp_path / "transaction.json", execute=True),
-        env=harness.env | {"FAKE_READYZ_FAILURES": "2"},
+def test_readyz_retries_then_succeeds_with_explicit_context_and_request_timeout() -> None:
+    module = runpy.run_path(str(_SCRIPT))
+    elapsed = [0.0]
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def kubectl(*arguments: str, **options: object) -> dict[str, object]:
+        calls.append((arguments, options))
+        failed = len(calls) <= 2
+        return {
+            "command": [],
+            "exitCode": int(failed),
+            "stdout": "",
+            "stderr": "not ready" if failed else "",
+        }
+
+    module["_readyz"].__globals__["kubectl"] = kubectl
+    module["_readyz"].__globals__["time"] = SimpleNamespace(
+        monotonic=lambda: elapsed[0],
+        sleep=lambda delay: elapsed.__setitem__(0, elapsed[0] + delay),
     )
-    assert result.returncode == 0, result.stderr
-    polls = [command for command in _commands(harness) if command[1:4] == ["get", "--raw", "/readyz"]]
-    assert len(polls) >= 3
-    assert all("--context" in command and _CONTEXT in command for command in polls)
-    assert all(any(argument.startswith("--request-timeout") for argument in command) for command in polls)
+    module["_readyz"](_CONTEXT, 3.0)
+
+    assert len(calls) == 3
+    assert elapsed == [2.0]
+    for arguments, options in calls:
+        assert arguments[:5] == ("get", "--raw", "/readyz", "--context", _CONTEXT)
+        assert arguments[5].startswith("--request-timeout=")
+        assert float(options["timeout"]) <= 3.0
 
 
 def test_node_wait_uses_remaining_deadline_beyond_general_command_cap() -> None:
@@ -861,19 +985,16 @@ def test_near_deadline_node_success_gets_fresh_identity_absence_budget(harness: 
     result = _run(
         harness,
         *_factory_arguments(checkpoint, checksum, evidence, execute=True),
-        env=harness.env | {"FAKE_NODE_WAIT_NEAR_TIMEOUT": "1"},
+        monotonic_values=(0.0, 0.0, 2.95, 3.0),
         timeout_constants={"READINESS_TIMEOUT_SECONDS": 3.0},
     )
     assert result.returncode == 0, result.stderr
     document = json.loads(evidence.read_text())
     assert document["status"] == "succeeded"
-    assert document["identity"]["new"]["kubeSystemUid"] == _NEW_UID
+    assert document["phases"][-1]["phase"] == "absence"
     assert document["absence"] == [
-        {"check": check, "passed": True}
-        for check in (
-            *(f"namespace {namespace} absent" for namespace in _ABSENT_NAMESPACES),
-            "no CRD ending .fluxcd.io",
-        )
+        *({"check": f"namespace {namespace} absent", "passed": True} for namespace in _ABSENT_NAMESPACES),
+        {"check": "no CRD ending .fluxcd.io", "passed": True},
     ]
 
 
@@ -1026,31 +1147,11 @@ def test_recovery_refuses_under_execute_lock_before_live_capture(harness: Harnes
     reset = _run(harness, *_factory_arguments(checkpoint, checksum, succeeded, execute=True))
     assert reset.returncode == 0, reset.stderr
     reset_checksum = _sha256(succeeded)
+    module = runpy.run_path(str(_SCRIPT))
+    before = len(_commands(harness))
+    output = tmp_path / "blocked-recovery.json"
 
-    second_dir = tmp_path / "second"
-    second_dir.mkdir()
-    current_checkpoint, current_checksum = _checkpoint(harness, second_dir)
-    release = tmp_path / "release"
-    active = tmp_path / "active.json"
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            str(_SCRIPT),
-            *_factory_arguments(current_checkpoint, current_checksum, active, execute=True),
-        ],
-        cwd=harness.repo,
-        env=harness.env | {"FAKE_PURGE_BLOCK": str(release)},
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        deadline = time.monotonic() + 5
-        while sum(row[0] == "purge-adapter" for row in _commands(harness)) < 2:
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
-        before = len(_commands(harness))
-        output = tmp_path / "blocked-recovery.json"
+    with module["target_lock_endpoint"](harness.endpoint, exclusive=True):
         result = _run(
             harness,
             "recovery-evidence",
@@ -1067,52 +1168,43 @@ def test_recovery_refuses_under_execute_lock_before_live_capture(harness: Harnes
             "--output",
             str(output),
         )
-        assert result.returncode == 2
-        assert "transaction is active" in result.stderr
-        kubectl_calls = [row for row in _commands(harness)[before:] if row[0] == "kubectl"]
-        assert kubectl_calls == [
-            [
-                "kubectl",
-                "config",
-                "view",
-                "--minify",
-                "--context",
-                _CONTEXT,
-                "-o",
-                "json",
-            ]
+
+    assert result.returncode == 2
+    assert "transaction is active" in result.stderr
+    kubectl_calls = [row for row in _commands(harness)[before:] if row[0] == "kubectl"]
+    assert kubectl_calls == [
+        [
+            "kubectl",
+            "config",
+            "view",
+            "--minify",
+            "--context",
+            _CONTEXT,
+            "-o",
+            "json",
         ]
-        assert not output.exists()
-    finally:
-        release.touch()
-        process.communicate(timeout=10)
+    ]
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("command", ["checkpoint", "zero-state"])
 def test_read_only_commands_refuse_while_execute_lock_is_active(harness: Harness, tmp_path: Path, command: str) -> None:
-    checkpoint, checksum = _checkpoint(harness, tmp_path)
-    release = tmp_path / "release"
-    environment = harness.env | {"FAKE_PURGE_BLOCK": str(release)}
-    transaction = tmp_path / "transaction.json"
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            str(_SCRIPT),
-            *_factory_arguments(checkpoint, checksum, transaction, execute=True),
-        ],
-        cwd=harness.repo,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    deadline = time.monotonic() + 5
-    while not any(row[0] == "purge-adapter" for row in _commands(harness)):
-        assert time.monotonic() < deadline
-        time.sleep(0.01)
+    module = runpy.run_path(str(_SCRIPT))
     output = tmp_path / f"blocked-{command}.json"
     if command == "checkpoint":
-        arguments = [command, "--expected-context", _CONTEXT, "--output", str(output)]
+        arguments = [
+            command,
+            "--expected-context",
+            _CONTEXT,
+            "--output",
+            str(output),
+            "--owner",
+            "release-owner",
+            "--runtime-control-ref",
+            "HEAD",
+            "--reviewed-topic",
+            "runtime=reviewed/topic",
+        ]
     else:
         arguments = [
             command,
@@ -1123,50 +1215,37 @@ def test_read_only_commands_refuse_while_execute_lock_is_active(harness: Harness
             "--evidence-output",
             str(output),
         ]
-    blocked = _run(harness, *arguments)
-    release.touch()
-    stdout, stderr = process.communicate(timeout=5)
-    assert process.returncode == 0, stderr or stdout
+
+    with module["target_lock_endpoint"](harness.endpoint, exclusive=True):
+        blocked = _run(harness, *arguments)
+
     assert blocked.returncode == 2
     assert "active" in blocked.stderr.lower() or "lock" in blocked.stderr.lower()
     assert not output.exists()
 
 
-def test_two_concurrent_executes_make_exactly_one_adapter_transaction(harness: Harness, tmp_path: Path) -> None:
+def test_concurrent_factory_reset_executes_exactly_one_adapter_transaction(harness: Harness, tmp_path: Path) -> None:
     checkpoint, checksum = _checkpoint(harness, tmp_path)
-    release = tmp_path / "release"
-    environment = harness.env | {"FAKE_PURGE_BLOCK": str(release)}
-    first_evidence = tmp_path / "first.json"
-    second_evidence = tmp_path / "second.json"
-    first = subprocess.Popen(
-        [
-            sys.executable,
-            str(_SCRIPT),
-            *_factory_arguments(checkpoint, checksum, first_evidence, execute=True),
-        ],
-        cwd=harness.repo,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    deadline = time.monotonic() + 5
-    while not any(row[0] == "purge-adapter" for row in _commands(harness)):
-        assert time.monotonic() < deadline
-        time.sleep(0.01)
-    second = _run(
+    blocked_evidence = tmp_path / "blocked.json"
+    succeeded_evidence = tmp_path / "succeeded.json"
+    module = runpy.run_path(str(_SCRIPT))
+
+    with module["target_lock_endpoint"](harness.endpoint, exclusive=True):
+        blocked = _run(
+            harness,
+            *_factory_arguments(checkpoint, checksum, blocked_evidence, execute=True),
+        )
+    succeeded = _run(
         harness,
-        *_factory_arguments(checkpoint, checksum, second_evidence, execute=True),
-        env=environment,
+        *_factory_arguments(checkpoint, checksum, succeeded_evidence, execute=True),
     )
-    assert second.returncode == 2
-    assert "active" in second.stderr.lower() or "lock" in second.stderr.lower()
-    release.touch()
-    stdout, stderr = first.communicate(timeout=5)
-    assert first.returncode == 0, stderr or stdout
+
+    assert blocked.returncode == 2
+    assert "active" in blocked.stderr.lower() or "lock" in blocked.stderr.lower()
+    assert succeeded.returncode == 0, succeeded.stderr
     assert sum(row[0] == "purge-adapter" for row in _commands(harness)) == 1
     assert sum(row[0] == "start-adapter" for row in _commands(harness)) == 1
-    assert not second_evidence.exists()
+    assert not blocked_evidence.exists()
 
 
 def test_success_evidence_schema_sidecar_identity_absence_and_partial_order(harness: Harness, tmp_path: Path) -> None:
@@ -1437,7 +1516,7 @@ def test_adapter_timeout_process_lookup_race_is_durable(harness: Harness, tmp_pa
         harness,
         *_factory_arguments(checkpoint, checksum, evidence, execute=True),
         env=harness.env | {"FAKE_PURGE_SLEEP": "1"},
-        timeout_constants={"PURGE_TIMEOUT_SECONDS": 0.2},
+        timeout_constants={"PURGE_TIMEOUT_SECONDS": 0.1},
         killpg_process_lookup=True,
     )
     assert result.returncode == 2
@@ -1452,14 +1531,15 @@ def test_adapter_timeout_process_lookup_race_is_durable(harness: Harness, tmp_pa
 def test_hung_kubectl_process_obeys_monotonic_deadline(harness: Harness, tmp_path: Path) -> None:
     checkpoint, checksum = _checkpoint(harness, tmp_path)
     evidence = tmp_path / "transaction.json"
-    started = time.monotonic()
+    timeout_probe = tmp_path / "readyz-timeout"
     result = _run(
         harness,
         *_factory_arguments(checkpoint, checksum, evidence, execute=True),
-        env=harness.env | {"FAKE_READYZ_PROCESS_SLEEP": "5"},
-        timeout_constants={"READINESS_TIMEOUT_SECONDS": 0.1},
+        timeout_constants={"READINESS_TIMEOUT_SECONDS": 10.0},
+        monotonic_values=(0.0, 0.0, 10.1),
+        timeout_probe=timeout_probe,
     )
-    assert time.monotonic() - started < 4
+    assert float(timeout_probe.read_text()) <= 10.0
     assert result.returncode == 2
     assert "timed out" in result.stderr.lower() or "deadline" in result.stderr.lower()
     assert json.loads(evidence.read_text())["status"] == "failed"
