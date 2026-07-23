@@ -10,9 +10,9 @@ _JUSTFILE = _ROOT / "Justfile"
 def test_api_schema_check_reuses_the_authoritative_workspace_environment() -> None:
     """OpenAPI export must not resynchronize (and thereby narrow) the pre-built workspace env."""
     commands = [
-        shlex.split(line.strip())
+        shlex.split(line.strip().split(" -- ", 1)[-1])
         for line in _JUSTFILE.read_text(encoding="utf-8").splitlines()
-        if line.strip().startswith("uv run ") and "scripts/util/export-openapi.py" in line
+        if "uv run " in line and "scripts/util/export-openapi.py" in line
     ]
 
     assert len(commands) == 1, "api-schema-check must define exactly one OpenAPI export command"

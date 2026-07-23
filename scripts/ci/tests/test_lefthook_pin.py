@@ -140,6 +140,10 @@ def _run_python_mutator(
     bin_dir = repo / ".fake-bin"
     bin_dir.mkdir(exist_ok=True)
     _write_fake_uv(bin_dir)
+    wrapper = repo / "scripts" / "dev" / "env-lock.sh"
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_ROOT / "scripts" / "dev" / "env-lock.sh", wrapper)
+    wrapper.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["FAKE_UV_RECORD"] = str(record)
