@@ -152,7 +152,7 @@ async def _wait_for_schema(engine: AsyncEngine, schema: str, *, max_wait: float 
         max_wait: Maximum seconds to wait.
 
     """
-    start = time.monotonic()
+    deadline = time.monotonic() + max_wait
     while True:
         try:
             async with engine.connect() as conn:
@@ -164,11 +164,12 @@ async def _wait_for_schema(engine: AsyncEngine, schema: str, *, max_wait: float 
                     return
         except Exception:  # noqa: BLE001
             logger.debug("Schema not yet available", schema=schema)
-        if time.monotonic() - start > max_wait:
+        now = time.monotonic()
+        if now > deadline:
             msg = f"Schema {schema} not ready after {max_wait}s"
             raise RuntimeError(msg)
         logger.debug("Waiting for schema", schema=schema)
-        await asyncio.sleep(3)
+        await asyncio.sleep(min(3, max(0.0, deadline - now)))
 
 
 async def _check_already_seeded(
