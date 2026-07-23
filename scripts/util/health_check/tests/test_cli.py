@@ -27,7 +27,7 @@ from health_check.platform.models import PlatformTarget
 from rich.console import Console
 from typer.testing import CliRunner
 
-from tests.conftest import make_check_result
+from ._helpers import make_check_result
 
 _runner = CliRunner()
 
@@ -514,7 +514,7 @@ def _patched_init_run(
     class _FakeCheck(HealthCheck):
         @property
         def metadata(self) -> CheckMetadata:
-            from tests.conftest import make_metadata
+            from ._helpers import make_metadata
 
             return make_metadata(
                 check_id="fake_check",

@@ -1,4 +1,4 @@
-"""Shared fixtures and helpers for the health_check test suite."""
+"""Shared helpers for the health_check test suite."""
 
 from __future__ import annotations
 

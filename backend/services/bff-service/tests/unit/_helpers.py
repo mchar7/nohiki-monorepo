@@ -1,4 +1,4 @@
-"""Shared fixtures and factory helpers for BFF service unit tests."""
+"""Shared factory helpers for BFF service unit tests."""
 
 from __future__ import annotations
 
@@ -235,6 +235,3 @@ def make_attachment_projection(**kwargs: object) -> SimpleNamespace:
     }
     defaults |= kwargs
     return SimpleNamespace(**defaults)
-
-
-# Pytest fixtures

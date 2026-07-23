@@ -16,7 +16,7 @@ from health_check.core.models import (
 )
 from health_check.platform.models import PlatformTarget
 
-from tests.conftest import make_check_result, make_metadata
+from ._helpers import make_check_result, make_metadata
 
 
 class TestCheckStatus:
@@ -239,7 +239,7 @@ class TestHealthCheckBase:
         assert check.fix_platforms == check.metadata.platforms
 
     async def test_fix_returns_not_supported(self) -> None:
-        from tests.conftest import MockPlatform
+        from ._helpers import MockPlatform
 
         check = self._make_concrete()
         result = await check.fix(MockPlatform(), make_check_result())

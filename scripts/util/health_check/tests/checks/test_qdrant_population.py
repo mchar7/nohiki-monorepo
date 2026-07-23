@@ -13,7 +13,7 @@ from health_check.checks.vectors.qdrant_population import (
 )
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class _Manifest:

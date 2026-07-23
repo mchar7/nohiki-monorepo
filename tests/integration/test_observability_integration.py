@@ -5,7 +5,7 @@ import uuid
 import pytest
 import structlog
 
-from tests.conftest import TEST_USER_ID
+from tests._helpers import TEST_USER_ID
 
 
 @pytest.mark.integration

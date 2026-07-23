@@ -18,7 +18,7 @@ from health_check.core.models import (
 from health_check.core.runner import CheckRunner
 from health_check.platform.models import PlatformTarget
 
-from tests.conftest import MockPlatform, make_metadata
+from ._helpers import MockPlatform, make_metadata
 
 
 def _make_check(

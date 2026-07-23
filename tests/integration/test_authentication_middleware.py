@@ -9,7 +9,7 @@ import jwt
 import pytest
 from nohiki_test_utils import create_jwt, create_user_jwt
 
-from tests.conftest import TEST_JWT_SECRET, TEST_USER_ID, TestJWTHandler
+from tests._helpers import TEST_JWT_SECRET, TEST_USER_ID, TestJWTHandler
 
 if TYPE_CHECKING:
     from httpx import AsyncClient

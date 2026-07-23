@@ -13,7 +13,7 @@ from health_check.core.registry import CheckRegistry
 from health_check.platform.kubernetes import KubernetesPlatform
 from health_check.platform.models import PlatformTarget
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class _ResourcePlatform(KubernetesPlatform):

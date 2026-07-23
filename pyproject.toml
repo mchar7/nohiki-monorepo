@@ -543,6 +543,7 @@ unknown-argument = "ignore"
 [tool.pytest.ini_options]
 minversion = "7.0"
 pythonpath = ["."]
+consider_namespace_packages = true
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

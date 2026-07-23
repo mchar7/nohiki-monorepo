@@ -5,7 +5,7 @@ from __future__ import annotations
 from health_check.checks.cdc.replication_capacity import ReplicationCapacityCheck
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 async def test_legacy_slot_proliferation_reports_counts_and_remediation() -> None:

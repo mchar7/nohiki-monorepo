@@ -8,7 +8,7 @@ from health_check.core.models import CheckStatus
 from health_check.platform.kubernetes import KubernetesPlatform
 from health_check.platform.models import PlatformTarget, ServiceInfo, ServiceStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class _ApplicationK8sPlatform(KubernetesPlatform):

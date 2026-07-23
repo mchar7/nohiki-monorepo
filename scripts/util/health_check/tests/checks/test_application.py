@@ -16,7 +16,7 @@ from health_check.config.services import REQUIRED_SYSTEM_TEMPLATES
 from health_check.core.models import CheckStatus
 from health_check.platform.models import PlatformTarget
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 _SKILL_COLLECTION = "skills_v1"
 _PG_SUFFICIENT = "13896\n"

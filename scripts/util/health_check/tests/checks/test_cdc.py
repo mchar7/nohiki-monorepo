@@ -13,7 +13,7 @@ from health_check.checks.cdc.replication_slot import ReplicationSlotCheck
 from health_check.config.kafka import OUTBOX_CONNECTOR_NAMES
 from health_check.core.models import CheckStatus, FixStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 def _connector_response(state: str = "RUNNING", task_state: str = "RUNNING") -> str:

@@ -22,6 +22,7 @@ from requests.exceptions import RequestException
 
 from tests.utils.deployment_platform import get_platform
 
+from ._helpers import _is_profile_data_complete
 from .client import NohikiClient
 from .config import E2EConfig
 
@@ -47,41 +48,6 @@ _RICH_EXPERIENCE_PREFERENCE = {
     "experience_years": 5,
     "seniority_levels": ["MID", "SENIOR"],
 }
-
-
-def _is_profile_data_complete(profile: dict) -> bool:
-    """Check if profile has required data for meaningful ML scoring."""
-    salary = profile.get("salary_preference") or {}
-    experience = profile.get("experience_preference") or {}
-    return bool(
-        salary.get("min_salary") is not None
-        and experience.get("experience_years") is not None
-        and profile.get("work_arrangements"),
-    )
-
-
-def _poll_for_complete_profile(
-    client: NohikiClient,
-    pref_id: str,
-    timeout: int = 30,
-) -> dict | None:
-    """Poll until profile update propagates through the CDC pipeline."""
-    import time
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            profile = client.get_profile(pref_id)
-        except (RequestException, KeyError, ValueError) as exc:
-            # Transient projection lag during CDC propagation; keep polling.
-            logger.debug("Profile fetch transient error: %s", exc)
-        else:
-            if _is_profile_data_complete(profile):
-                logger.info("Profile update propagated: %s", pref_id)
-                return profile
-        time.sleep(1.0)
-    logger.warning("Timed out waiting for profile update: %s", pref_id)
-    return None
 
 
 @pytest.fixture(scope="session")

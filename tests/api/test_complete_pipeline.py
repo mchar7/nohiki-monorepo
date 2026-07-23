@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ._helpers import poll_for_complete_profile
+
 if TYPE_CHECKING:
     from .client import NohikiClient
 
@@ -132,9 +134,7 @@ class TestCompletePipelineFlow:
                 # Poll the projection rather than a magic sleep, CDC propagation
                 # latency varies by infrastructure pressure, and a fixed 5s is
                 # both flakey and slower than necessary on healthy clusters.
-                from .conftest import _poll_for_complete_profile
-
-                updated = _poll_for_complete_profile(client, profile["id"], timeout=30)
+                updated = poll_for_complete_profile(client, profile["id"], timeout=30)
                 return updated or profile
 
         profile_name = f"Pipeline Test {uuid.uuid4().hex[:6]}"

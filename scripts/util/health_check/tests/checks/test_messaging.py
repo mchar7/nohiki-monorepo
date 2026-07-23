@@ -11,7 +11,7 @@ from health_check.checks.messaging.topics import KafkaTopicsCheck
 from health_check.config.thresholds import KAFKA_CONNECT_DEFAULT_PORT
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class TestKafkaTopicsCheck:

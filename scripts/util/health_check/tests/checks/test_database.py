@@ -8,7 +8,7 @@ from health_check.checks.database.schemas import DatabaseSchemasCheck
 from health_check.config.database import CRITICAL_SCHEMAS
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 class TestDatabaseSchemasCheck:

@@ -7,7 +7,7 @@ from health_check.checks.application.model_readiness import ModelReadinessCheck
 from health_check.checks.messaging.schedule_ticks import ScheduleTickContinuityCheck
 from health_check.core.models import CheckStatus
 
-from tests.conftest import MockPlatform
+from .._helpers import MockPlatform
 
 
 async def test_due_schedules_without_dispatch_progress_fail_actionably() -> None:

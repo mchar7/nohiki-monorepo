@@ -11,7 +11,7 @@ import pytest
 from nohiki_db_utils.testing import create_mock_session
 from sqlalchemy.dialects import postgresql
 
-from tests.unit.conftest import make_scalar_all
+from .._helpers import make_scalar_all
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture

@@ -12,7 +12,8 @@ from skill_graph_service.services.bootstrap_publisher import (
     BootstrapPublishResult,
     publish_skill_created_events_for_bootstrap,
 )
-from tests.helpers import MockAsyncIterator
+
+from ...helpers import MockAsyncIterator
 
 
 class TestBootstrapPublishResult:

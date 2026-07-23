@@ -14,7 +14,8 @@ from skill_graph_service.db.repositories import (
     fetch_all_skills_for_embedding,
     stream_skills_with_provenance,
 )
-from tests.helpers import MockAsyncIterator
+
+from ...helpers import MockAsyncIterator
 
 
 class TestSkillRecord:
