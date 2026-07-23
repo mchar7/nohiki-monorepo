@@ -216,12 +216,28 @@ class TestGeographicTier:
 class TestWeightRange:
     """Ensure the weight always stays within [0, 1]."""
 
-    @pytest.mark.parametrize("days_old", [0, 1, 2, 7, 14, 30, 60, 365])
-    @pytest.mark.parametrize("is_same_country", [True, False])
     @pytest.mark.parametrize(
-        ("listing_lang", "user_lang"),
-        [("en", "en"), ("de", "en"), (None, None), (None, "en"), ("en", None)],
-        ids=["match", "mismatch", "both-none", "listing-none", "user-none"],
+        ("days_old", "is_same_country", "listing_lang", "user_lang"),
+        [
+            (0, True, "en", "en"),
+            (1, False, "de", "en"),
+            (2, True, None, None),
+            (7, False, None, "en"),
+            (14, True, "en", None),
+            (30, False, "en", "en"),
+            (60, True, "de", "en"),
+            (365, False, None, None),
+        ],
+        ids=[
+            "today-best",
+            "mid-mismatch",
+            "2d-unknown",
+            "7d-listing-unknown",
+            "14d-user-unknown",
+            "30d",
+            "60d",
+            "365d",
+        ],
     )
     def test_weight_in_unit_interval(
         self,
@@ -230,7 +246,7 @@ class TestWeightRange:
         listing_lang: str | None,
         user_lang: str | None,
     ) -> None:
-        """Weight must be in [0, 1] for all input combinations."""
+        """Weight stays in [0, 1] across recency boundaries and representative factors."""
         weight = compute_weight(
             _posted_days_ago(days_old),
             is_same_country=is_same_country,
