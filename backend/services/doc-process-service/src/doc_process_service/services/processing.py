@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+import importlib
+from typing import TYPE_CHECKING, cast
 
 from nohiki.doc.process.v1 import ProcessedDocumentSnapshot
 from nohiki_observability import get_logger
@@ -13,10 +14,10 @@ from doc_process_service.cache import CacheManager, compute_content_hash
 from doc_process_service.cache.keys import CacheKeyBuilder
 from doc_process_service.cache.manager import get_cache
 from doc_process_service.models.domain import ProcessingOptions, ProcessingResult
-from doc_process_service.providers.docling import DoclingClient, DoclingClientConfig
 
 if TYPE_CHECKING:
     from doc_process_service.core.config import Settings
+    from doc_process_service.providers.docling import DoclingClient, DoclingClientConfig
 
 logger = get_logger(__name__)
 
@@ -49,8 +50,11 @@ class ProcessingService:
 
     def _create_docling_client(self, settings: Settings) -> DoclingClient:
         """Create Docling client from settings."""
-        config = DoclingClientConfig.from_settings(settings.docling, settings.vlm)
-        return DoclingClient(config)
+        docling = importlib.import_module("doc_process_service.providers.docling")
+        client_type = cast("type[DoclingClient]", docling.DoclingClient)
+        config_type = cast("type[DoclingClientConfig]", docling.DoclingClientConfig)
+        config = config_type.from_settings(settings.docling, settings.vlm)
+        return client_type(config)
 
     def _create_cache_manager(
         self,
