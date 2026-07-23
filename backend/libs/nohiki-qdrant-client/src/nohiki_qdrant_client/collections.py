@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nohiki_observability import get_logger
-from qdrant_client import models
+from qdrant_client.http import models
 
 if TYPE_CHECKING:
-    from qdrant_client import AsyncQdrantClient, QdrantClient
+    from qdrant_client.async_qdrant_client import AsyncQdrantClient
+    from qdrant_client.qdrant_client import QdrantClient
 
 logger = get_logger(__name__)
 

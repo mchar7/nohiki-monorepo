@@ -17,6 +17,11 @@ Usage::
     )
 """
 
+from __future__ import annotations
+
+import importlib
+from typing import TYPE_CHECKING
+
 from nohiki_qdrant_client.client import (
     GroupedSearchParams,
     HybridSearchResult,
@@ -26,17 +31,19 @@ from nohiki_qdrant_client.client import (
     VectorPoint,
     create_async_qdrant_client,
 )
-from nohiki_qdrant_client.collections import PAYLOAD_INDEX_SCHEMAS, CollectionConfig
 from nohiki_qdrant_client.config import QdrantMixin, QdrantSettings
-from nohiki_qdrant_client.filter_builder import build_filter, build_filter_with_should
 from nohiki_qdrant_client.health import QdrantHealthProbe, ensure_qdrant_ready
-from nohiki_qdrant_client.multivector import (
-    MultiStageQuery,
-    MultiStageSearchResult,
-    MultiVectorCollectionConfig,
-    MultiVectorPoint,
-    MuveraMaxSimQuery,
-)
+
+if TYPE_CHECKING:
+    from nohiki_qdrant_client.collections import PAYLOAD_INDEX_SCHEMAS as PAYLOAD_INDEX_SCHEMAS
+    from nohiki_qdrant_client.collections import CollectionConfig as CollectionConfig
+    from nohiki_qdrant_client.filter_builder import build_filter as build_filter
+    from nohiki_qdrant_client.filter_builder import build_filter_with_should as build_filter_with_should
+    from nohiki_qdrant_client.multivector import MultiStageQuery as MultiStageQuery
+    from nohiki_qdrant_client.multivector import MultiStageSearchResult as MultiStageSearchResult
+    from nohiki_qdrant_client.multivector import MultiVectorCollectionConfig as MultiVectorCollectionConfig
+    from nohiki_qdrant_client.multivector import MultiVectorPoint as MultiVectorPoint
+    from nohiki_qdrant_client.multivector import MuveraMaxSimQuery as MuveraMaxSimQuery
 
 __all__ = [
     "PAYLOAD_INDEX_SCHEMAS",
@@ -60,3 +67,25 @@ __all__ = [
     "create_async_qdrant_client",
     "ensure_qdrant_ready",
 ]
+
+_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "PAYLOAD_INDEX_SCHEMAS": ("nohiki_qdrant_client.collections", "PAYLOAD_INDEX_SCHEMAS"),
+    "CollectionConfig": ("nohiki_qdrant_client.collections", "CollectionConfig"),
+    "build_filter": ("nohiki_qdrant_client.filter_builder", "build_filter"),
+    "build_filter_with_should": ("nohiki_qdrant_client.filter_builder", "build_filter_with_should"),
+    "MultiStageQuery": ("nohiki_qdrant_client.multivector", "MultiStageQuery"),
+    "MultiStageSearchResult": ("nohiki_qdrant_client.multivector", "MultiStageSearchResult"),
+    "MultiVectorCollectionConfig": ("nohiki_qdrant_client.multivector", "MultiVectorCollectionConfig"),
+    "MultiVectorPoint": ("nohiki_qdrant_client.multivector", "MultiVectorPoint"),
+    "MuveraMaxSimQuery": ("nohiki_qdrant_client.multivector", "MuveraMaxSimQuery"),
+}
+
+
+def __getattr__(name: str) -> object:
+    """Lazy-import collection, filter, and multivector helpers (PEP 562)."""
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
+        module = importlib.import_module(module_path)
+        return getattr(module, attr_name)
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)

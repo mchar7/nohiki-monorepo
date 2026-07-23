@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from qdrant_client import models
+from qdrant_client.http import models
 
 # Type alias for filter values
 type FilterValue = bool | str | int | float | list[str | int | float] | dict[str, str | int | float | datetime] | None

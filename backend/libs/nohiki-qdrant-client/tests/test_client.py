@@ -46,10 +46,10 @@ def _make_schema(
 def _make_client(
     schema: QdrantCollectionSchema | None = None,
 ) -> QdrantVectorClient:
-    """Create a QdrantVectorClient with a patched AsyncQdrantClient."""
-    effective_schema = schema or _make_schema()
-    with patch("nohiki_qdrant_client.client.AsyncQdrantClient"):
-        return QdrantVectorClient(QdrantSettings(), effective_schema)
+    """Create a QdrantVectorClient with a fake deferred transport."""
+    client = QdrantVectorClient(QdrantSettings(), schema or _make_schema())
+    client._client_instance = AsyncMock()
+    return client
 
 
 class TestHybridSearchResult:
@@ -166,7 +166,7 @@ class TestQdrantVectorClientInit:
     def test_raw_client_property(self) -> None:
         """Test raw_client property."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_qdrant.return_value = mock_instance
             client = QdrantVectorClient(QdrantSettings(), schema)
@@ -180,7 +180,7 @@ class TestQdrantVectorClient:
     async def test_search_hybrid(self) -> None:
         """Test search_hybrid method."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_point = MagicMock()
             mock_point.id = "point-1"
@@ -219,7 +219,7 @@ class TestQdrantVectorClient:
     async def test_search_muvera_only(self) -> None:
         """Test search_muvera_only method."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_point = MagicMock()
             mock_point.id = "point-1"
@@ -244,7 +244,7 @@ class TestQdrantVectorClient:
     async def test_search_dense(self) -> None:
         """Test search_dense method."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_point = MagicMock()
             mock_point.id = "point-1"
@@ -282,7 +282,7 @@ class TestQdrantVectorClient:
     async def test_search_dense_batch_single_qdrant_call(self) -> None:
         """Test search_dense_batch uses one query_batch_points call for multiple queries."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
 
             def _make_point(pid: str, score: float) -> MagicMock:
@@ -315,7 +315,7 @@ class TestQdrantVectorClient:
     async def test_upsert_vector_point(self) -> None:
         """Test upsert_vector_point method with a MUVERA embedding."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_qdrant.return_value = mock_instance
 
@@ -416,7 +416,7 @@ class TestQdrantVectorClient:
     async def test_upsert_vector_point_sparse_happy_path(self) -> None:
         """Test SPARSE embedding is successfully upserted when schema has sparse slot."""
         schema = _make_schema(with_sparse=True)
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_qdrant.return_value = mock_instance
 
@@ -446,7 +446,7 @@ class TestQdrantVectorClient:
     async def test_upsert_vector_point_colbert_happy_path(self) -> None:
         """Test COLBERT multi-vector embedding is successfully upserted."""
         schema = _make_schema(with_colbert=True, with_sparse=False)
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_qdrant.return_value = mock_instance
 
@@ -560,7 +560,7 @@ class TestQdrantVectorClient:
     async def test_upsert_vector_points_batch(self) -> None:
         """Test upsert_vector_points_batch method with multiple VectorPoints."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_qdrant.return_value = mock_instance
 
@@ -607,7 +607,7 @@ class TestQdrantVectorClient:
     @pytest.mark.asyncio
     async def test_get_point_found(self) -> None:
         """Test get_point when point exists."""
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_point = MagicMock()
             mock_point.payload = {"entity_id": "job-123"}
@@ -622,7 +622,7 @@ class TestQdrantVectorClient:
     @pytest.mark.asyncio
     async def test_get_point_not_found(self) -> None:
         """Test get_point when point doesn't exist."""
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_instance.retrieve.return_value = []
             mock_qdrant.return_value = mock_instance
@@ -635,7 +635,7 @@ class TestQdrantVectorClient:
     @pytest.mark.asyncio
     async def test_point_exists_true(self) -> None:
         """Test point_exists returns True when point exists."""
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_point = MagicMock()
             mock_point.payload = {}
@@ -648,7 +648,7 @@ class TestQdrantVectorClient:
     @pytest.mark.asyncio
     async def test_point_exists_false(self) -> None:
         """Test point_exists returns False when point doesn't exist."""
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_instance.retrieve.return_value = []
             mock_qdrant.return_value = mock_instance
@@ -659,7 +659,7 @@ class TestQdrantVectorClient:
     @pytest.mark.asyncio
     async def test_delete_points(self) -> None:
         """Test delete_points method."""
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_qdrant.return_value = mock_instance
 
@@ -671,7 +671,7 @@ class TestQdrantVectorClient:
     @pytest.mark.asyncio
     async def test_set_points_inactive(self) -> None:
         """Test set_points_inactive method."""
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_qdrant.return_value = mock_instance
 
@@ -683,7 +683,7 @@ class TestQdrantVectorClient:
     @pytest.mark.asyncio
     async def test_count_points(self) -> None:
         """Test count_points method."""
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_instance.count.return_value = MagicMock(count=42)
             mock_qdrant.return_value = mock_instance
@@ -698,7 +698,7 @@ class TestQdrantVectorClient:
     async def test_search_grouped(self) -> None:
         """Test search_grouped method with Qdrant native group_by."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
 
             mock_hit1 = MagicMock()
@@ -743,7 +743,7 @@ class TestQdrantVectorClient:
     async def test_search_grouped_with_filters(self) -> None:
         """Test search_grouped with filters and score threshold."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_instance.query_points_groups.return_value = MagicMock(groups=[])
             mock_qdrant.return_value = mock_instance
@@ -769,7 +769,7 @@ class TestQdrantVectorClient:
     async def test_search_grouped_with_named_vector(self) -> None:
         """Test search_grouped with explicit named vector overrides schema default."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_instance.query_points_groups.return_value = MagicMock(groups=[])
             mock_qdrant.return_value = mock_instance
@@ -793,7 +793,7 @@ class TestQdrantVectorClient:
     async def test_search_grouped_multiple_hits_per_group(self) -> None:
         """Test search_grouped with multiple hits per group (group_size > 1)."""
         schema = _make_schema()
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
 
             mock_hit1 = MagicMock()
@@ -866,7 +866,7 @@ class TestQdrantVectorClient:
     @pytest.mark.asyncio
     async def test_get_points_batch_retrieves_payloads(self) -> None:
         """Test get_points_batch returns payload dicts keyed by point id."""
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_point = MagicMock()
             mock_point.id = "point-abc"
@@ -890,7 +890,7 @@ class TestQdrantVectorClient:
     @pytest.mark.asyncio
     async def test_retrieve_vectors_returns_dense_vectors(self) -> None:
         """Test retrieve_vectors maps point ids to their dense vector data."""
-        with patch("nohiki_qdrant_client.client.AsyncQdrantClient") as mock_qdrant:
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
             mock_instance = AsyncMock()
             mock_point = MagicMock()
             mock_point.id = "skill-1_label"
