@@ -34,6 +34,7 @@ from typing import Any
 
 import pytest
 import yaml
+from ci_checks.core.repository import tracked_text_files
 
 _ENV_ROOT = os.environ.get("NOHIKI_PORTABILITY_TEST_ROOT")
 _REPO = Path(_ENV_ROOT).resolve() if _ENV_ROOT else Path(__file__).resolve().parents[3]
@@ -2170,57 +2171,15 @@ def test_all_supported_just_compose_commands_use_the_validation_gate() -> None:
     assert sorted(actual_commands) == sorted(expected_commands)
 
 
-def test_production_wrapper_callsites_use_the_accepted_action_grammar() -> None:
-    call_pattern = re.compile(
-        r"infra/compose/scripts/preflight\.sh(?P<args>[^\n`]*?)\s*(?:$|['\"])",
-        re.MULTILINE,
-    )
-    excluded_dirs = {
-        ".git",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".venv",
-        "__pycache__",
-        "node_modules",
-    }
-    accepted_actions = {"up", "run", "build", "down", "logs"}
-    rejected_options = {"--no-recreate", "--no-deps", "--env-file", "--env-from-file"}
-    invalid: list[str] = []
-
-    for root, dirs, files in os.walk(_REPO):
-        dirs[:] = [directory for directory in dirs if directory not in excluded_dirs]
-        for filename in files:
-            path = Path(root, filename)
-            relative = path.relative_to(_REPO)
-            if relative.parts[:3] == ("scripts", "ci", "tests"):
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except OSError, UnicodeDecodeError:
-                continue
-            for match in call_pattern.finditer(text):
-                arguments = match.group("args").strip().removesuffix(".")
-                tokens = arguments.split()
-                if not tokens:
-                    continue
-                action = tokens[0]
-                if action not in accepted_actions or rejected_options.intersection(tokens):
-                    invalid.append(f"{relative.as_posix()}: {arguments}")
-                    continue
-                for index, token in enumerate(tokens):
-                    if token in {"-e", "--env"} and (
-                        index + 1 == len(tokens) or not tokens[index + 1].startswith("REFRESH_REASON=")
-                    ):
-                        invalid.append(f"{relative.as_posix()}: {arguments}")
-                        break
-
-    assert invalid == [], "wrapper calls outside accepted grammar:\n" + "\n".join(invalid)
+@cache
+def _tracked_repo_text_files() -> tuple[tuple[Path, str], ...]:
+    return tracked_text_files(_REPO)
 
 
-def test_repo_runtime_strings_and_docs_use_the_main_compose_validation_gate() -> None:
+@cache
+def _direct_compose_action_patterns() -> tuple[re.Pattern[str], ...]:
     actions = r"build|config|down|exec|logs|ps|pull|restart|run|start|stop|up"
-    direct_actions = (
+    return (
         re.compile(
             rf"\b(?:docker|podman)[ \t]+compose\b"
             rf"(?:[^\n]*\\\r?\n)*[^\n]*\b(?:{actions})\b"
@@ -2245,37 +2204,73 @@ def test_repo_runtime_strings_and_docs_use_the_main_compose_validation_gate() ->
             rf"[^]]{{0,2000}}?['\"](?:{actions})['\"][^]]*]"
         ),
     )
-    excluded_dirs = {
-        ".git",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".venv",
-        "__pycache__",
-        "dist",
-        "node_modules",
-        "target",
-    }
+
+
+def _direct_compose_bypasses(relative: Path, text: str) -> list[str]:
     bypasses: list[str] = []
-    for root, dirs, files in os.walk(_REPO):
-        dirs[:] = [directory for directory in dirs if directory not in excluded_dirs]
-        for filename in files:
-            path = Path(root, filename)
-            try:
-                text = path.read_text(encoding="utf-8")
-            except OSError, UnicodeDecodeError:
+    for pattern in _direct_compose_action_patterns():
+        for match in pattern.finditer(text):
+            line_number = text.count("\n", 0, match.start()) + 1
+            command = " ".join(match.group().split())
+            bypasses.append(f"{relative.as_posix()}:{line_number}: {command}")
+    return bypasses
+
+
+def test_production_wrapper_callsites_use_the_accepted_action_grammar() -> None:
+    call_pattern = re.compile(
+        r"infra/compose/scripts/preflight\.sh(?P<args>[^\n`]*?)\s*(?:$|['\"])",
+        re.MULTILINE,
+    )
+    accepted_actions = {"up", "run", "build", "down", "logs"}
+    rejected_options = {"--no-recreate", "--no-deps", "--env-file", "--env-from-file"}
+    invalid: list[str] = []
+
+    for relative, text in _tracked_repo_text_files():
+        if relative.parts[:3] == ("scripts", "ci", "tests"):
+            continue
+        for match in call_pattern.finditer(text):
+            arguments = match.group("args").strip().removesuffix(".")
+            tokens = arguments.split()
+            if not tokens:
                 continue
-            relative = path.relative_to(_REPO).as_posix()
-            for pattern in direct_actions:
-                for match in pattern.finditer(text):
-                    line_number = text.count("\n", 0, match.start()) + 1
-                    command = " ".join(match.group().split())
-                    bypasses.append(f"{relative}:{line_number}: {command}")
+            action = tokens[0]
+            if action not in accepted_actions or rejected_options.intersection(tokens):
+                invalid.append(f"{relative.as_posix()}: {arguments}")
+                continue
+            for index, token in enumerate(tokens):
+                if token in {"-e", "--env"} and (
+                    index + 1 == len(tokens) or not tokens[index + 1].startswith("REFRESH_REASON=")
+                ):
+                    invalid.append(f"{relative.as_posix()}: {arguments}")
+                    break
+
+    assert invalid == [], "wrapper calls outside accepted grammar:\n" + "\n".join(invalid)
+
+
+def test_repo_runtime_strings_and_docs_use_the_main_compose_validation_gate() -> None:
+    bypasses: list[str] = []
+    for relative, text in _tracked_repo_text_files():
+        bypasses.extend(_direct_compose_bypasses(relative, text))
 
     assert bypasses == [], "direct main-stack Compose bypasses:\n" + "\n".join(bypasses)
     documentation = _ROOT_README.read_text() + _COMPOSE_README.read_text()
     assert "just compose-up" in documentation
     assert "infra/compose/scripts/preflight.sh" in documentation
+
+
+def test_tracked_repo_string_scan_ignores_untracked_files_and_detects_tracked_bypasses(tmp_path: Path) -> None:
+    docker = "docker"
+    podman = "podman"
+    tracked = tmp_path / "tracked.md"
+    tracked.write_text(f"{docker} compose up\n", encoding="utf-8")
+    (tmp_path / "untracked.md").write_text(f"{podman} compose down\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", tracked.name], cwd=tmp_path, check=True)
+
+    scanned = tracked_text_files(tmp_path)
+
+    assert tuple(relative for relative, _ in scanned) == (Path(tracked.name),)
+    assert _direct_compose_bypasses(*scanned[0]) == [f"tracked.md:1: {docker} compose up"]
 
 
 @pytest.mark.parametrize(
