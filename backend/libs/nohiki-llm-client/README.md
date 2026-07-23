@@ -264,11 +264,14 @@ class LLMResult[T]:
 
 ### Observability
 
-- **`LLMHealthProbe(settings)`** -- `async check() -> HealthProbeResult`. Checks the primary
-  provider's models endpoint. Supports OpenRouter, OpenAI, and Ollama (via `/api/tags`). Register
-  with `nohiki-fastapi-utils` health endpoint during service lifespan startup.
-- **`ensure_llm_ready(settings, *, timeout_seconds=30, retry_interval_seconds=5)`** -- Blocks
-  startup until the LLM provider responds. Raises `RuntimeError` after timeout.
+- **`LLMHealthProbe(settings, *, chains=None)`**: `async check() -> HealthProbeResult`.
+  Runs bounded endpoint and exact-model checks concurrently for each selected effective chain.
+  Readiness requires at least one usable candidate per chain, so an unavailable primary does not
+  mask a working fallback. Supports OpenRouter, OpenAI, Anthropic, Google Vertex, Ollama, and
+  llama.cpp. Register with `nohiki-fastapi-utils` health during service lifespan startup.
+- **`ensure_llm_ready(settings, *, chains=None, timeout_seconds=30, retry_interval_seconds=5)`**:
+  Blocks startup until every selected chain has a usable candidate. Raises `RuntimeError` after
+  the timeout.
 - **`get_llm_metrics() -> LLMMetrics`** -- Returns the singleton `LLMMetrics` instance (OTel
   counters/histograms). `LLMClient` calls this automatically; use it only for custom metric reads.
 - **`llm_span_context(*, use_case, user_id=None, session_id=None, metadata=None)`** -- Context

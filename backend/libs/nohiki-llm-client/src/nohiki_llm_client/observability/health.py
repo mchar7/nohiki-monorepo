@@ -64,6 +64,11 @@ _HEALTH_ENDPOINTS: Final[dict[str, str]] = {
     PROVIDER_ANTHROPIC: "https://api.anthropic.com/v1/models",
 }
 
+type _HealthTarget = tuple[LLMModelConfig, LLMProviderSettings]
+type _HealthTargetKey = tuple[LLMModelConfig, str | None]
+type _HealthChain = tuple[_HealthTarget, ...]
+type _HealthTask = asyncio.Task[tuple[bool, str | None]]
+
 
 def _resolve_health_url(provider: str, base_url: str | None) -> str | None:
     """Resolve provider health check URL, preferring custom base_url when set.
@@ -125,9 +130,9 @@ def _create_health_http_client(
 
 
 class LLMHealthProbe:
-    """Health probe for every distinct model in explicitly selected chains."""
+    """Health probe for the effective fallback chains a service consumes."""
 
-    __slots__ = ("_settings", "_targets", "_timeout_seconds")
+    __slots__ = ("_chains", "_settings", "_targets", "_timeout_seconds")
 
     def __init__(
         self,
@@ -143,7 +148,7 @@ class LLMHealthProbe:
 
         Args:
             settings: LLM settings containing the default and named chains.
-            chains: Named service chains whose complete fallback sets must be ready.
+            chains: Named service chains for which at least one fallback must be ready.
                 ``None`` selects the default provider.
             timeout_seconds: Overall timeout for the parallel probe set.
 
@@ -158,15 +163,31 @@ class LLMHealthProbe:
             if chains is None
             else tuple(settings.chains.get(chain, settings.provider) for chain in chains)
         )
-        targets: list[tuple[LLMModelConfig, LLMProviderSettings]] = []
-        seen: set[tuple[LLMModelConfig, str | None]] = set()
+        selected_chains: list[_HealthChain] = []
+        targets: list[_HealthTarget] = []
+        seen_targets: set[_HealthTargetKey] = set()
+        seen_chains: set[tuple[_HealthTargetKey, ...]] = set()
         for provider in providers:
+            chain_targets: list[_HealthTarget] = []
+            chain_keys: list[_HealthTargetKey] = []
+            seen_in_chain: set[_HealthTargetKey] = set()
             for config in provider.models:
                 key = (config, self._effective_health_api_key(config, provider))
-                if key not in seen:
-                    seen.add(key)
-                    targets.append((config, provider))
+                if key in seen_in_chain:
+                    continue
+                seen_in_chain.add(key)
+                chain_keys.append(key)
+                target = (config, provider)
+                chain_targets.append(target)
+                if key not in seen_targets:
+                    seen_targets.add(key)
+                    targets.append(target)
+            signature = tuple(chain_keys)
+            if signature not in seen_chains:
+                seen_chains.add(signature)
+                selected_chains.append(tuple(chain_targets))
         self._settings = settings
+        self._chains = tuple(selected_chains)
         self._targets = tuple(targets)
         self._timeout_seconds = timeout_seconds
 
@@ -176,28 +197,33 @@ class LLMHealthProbe:
         return HEALTH_PROBE_NAME
 
     async def check(self) -> HealthProbeResult:
-        """Verify every distinct model in the selected chains is reachable."""
+        """Verify every selected chain has at least one reachable model."""
         with HealthProbeTimer() as timer:
+            tasks: dict[_HealthTargetKey, _HealthTask] = {}
             try:
+                for config, provider_settings in self._targets:
+                    key = (config, self._effective_health_api_key(config, provider_settings))
+                    tasks[key] = asyncio.create_task(self._check_model(config, provider_settings))
                 async with asyncio.timeout(self._timeout_seconds):
-                    results = await asyncio.gather(
-                        *(self._check_model(config, provider_settings) for config, provider_settings in self._targets)
-                    )
-                for (config, _), (ok, err) in zip(self._targets, results, strict=True):
+                    results = await asyncio.gather(*(self._check_chain(chain, tasks) for chain in self._chains))
+                for ok, config, err in results:
                     if not ok:
-                        return create_unhealthy_result(
-                            name=self.name,
-                            message=err or f"LLM model '{config.model}' check failed",
-                            latency_ms=timer.elapsed_ms,
-                            details={
+                        details = {}
+                        if config is not None:
+                            details = {
                                 "model": config.model,
                                 "provider": config.provider_name,
-                            },
+                            }
+                        return create_unhealthy_result(
+                            name=self.name,
+                            message=err or "LLM fallback chain check failed",
+                            latency_ms=timer.elapsed_ms,
+                            details=details,
                         )
-                models = ", ".join(config.model for config, _ in self._targets)
+                models = ", ".join(config.model for _, config, _ in results if config is not None)
                 return create_healthy_result(
                     name=self.name,
-                    message=f"LLM models are healthy: {models}",
+                    message=f"LLM model chains are healthy: {models}",
                     latency_ms=timer.elapsed_ms,
                     details={"models": models},
                 )
@@ -222,6 +248,35 @@ class LLMHealthProbe:
                     latency_ms=timer.elapsed_ms,
                     details={"error": str(exc), "error_type": type(exc).__name__},
                 )
+            finally:
+                pending = [task for task in tasks.values() if not task.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _check_chain(
+        self,
+        chain: _HealthChain,
+        tasks: dict[_HealthTargetKey, _HealthTask],
+    ) -> tuple[bool, LLMModelConfig | None, str | None]:
+        """Return as soon as one model in a fallback chain is usable."""
+        pending = {
+            tasks[(config, self._effective_health_api_key(config, provider_settings))]: config
+            for config, provider_settings in chain
+        }
+        errors: list[str] = []
+        last_config: LLMModelConfig | None = None
+        while pending:
+            done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                config = pending.pop(task)
+                last_config = config
+                ok, err = task.result()
+                if ok:
+                    return True, config, None
+                errors.append(err or f"LLM model '{config.model}' check failed")
+        return False, last_config, "LLM fallback chain unavailable: " + "; ".join(errors)
 
     async def _check_model(
         self,
@@ -279,11 +334,14 @@ class LLMHealthProbe:
         try:
             try:
                 probe_config = config.model_copy(update={"reasoning_effort": "disabled"})
+                openai_uses_reasoning = False
                 if config.provider_name == PROVIDER_OPENAI:
                     profile = openai_model_profile(config.model_name)
-                    reasoning_enabled = profile.get("openai_reasoning_enabled_by_default", False)
+                    reasoning_enabled_by_default = profile.get("openai_reasoning_enabled_by_default", False)
                     supports_none = profile.get("openai_supports_reasoning_effort_none", False)
-                    if (reasoning_enabled and not supports_none) or uses_fixed_openai_reasoning(config.model_name):
+                    fixed_reasoning = uses_fixed_openai_reasoning(config.model_name)
+                    openai_uses_reasoning = reasoning_enabled_by_default or fixed_reasoning
+                    if (reasoning_enabled_by_default and not supports_none) or fixed_reasoning:
                         probe_config = config
                 model = create_model(
                     probe_config,
@@ -293,9 +351,10 @@ class LLMHealthProbe:
                 probe_max_tokens = 16 if config.provider_name == PROVIDER_OPENAI else 1
                 request_settings = ModelSettings(
                     max_tokens=probe_max_tokens,
-                    temperature=0.0,
                     timeout=self._timeout_seconds,
                 )
+                if not openai_uses_reasoning:
+                    request_settings["temperature"] = 0.0
                 await model.request(
                     [ModelRequest(parts=[UserPromptPart(content="health")])],
                     request_settings,
@@ -489,19 +548,18 @@ async def ensure_llm_ready(
     timeout_seconds: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
     retry_interval_seconds: float = DEFAULT_RETRY_INTERVAL_SECONDS,
 ) -> None:
-    """Block startup until LLM provider is available.
+    """Block startup until every selected LLM chain has a usable candidate.
 
     Args:
         settings: LLM settings containing the default and named chains.
-        chains: Named chains whose complete fallback sets must be reachable.
+        chains: Named chains that each require at least one reachable candidate.
             ``None`` selects the default provider.
-        timeout_seconds: Maximum time to wait for every model.
+        timeout_seconds: Hard deadline for startup readiness.
         retry_interval_seconds: Interval between retry attempts.
 
     Raises:
         RuntimeError: If LLM is unavailable after timeout.
     """
-    probe = LLMHealthProbe(settings, chains=chains)
     start_time = time.perf_counter()
     attempt = 0
 
@@ -511,8 +569,13 @@ async def ensure_llm_ready(
         chains=chains,
     )
 
-    while (time.perf_counter() - start_time) < timeout_seconds:
+    while (remaining := timeout_seconds - (time.perf_counter() - start_time)) > 0:
         attempt += 1
+        probe = LLMHealthProbe(
+            settings,
+            chains=chains,
+            timeout_seconds=min(DEFAULT_HEALTH_TIMEOUT_SECONDS, remaining),
+        )
         result = await probe.check()
 
         if result.is_healthy():
