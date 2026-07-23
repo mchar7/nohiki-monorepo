@@ -7,7 +7,8 @@ if critical dependencies are unavailable.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+import time
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,14 @@ if TYPE_CHECKING:
     from nohiki_common_exceptions import HealthProbe
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ProbeTiming:
+    """Timing dependencies for a startup probe retry loop."""
+
+    clock: Callable[[], float] = time.perf_counter
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
 @dataclass(slots=True)
@@ -83,6 +92,7 @@ async def validate_startup_dependencies(
     timeout_seconds: float = 60.0,
     retry_interval_seconds: float = 2.0,
     fail_fast: bool = True,
+    timing: ProbeTiming | None = None,
 ) -> StartupValidationResult:
     """Validate all startup dependencies are available.
 
@@ -93,6 +103,7 @@ async def validate_startup_dependencies(
         timeout_seconds: Maximum time to wait for all probes.
         retry_interval_seconds: Interval between retry attempts.
         fail_fast: If True, raises RuntimeError on failure.
+        timing: Optional timing dependencies for deterministic retry control.
 
     Returns:
         StartupValidationResult with probe results.
@@ -103,29 +114,30 @@ async def validate_startup_dependencies(
     """
     if not probes:
         return StartupValidationResult(success=True)
+    timing = ProbeTiming() if timing is None else timing
 
     probe_names = [p.name for p in probes]
     logger.info("Validating startup dependencies", probes=probe_names, timeout_seconds=timeout_seconds)
 
-    start_time = asyncio.get_event_loop().time()
+    start_time = timing.clock()
 
-    while (asyncio.get_event_loop().time() - start_time) < timeout_seconds:
+    while (timing.clock() - start_time) < timeout_seconds:
         raw_results = await _run_probes(probes)
         probe_results, failed_probes = _collect_results(probes, raw_results)
 
         if not failed_probes:
-            elapsed = asyncio.get_event_loop().time() - start_time
+            elapsed = timing.clock() - start_time
             logger.info("All startup dependencies validated", probes=probe_names, elapsed_seconds=round(elapsed, 2))
             return StartupValidationResult(success=True, results=probe_results)
 
-        remaining = timeout_seconds - (asyncio.get_event_loop().time() - start_time)
+        remaining = timeout_seconds - (timing.clock() - start_time)
         if remaining > 0:
-            await asyncio.sleep(min(retry_interval_seconds, remaining))
+            await timing.sleep(min(retry_interval_seconds, remaining))
 
     raw_results = await _run_probes(probes)
     probe_results, failed_probes = _collect_results(probes, raw_results)
 
-    elapsed = asyncio.get_event_loop().time() - start_time
+    elapsed = timing.clock() - start_time
     logger.error("Startup validation failed", failed=failed_probes, elapsed_seconds=round(elapsed, 2))
 
     validation_result = StartupValidationResult(success=False, results=probe_results, failed_probes=failed_probes)
