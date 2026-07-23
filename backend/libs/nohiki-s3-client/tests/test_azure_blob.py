@@ -44,7 +44,7 @@ def service_with_blob() -> tuple[MagicMock, MagicMock]:
 async def test_provider_dispatch_and_service_closure() -> None:
     service, blob = service_with_blob()
     blob.exists = AsyncMock(return_value=True)
-    with patch("nohiki_s3_client.client.BlobServiceClient", return_value=service) as factory:
+    with patch("azure.storage.blob.aio.BlobServiceClient", return_value=service) as factory:
         client = S3Client(azure_settings())
         assert await client.object_exists("folder/item") is True
     factory.assert_called_once_with(account_url="https://account.blob.core.windows.net", credential="key")
@@ -58,7 +58,7 @@ async def test_bounded_ranged_download(size: int, data: bytes) -> None:
     blob.get_blob_properties = AsyncMock(return_value=SimpleNamespace(size=size))
     downloader = MagicMock(readall=AsyncMock(return_value=data))
     blob.download_blob = AsyncMock(return_value=downloader)
-    with patch("nohiki_s3_client.client.BlobServiceClient", return_value=service):
+    with patch("azure.storage.blob.aio.BlobServiceClient", return_value=service):
         client = S3Client(azure_settings())
         if size > 4 or len(data) > 4:
             with pytest.raises(S3ObjectTooLargeError):
@@ -79,7 +79,7 @@ async def test_metadata_normalization_and_checksum_absence() -> None:
             content_settings=SimpleNamespace(content_type="text/plain"),
         )
     )
-    with patch("nohiki_s3_client.client.BlobServiceClient", return_value=service):
+    with patch("azure.storage.blob.aio.BlobServiceClient", return_value=service):
         metadata = await S3Client(azure_settings()).head_object("item")
     assert metadata.content_length == 7
     assert metadata.content_type == "text/plain"
@@ -96,7 +96,7 @@ async def test_upload_delete_list_and_container_access() -> None:
     container.get_container_properties = AsyncMock()
     container.list_blobs.return_value = _blob_names("one", "two", "ignored")
     service.get_container_client.return_value = container
-    with patch("nohiki_s3_client.client.BlobServiceClient", return_value=service):
+    with patch("azure.storage.blob.aio.BlobServiceClient", return_value=service):
         client = S3Client(azure_settings())
         await client.put_object("item", b"body", "text/plain", {"a": "b"})
         await client.delete_object("item")
@@ -135,7 +135,7 @@ def _http_error(message: str, status_code: int, reason: str) -> HttpResponseErro
 async def test_azure_error_mapping(error: HttpResponseError, expected: type[Exception]) -> None:
     service, blob = service_with_blob()
     blob.exists = AsyncMock(side_effect=error)
-    with patch("nohiki_s3_client.client.BlobServiceClient", return_value=service), pytest.raises(expected):
+    with patch("azure.storage.blob.aio.BlobServiceClient", return_value=service), pytest.raises(expected):
         await S3Client(azure_settings()).object_exists("item")
 
 
@@ -145,7 +145,7 @@ async def test_azure_error_mapping(error: HttpResponseError, expected: type[Exce
 async def test_sas_is_https_bounded_and_has_exact_permissions(
     method: str, *, read: bool, create: bool, write: bool
 ) -> None:
-    with patch("nohiki_s3_client.client.generate_blob_sas", return_value="sig=token") as generate:
+    with patch("azure.storage.blob.generate_blob_sas", return_value="sig=token") as generate:
         url = await S3Client(azure_settings()).generate_presigned_url("folder/a b", 60, method)
     assert url == "https://cdn.example.test/container/folder/a%20b?sig=token"
     call = generate.call_args.kwargs
@@ -165,7 +165,7 @@ async def test_azure_put_accepts_api_constraints_with_exact_write_sas() -> None:
         checksum_sha256="digest",
     )
 
-    with patch("nohiki_s3_client.client.generate_blob_sas", return_value="sig=token") as generate:
+    with patch("azure.storage.blob.generate_blob_sas", return_value="sig=token") as generate:
         url = await S3Client(azure_settings()).generate_presigned_url(
             "folder/item",
             expires_in=60,
@@ -217,9 +217,9 @@ async def test_workload_identity_presign_uses_delegation_key_and_closes_resource
     service.get_user_delegation_key = AsyncMock(return_value="delegation-key")
 
     with (
-        patch("nohiki_s3_client.client.DefaultAzureCredential", FakeDefaultAzureCredential),
-        patch("nohiki_s3_client.client.BlobServiceClient", return_value=service) as service_factory,
-        patch("nohiki_s3_client.client.generate_blob_sas", return_value="sig=token") as generate,
+        patch("azure.identity.aio.DefaultAzureCredential", FakeDefaultAzureCredential),
+        patch("azure.storage.blob.aio.BlobServiceClient", return_value=service) as service_factory,
+        patch("azure.storage.blob.generate_blob_sas", return_value="sig=token") as generate,
     ):
         url = await S3Client(azure_settings(access_key=None, secret_key=None, public_url="")).generate_presigned_url(
             "folder/item", expires_in=60
@@ -246,7 +246,7 @@ async def test_workload_identity_presign_uses_delegation_key_and_closes_resource
 )
 def test_azure_rejects_unsafe_or_hostless_service_endpoints(endpoint: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        S3Client(azure_settings(endpoint=endpoint))
+        _ = S3Client(azure_settings(endpoint=endpoint))._backend
 
 
 def test_direct_upload_headers_are_provider_specific() -> None:

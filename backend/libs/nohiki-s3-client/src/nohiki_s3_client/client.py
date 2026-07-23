@@ -8,14 +8,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, cast
 from urllib.parse import quote, urlsplit
 
-from aiobotocore.session import get_session
-from azure.core.exceptions import AzureError, ResourceNotFoundError
-from azure.identity.aio import DefaultAzureCredential
-from azure.storage.blob import BlobSasPermissions, ContentSettings, generate_blob_sas
-from azure.storage.blob.aio import BlobServiceClient
-from botocore.config import Config
-from botocore.exceptions import ClientError
-
 from nohiki_s3_client.exceptions import (
     S3ConnectionError,
     S3ObjectNotFoundError,
@@ -26,12 +18,12 @@ from nohiki_s3_client.exceptions import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from azure.core.exceptions import AzureError
+    from azure.storage.blob.aio import BlobServiceClient
     from types_aiobotocore_s3 import S3Client as S3ClientType
     from types_aiobotocore_s3.type_defs import GetObjectOutputTypeDef
 
     from nohiki_s3_client.settings import S3Settings
-
-from nohiki_s3_client.settings import ObjectStorageProvider
 
 
 class _BoundedAsyncReader(Protocol):
@@ -130,6 +122,8 @@ class _S3Backend:
 
     def __init__(self, settings: S3Settings) -> None:
         """Initialize the S3 client with settings."""
+        from aiobotocore.session import get_session  # noqa: PLC0415 -- Load AWS SDK on first S3 use.
+
         if bool(settings.access_key) != bool(settings.secret_key):
             msg = "access_key and secret_key must either both be set or both be omitted"
             raise ValueError(msg)
@@ -139,6 +133,8 @@ class _S3Backend:
     @asynccontextmanager
     async def _get_client(self, endpoint_override: str | None = None) -> AsyncIterator[S3ClientType]:
         """Get an S3 client context manager."""
+        from botocore.config import Config  # noqa: PLC0415 -- Load AWS SDK on first S3 use.
+
         botocore_config = Config(
             connect_timeout=self._settings.connect_timeout,
             read_timeout=self._settings.read_timeout,
@@ -180,6 +176,8 @@ class _S3Backend:
             S3ConnectionError: If connection fails.
 
         """
+        from botocore.exceptions import ClientError  # noqa: PLC0415 -- Load AWS SDK on first S3 use.
+
         _validate_key(key)
         effective_max_bytes = max_bytes if max_bytes is not None else self._settings.max_download_bytes
         if effective_max_bytes <= 0:
@@ -202,6 +200,8 @@ class _S3Backend:
 
     async def head_object(self, key: str) -> S3ObjectMetadata:
         """Return object metadata without downloading its body."""
+        from botocore.exceptions import ClientError  # noqa: PLC0415 -- Load AWS SDK on first S3 use.
+
         _validate_key(key)
         try:
             async with self._get_client() as client:
@@ -242,6 +242,8 @@ class _S3Backend:
             S3ConnectionError: If connection fails.
 
         """
+        from botocore.exceptions import ClientError  # noqa: PLC0415 -- Load AWS SDK on first S3 use.
+
         _validate_key(key)
         if len(data) > _MAX_SINGLE_PUT_BYTES:
             msg = "put_object supports at most 5 GiB; use multipart upload for larger objects"
@@ -273,6 +275,8 @@ class _S3Backend:
             S3ConnectionError: If connection fails.
 
         """
+        from botocore.exceptions import ClientError  # noqa: PLC0415 -- Load AWS SDK on first S3 use.
+
         _validate_key(key)
         try:
             async with self._get_client() as client:
@@ -301,6 +305,8 @@ class _S3Backend:
             S3ConnectionError: If connection fails.
 
         """
+        from botocore.exceptions import ClientError  # noqa: PLC0415 -- Load AWS SDK on first S3 use.
+
         _validate_key(key)
         try:
             async with self._get_client() as client:
@@ -330,6 +336,8 @@ class _S3Backend:
             S3ConnectionError: If connection fails.
 
         """
+        from botocore.exceptions import ClientError  # noqa: PLC0415 -- Load AWS SDK on first S3 use.
+
         if not self._settings.bucket.strip():
             msg = "S3 bucket must not be empty"
             raise ValueError(msg)
@@ -359,6 +367,8 @@ class _S3Backend:
             S3ConnectionError: If connection fails.
 
         """
+        from botocore.exceptions import ClientError  # noqa: PLC0415 -- Load AWS SDK on first S3 use.
+
         if not 1 <= max_keys <= _MAX_LIST_KEYS:
             msg = f"max_keys must be between 1 and {_MAX_LIST_KEYS}"
             raise ValueError(msg)
@@ -445,17 +455,23 @@ class _AzureBlobBackend:
 
     @asynccontextmanager
     async def _get_service(self) -> AsyncIterator[BlobServiceClient]:
-        credential = DefaultAzureCredential() if self._account_key is None else self._account_key
+        from azure.identity.aio import DefaultAzureCredential  # noqa: PLC0415 -- Load Azure SDK on first use.
+        from azure.storage.blob.aio import BlobServiceClient  # noqa: PLC0415 -- Load Azure SDK on first use.
+
+        workload_credential = DefaultAzureCredential() if self._account_key is None else None
+        credential = workload_credential or self._account_key
         service = BlobServiceClient(account_url=self._endpoint, credential=credential)
         try:
             yield service
         finally:
             await service.close()
-            if isinstance(credential, DefaultAzureCredential):
-                await credential.close()
+            if workload_credential is not None:
+                await workload_credential.close()
 
     @staticmethod
     def _raise(error: AzureError, key: str) -> NoReturn:
+        from azure.core.exceptions import ResourceNotFoundError  # noqa: PLC0415 -- Load Azure SDK on first use.
+
         status_code = getattr(error, "status_code", None)
         if isinstance(error, ResourceNotFoundError) or status_code == _HTTP_NOT_FOUND:
             raise S3ObjectNotFoundError(key) from error
@@ -464,6 +480,8 @@ class _AzureBlobBackend:
         raise S3ConnectionError(str(error)) from error
 
     async def get_object(self, key: str, *, max_bytes: int | None = None) -> bytes:
+        from azure.core.exceptions import AzureError  # noqa: PLC0415 -- Load Azure SDK on first use.
+
         _validate_key(key)
         limit = max_bytes if max_bytes is not None else self._settings.max_download_bytes
         if limit <= 0:
@@ -486,6 +504,8 @@ class _AzureBlobBackend:
 
     async def head_object(self, key: str) -> S3ObjectMetadata:
         _validate_key(key)
+        from azure.core.exceptions import AzureError  # noqa: PLC0415 -- Load Azure SDK on first use.
+
         try:
             async with self._get_service() as service:
                 properties = await service.get_blob_client(self._settings.bucket, key).get_blob_properties()
@@ -507,6 +527,9 @@ class _AzureBlobBackend:
         content_type: str = "application/octet-stream",
         metadata: dict[str, str] | None = None,
     ) -> None:
+        from azure.core.exceptions import AzureError  # noqa: PLC0415 -- Load Azure SDK on first use.
+        from azure.storage.blob import ContentSettings  # noqa: PLC0415 -- Load Azure SDK on first use.
+
         _validate_key(key)
         if len(data) > _MAX_SINGLE_PUT_BYTES:
             msg = "put_object supports at most 5 GiB; use multipart upload for larger objects"
@@ -524,6 +547,11 @@ class _AzureBlobBackend:
             self._raise(error, key)
 
     async def delete_object(self, key: str) -> None:
+        from azure.core.exceptions import (  # noqa: PLC0415 -- Load Azure SDK on first use.
+            AzureError,
+            ResourceNotFoundError,
+        )
+
         _validate_key(key)
         try:
             async with self._get_service() as service:
@@ -534,6 +562,8 @@ class _AzureBlobBackend:
             self._raise(error, key)
 
     async def object_exists(self, key: str) -> bool:
+        from azure.core.exceptions import AzureError  # noqa: PLC0415 -- Load Azure SDK on first use.
+
         _validate_key(key)
         try:
             async with self._get_service() as service:
@@ -542,6 +572,8 @@ class _AzureBlobBackend:
             self._raise(error, key)
 
     async def check_bucket_access(self) -> bool:
+        from azure.core.exceptions import AzureError  # noqa: PLC0415 -- Load Azure SDK on first use.
+
         if not self._settings.bucket.strip():
             msg = "S3 bucket must not be empty"
             raise ValueError(msg)
@@ -553,6 +585,8 @@ class _AzureBlobBackend:
             self._raise(error, self._settings.bucket)
 
     async def list_objects_sample(self, max_keys: int = 1) -> list[str]:
+        from azure.core.exceptions import AzureError  # noqa: PLC0415 -- Load Azure SDK on first use.
+
         if not 1 <= max_keys <= _MAX_LIST_KEYS:
             msg = f"max_keys must be between 1 and {_MAX_LIST_KEYS}"
             raise ValueError(msg)
@@ -577,6 +611,12 @@ class _AzureBlobBackend:
         *,
         put_constraints: S3PresignedPutConstraints | None = None,
     ) -> str:
+        from azure.core.exceptions import AzureError  # noqa: PLC0415 -- Load Azure SDK on first use.
+        from azure.storage.blob import (  # noqa: PLC0415 -- Load Azure SDK on first use.
+            BlobSasPermissions,
+            generate_blob_sas,
+        )
+
         _validate_key(key)
         if not 1 <= expires_in <= _MAX_PRESIGNED_EXPIRY_SECONDS:
             msg = f"expires_in must be between 1 and {_MAX_PRESIGNED_EXPIRY_SECONDS} seconds"
@@ -624,22 +664,38 @@ class S3Client:
     """Caller-compatible object-storage facade dispatching by provider."""
 
     def __init__(self, settings: S3Settings) -> None:
-        """Initialize the configured object-storage backend."""
+        """Retain settings until the first object-storage operation."""
         self._settings = settings
-        self._backend = (
-            _AzureBlobBackend(settings)
-            if settings.provider is ObjectStorageProvider.AZURE_BLOB
-            else _S3Backend(settings)
-        )
-        if isinstance(self._backend, _S3Backend):
-            # Retained for health probes and callers that instrument the botocore session.
-            self._session = self._backend._session  # noqa: SLF001
+        self.__backend: _S3Backend | _AzureBlobBackend | None = None
+
+    def _get_backend(self) -> _S3Backend | _AzureBlobBackend:
+        if self.__backend is None:
+            self.__backend = (
+                _AzureBlobBackend(self._settings)
+                if self._settings.provider == "azure_blob"
+                else _S3Backend(self._settings)
+            )
+        return self.__backend
+
+    @property
+    def _backend(self) -> _S3Backend | _AzureBlobBackend:
+        """Return the selected backend for compatibility with instrumentation."""
+        return self._get_backend()
+
+    @property
+    def _session(self) -> object:
+        """Return the AWS session retained for health and instrumentation seams."""
+        backend = self._get_backend()
+        if isinstance(backend, _S3Backend):
+            return backend._session  # noqa: SLF001
+        msg = "Azure Blob clients do not expose an aiobotocore session"
+        raise AttributeError(msg)
 
     async def get_object(self, key: str, *, max_bytes: int | None = None) -> bytes:  # noqa: D102
-        return await self._backend.get_object(key, max_bytes=max_bytes)
+        return await self._get_backend().get_object(key, max_bytes=max_bytes)
 
     async def head_object(self, key: str) -> S3ObjectMetadata:  # noqa: D102
-        return await self._backend.head_object(key)
+        return await self._get_backend().head_object(key)
 
     async def put_object(  # noqa: D102
         self,
@@ -648,23 +704,23 @@ class S3Client:
         content_type: str = "application/octet-stream",
         metadata: dict[str, str] | None = None,
     ) -> None:
-        await self._backend.put_object(key, data, content_type, metadata)
+        await self._get_backend().put_object(key, data, content_type, metadata)
 
     async def delete_object(self, key: str) -> None:  # noqa: D102
-        await self._backend.delete_object(key)
+        await self._get_backend().delete_object(key)
 
     async def object_exists(self, key: str) -> bool:  # noqa: D102
-        return await self._backend.object_exists(key)
+        return await self._get_backend().object_exists(key)
 
     async def check_bucket_access(self) -> bool:  # noqa: D102
-        return await self._backend.check_bucket_access()
+        return await self._get_backend().check_bucket_access()
 
     async def list_objects_sample(self, max_keys: int = 1) -> list[str]:  # noqa: D102
-        return await self._backend.list_objects_sample(max_keys)
+        return await self._get_backend().list_objects_sample(max_keys)
 
     def required_upload_headers(self) -> dict[str, str]:
         """Return headers required for direct uploads by the configured provider."""
-        if isinstance(self._backend, _AzureBlobBackend):
+        if self._settings.provider == "azure_blob":
             return {"x-ms-blob-type": "BlockBlob"}
         return {}
 
@@ -676,7 +732,7 @@ class S3Client:
         *,
         put_constraints: S3PresignedPutConstraints | None = None,
     ) -> str:
-        return await self._backend.generate_presigned_url(
+        return await self._get_backend().generate_presigned_url(
             key,
             expires_in,
             http_method,
