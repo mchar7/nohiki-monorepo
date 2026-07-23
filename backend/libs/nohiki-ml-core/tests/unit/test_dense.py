@@ -55,7 +55,7 @@ class TestDenseEncoderInitialization:
         sample_manifest_data: dict[str, object],
     ) -> None:
         """Test initialization with ONNX backend."""
-        with patch("nohiki_ml_core.encoders.dense.SentenceTransformer") as mock_st:
+        with patch("nohiki_ml_core.encoders.dense._create_sentence_transformer") as mock_st:
             manifest = SemanticRepresentationManifest.model_validate(sample_manifest_data)
             manifest.dense = DenseConfig(
                 enabled=True,
@@ -120,7 +120,7 @@ class TestDenseEncoderEncode:
         sample_manifest_data: dict[str, object],
     ) -> None:
         """Test encoding with DIRECT backend."""
-        with patch("nohiki_ml_core.encoders.dense.SentenceTransformer") as mock_st:
+        with patch("nohiki_ml_core.encoders.dense._create_sentence_transformer") as mock_st:
             manifest = SemanticRepresentationManifest.model_validate(sample_manifest_data)
             encoder = DenseEncoder(manifest)
 
@@ -141,7 +141,7 @@ class TestDenseEncoderEncode:
         sample_manifest_data: dict[str, object],
     ) -> None:
         """Test batch encoding with DIRECT backend."""
-        with patch("nohiki_ml_core.encoders.dense.SentenceTransformer") as mock_st:
+        with patch("nohiki_ml_core.encoders.dense._create_sentence_transformer") as mock_st:
             manifest = SemanticRepresentationManifest.model_validate(sample_manifest_data)
             encoder = DenseEncoder(manifest)
 
@@ -269,7 +269,7 @@ class TestDenseEncoderEncode:
         sample_manifest_data: dict[str, object],
     ) -> None:
         """Test proper error handling on model load failure."""
-        with patch("nohiki_ml_core.encoders.dense.SentenceTransformer") as mock_st:
+        with patch("nohiki_ml_core.encoders.dense._create_sentence_transformer") as mock_st:
             manifest = SemanticRepresentationManifest.model_validate(sample_manifest_data)
             encoder = DenseEncoder(manifest)
 
@@ -315,7 +315,7 @@ class TestDenseEncoderSimilarity:
         sample_manifest_data: dict[str, object],
     ) -> None:
         """Test computing cosine similarity between texts."""
-        with patch("nohiki_ml_core.encoders.dense.SentenceTransformer") as mock_st:
+        with patch("nohiki_ml_core.encoders.dense._create_sentence_transformer") as mock_st:
             manifest = SemanticRepresentationManifest.model_validate(sample_manifest_data)
             encoder = DenseEncoder(manifest)
 
@@ -358,7 +358,7 @@ class TestDenseEncoderSimilarity:
         sample_manifest_data: dict[str, object],
     ) -> None:
         """Test similarity with zero norm embedding returns 0."""
-        with patch("nohiki_ml_core.encoders.dense.SentenceTransformer") as mock_st:
+        with patch("nohiki_ml_core.encoders.dense._create_sentence_transformer") as mock_st:
             manifest = SemanticRepresentationManifest.model_validate(sample_manifest_data)
             encoder = DenseEncoder(manifest)
 
@@ -379,7 +379,7 @@ class TestDenseEncoderWarmUp:
         sample_manifest_data: dict[str, object],
     ) -> None:
         """Test warm_up pre-loads model with DIRECT backend."""
-        with patch("nohiki_ml_core.encoders.dense.SentenceTransformer") as mock_st:
+        with patch("nohiki_ml_core.encoders.dense._create_sentence_transformer") as mock_st:
             manifest = SemanticRepresentationManifest.model_validate(sample_manifest_data)
             encoder = DenseEncoder(manifest)
 
