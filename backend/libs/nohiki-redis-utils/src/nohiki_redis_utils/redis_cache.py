@@ -4,21 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import importlib
 import json
 import time
 from collections.abc import Awaitable
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 from nohiki_observability import get_logger
 from redis.asyncio import Redis, RedisError
 
 from .circuit_breaker import CircuitBreaker, CircuitBreakerConfig
-from .distributed_lock import DistributedLockError
-from .metrics import get_redis_metrics
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+
+    from .distributed_lock import DistributedLockError
 
 logger = get_logger(__name__)
 
@@ -74,6 +76,7 @@ class RedisCache:
             circuit_breaker_config: Optional circuit breaker configuration.
 
         """
+        metrics_module = importlib.import_module("nohiki_redis_utils.metrics")
         self._redis = Redis.from_url(redis_url, decode_responses=True)
         self._redis_binary = Redis.from_url(redis_url, decode_responses=False)
         self._service_name = service_name
@@ -81,7 +84,7 @@ class RedisCache:
             name=f"redis-{service_name}",
             config=circuit_breaker_config,
         )
-        self._metrics = get_redis_metrics()
+        self._metrics = metrics_module.get_redis_metrics()
 
     async def close(self) -> None:
         """Close the Redis connections."""
@@ -428,7 +431,7 @@ class RedisCache:
         else:
             return result
 
-    async def set_bytes(self, key: str, value: bytes, ttl: int | None = None) -> None:
+    async def set_bytes(self, key: str, value: bytes, ttl: int | timedelta | None = None) -> None:
         """Set raw bytes in Redis cache."""
         start = time.perf_counter()
         try:
@@ -597,12 +600,15 @@ class RedisCache:
         result = await self._redis_binary.get(self._make_key(key))
         return result if isinstance(result, bytes) else None
 
-    async def _set_bytes_internal(self, key: str, value: bytes, ttl: int | None) -> None:
+    async def _set_bytes_internal(self, key: str, value: bytes, ttl: int | timedelta | None) -> None:
         """Set raw bytes in Redis, letting exceptions propagate."""
-        if ttl:
-            await self._redis_binary.set(self._make_key(key), value, ex=ttl)
-        else:
-            await self._redis_binary.set(self._make_key(key), value)
+        match ttl:
+            case timedelta():
+                await self._redis_binary.set(self._make_key(key), value, px=ttl)
+            case int() if ttl:
+                await self._redis_binary.set(self._make_key(key), value, ex=ttl)
+            case _:
+                await self._redis_binary.set(self._make_key(key), value)
 
     async def _incr_internal(self, key: str) -> int:
         """Increment value at key in Redis, letting exceptions propagate."""
@@ -644,13 +650,15 @@ class RedisCache:
 
         """
         prefixed_key = f"lock:{lock_key}"
-        start_time = time.perf_counter()
+        deadline = time.perf_counter() + timeout_seconds
 
-        while (time.perf_counter() - start_time) < timeout_seconds:
+        while time.perf_counter() < deadline:
             acquired = await self.setnx(prefixed_key, lock_value, ttl=ttl_seconds)
             if acquired:
                 return True
-            await asyncio.sleep(_LOCK_POLL_INTERVAL_SECONDS)
+            remaining_seconds = deadline - time.perf_counter()
+            if remaining_seconds > 0:
+                await asyncio.sleep(min(_LOCK_POLL_INTERVAL_SECONDS, remaining_seconds))
 
         return False
 
@@ -701,8 +709,10 @@ class RedisCache:
             acquired = await self.acquire_lock(operation_name, lock_value, ttl_seconds, timeout_seconds)
 
             if not acquired:
+                lock_module = importlib.import_module("nohiki_redis_utils.distributed_lock")
+
                 error_msg = f"Could not acquire distributed lock for {operation_name} within {timeout_seconds} seconds"
-                raise DistributedLockError(error_msg)
+                raise cast("type[DistributedLockError]", lock_module.DistributedLockError)(error_msg)
 
             yield
 
