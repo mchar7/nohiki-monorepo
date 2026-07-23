@@ -6,12 +6,27 @@ from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from nohiki_common_exceptions import HealthProbeResult, HealthStatus
 from nohiki_db_utils.health import (
     DatabaseHealthProbe,
+    ProbeTiming,
     ensure_database_ready,
 )
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+
+class _FakeTime:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.sleeps: list[float] = []
+
+    def __call__(self) -> float:
+        return self.elapsed
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.elapsed += seconds
 
 
 class TestDatabaseHealthProbe:
@@ -23,6 +38,7 @@ class TestDatabaseHealthProbe:
         probe = DatabaseHealthProbe(mock_engine)
         assert probe.name == "database"
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_check_healthy(self, async_engine: AsyncEngine) -> None:
         """Returns healthy when database responds correctly."""
@@ -31,6 +47,7 @@ class TestDatabaseHealthProbe:
         assert result.is_healthy()
         assert result.name == "database"
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_check_with_degraded_latency(self, async_engine: AsyncEngine) -> None:
         """Returns degraded when latency exceeds threshold."""
@@ -62,6 +79,7 @@ class TestDatabaseHealthProbe:
         assert result.status.value == "unhealthy"
         assert "Connection refused" in result.message
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_check_with_migration_check_disabled(self, async_engine: AsyncEngine) -> None:
         """check_migrations=False skips migration state check."""
@@ -138,6 +156,7 @@ class TestDatabaseHealthProbe:
 class TestEnsureDatabaseReady:
     """Tests for ensure_database_ready function."""
 
+    @pytest.mark.requires_docker
     @pytest.mark.asyncio
     async def test_succeeds_when_db_available(self, async_engine: AsyncEngine) -> None:
         """Returns successfully when database is available."""
@@ -146,21 +165,27 @@ class TestEnsureDatabaseReady:
     @pytest.mark.asyncio
     async def test_raises_on_timeout(self) -> None:
         """Raises RuntimeError when database unavailable after timeout."""
-        from contextlib import asynccontextmanager
-
         mock_engine = MagicMock(spec=AsyncEngine)
-        mock_conn = MagicMock()
-        mock_conn.scalar = MagicMock(side_effect=SQLAlchemyError("Connection refused"))
+        unavailable = HealthProbeResult(
+            name="database",
+            status=HealthStatus.UNHEALTHY,
+            message="Connection refused",
+            latency_ms=0.0,
+        )
+        check = AsyncMock(return_value=unavailable)
+        fake_time = _FakeTime()
 
-        @asynccontextmanager
-        async def mock_connect() -> AsyncIterator[MagicMock]:
-            yield mock_conn
-
-        mock_engine.connect = mock_connect
-
-        with pytest.raises(RuntimeError, match="Database unavailable"):
+        with (
+            patch.object(DatabaseHealthProbe, "check", check),
+            pytest.raises(RuntimeError, match="Database unavailable"),
+        ):
             await ensure_database_ready(
                 mock_engine,
                 timeout_seconds=0.1,
                 retry_interval_seconds=0.05,
+                timing=ProbeTiming(clock=fake_time, sleep=fake_time.sleep),
             )
+
+        assert check.await_count == 2
+        assert fake_time.elapsed == pytest.approx(0.1)
+        assert fake_time.sleeps == pytest.approx([0.05, 0.05])

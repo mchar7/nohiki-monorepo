@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nohiki_common_exceptions import (
@@ -37,6 +38,14 @@ except ImportError:
     pass
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ProbeTiming:
+    """Timing dependencies for a startup probe retry loop."""
+
+    clock: Callable[[], float] = time.perf_counter
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
 class DatabaseHealthProbe:
@@ -148,6 +157,7 @@ async def ensure_database_ready(
     *,
     timeout_seconds: float = 60.0,
     retry_interval_seconds: float = 2.0,
+    timing: ProbeTiming | None = None,
 ) -> None:
     """Block startup until database is available.
 
@@ -155,13 +165,15 @@ async def ensure_database_ready(
         engine: SQLAlchemy async engine.
         timeout_seconds: Maximum time to wait for database.
         retry_interval_seconds: Interval between retry attempts.
+        timing: Optional timing dependencies for deterministic retry control.
 
     Raises:
         RuntimeError: If database is unavailable after timeout.
 
     """
+    timing = ProbeTiming() if timing is None else timing
     probe = DatabaseHealthProbe(engine, check_migrations=False)
-    start_time = time.perf_counter()
+    start_time = timing.clock()
     attempt = 0
 
     logger.info(
@@ -169,12 +181,12 @@ async def ensure_database_ready(
         timeout_seconds=timeout_seconds,
     )
 
-    while (time.perf_counter() - start_time) < timeout_seconds:
+    while (timing.clock() - start_time) < timeout_seconds:
         attempt += 1
         result = await probe.check()
 
         if result.is_healthy():
-            elapsed = time.perf_counter() - start_time
+            elapsed = timing.clock() - start_time
             logger.info(
                 "Database is available",
                 elapsed_seconds=round(elapsed, 2),
@@ -182,7 +194,7 @@ async def ensure_database_ready(
             )
             return
 
-        remaining = timeout_seconds - (time.perf_counter() - start_time)
+        remaining = timeout_seconds - (timing.clock() - start_time)
         if remaining > 0:
             wait_time = min(retry_interval_seconds, remaining)
             logger.debug(
@@ -191,9 +203,9 @@ async def ensure_database_ready(
                 error=result.message,
                 retry_in_seconds=wait_time,
             )
-            await asyncio.sleep(wait_time)
+            await timing.sleep(wait_time)
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = timing.clock() - start_time
     msg = f"Database unavailable after {elapsed:.1f}s ({attempt} attempts)"
     logger.error("Database startup timeout", elapsed_seconds=round(elapsed, 2), attempts=attempt)
     raise RuntimeError(msg)
