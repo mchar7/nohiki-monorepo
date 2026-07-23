@@ -17,7 +17,7 @@ import { ROUTE_PATHS } from '@/shared/config/index.ts';
 import { useDocumentTitle, useUnsavedChanges } from '@/shared/lib/index.ts';
 import { Button } from '@/shared/ui/button.tsx';
 import { Form } from '@/shared/ui/form.tsx';
-import { PageHeader } from '@/shared/ui/index.ts';
+import { PageHeader } from '@/shared/ui/PageHeader.tsx';
 import { UnsavedChangesDialog } from '@/shared/ui/unsaved-changes-dialog.tsx';
 import { PageLayout } from '@/widgets/layout/index.ts';
 

@@ -1,7 +1,8 @@
 import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Card, CardContent, CardHeader, Skeleton } from '@/shared/ui/index.ts';
+import { Card, CardContent, CardHeader } from '@/shared/ui/card.tsx';
+import { Skeleton } from '@/shared/ui/skeleton.tsx';
 
 /** Number of stat card placeholders in the skeleton grid */
 const STAT_CARD_COUNT: number = 4;

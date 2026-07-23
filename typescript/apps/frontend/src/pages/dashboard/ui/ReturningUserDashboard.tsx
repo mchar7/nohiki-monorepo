@@ -1,7 +1,8 @@
 import type { JSX, LazyExoticComponent } from 'react';
 import { lazy, Suspense } from 'react';
 
-import { Card, CardContent, CardHeader, Skeleton } from '@/shared/ui/index.ts';
+import { Card, CardContent, CardHeader } from '@/shared/ui/card.tsx';
+import { Skeleton } from '@/shared/ui/skeleton.tsx';
 import { CommonMissingSkillsWidget } from './CommonMissingSkillsWidget.tsx';
 import type {
   DashboardActivityChartProps,

@@ -1,4 +1,5 @@
-import { Input, Textarea } from '@shared/ui/index.ts';
+import { Input } from '@shared/ui/input.tsx';
+import { Textarea } from '@shared/ui/textarea.tsx';
 import type { JSX } from 'react';
 import type { Control } from 'react-hook-form';
 import type { JSONSchemaProperty } from '@/shared/model/index.ts';

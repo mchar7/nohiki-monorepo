@@ -4,7 +4,7 @@ import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ROUTE_PATHS } from '@/shared/config';
-import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/index.ts';
+import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card.tsx';
 import type { ActionItem, DashboardActionItemsProps } from './DashboardActionItemsModel.ts';
 import { computeActionItems } from './DashboardActionItemsModel.ts';
 

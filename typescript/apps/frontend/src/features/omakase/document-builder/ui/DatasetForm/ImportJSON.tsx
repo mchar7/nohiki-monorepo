@@ -1,11 +1,11 @@
+import { Button } from '@shared/ui/button.tsx';
 import {
-  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@shared/ui/index.ts';
+} from '@shared/ui/dialog.tsx';
 import { AlertCircle, FileText, Upload } from 'lucide-react';
 import type React from 'react';
 import type { JSX } from 'react';

@@ -4,7 +4,6 @@ import type React from 'react';
 import type { JSX } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 import { beforeEach, describe, expect, vi } from 'vitest';
-import type * as SharedUi from '@/shared/ui/index.ts';
 import type { ProfileFormValues } from '../schemas/index.ts';
 import type * as ProfileSchema from '../schemas/profile.schema.ts';
 import { KeywordsCard } from './KeywordsCard.tsx';
@@ -19,24 +18,21 @@ vi.mock('@/shared/lib/index.ts', async (importOriginal) => {
 });
 
 // Mock inputs while preserving the accessible form-control contract.
-vi.mock('@/shared/ui/index.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof SharedUi>();
-  return {
-    ...actual,
-    SkillInput: vi.fn(() => <div data-testid="skill-input" />),
-    TagInput: vi.fn(
-      ({ id, maxTags, value }: { id?: string; maxTags: number; value?: string[] }) => (
-        <input
-          id={id}
-          data-testid="tag-input"
-          data-max-tags={maxTags}
-          value={(value ?? []).join(',')}
-          readOnly
-        />
-      ),
-    ),
-  };
-});
+vi.mock('@/shared/ui/TagInput.tsx', () => ({
+  TagInput: vi.fn(({ id, maxTags, value }: { id?: string; maxTags: number; value?: string[] }) => (
+    <input
+      id={id}
+      data-testid="tag-input"
+      data-max-tags={maxTags}
+      value={(value ?? []).join(',')}
+      readOnly
+    />
+  )),
+}));
+
+vi.mock('@/shared/ui/skill-input/SkillInput.tsx', () => ({
+  SkillInput: vi.fn(() => <div data-testid="skill-input" />),
+}));
 
 // We want to verify that it uses the constant KEYWORDS_MAX_ITEMS.
 // To make it FAIL, we mock KEYWORDS_MAX_ITEMS to something else.

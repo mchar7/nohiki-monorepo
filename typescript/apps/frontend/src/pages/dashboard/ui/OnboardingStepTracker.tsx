@@ -3,8 +3,8 @@ import { ArrowRight, CheckCircle2, Circle } from 'lucide-react';
 import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/shared/lib';
+import { Button } from '@/shared/ui/button.tsx';
 import { Collapsible, CollapsibleContent } from '@/shared/ui/collapsible.tsx';
-import { Button } from '@/shared/ui/index.ts';
 import type { OnboardingStep, OnboardingStepTrackerProps } from './Dashboard.types.ts';
 
 type StepState = OnboardingStep['state'];

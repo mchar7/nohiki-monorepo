@@ -1,19 +1,21 @@
 import { logComponentError } from '@shared/lib/index.ts';
+import { Button } from '@shared/ui/button.tsx';
 import {
-  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  Input,
-  Label,
+} from '@shared/ui/dialog.tsx';
+import { Input } from '@shared/ui/input.tsx';
+import { Label } from '@shared/ui/label.tsx';
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@shared/ui/index.ts';
+} from '@shared/ui/select.tsx';
 import { Loader2 } from 'lucide-react';
 import type { JSX } from 'react';
 import { useEffect, useId, useState } from 'react';

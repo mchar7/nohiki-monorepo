@@ -20,8 +20,8 @@ import {
   FormLabel,
   FormMessage,
 } from '@/shared/ui/form.tsx';
-import { PasswordStrength } from '@/shared/ui/index.ts';
 import { Input } from '@/shared/ui/input.tsx';
+import { PasswordStrength } from '@/shared/ui/password-strength.tsx';
 import { UnsavedChangesDialog } from '@/shared/ui/unsaved-changes-dialog.tsx';
 import { useUpdateAccount } from '../api/index.ts';
 

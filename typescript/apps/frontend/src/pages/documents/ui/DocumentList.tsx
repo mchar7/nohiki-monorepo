@@ -15,7 +15,8 @@ import {
   usePullToRefresh,
 } from '@/shared/lib/index.ts';
 import { Button } from '@/shared/ui/button.tsx';
-import { PageDropZone, PageHeader } from '@/shared/ui/index.ts';
+import { PageHeader } from '@/shared/ui/PageHeader.tsx';
+import { PageDropZone } from '@/shared/ui/page-drop-zone.tsx';
 import { PendingMutationBadge } from '@/shared/ui/pending-mutation-badge.tsx';
 import { PullIndicator } from '@/shared/ui/pull-indicator.tsx';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs.tsx';

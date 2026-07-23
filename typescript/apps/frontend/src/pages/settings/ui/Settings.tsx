@@ -5,7 +5,7 @@ import { ROUTE_PATHS } from '@/shared/config/index.ts';
 import { useDocumentTitle } from '@/shared/lib/index.ts';
 import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert.tsx';
 import { Badge } from '@/shared/ui/badge.tsx';
-import { PageHeader } from '@/shared/ui/index.ts';
+import { PageHeader } from '@/shared/ui/PageHeader.tsx';
 import { Separator } from '@/shared/ui/separator.tsx';
 import { PageLayout } from '@/widgets/layout/index.ts';
 import { AboutSection } from './AboutSection.tsx';

@@ -14,7 +14,7 @@ vi.mock('@/shared/lib/index.ts', () => ({
   useIsMobileLayout: () => false,
 }));
 vi.mock('@/shared/ui/unsaved-changes-dialog.tsx', () => ({ UnsavedChangesDialog: () => null }));
-vi.mock('@/shared/ui/index.ts', () => ({
+vi.mock('@/shared/ui/PageHeader.tsx', () => ({
   PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }));
 vi.mock('@/widgets/layout/index.ts', () => ({

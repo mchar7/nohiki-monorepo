@@ -14,7 +14,8 @@ import { cn } from '@shared/lib/index.ts';
 /** Granularity (px) for rounding container width to reduce unnecessary re-renders */
 const CONTAINER_WIDTH_ROUND_STEP: number = 50;
 
-import { PanelEmptyState, PanelErrorState } from '@shared/ui/index.ts';
+import { PanelEmptyState } from '@shared/ui/panel-empty-state.tsx';
+import { PanelErrorState } from '@shared/ui/panel-error-state.tsx';
 import type { JSX } from 'react';
 import { useResizeObserver } from '@/shared/lib/index.ts';
 import { TemplateJsWarning } from '@/shared/ui/TemplateJsWarning.tsx';

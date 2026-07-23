@@ -1,4 +1,4 @@
-import { PanelHeader } from '@shared/ui/index.ts';
+import { PanelHeader } from '@shared/ui/panel-header.tsx';
 
 /** Width threshold (px) below which the header switches to compact mode */
 const COMPACT_MODE_THRESHOLD_PX: number = 600;

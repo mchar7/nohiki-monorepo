@@ -1,7 +1,8 @@
 import { closestCenter, DndContext, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Button, Card } from '@shared/ui/index.ts';
+import { Button } from '@shared/ui/button.tsx';
+import { Card } from '@shared/ui/card.tsx';
 import { GripVertical, Trash2 } from 'lucide-react';
 import type { JSX } from 'react';
 import type { Control } from 'react-hook-form';

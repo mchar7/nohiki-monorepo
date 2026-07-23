@@ -4,7 +4,8 @@ import { type JSX, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ROUTE_PATHS } from '@/shared/config';
-import { Button, Card, CardContent } from '@/shared/ui/index.ts';
+import { Button } from '@/shared/ui/button.tsx';
+import { Card, CardContent } from '@/shared/ui/card.tsx';
 
 interface DashboardNewMatchesBannerProps {
   readonly newMatchCount: number;

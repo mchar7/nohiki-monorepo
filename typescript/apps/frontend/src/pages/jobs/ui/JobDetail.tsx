@@ -13,7 +13,7 @@ import { ROUTE_PATHS } from '@/shared/config/index.ts';
 import { useDocumentTitle } from '@/shared/lib/index.ts';
 import { Button } from '@/shared/ui/button.tsx';
 import { Card, CardContent } from '@/shared/ui/card.tsx';
-import { PageHeader } from '@/shared/ui/index.ts';
+import { PageHeader } from '@/shared/ui/PageHeader.tsx';
 import { PageLayout } from '@/widgets/layout/index.ts';
 
 function JobDetail(): JSX.Element {

@@ -7,7 +7,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@shared/ui/index.ts';
+} from '@shared/ui/alert-dialog.tsx';
 import { AlertCircle, AlertTriangle, Info } from 'lucide-react';
 import type { JSX } from 'react';
 

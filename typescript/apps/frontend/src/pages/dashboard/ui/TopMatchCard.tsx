@@ -4,7 +4,9 @@ import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ROUTE_PATHS } from '@/shared/config';
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/index.ts';
+import { Badge } from '@/shared/ui/badge.tsx';
+import { Button } from '@/shared/ui/button.tsx';
+import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card.tsx';
 import { getScoreClassName } from '../lib/utils.ts';
 import type { TopMatchCardProps } from './Dashboard.types.ts';
 

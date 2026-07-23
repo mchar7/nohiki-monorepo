@@ -1,7 +1,7 @@
 import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Card, CardContent } from '@/shared/ui/index.ts';
+import { Card, CardContent } from '@/shared/ui/card.tsx';
 import type { OnboardingWelcomeProps } from './Dashboard.types.ts';
 
 function OnboardingWelcome({ displayName, firstName }: OnboardingWelcomeProps): JSX.Element {

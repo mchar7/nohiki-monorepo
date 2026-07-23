@@ -1,4 +1,4 @@
-import { Button } from '@shared/ui/index.ts';
+import { Button } from '@shared/ui/button.tsx';
 import type { JSX } from 'react';
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

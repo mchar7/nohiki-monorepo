@@ -1,5 +1,6 @@
 import { config } from '@shared/config/index.ts';
-import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@shared/ui/index.ts';
+import { Button } from '@shared/ui/button.tsx';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@shared/ui/tooltip.tsx';
 import type { JSX } from 'react';
 
 interface ConditionalTooltipButtonProps extends React.ComponentProps<typeof Button> {

@@ -1,4 +1,5 @@
-import { Button, Dialog, DialogContent, DialogHeader, DialogTitle } from '@shared/ui/index.ts';
+import { Button } from '@shared/ui/button.tsx';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@shared/ui/dialog.tsx';
 import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useResizeObserver } from '@/shared/lib/index.ts';

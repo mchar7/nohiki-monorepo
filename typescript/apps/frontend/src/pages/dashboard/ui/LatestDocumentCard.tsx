@@ -5,7 +5,9 @@ import { useTranslation } from 'react-i18next';
 
 import { ROUTE_PATHS } from '@/shared/config';
 import { getSafeGeneratedDocumentUrl } from '@/shared/lib';
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/index.ts';
+import { Badge } from '@/shared/ui/badge.tsx';
+import { Button } from '@/shared/ui/button.tsx';
+import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card.tsx';
 import type { LatestDocumentCardProps } from './Dashboard.types.ts';
 
 /** Returns a styled badge element for the given document processing status. */
