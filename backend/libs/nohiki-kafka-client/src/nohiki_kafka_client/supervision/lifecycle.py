@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
 from nohiki_observability import get_logger
 
-from nohiki_kafka_client.admin import KafkaAdmin
 from nohiki_kafka_client.config import KafkaClientConfig
 from nohiki_kafka_client.utils.broker_check import check_broker_connectivity
 
@@ -27,6 +26,8 @@ DEFAULT_STARTUP_RETRY_INTERVAL_SECONDS = 2
 DEFAULT_HEALTH_CHECK_INTERVAL_SECONDS = 30
 DEFAULT_RECONNECT_BACKOFF_SECONDS = 5
 DEFAULT_MAX_RECONNECT_BACKOFF_SECONDS = 60
+type MonotonicClock = Callable[[], float]
+type AsyncSleeper = Callable[[float], Awaitable[None]]
 
 
 class KafkaConnectionState(StrEnum):
@@ -110,24 +111,33 @@ class KafkaLifecycleManager:
         "_config",
         "_health_state",
         "_lock",
+        "_monotonic",
+        "_sleep",
     )
 
     def __init__(
         self,
         bootstrap_servers: str,
         config: KafkaLifecycleConfig | None = None,
+        *,
+        monotonic: MonotonicClock = time.perf_counter,
+        sleep: AsyncSleeper = asyncio.sleep,
     ) -> None:
         """Initialize lifecycle manager.
 
         Args:
             bootstrap_servers: Kafka bootstrap servers address.
             config: Lifecycle configuration (timeouts, backoff, etc.).
+            monotonic: Monotonic clock used to enforce startup timeout.
+            sleep: Async sleeper used between connectivity attempts.
 
         """
         self._bootstrap_servers = bootstrap_servers
         self._config = config or KafkaLifecycleConfig()
         self._health_state = KafkaHealthState()
         self._lock = asyncio.Lock()
+        self._monotonic = monotonic
+        self._sleep = sleep
 
     @property
     def health_state(self) -> KafkaHealthState:
@@ -210,7 +220,7 @@ class KafkaLifecycleManager:
         """
         self._health_state.state = KafkaConnectionState.CONNECTING
 
-        start_time = time.perf_counter()
+        start_time = self._monotonic()
         timeout = self._config.startup_timeout_seconds
         retry_interval = self._config.startup_retry_interval_seconds
 
@@ -221,12 +231,12 @@ class KafkaLifecycleManager:
         )
 
         attempt = 0
-        while (time.perf_counter() - start_time) < timeout:
+        while (self._monotonic() - start_time) < timeout:
             attempt += 1
             connected = await self.check_connectivity()
 
             if connected:
-                elapsed = time.perf_counter() - start_time
+                elapsed = self._monotonic() - start_time
                 logger.info(
                     "Kafka is available",
                     bootstrap_servers=self._bootstrap_servers,
@@ -236,7 +246,7 @@ class KafkaLifecycleManager:
                 )
                 return True
 
-            remaining = timeout - (time.perf_counter() - start_time)
+            remaining = timeout - (self._monotonic() - start_time)
             if remaining > 0:
                 wait_time = min(retry_interval, remaining)
                 logger.debug(
@@ -245,10 +255,10 @@ class KafkaLifecycleManager:
                     error=self._health_state.last_error,
                     retry_in_seconds=wait_time,
                 )
-                await asyncio.sleep(wait_time)
+                await self._sleep(wait_time)
 
         # Timeout reached
-        elapsed = time.perf_counter() - start_time
+        elapsed = self._monotonic() - start_time
         self._health_state.state = KafkaConnectionState.FAILED
 
         error_msg = f"Kafka unavailable after {elapsed:.1f}s ({attempt} attempts): {self._health_state.last_error}"
@@ -371,6 +381,8 @@ async def _validate_required_topics(
         RuntimeError: If any required topics are missing.
 
     """
+    from nohiki_kafka_client.admin import KafkaAdmin  # noqa: PLC0415
+
     config = KafkaClientConfig(bootstrap_servers=bootstrap_servers)
     async with KafkaAdmin(config) as admin:
         existing = frozenset(await admin.list_topics(include_internal=True))
