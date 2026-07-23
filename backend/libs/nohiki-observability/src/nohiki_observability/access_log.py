@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from .observability import get_logger
+from .logger import get_logger
 
 if TYPE_CHECKING:
     from fastapi import Request, Response

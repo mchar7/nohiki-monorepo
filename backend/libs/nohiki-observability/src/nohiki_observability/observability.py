@@ -38,7 +38,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 
 from .builder import ObservabilityBuilder
 from .config import ObservabilityOptions
-from .logger import Logger
+from .logger import Logger, get_logger
 from .processors import (
     ServiceInfoProcessor,
     add_correlation_id,
@@ -181,7 +181,7 @@ class Observability:
 
     def get_logger(self, name: str) -> Logger:
         """Get a structured logger instance."""
-        return Logger(structlog.get_logger(name))
+        return get_logger(name)
 
     @property
     def options(self) -> ObservabilityOptions:
@@ -508,20 +508,3 @@ class Observability:
             W3CBaggagePropagator(),
         ]
         set_global_textmap(CompositePropagator(propagators))
-
-
-def get_logger(name: str) -> Logger:
-    """Get a structured logger instance.
-
-    This is a convenience function that can be used before Observability.init()
-    is called, though the logger will have limited functionality until
-    observability is properly initialized.
-
-    Args:
-        name: Logger name (typically __name__).
-
-    Returns:
-        Logger instance for structured logging.
-
-    """
-    return Logger(structlog.get_logger(name))

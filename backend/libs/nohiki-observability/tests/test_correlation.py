@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 
 import httpx
 import pytest
@@ -14,6 +15,16 @@ from nohiki_observability import (
     set_correlation_id,
 )
 from nohiki_observability.correlation import _correlation_id_ctx_var
+
+
+@pytest.fixture(autouse=True)
+def reset_correlation_id() -> Iterator[None]:
+    """Restore the correlation ID after each test."""
+    token = _correlation_id_ctx_var.set(None)
+    try:
+        yield
+    finally:
+        _correlation_id_ctx_var.reset(token)
 
 
 @pytest.fixture
@@ -211,13 +222,18 @@ class TestCorrelationIdWithoutFastAPI:
             if mod_name in blocked or mod_name.startswith(("fastapi.", "starlette.")):
                 saved[mod_name] = sys.modules.pop(mod_name)
         saved["nohiki_observability.correlation"] = sys.modules.pop("nohiki_observability.correlation", None)
+        saved["nohiki_observability._correlation_middleware"] = sys.modules.pop(
+            "nohiki_observability._correlation_middleware", None
+        )
 
         blocker = _Blocker()
         sys.meta_path.insert(0, blocker)
         try:
             mod = importlib.import_module("nohiki_observability.correlation")
-            assert mod._FASTAPI_AVAILABLE is False
+            assert "nohiki_observability._correlation_middleware" not in sys.modules
             middleware_cls = mod.CorrelationIdMiddleware
+            middleware_mod = sys.modules["nohiki_observability._correlation_middleware"]
+            assert middleware_mod._FASTAPI_AVAILABLE is False
             with pytest.raises(ImportError, match="FastAPI not installed"):
                 middleware_cls()
         finally:
