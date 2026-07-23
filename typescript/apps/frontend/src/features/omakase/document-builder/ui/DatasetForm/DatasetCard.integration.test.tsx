@@ -82,7 +82,7 @@ describe('DatasetCard (integration)', () => {
       <DatasetCard dataset={mockDataset} template={mockTemplateFamily} onEdit={onEdit} />,
     );
 
-    await user.click(screen.getByRole('button', { name: /Dataset: My Resume/ }));
+    await user.click(screen.getByRole('button', { name: /Dataset: My Resume/u }));
     expect(onEdit).toHaveBeenCalledWith(mockDataset);
 
     onEdit.mockClear();

@@ -17,9 +17,7 @@ describe('TemplateJsWarning', () => {
     expect(
       screen.getByRole('heading', { name: 'JavaScript Template Warning' }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText('Reason: Needed for dynamic content generation'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Reason: Needed for dynamic content generation')).toBeInTheDocument();
     expect(
       screen.getByRole('checkbox', { name: 'Don\'t ask again for "Test Template@1.0.0"' }),
     ).toBeInTheDocument();

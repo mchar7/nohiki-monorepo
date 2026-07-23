@@ -91,4 +91,3 @@ animStyle.textContent = [
   '}',
 ].join('\n');
 document.head.appendChild(animStyle);
-

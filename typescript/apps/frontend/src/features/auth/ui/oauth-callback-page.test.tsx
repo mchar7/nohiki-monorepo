@@ -37,10 +37,7 @@ vi.mock('react-i18next', async (importOriginal) => {
     ...actual,
     useTranslation: () => ({
       t: (key: string, options?: string | Record<string, unknown>) => {
-        if (
-          typeof options === 'object' &&
-          typeof options.provider === 'string'
-        ) {
+        if (typeof options === 'object' && typeof options.provider === 'string') {
           return `${key}:${options.provider}`;
         }
         return key;
@@ -217,7 +214,6 @@ describe('OAuthCallbackPage error display', () => {
 
     expect(mockNavigate).toHaveBeenCalledWith({ to: '/auth', replace: true });
   });
-
 });
 
 describe('OAuthCallbackPage error codes', () => {
@@ -256,19 +252,16 @@ describe('OAuthCallbackPage error codes', () => {
       expectedMessage: 'oauth.errors.serverError',
       provider: 'google',
     },
-  ])(
-    'maps $errorCode to $expectedMessage and identifies $provider',
-    ({ errorCode, expectedMessage, provider }) => {
-      setupMocks({ error: errorCode, provider });
-      render(<OAuthCallbackPage />);
+  ])('maps $errorCode to $expectedMessage and identifies $provider', ({
+    errorCode,
+    expectedMessage,
+    provider,
+  }) => {
+    setupMocks({ error: errorCode, provider });
+    render(<OAuthCallbackPage />);
 
-      expect(screen.getByText(expectedMessage)).toBeInTheDocument();
-      expect(
-        screen.getByText(`oauth.callback.errorDescription:${provider}`),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: 'oauth.callback.tryAgain' }),
-      ).toBeInTheDocument();
-    },
-  );
+    expect(screen.getByText(expectedMessage)).toBeInTheDocument();
+    expect(screen.getByText(`oauth.callback.errorDescription:${provider}`)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'oauth.callback.tryAgain' })).toBeInTheDocument();
+  });
 });
