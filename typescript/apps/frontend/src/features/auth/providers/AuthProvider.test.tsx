@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useLocation } from '@tanstack/react-router';
-import { act, render, waitFor } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import type { JSX, ReactNode } from 'react';
 import { beforeEach, describe, expect, vi } from 'vitest';
 import type { SessionResponse } from '@/shared/api';
@@ -56,11 +56,7 @@ async function renderAuthTest(
     </QueryClientProvider>,
     path,
   );
-  const result = render(jsx);
-  await act(async () => {
-    /* wait for effects */
-  });
-  return result;
+  return render(jsx);
 }
 
 describe('AuthProvider rendering', () => {

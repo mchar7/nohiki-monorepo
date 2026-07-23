@@ -1,93 +1,88 @@
-import { describe, expect, vi } from 'vitest';
-import { nonNull } from '@/shared/test-utils';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, vi } from 'vitest';
+import type { UsePreviewPaneReturn } from '../../lib/previewPaneHelpers.ts';
+import { usePreviewPane } from '../../lib/usePreviewPane.ts';
+import { PreviewPane } from './PreviewPane.tsx';
 
-/** 2 render methods x 2 choices (remember/don't remember) */
-const EXPECTED_MOCK_CALLS: number = 4;
-
-// Mock the PreviewPane and its dependencies
-vi.mock('../PreviewPane', () => ({
-  PreviewPane: vi.fn(() => null),
+vi.mock('../../lib/usePreviewPane.ts', () => ({
+  usePreviewPane: vi.fn(),
 }));
 
-vi.mock('../../hooks/useTemplateJsWarning', () => ({
-  useTemplateJsWarning: vi.fn(() => ({
-    showWarning: false,
+const mockHandleJsChoice =
+  vi.fn<(method: 'html' | 'image', remember: boolean) => void>();
+
+const mockPreviewState: UsePreviewPaneReturn = {
+  htmlUrl: null,
+  imageUrl: null,
+  isGenerating: false,
+  isGeneratingPreview: false,
+  isGeneratingImage: false,
+  hasPreview: false,
+  error: null,
+  clearError: vi.fn(),
+  generatePreview: vi.fn().mockResolvedValue(undefined),
+  clearPreview: vi.fn(),
+  revokeHtmlUrl: vi.fn(),
+  revokeImageUrl: vi.fn(),
+  downloadPdf: vi.fn().mockResolvedValue(undefined),
+  renderMethod: 'html',
+  setRenderMethod: vi.fn(),
+  jsWarning: {
+    showWarning: true,
     templateName: 'Test Template',
     templateVersion: '1.0.0',
-    reason: 'For dynamic content',
-    checkJsRequirement: vi.fn(),
-    handleJsChoice: vi.fn(),
-  })),
-}));
+    reason: 'Dynamic content generation',
+    handleJsChoice: mockHandleJsChoice,
+  },
+};
 
-describe('PreviewPane JS Integration - basics', () => {
-  test('integrates JavaScript warning functionality', () => {
-    expect(true).toBe(true);
+describe('PreviewPane JavaScript warning integration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(usePreviewPane).mockReturnValue(mockPreviewState);
   });
 
-  test('handles template with JavaScript requirements', () => {
-    const template = {
-      id: 'template-1',
-      name: 'JS Template',
-      version: '1.0.0',
-      requiresJavaScript: {
-        required: true,
-        reason: 'For dynamic content generation',
-      },
-    };
+  test('renders warning details supplied by the preview hook', () => {
+    render(<PreviewPane showHeader={false} templateId="template-1" />);
 
-    expect(template.requiresJavaScript.required).toBe(true);
-    expect(template.requiresJavaScript.reason).toBe('For dynamic content generation');
-  });
-});
-
-describe('PreviewPane JS Integration - choices', () => {
-  test('handles render method choices', () => {
-    const renderMethods = ['html', 'image'] as const;
-    const mockChoice = vi.fn();
-
-    for (const method of renderMethods) {
-      mockChoice(method, false); // Don't remember
-      mockChoice(method, true); // Remember choice
-    }
-
-    expect(mockChoice).toHaveBeenCalledTimes(EXPECTED_MOCK_CALLS);
-    expect(mockChoice).toHaveBeenCalledWith('html', false);
-    expect(mockChoice).toHaveBeenCalledWith('html', true);
-    expect(mockChoice).toHaveBeenCalledWith('image', false);
-    expect(mockChoice).toHaveBeenCalledWith('image', true);
+    expect(
+      screen.getByRole('heading', { name: 'JavaScript Template Warning' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Reason: Dynamic content generation')).toBeInTheDocument();
+    expect(
+      screen.getByRole('checkbox', { name: 'Don\'t ask again for "Test Template@1.0.0"' }),
+    ).toBeInTheDocument();
   });
 
-  test('validates JavaScript badge display logic', () => {
-    const templates = [
-      { id: '1', name: 'Regular Template', requiresJavaScript: { required: false } },
-      {
-        id: '2',
-        name: 'JS Template',
-        requiresJavaScript: { required: true, reason: 'Dynamic content' },
-      },
-    ];
-
-    const templatesWithJs = templates.filter((t) => t.requiresJavaScript?.required);
-    const templatesWithoutJs = templates.filter((t) => !t.requiresJavaScript?.required);
-
-    expect(templatesWithJs).toHaveLength(1);
-    expect(templatesWithoutJs).toHaveLength(1);
-    expect(nonNull(templatesWithJs[0]).name).toBe('JS Template');
-    expect(nonNull(templatesWithoutJs[0]).name).toBe('Regular Template');
-  });
-
-  test('handles preference storage structure', () => {
-    const preference = {
-      templateId: 'template-1',
-      version: '1.0.0',
+  test.each([
+    {
+      buttonName: 'Render as Image (WebP)',
+      method: 'image' as const,
+      remember: false,
+    },
+    {
+      buttonName: 'Render Directly (HTML)',
       method: 'html' as const,
-      timestamp: Date.now(),
-    };
+      remember: true,
+    },
+  ])(
+    'passes the $method choice and remember preference through the component boundary',
+    async ({ buttonName, method, remember }) => {
+      const user = userEvent.setup();
+      render(<PreviewPane showHeader={false} templateId="template-1" />);
 
-    expect(preference.templateId).toBe('template-1');
-    expect(preference.version).toBe('1.0.0');
-    expect(preference.method).toBe('html');
-    expect(typeof preference.timestamp).toBe('number');
-  });
+      if (remember) {
+        await user.click(
+          screen.getByRole('checkbox', {
+            name: 'Don\'t ask again for "Test Template@1.0.0"',
+          }),
+        );
+      }
+      await user.click(screen.getByRole('button', { name: buttonName }));
+
+      expect(mockHandleJsChoice).toHaveBeenCalledOnce();
+      expect(mockHandleJsChoice).toHaveBeenCalledWith(method, remember);
+    },
+  );
 });

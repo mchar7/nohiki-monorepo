@@ -1,58 +1,62 @@
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, vi } from 'vitest';
+import { TemplateJsWarning } from './TemplateJsWarning.tsx';
 
-// Mock TemplateJsWarning component since we can't easily test React components without @testing-library/react
-vi.mock('./TemplateJsWarning', () => ({
-  TemplateJsWarning: vi.fn(() => null),
-}));
+const baseProps = {
+  open: true,
+  templateName: 'Test Template',
+  templateVersion: '1.0.0',
+  reason: 'Needed for dynamic content generation',
+};
 
 describe('TemplateJsWarning', () => {
-  test('is importable', () => {
-    // Basic test to ensure the module can be imported
-    expect(true).toBe(true);
+  test('renders the template warning details when open', () => {
+    render(<TemplateJsWarning {...baseProps} onChoice={vi.fn()} />);
+
+    expect(
+      screen.getByRole('heading', { name: 'JavaScript Template Warning' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Reason: Needed for dynamic content generation'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('checkbox', { name: 'Don\'t ask again for "Test Template@1.0.0"' }),
+    ).toBeInTheDocument();
   });
 
-  test('has correct props interface', () => {
-    // Test the expected props structure
-    const expectedProps = {
-      open: true,
-      templateName: 'Test Template',
-      templateVersion: '1.0.0',
-      reason: 'Needed for dynamic content generation',
-      onChoice: vi.fn(),
-    };
+  test('does not render warning content while closed', () => {
+    render(<TemplateJsWarning {...baseProps} open={false} onChoice={vi.fn()} />);
 
-    expect(expectedProps.open).toBe(true);
-    expect(expectedProps.templateName).toBe('Test Template');
-    expect(expectedProps.templateVersion).toBe('1.0.0');
-    expect(expectedProps.reason).toBe('Needed for dynamic content generation');
-    expect(typeof expectedProps.onChoice).toBe('function');
+    expect(
+      screen.queryByRole('heading', { name: 'JavaScript Template Warning' }),
+    ).not.toBeInTheDocument();
   });
 
-  test('handles choice callback function', () => {
-    const mockOnChoice = vi.fn();
+  test('chooses image rendering without remembering by default', async () => {
+    const user = userEvent.setup();
+    const onChoice = vi.fn();
+    render(<TemplateJsWarning {...baseProps} onChoice={onChoice} />);
 
-    // Simulate calling the choice callback
-    mockOnChoice('html', false);
-    mockOnChoice('image', true);
+    await user.click(screen.getByRole('button', { name: 'Render as Image (WebP)' }));
 
-    expect(mockOnChoice).toHaveBeenCalledWith('html', false);
-    expect(mockOnChoice).toHaveBeenCalledWith('image', true);
-    expect(mockOnChoice).toHaveBeenCalledTimes(2);
+    expect(onChoice).toHaveBeenCalledOnce();
+    expect(onChoice).toHaveBeenCalledWith('image', false);
   });
 
-  test('handles different render methods', () => {
-    const renderMethods = ['html', 'image'] as const;
+  test('passes the remember preference and resets it after choosing HTML', async () => {
+    const user = userEvent.setup();
+    const onChoice = vi.fn();
+    render(<TemplateJsWarning {...baseProps} onChoice={onChoice} />);
+    const rememberCheckbox = screen.getByRole('checkbox', {
+      name: 'Don\'t ask again for "Test Template@1.0.0"',
+    });
 
-    for (const method of renderMethods) {
-      expect(['html', 'image']).toContain(method);
-    }
-  });
+    await user.click(rememberCheckbox);
+    await user.click(screen.getByRole('button', { name: 'Render Directly (HTML)' }));
 
-  test('handles remember choice option', () => {
-    const rememberOptions = [true, false];
-
-    for (const remember of rememberOptions) {
-      expect(typeof remember).toBe('boolean');
-    }
+    expect(onChoice).toHaveBeenCalledOnce();
+    expect(onChoice).toHaveBeenCalledWith('html', true);
+    expect(rememberCheckbox).not.toBeChecked();
   });
 });

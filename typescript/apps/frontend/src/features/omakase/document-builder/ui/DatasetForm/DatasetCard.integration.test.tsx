@@ -1,5 +1,6 @@
 import type { RenderResult } from '@testing-library/react';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type React from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
@@ -74,28 +75,48 @@ describe('DatasetCard (integration)', () => {
     expect(screen.getByText('My Resume')).toBeInTheDocument();
   });
 
-  test('handles edit action correctly', async () => {
+  test('passes the dataset to edit from both card and menu actions', async () => {
+    const user = userEvent.setup();
     const onEdit = vi.fn();
     await renderInWrapper(
       <DatasetCard dataset={mockDataset} template={mockTemplateFamily} onEdit={onEdit} />,
     );
-    expect(onEdit).toBeDefined();
-    expect(screen.getByText('My Resume')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Dataset: My Resume/ }));
+    expect(onEdit).toHaveBeenCalledWith(mockDataset);
+
+    onEdit.mockClear();
+    await user.click(screen.getByRole('button', { name: 'More options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Edit Dataset' }));
+    expect(onEdit).toHaveBeenCalledOnce();
+    expect(onEdit).toHaveBeenCalledWith(mockDataset);
   });
 
-  test('handles delete callback', async () => {
+  test('passes the dataset to the delete menu action', async () => {
+    const user = userEvent.setup();
     const onDelete = vi.fn();
     await renderInWrapper(
       <DatasetCard dataset={mockDataset} template={mockTemplateFamily} onDelete={onDelete} />,
     );
-    expect(onDelete).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: 'More options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+
+    expect(onDelete).toHaveBeenCalledOnce();
+    expect(onDelete).toHaveBeenCalledWith(mockDataset);
   });
 
-  test('handles duplicate callback', async () => {
+  test('passes the dataset to the duplicate menu action', async () => {
+    const user = userEvent.setup();
     const onDuplicate = vi.fn();
     await renderInWrapper(
       <DatasetCard dataset={mockDataset} template={mockTemplateFamily} onDuplicate={onDuplicate} />,
     );
-    expect(onDuplicate).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: 'More options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Duplicate' }));
+
+    expect(onDuplicate).toHaveBeenCalledOnce();
+    expect(onDuplicate).toHaveBeenCalledWith(mockDataset);
   });
 });
