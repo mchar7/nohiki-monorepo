@@ -16,23 +16,30 @@ def render_cache(tmp_path_factory: pytest.TempPathFactory) -> RenderCache:
     return RenderCache(session_directory / "nohiki-render-cache")
 
 
-# Hook-time git exports (GIT_DIR, GIT_INDEX_FILE, ...) override cwd-based
-# repository discovery, so scratch-repo git calls in tests would silently
-# target the real repository when the suite runs inside a lefthook hook.
+# Git exports repository-discovery env vars (GIT_DIR, GIT_WORK_TREE, ...) to hooks;
+# under a pre-push hook these override cwd-based discovery, so a scratch-repo `git init`
+# would silently target the real repository and re-initialize it as bare. The scrub is
+# SESSION-scoped so it runs before every fixture -- including module-scoped ones (e.g. the
+# cluster-reset harness) that shell out to git during setup, which a function-scoped
+# fixture would run too late to protect.
 _GIT_DISCOVERY_ENV = (
     "GIT_DIR",
     "GIT_INDEX_FILE",
     "GIT_WORK_TREE",
     "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
     "GIT_PREFIX",
 )
 
 
-@pytest.fixture(autouse=True)
-def _scrub_git_discovery_env(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture(scope="session", autouse=True)
+def _scrub_git_discovery_env() -> Iterator[None]:
+    patch = pytest.MonkeyPatch()
     for name in _GIT_DISCOVERY_ENV:
-        monkeypatch.delenv(name, raising=False)
+        patch.delenv(name, raising=False)
+    yield
+    patch.undo()
 
 
 @pytest.fixture(scope="session", autouse=True)
