@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fnmatch
 import json
 import re
 import shlex
@@ -13,7 +12,7 @@ from typing import Any
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
-_DEPENDABOT = _ROOT / ".github" / "dependabot.yml"
+_RENOVATE = _ROOT / ".github" / "renovate.json5"
 _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _WORKFLOWS = _ROOT / ".github" / "workflows"
 _FLAKE = _ROOT / "flake.nix"
@@ -99,22 +98,10 @@ def _images(path: Path, repository: str) -> list[re.Match[str]]:
     return [match for match in _IMAGE.finditer(_read_text(path)) if match["repository"] == repository]
 
 
-def _dependabot_entries() -> dict[str, list[dict[str, Any]]]:
-    entries: dict[str, list[dict[str, Any]]] = {}
-    for update in _load_yaml(_DEPENDABOT)["updates"]:
-        entries.setdefault(update["package-ecosystem"], []).append(update)
-    return entries
-
-
-def _configured_directories(entry: dict[str, Any]) -> list[str]:
-    directories = entry.get("directories")
-    if directories is None:
-        directories = [entry["directory"]]
-    return [directory.removeprefix("/") or "." for directory in directories]
-
-
-def _is_covered(relative_directory: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatchcase(relative_directory, pattern) for pattern in patterns)
+def _renovate_config() -> dict[str, Any]:
+    value = json.loads(_read_text(_RENOVATE))
+    assert isinstance(value, dict), _RENOVATE
+    return value
 
 
 def _assert_cpu_development_sync(command: str) -> None:
@@ -399,77 +386,62 @@ def test_strimzi_and_kafka_versions_are_aligned() -> None:
     assert '$glob.kafka.version | default "4.3.0"' in template
 
 
-def test_dependabot_covers_every_active_dependency_ecosystem_and_root() -> None:
-    entries = _dependabot_entries()
-    required = {
-        "github-actions",
-        "uv",
+def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
+    assert _RENOVATE.is_file()
+    assert not (_ROOT / ".github" / "dependabot.yml").exists()
+
+    config = _renovate_config()
+    required_managers = {
         "npm",
-        "docker",
+        "pep621",
+        "github-actions",
+        "dockerfile",
         "docker-compose",
-        "helm",
-        "terraform",
+        "helmv3",
+        "helm-values",
+        "flux",
+        "kubernetes",
+        "nix",
     }
-    assert required <= entries.keys()
+    assert required_managers <= set(config["enabledManagers"])
+    assert config["nix"] == {"enabled": True}
+    assert config["automerge"] is False
+    assert config["minimumReleaseAge"] == "3 days"
+    assert config["prConcurrentLimit"] == 2
+    assert ":semanticCommitTypeAll(chore)" in config["extends"]
+    assert config["ignorePaths"] == [
+        "**/node_modules/**",
+        "**/bower_components/**",
+        "**/vendor/**",
+        "**/examples/**",
+        "**/__tests__/**",
+        "**/test/**",
+        "**/tests/**/!(Dockerfile.api-runner)",
+        "**/__fixtures__/**",
+    ]
+    assert config["helm-values"]["managerFilePatterns"] == [
+        r"/^infra\/k8s\/.+\/values\.ya?ml$/",
+        r"/^infra\/k8s\/helm\/values\.local\.ya?ml$/",
+    ]
+    assert "custom.regex" not in config["enabledManagers"]
+    assert "customManagers" not in config
 
-    assert _configured_directories(entries["github-actions"][0]) == ["."]
-    assert _configured_directories(entries["npm"][0]) == ["."]
+    rules = config["packageRules"]
+    major_rule = next(rule for rule in rules if rule.get("matchUpdateTypes") == ["major"])
+    assert major_rule["dependencyDashboardApproval"] is True
 
-    root_project = tomllib.loads(_read_text(_ROOT_PROJECT))
-    workspace_members = set(root_project["tool"]["uv"]["workspace"]["members"])
-    all_python_roots = {
-        str(path.parent.relative_to(_ROOT))
-        for path in _ROOT.glob("**/pyproject.toml")
-        if not any(part.startswith(".") or part == "node_modules" for part in path.relative_to(_ROOT).parts)
-    }
-    standalone_python_roots = all_python_roots - workspace_members - {"."}
-    uv_patterns = [pattern for entry in entries["uv"] for pattern in _configured_directories(entry)]
-    assert "." in uv_patterns
-    assert not (
-        uncovered_uv := sorted(root for root in standalone_python_roots if not _is_covered(root, uv_patterns))
-    ), f"Dependabot uv coverage is missing standalone projects: {uncovered_uv}"
-
-    docker_roots = {
-        str(path.parent.relative_to(_ROOT))
-        for path in [
-            *_ROOT.glob("backend/services/*/Dockerfile"),
-            *_ROOT.glob("backend/jobs/*/Dockerfile"),
-            _KAFKA_DOCKERFILE,
-            _ROOT / "infra" / "shared" / "qdrant-init" / "Dockerfile",
-        ]
-    }
-    docker_patterns = [pattern for entry in entries["docker"] for pattern in _configured_directories(entry)]
-    assert docker_roots
-    assert not (uncovered := sorted(root for root in docker_roots if not _is_covered(root, docker_patterns))), (
-        f"Dependabot docker coverage is missing: {uncovered}"
+    grouped_ecosystems = (
+        {"npm"},
+        {"pep621"},
+        {"github-actions"},
+        {"dockerfile", "docker-compose"},
+        {"helmv3", "helm-values", "flux", "kubernetes"},
+        {"nix"},
     )
-
-    ecosystem_roots = {
-        "docker-compose": {
-            str(path.parent.relative_to(_ROOT)) for path in (_ROOT / "infra" / "compose").glob("docker-compose*.yml")
-        },
-        "helm": {str((_ROOT / "infra" / "k8s" / "helm").relative_to(_ROOT))},
-        "terraform": {str(path.parent.relative_to(_ROOT)) for path in (_ROOT / "infra" / "terraform").glob("*.tf")},
-    }
-    for ecosystem, roots in ecosystem_roots.items():
-        patterns = [pattern for entry in entries[ecosystem] for pattern in _configured_directories(entry)]
-        assert roots
-        assert all(_is_covered(root, patterns) for root in roots), (
-            f"{ecosystem}: roots={sorted(roots)}, patterns={patterns}"
-        )
-
-
-def test_dependabot_batches_every_ecosystem_on_the_same_weekly_schedule() -> None:
-    entries = _dependabot_entries()
-    updates = [update for ecosystem_entries in entries.values() for update in ecosystem_entries]
-    assert updates
-
-    for update in updates:
-        assert update["schedule"] == {"interval": "weekly", "day": "monday"}
-        assert update["rebase-strategy"] == "disabled"
-        groups = update["groups"]
-        assert len(groups) == 1
-        assert next(iter(groups.values())) == {"patterns": ["*"]}
+    for managers in grouped_ecosystems:
+        rule = next(rule for rule in rules if set(rule.get("matchManagers", [])) == managers)
+        assert {"minor", "patch"} <= set(rule["matchUpdateTypes"])
+        assert rule["groupName"]
 
 
 def test_remote_kubernetes_manifests_are_versioned_and_checksum_verified_before_apply() -> None:
