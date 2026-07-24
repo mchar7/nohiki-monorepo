@@ -320,7 +320,7 @@ class TestCircuitBreakerOpensAfterFailures:
 
         @circuit_breaker(
             "test-no-fallback",
-            config=CircuitBreakerConfig(failure_threshold=1, timeout_seconds=60),
+            config=CircuitBreakerConfig(failure_threshold=1, timeout_seconds=3600),
         )
         async def failing_func() -> str:
             raise SimulatedError(ERR_FAIL)
@@ -347,7 +347,7 @@ class TestCircuitBreakerFallback:
 
         @circuit_breaker(
             "test-static-fallback",
-            config=CircuitBreakerConfig(failure_threshold=1),
+            config=CircuitBreakerConfig(failure_threshold=1, timeout_seconds=3600),
             fallback={"status": "unavailable"},
         )
         async def failing_func() -> dict[str, str]:
@@ -372,7 +372,7 @@ class TestCircuitBreakerFallback:
 
         @circuit_breaker(
             "test-sync-fallback",
-            config=CircuitBreakerConfig(failure_threshold=1),
+            config=CircuitBreakerConfig(failure_threshold=1, timeout_seconds=3600),
             fallback=sync_fallback,
         )
         async def failing_func() -> str:

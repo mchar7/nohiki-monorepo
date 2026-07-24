@@ -128,7 +128,7 @@ class TestCircuitBreakerOpenState:
     @pytest.mark.asyncio
     async def test_open_circuit_returns_fallback_without_calling_function(self) -> None:
         """Open circuit should return fallback immediately without calling function."""
-        config = CircuitBreakerConfig(failure_threshold=1, timeout_seconds=60)
+        config = CircuitBreakerConfig(failure_threshold=1, timeout_seconds=3600)
         cb = CircuitBreaker("test", config)
 
         # Open the circuit
@@ -459,7 +459,7 @@ class TestCircuitBreakerIntegration:
     @pytest.mark.asyncio
     async def test_redis_cache_simulation(self) -> None:
         """Simulate Redis cache usage with circuit breaker."""
-        config = CircuitBreakerConfig(failure_threshold=2)
+        config = CircuitBreakerConfig(failure_threshold=2, timeout_seconds=3600)
         cb = CircuitBreaker("redis-sim", config)
 
         # Simulate Redis operations
@@ -575,7 +575,7 @@ class TestCircuitBreakerGetRetryAfter:
             "test",
             config=CircuitBreakerConfig(
                 failure_threshold=1,
-                timeout_seconds=60.0,
+                timeout_seconds=3600.0,
             ),
         )
 
