@@ -57,16 +57,20 @@ def _email_config() -> EmailConfig:
     )
 
 
-def _breaker_config(**overrides: object) -> CircuitBreakerConfig:
+def _breaker_config(
+    *,
+    failure_threshold: int = 2,
+    success_threshold: int = 1,
+    timeout_seconds: float = 3600.0,
+    half_open_max_calls: int = 1,
+) -> CircuitBreakerConfig:
     """Fast-tripping breaker config for tests."""
-    defaults: dict[str, object] = {
-        "failure_threshold": 2,
-        "success_threshold": 1,
-        "timeout_seconds": 0.05,
-        "half_open_max_calls": 1,
-    }
-    defaults.update(overrides)
-    return CircuitBreakerConfig(**defaults)  # type: ignore[arg-type]
+    return CircuitBreakerConfig(
+        failure_threshold=failure_threshold,
+        success_threshold=success_threshold,
+        timeout_seconds=timeout_seconds,
+        half_open_max_calls=half_open_max_calls,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -267,7 +271,7 @@ class TestBreakerIsolation:
         register_provider(NotificationChannel.EMAIL, _Fallback)
         configure_email_provider(_email_config(), "primary")
 
-        router = ProviderRouter(cb_config=_breaker_config(failure_threshold=2, timeout_seconds=60.0))
+        router = ProviderRouter(cb_config=_breaker_config(failure_threshold=2))
 
         # Two failures on primary trip its breaker; subsequent sends must
         # consistently route to the fallback without re-opening its breaker.
