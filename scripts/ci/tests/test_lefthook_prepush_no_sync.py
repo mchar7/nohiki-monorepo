@@ -5,7 +5,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
-import yaml
+from _documents import load_mapping
 
 _ROOT = Path(__file__).resolve().parents[3]
 _LEFTHOOK = _ROOT / "lefthook.yml"
@@ -28,7 +28,7 @@ def _uv_run_invocations(node: object) -> Iterator[str]:
             yield from _uv_run_invocations(child)
 
 
-def _named_mappings(node: object, name: str) -> Iterator[Mapping[str, object]]:
+def _named_mappings(node: object, name: str) -> Iterator[object]:
     if isinstance(node, Mapping):
         if node.get("name") == name:
             yield node
@@ -50,9 +50,7 @@ def _has_no_sync_after_every_run(command: str) -> bool:
 
 @pytest.fixture(scope="module")
 def lefthook_config() -> Mapping[str, object]:
-    config = yaml.safe_load(_LEFTHOOK.read_text(encoding="utf-8"))
-    assert isinstance(config, Mapping)
-    return config
+    return load_mapping(_LEFTHOOK)
 
 
 def test_hook_uv_runs_reuse_the_authoritative_workspace_environment(
@@ -62,7 +60,9 @@ def test_hook_uv_runs_reuse_the_authoritative_workspace_environment(
     config = lefthook_config
     python_test_jobs = tuple(_named_mappings(config.get("pre-push"), "python-tests"))
     assert len(python_test_jobs) == 1, "pre-push must define exactly one python-tests job"
-    python_tests_env = python_test_jobs[0].get("env")
+    python_test_job = python_test_jobs[0]
+    assert isinstance(python_test_job, Mapping)
+    python_tests_env = python_test_job.get("env")
     assert isinstance(python_tests_env, Mapping)
     assert python_tests_env.get("UV_NO_SYNC") == "1"
 
@@ -86,8 +86,37 @@ def test_pre_push_folds_fixture_gate_into_the_single_python_test_job(
     assert not tuple(_named_mappings(pre_push, "fixtures"))
     python_test_jobs = tuple(_named_mappings(pre_push, "python-tests"))
     assert len(python_test_jobs) == 1
-    assert "--unused-fixtures" not in str(python_test_jobs[0]["run"])
+    python_test_job = python_test_jobs[0]
+    assert isinstance(python_test_job, Mapping)
+    python_test_command = python_test_job.get("run")
+    assert isinstance(python_test_command, str)
+    assert "--unused-fixtures" not in python_test_command
 
     semgrep_jobs = tuple(_named_mappings(pre_push, "semgrep"))
     assert len(semgrep_jobs) == 1
-    assert str(semgrep_jobs[0]["run"]).startswith("env -u LD_LIBRARY_PATH uvx ")
+    semgrep_job = semgrep_jobs[0]
+    assert isinstance(semgrep_job, Mapping)
+    semgrep_command = semgrep_job.get("run")
+    assert isinstance(semgrep_command, str)
+    assert semgrep_command.startswith("env -u LD_LIBRARY_PATH uvx ")
+
+
+def _glob_entries(node: object) -> set[str]:
+    """Return the glob patterns declared by a lefthook job."""
+    assert isinstance(node, Mapping)
+    raw = node.get("glob")
+    if isinstance(raw, str):
+        return {raw}
+    assert isinstance(raw, list)
+    return {entry for entry in raw if isinstance(entry, str)}
+
+
+def test_python_push_lanes_cover_every_python_workspace_root(
+    lefthook_config: Mapping[str, object],
+) -> None:
+    typecheck = _glob_entries(next(iter(_named_mappings(lefthook_config, "python-typecheck"))))
+
+    for lane in ("python-tests", "deadcode", "deptry"):
+        covered = _glob_entries(next(iter(_named_mappings(lefthook_config, lane))))
+        missing = typecheck - covered
+        assert not missing, f"{lane} skips Python roots that python-typecheck covers: {sorted(missing)}"

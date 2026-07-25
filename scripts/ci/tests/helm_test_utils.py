@@ -2,21 +2,73 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import inspect
 import json
 import os
 import shutil
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
-from typing import cast
+from typing import Protocol, TypeIs
 
 import yaml
 
-_ORIGINAL_RUN = subprocess.run
+_ORIGINAL_RUN: object = subprocess.run
 _SAFE_LOADER = yaml.CSafeLoader if yaml.__with_libyaml__ else yaml.SafeLoader
 
 
 _RUNTIME_ENVIRONMENTS = {"dev", "staging", "prod"}
+
+
+class _SubprocessRunner(Protocol):
+    def __call__(
+        self,
+        command: Sequence[str | os.PathLike[str]],
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
+
+
+def _accepts_invocation(
+    value: object,
+    command: Sequence[str | os.PathLike[str]],
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> TypeIs[_SubprocessRunner]:
+    if not callable(value):
+        return False
+    try:
+        inspect.signature(value).bind(command, *args, **kwargs)
+    except TypeError, ValueError:
+        return False
+    return True
+
+
+def _is_completed_process(
+    result: object,
+) -> TypeIs[subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]]:
+    if not isinstance(result, subprocess.CompletedProcess):
+        return False
+    streams = (result.stdout, result.stderr)
+    return all(stream is None or isinstance(stream, str) for stream in streams) or all(
+        stream is None or isinstance(stream, bytes) for stream in streams
+    )
+
+
+def _run_original(
+    command: Sequence[str | os.PathLike[str]],
+    *args: object,
+    **kwargs: object,
+) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+    runner: object = _ORIGINAL_RUN
+    if not _accepts_invocation(runner, command, args, kwargs):
+        message = "subprocess.run cannot accept the requested invocation"
+        raise TypeError(message)
+    result = runner(command, *args, **kwargs)
+    if not _is_completed_process(result):
+        message = "subprocess.run must return text or bytes"
+        raise TypeError(message)
+    return result
 
 
 class RenderCache:
@@ -67,10 +119,7 @@ class RenderCache:
         **kwargs: object,
     ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
         """Drop-in subprocess.run wrapper caching only manifest render commands."""
-        passthrough = cast(
-            "Callable[..., subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]]",
-            _ORIGINAL_RUN,
-        )
+        passthrough = _run_original
         normalized = tuple(str(part) for part in command)
         if (
             not self._is_render(normalized)

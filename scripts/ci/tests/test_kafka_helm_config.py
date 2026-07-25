@@ -2,10 +2,20 @@
 
 import subprocess
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
 import yaml
+from _documents import (
+    ContainerEnv,
+    Manifest,
+    containers_of,
+    load_manifests,
+    load_mapping,
+    load_workflow,
+    mapping_at,
+    metadata_of,
+    string_at,
+)
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm"
@@ -55,20 +65,18 @@ _WAL_CONFIG = {
 
 
 def _digest_values(tmp_path: Path) -> Path:
-    workflow = cast(dict[str, Any], yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8")))
-    entries = cast(
-        list[dict[str, str]],
-        workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"],
-    )
+    workflow = load_workflow(_WORKFLOW)
+    entries = workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
     digests = {
-        f"{_FIRST_PARTY_PREFIX}{entry['name']}": f"sha256:{index + 1:064x}" for index, entry in enumerate(entries)
+        f"{_FIRST_PARTY_PREFIX}{string_at(entry, 'name')}": f"sha256:{index + 1:064x}"
+        for index, entry in enumerate(entries)
     }
     path = tmp_path / "values.prod.digests.yaml"
     path.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
     return path
 
 
-def _render_connectors(values_name: str, tmp_path: Path) -> tuple[dict[str, Any], ...]:
+def _render_connectors(values_name: str, tmp_path: Path) -> tuple[Manifest, ...]:
     environment = values_name.removeprefix("values.").removesuffix(".yaml")
     command = [
         "helm",
@@ -98,20 +106,14 @@ def _render_connectors(values_name: str, tmp_path: Path) -> tuple[dict[str, Any]
     elif values_name in {"values.dev.yaml", "values.staging.yaml"}:
         command.extend(("--values", str(_IDENTITY)))
     result = subprocess.run(command, check=True, capture_output=True, text=True)
-    return tuple(
-        document
-        for document in yaml.safe_load_all(result.stdout)
-        if isinstance(document, dict) and document.get("kind") == "KafkaConnector"
-    )
+    return tuple(document for document in load_manifests(result.stdout) if document["kind"] == "KafkaConnector")
 
 
-def _source_connectors(
-    documents: tuple[dict[str, Any], ...],
-) -> dict[str, dict[str, Any]]:
+def _source_connectors(documents: tuple[Manifest, ...]) -> dict[str, Manifest]:
     return {
-        document["metadata"]["name"]: document
+        metadata_of(document)["name"]: document
         for document in documents
-        if document["spec"]["class"] == "io.debezium.connector.postgresql.PostgresConnector"
+        if string_at(mapping_at(document, "spec"), "class") == "io.debezium.connector.postgresql.PostgresConnector"
     }
 
 
@@ -162,17 +164,19 @@ def test_synthetic_production_render_wires_every_kafka_app_to_event_hubs_secret(
         capture_output=True,
         text=True,
     )
-    documents = tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+    documents = load_manifests(result.stdout)
 
-    kafka_containers: list[tuple[str, list[dict[str, Any]]]] = []
+    kafka_containers: list[tuple[str, list[ContainerEnv]]] = []
     for document in documents:
-        pod_spec = document.get("spec", {}).get("template", {}).get("spec")
+        spec = document.get("spec")
+        template = spec.get("template") if isinstance(spec, dict) else None
+        pod_spec = template.get("spec") if isinstance(template, dict) else None
         if not pod_spec:
             continue
-        for container in pod_spec.get("containers", ()):
-            env = cast(list[dict[str, Any]], container.get("env") or [])
+        for container in containers_of(document):
+            env = container.get("env") or []
             if any(item["name"].endswith("KAFKA__DSN") for item in env):
-                kafka_containers.append((document["metadata"]["name"], env))
+                kafka_containers.append((metadata_of(document)["name"], env))
 
     assert kafka_containers, "production render must contain Kafka-enabled applications"
     for workload_name, entries in kafka_containers:
@@ -185,7 +189,7 @@ def test_synthetic_production_render_wires_every_kafka_app_to_event_hubs_secret(
             ("KAFKA__SECURITY__SASL__USERNAME", "username"),
             ("KAFKA__SECURITY__SASL__PASSWORD", "password"),
         ):
-            assert env[f"{prefix}{suffix}"]["valueFrom"]["secretKeyRef"] == {
+            assert mapping_at(env[f"{prefix}{suffix}"], "valueFrom", "secretKeyRef") == {
                 "name": _SECRET_NAME,
                 "key": key,
             }, workload_name
@@ -203,11 +207,11 @@ def test_every_environment_renders_only_correlation_through_the_wal_smt(
     connectors = _source_connectors(_render_connectors(values_name, tmp_path))
 
     assert set(connectors) == _SOURCE_CONNECTOR_NAMES
-    wal = connectors[_WAL_NAME]["spec"]["config"]
+    wal = mapping_at(connectors[_WAL_NAME], "spec", "config")
     assert {key: wal[key] for key in _WAL_CONFIG} == _WAL_CONFIG
     assert not any(key == "transforms.outbox" or key.startswith("transforms.outbox.") for key in wal)
     assert all(
-        connector["spec"]["config"]["transforms"] == "outbox"
+        string_at(connector, "spec", "config", "transforms") == "outbox"
         for name, connector in connectors.items()
         if name != _WAL_NAME
     )
@@ -219,11 +223,7 @@ def test_rendered_wal_connector_exactly_matches_the_manual_registration_template
     tmp_path: Path,
 ) -> None:
     connector = _source_connectors(_render_connectors("values.local.yaml", tmp_path))[_WAL_NAME]
-    manual = yaml.safe_load(
-        (_REPOSITORY_ROOT / "infra/k8s/kafka-connect/connectors/wal-connector-template.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    manual = load_mapping(_REPOSITORY_ROOT / "infra/k8s/kafka-connect/connectors/wal-connector-template.json")
     replacements = {
         "SERVICE_NAME": "job-correlation-evaluation-service",
         "DB_PREFIX": "job_correlation",
@@ -247,9 +247,10 @@ def test_rendered_wal_connector_exactly_matches_the_manual_registration_template
             return [substitute(item) for item in value]
         return value
 
-    rendered_manual = cast(dict[str, Any], substitute(manual))
-    manual_config = cast(dict[str, Any], rendered_manual["config"]).copy()
-    assert connector["metadata"]["name"] == rendered_manual["name"]
-    assert connector["spec"]["class"] == manual_config.pop("connector.class")
-    assert str(connector["spec"]["tasksMax"]) == manual_config.pop("tasks.max")
-    assert connector["spec"]["config"] == manual_config
+    rendered_manual = mapping_at({"document": substitute(manual)}, "document")
+    manual_config = mapping_at(rendered_manual, "config").copy()
+    connector_spec = mapping_at(connector, "spec")
+    assert metadata_of(connector)["name"] == rendered_manual["name"]
+    assert string_at(connector_spec, "class") == manual_config.pop("connector.class")
+    assert str(connector_spec["tasksMax"]) == manual_config.pop("tasks.max")
+    assert mapping_at(connector_spec, "config") == manual_config

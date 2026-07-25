@@ -3,10 +3,18 @@ from __future__ import annotations
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
-import yaml
+from _documents import (
+    Manifest,
+    load_manifests,
+    load_mapping,
+    load_workflow,
+    mapping_at,
+    mapping_sequence_at,
+    metadata_of,
+    string_at,
+)
 from test_image_digest_gitops import _digest_values
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -27,7 +35,7 @@ _CLUSTER_KINDS = {
 }
 
 
-def _helm(values_name: str, tmp_path: Path, *extra_args: str) -> tuple[dict[str, Any], ...]:
+def _helm(values_name: str, tmp_path: Path, *extra_args: str) -> list[Manifest]:
     environment = values_name.removeprefix("values.").removesuffix(".yaml")
     command = [
         "helm",
@@ -53,10 +61,10 @@ def _helm(values_name: str, tmp_path: Path, *extra_args: str) -> tuple[dict[str,
     elif values_name == "values.staging.yaml":
         command.extend(("--values", str(_IDENTITY)))
     result = subprocess.run([*command, *extra_args], cwd=_ROOT, capture_output=True, text=True, check=True)
-    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+    return load_manifests(result.stdout)
 
 
-def _kustomize(overlay: str) -> tuple[dict[str, Any], ...]:
+def _kustomize(overlay: str) -> list[Manifest]:
     result = subprocess.run(
         ["kustomize", "build", str(_OBSERVABILITY / "overlays" / overlay)],
         cwd=_ROOT,
@@ -64,47 +72,39 @@ def _kustomize(overlay: str) -> tuple[dict[str, Any], ...]:
         text=True,
         check=True,
     )
-    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+    return load_manifests(result.stdout)
 
 
-def _containers(value: object) -> list[dict[str, Any]]:
+def _container_images(value: object) -> list[str]:
     if isinstance(value, dict):
-        containers: list[dict[str, Any]] = []
+        images: list[str] = []
         for key, child in value.items():
             if key in {"containers", "initContainers"} and isinstance(child, list):
-                containers.extend(cast(dict[str, Any], item) for item in child if isinstance(item, dict))
+                images.extend(
+                    image for item in child if isinstance(item, dict) and isinstance(image := item.get("image"), str)
+                )
             else:
-                containers.extend(_containers(child))
-        return containers
+                images.extend(_container_images(child))
+        return images
     if isinstance(value, list):
-        return [item for child in value for item in _containers(child)]
+        return [image for child in value for image in _container_images(child)]
     return []
 
 
-def _named(documents: tuple[dict[str, Any], ...], kind: str, name: str) -> dict[str, Any]:
+def _named(documents: list[Manifest], kind: str, name: str) -> Manifest:
     return next(
-        document
-        for document in documents
-        if document.get("kind") == kind and document.get("metadata", {}).get("name") == name
+        document for document in documents if document["kind"] == kind and metadata_of(document)["name"] == name
     )
-
-
-def _on(workflow: dict[str, Any]) -> dict[str, Any]:
-    return workflow.get("on", workflow.get(True, {}))
 
 
 def test_staging_uses_canonical_first_party_images_and_external_jwt_secret(
     tmp_path: Path,
 ) -> None:
-    workflow = yaml.safe_load((_ROOT / ".github" / "workflows" / "build-push.yml").read_text(encoding="utf-8"))
-    names = {entry["name"] for entry in workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]}
+    workflow = load_workflow(_ROOT / ".github" / "workflows" / "build-push.yml")
+    entries = mapping_sequence_at(workflow, "jobs", "build-push", "strategy", "matrix", "include")
+    names = {string_at(entry, "name") for entry in entries}
     documents = _helm("values.staging.yaml", tmp_path)
-    images = {
-        container["image"]
-        for document in documents
-        for container in _containers(document)
-        if isinstance(container.get("image"), str)
-    }
+    images = {image for document in documents for image in _container_images(document)}
     first_party = {image for image in images if any(f"/{name}:" in image for name in names)}
     assert first_party
     assert all(image.startswith(_FIRST_PARTY_PREFIX) for image in first_party)
@@ -114,29 +114,33 @@ def test_staging_uses_canonical_first_party_images_and_external_jwt_secret(
     } <= first_party
 
     assert not any(
-        document.get("kind") == "Secret" and document.get("metadata", {}).get("name") == "nohiki-jwt-keys"
-        for document in documents
+        document["kind"] == "Secret" and metadata_of(document)["name"] == "nohiki-jwt-keys" for document in documents
     )
     jwt = _named(documents, "ExternalSecret", "nohiki-jwt-keys")
-    assert jwt["metadata"]["namespace"] == "nohiki-staging"
-    assert jwt["spec"]["secretStoreRef"] == {
+    assert metadata_of(jwt)["namespace"] == "nohiki-staging"
+    assert mapping_at(jwt, "spec", "secretStoreRef") == {
         "name": "nohiki-secret-store",
         "kind": "ClusterSecretStore",
     }
-    assert jwt["spec"]["target"] == {
+    assert mapping_at(jwt, "spec", "target") == {
         "name": "nohiki-jwt-keys",
         "creationPolicy": "Owner",
     }
-    assert jwt["spec"]["data"] == [{"secretKey": "private_key", "remoteRef": {"key": "jwt-private-key"}}]
+    assert mapping_sequence_at(jwt, "spec", "data") == [
+        {"secretKey": "private_key", "remoteRef": {"key": "jwt-private-key"}}
+    ]
 
 
 def test_production_kafka_scalers_require_authenticated_tls(tmp_path: Path) -> None:
     documents = _helm("values.prod.yaml", tmp_path)
-    values = yaml.safe_load((_CHART / "values.prod.yaml").read_text(encoding="utf-8"))
-    assert values["global"]["kafka"]["security"]["protocol"] == "SASL_SSL"
+    values = load_mapping(_CHART / "values.prod.yaml")
+    assert string_at(values, "global", "kafka", "security", "protocol") == "SASL_SSL"
 
     auth = _named(documents, "TriggerAuthentication", "nohiki-kafka-auth")
-    refs = {item["parameter"]: (item["name"], item["key"]) for item in auth["spec"]["secretTargetRef"]}
+    refs = {
+        string_at(item, "parameter"): (string_at(item, "name"), string_at(item, "key"))
+        for item in mapping_sequence_at(auth, "spec", "secretTargetRef")
+    }
     assert refs == {
         "sasl": ("kafka-sasl-credentials", "mechanism"),
         "username": ("kafka-sasl-credentials", "username"),
@@ -144,18 +148,18 @@ def test_production_kafka_scalers_require_authenticated_tls(tmp_path: Path) -> N
         "tls": ("kafka-tls-credentials", "tls"),
     }
 
-    scalers = [document for document in documents if document.get("kind") == "ScaledObject"]
+    scalers = [document for document in documents if document["kind"] == "ScaledObject"]
     assert scalers
     kafka_triggers = [
-        (scaler["metadata"]["name"], trigger)
+        (metadata_of(scaler)["name"], trigger)
         for scaler in scalers
-        for trigger in scaler["spec"]["triggers"]
+        for trigger in mapping_sequence_at(scaler, "spec", "triggers")
         if trigger.get("type") == "kafka"
     ]
     assert kafka_triggers
     for scaler_name, trigger in kafka_triggers:
-        assert trigger.get("metadata", {}).get("tls") == "enable", scaler_name
-        assert trigger.get("authenticationRef") == {"name": "nohiki-kafka-auth"}, scaler_name
+        assert mapping_at(trigger, "metadata").get("tls") == "enable", scaler_name
+        assert mapping_at(trigger, "authenticationRef") == {"name": "nohiki-kafka-auth"}, scaler_name
     assert any(document.get("kind") == "HTTPScaledObject" for document in documents)
     keda_installer = (_ROOT / "infra" / "terraform" / "keda.tf").read_text(encoding="utf-8")
     assert 'resource "helm_release" "keda"' in keda_installer
@@ -171,18 +175,17 @@ def test_observability_overlays_keep_namespaced_resources_in_environment_namespa
 ) -> None:
     documents = _kustomize(overlay)
     assert documents
-    namespaced = [document for document in documents if document.get("kind") not in _CLUSTER_KINDS]
+    namespaced = [document for document in documents if document["kind"] not in _CLUSTER_KINDS]
     assert namespaced
-    assert all(document.get("metadata", {}).get("namespace") == namespace for document in namespaced)
+    assert all(metadata_of(document).get("namespace") == namespace for document in namespaced)
     for kind in ("Grafana", "GrafanaDatasource", "OpenTelemetryCollector"):
         assert any(
-            document.get("kind") == kind and document.get("metadata", {}).get("namespace") == namespace
-            for document in documents
+            document["kind"] == kind and metadata_of(document).get("namespace") == namespace for document in documents
         )
 
 
 def test_promotion_validates_merge_revision_renders_all_manifests_and_opens_activation_pr() -> None:
-    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    workflow = load_workflow(_WORKFLOW)
     activation = workflow["jobs"]["activate-production-runtime"]
     condition = activation["if"]
     assert "github.event_name == 'pull_request'" in condition
@@ -265,10 +268,12 @@ def test_promotion_validates_merge_revision_renders_all_manifests_and_opens_acti
         assert forbidden not in activation_runs, forbidden
 
     pr = next(step for step in activation["steps"] if "create-pull-request" in step.get("uses", ""))
-    assert pr["with"]["branch"].startswith("bot/activate-production-runtime-")
-    assert "${{ github.event.pull_request.merge_commit_sha }}" in pr["with"]["branch"]
-    assert pr["with"]["base"] == "${{ github.event.repository.default_branch }}"
-    assert set(pr["with"]["add-paths"].splitlines()) == {
+    inputs = pr["with"]
+    branch = string_at(inputs, "branch")
+    assert branch.startswith("bot/activate-production-runtime-")
+    assert "${{ github.event.pull_request.merge_commit_sha }}" in branch
+    assert string_at(inputs, "base") == "${{ github.event.repository.default_branch }}"
+    assert set(string_at(inputs, "add-paths").splitlines()) == {
         "infra/k8s/gitops/clusters/prod-aks/release-source.yaml",
         "infra/k8s/gitops/clusters/prod-aks/gateway-api-crds.yaml",
         "infra/k8s/gitops/clusters/prod-aks/infrastructure.yaml",

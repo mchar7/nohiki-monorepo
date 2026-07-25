@@ -13,9 +13,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
-import yaml
+from _documents import load_compose
 
 _REPO = Path(__file__).resolve().parents[3]
 _COMPOSE = _REPO / "infra" / "compose" / "docker-compose.yml"
@@ -26,8 +27,14 @@ _REGISTRATION = _CONNECT_ROOT / "scripts" / "register-connectors.sh"
 _ENTRYPOINT = _REGISTRATION.with_name("entrypoint.sh")
 _CDC_RESOURCES = {
     "bff-service-outbox": ("bff_outbox_slot", "bff_outbox_pub"),
-    "doc-template-service-outbox": ("doc_template_outbox_slot", "doc_template_outbox_pub"),
-    "job-correlation-evaluation-service-wal": ("job_correlation_wal_slot", "job_correlation_wal_pub"),
+    "doc-template-service-outbox": (
+        "doc_template_outbox_slot",
+        "doc_template_outbox_pub",
+    ),
+    "job-correlation-evaluation-service-wal": (
+        "job_correlation_wal_slot",
+        "job_correlation_wal_pub",
+    ),
     "job-ingest-enrichment-service-outbox": (
         "job_ingest_enrichment_outbox_slot",
         "job_ingest_enrichment_outbox_pub",
@@ -37,7 +44,10 @@ _CDC_RESOURCES = {
         "job_query_composition_outbox_pub",
     ),
     "job-storage-service-outbox": ("job_storage_outbox_slot", "job_storage_outbox_pub"),
-    "notification-service-outbox": ("notification_outbox_slot", "notification_outbox_pub"),
+    "notification-service-outbox": (
+        "notification_outbox_slot",
+        "notification_outbox_pub",
+    ),
     "skill-graph-service-outbox": ("skill_graph_outbox_slot", "skill_graph_outbox_pub"),
     "user-auth-service-outbox": ("user_auth_outbox_slot", "user_auth_outbox_pub"),
     "user-entitlement-service-outbox": (
@@ -50,7 +60,32 @@ _CDC_RESOURCES = {
 _REQUIRED_CONNECTORS = tuple(_CDC_RESOURCES)
 
 
-def _connector_payload() -> dict[str, object]:
+class _ConnectorInfo(TypedDict):
+    config: dict[str, str]
+
+
+class _ConnectorState(TypedDict):
+    state: str
+
+
+class _ConnectorTask(_ConnectorState):
+    id: int
+
+
+class _ConnectorStatus(TypedDict):
+    connector: _ConnectorState
+    tasks: list[_ConnectorTask]
+
+
+class _ConnectorPayload(TypedDict):
+    info: _ConnectorInfo
+    status: _ConnectorStatus
+
+
+type _ConnectorPayloads = dict[str, _ConnectorPayload]
+
+
+def _connector_payload() -> _ConnectorPayloads:
     return {
         name: {
             "info": {
@@ -60,14 +95,17 @@ def _connector_payload() -> dict[str, object]:
                     "publication.name": publication,
                 }
             },
-            "status": {"connector": {"state": "RUNNING"}, "tasks": [{"id": 0, "state": "RUNNING"}]},
+            "status": {
+                "connector": {"state": "RUNNING"},
+                "tasks": [{"id": 0, "state": "RUNNING"}],
+            },
         }
         for name, (slot, publication) in _CDC_RESOURCES.items()
     }
 
 
 @contextmanager
-def _connect_api(payload: dict[str, object]) -> Iterator[str]:
+def _connect_api(payload: _ConnectorPayloads) -> Iterator[str]:
     encoded = json.dumps(payload).encode()
 
     class Handler(BaseHTTPRequestHandler):
@@ -81,14 +119,17 @@ def _connect_api(payload: dict[str, object]) -> Iterator[str]:
             self.end_headers()
             self.wfile.write(encoded)
 
-        def log_message(self, _format: str, *_args: object) -> None:
-            return
+    def log_message(_self: BaseHTTPRequestHandler, fmt: str, *args: object) -> None:
+        del fmt, args
+
+    type.__setattr__(Handler, "log_message", log_message)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        host, port = server.server_address
+        host = server.server_address[0]
+        port = server.server_address[1]
         yield f"http://{host}:{port}"
     finally:
         server.shutdown()
@@ -98,7 +139,7 @@ def _connect_api(payload: dict[str, object]) -> Iterator[str]:
 
 def _run_healthcheck(
     tmp_path: Path,
-    payload: dict[str, object],
+    payload: _ConnectorPayloads,
     omitted_resource: str = "",
     registration_script: Path = _REGISTRATION,
 ) -> subprocess.CompletedProcess[str]:
@@ -145,27 +186,33 @@ def _run_healthcheck(
         )
 
 
-def _connector_config(payload: dict[str, object], name: str) -> dict[str, object]:
-    details = payload[name]
-    assert isinstance(details, dict)
-    info = details["info"]
-    assert isinstance(info, dict)
-    config = info["config"]
-    assert isinstance(config, dict)
-    return config
+def _connector_config(payload: _ConnectorPayloads, name: str) -> dict[str, str]:
+    return payload[name]["info"]["config"]
 
 
 def test_compose_health_depends_on_image_registration_and_gates_dependents() -> None:
-    compose = yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
+    compose = load_compose(_COMPOSE)
     connect = compose["services"]["nohiki-cp-kafka-connect"]
+    kafka_ui = compose["services"]["nohiki-cp-kafka-ui"]
+    kafka_ui_dependencies = kafka_ui["depends_on"]
+    assert isinstance(kafka_ui_dependencies, dict)
 
     assert connect.get("entrypoint") is None, "Compose must retain the image entrypoint that registers connectors"
     entrypoint = _ENTRYPOINT.read_text(encoding="utf-8")
     assert re.search(r'register-connectors\.sh["\']?\s+register\b', entrypoint)
-    assert connect["depends_on"]["nohiki-cp-kafka-init"] == {"condition": "service_completed_successfully"}
-    assert "./scripts/kafka_connect_healthcheck.py:/kafka/scripts/compose-healthcheck.py:ro" in connect["volumes"]
-    assert connect["healthcheck"]["test"] == ["CMD", "python3", "/kafka/scripts/compose-healthcheck.py"]
-    kafka_ui_dependencies = compose["services"]["nohiki-cp-kafka-ui"]["depends_on"]
+    depends_on = connect["depends_on"]
+    assert isinstance(depends_on, dict)
+    assert depends_on["nohiki-cp-kafka-init"] == {"condition": "service_completed_successfully"}
+    volumes = connect["volumes"]
+    assert isinstance(volumes, list)
+    assert "./scripts/kafka_connect_healthcheck.py:/kafka/scripts/compose-healthcheck.py:ro" in volumes
+    healthcheck = connect["healthcheck"]
+    assert isinstance(healthcheck, dict)
+    assert healthcheck["test"] == [
+        "CMD",
+        "python3",
+        "/kafka/scripts/compose-healthcheck.py",
+    ]
     assert kafka_ui_dependencies["nohiki-cp-kafka-connect"] == {"condition": "service_healthy"}
 
 
@@ -185,7 +232,10 @@ def test_readiness_rejects_unexpected_or_legacy_identities(tmp_path: Path, unexp
     payload = _connector_payload()
     payload[unexpected] = {
         "info": {"config": {"connector.class": "example.UnexpectedConnector"}},
-        "status": {"connector": {"state": "RUNNING"}, "tasks": [{"id": 0, "state": "RUNNING"}]},
+        "status": {
+            "connector": {"state": "RUNNING"},
+            "tasks": [{"id": 0, "state": "RUNNING"}],
+        },
     }
 
     result = _run_healthcheck(tmp_path, payload)
@@ -198,9 +248,7 @@ def test_readiness_rejects_unexpected_or_legacy_identities(tmp_path: Path, unexp
 def test_readiness_requires_connectors_and_tasks_to_be_running(tmp_path: Path, failed_component: str) -> None:
     payload = _connector_payload()
     target = payload["user-auth-service-outbox"]
-    assert isinstance(target, dict)
     status = target["status"]
-    assert isinstance(status, dict)
     if failed_component == "connector":
         status["connector"] = {"state": "FAILED"}
     else:
@@ -259,7 +307,8 @@ def test_registration_array_parser_rejects_unsupported_entries(tmp_path: Path, u
     registration = tmp_path / "register-connectors.sh"
     source = _REGISTRATION.read_text(encoding="utf-8")
     registration.write_text(
-        source.replace("OUTBOX_CONNECTORS=(\n", f"OUTBOX_CONNECTORS=(\n{unsupported}\n", 1), encoding="utf-8"
+        source.replace("OUTBOX_CONNECTORS=(\n", f"OUTBOX_CONNECTORS=(\n{unsupported}\n", 1),
+        encoding="utf-8",
     )
 
     result = _run_healthcheck(tmp_path, _connector_payload(), registration_script=registration)

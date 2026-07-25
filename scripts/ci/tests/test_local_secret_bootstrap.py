@@ -19,6 +19,14 @@ from types import ModuleType
 
 import pytest
 import yaml
+from _documents import (
+    load_manifests,
+    load_mapping,
+    mapping_at,
+    mapping_sequence_at,
+    sequence_at,
+    string_at,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 VALIDATOR = ROOT / "scripts/infra/validate_local_secret_sources.py"
@@ -58,8 +66,8 @@ def _local_provider_credentials() -> frozenset[str]:
     contract = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(contract)
     credentials = contract.enabled_provider_credentials(
-        yaml.safe_load(BASE_VALUES.read_text(encoding="utf-8")),
-        yaml.safe_load(LOCAL_VALUES.read_text(encoding="utf-8")),
+        load_mapping(BASE_VALUES),
+        load_mapping(LOCAL_VALUES),
     )
     assert credentials
     return frozenset(credentials)
@@ -200,7 +208,9 @@ def _private_write(path: Path, value: str) -> None:
 def provisioned_sources_template(tmp_path_factory: pytest.TempPathFactory) -> Sources:
     tmp_path = tmp_path_factory.mktemp("local-secret-sources")
     secrets = tmp_path / "secrets"
-    values = {relative: f"{_REJECTION_MARKER}-{relative.replace('/', '-')}" for relative in REQUIRED_SOURCES}
+    values: dict[str, str] = {
+        relative: f"{_REJECTION_MARKER}-{relative.replace('/', '-')}" for relative in REQUIRED_SOURCES
+    }
     for credential in _local_provider_credentials():
         values[f"llm/provider/api_keys/{credential}"] = f"sk-{credential}-{_REJECTION_MARKER}"
     values["database/port"] = "5432"
@@ -457,9 +467,7 @@ def _provision(sources: Sources, output: Path) -> subprocess.CompletedProcess[st
 
 
 def _encrypted_inventory(path: Path) -> dict[str, set[str]]:
-    documents = tuple(
-        document for document in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(document, dict)
-    )
+    documents = tuple(load_manifests(path.read_text(encoding="utf-8")))
     inventory = {document["metadata"]["name"]: set(document["stringData"]) for document in documents}
     assert len(inventory) == len(documents)
     assert all(
@@ -478,9 +486,12 @@ def _encrypted_inventory(path: Path) -> dict[str, set[str]]:
 
 
 def _runtime_encrypted_keys(path: Path) -> set[str]:
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert document["metadata"] == {"name": "nohiki-llm-runtime", "namespace": "nohiki"}
-    data = document["data"]
+    document = load_mapping(path)
+    assert document["metadata"] == {
+        "name": "nohiki-llm-runtime",
+        "namespace": "nohiki",
+    }
+    data = mapping_at(document, "data")
     assert all(isinstance(value, str) and value.startswith("ENC[AES256_GCM,") for value in data.values())
     return set(data)
 
@@ -501,11 +512,14 @@ def _install_path_swap(
 ) -> None:
     swapped = False
 
-    def maybe_swap(path: object, dir_fd: int | None = None) -> None:
+    def maybe_swap(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        dir_fd: int | None = None,
+    ) -> None:
         nonlocal swapped
-        if swapped or not isinstance(path, (str, bytes, os.PathLike)):
+        if swapped:
             return
-        candidate = Path(path)
+        candidate = Path(os.fsdecode(path))
         if not candidate.is_absolute() and dir_fd is not None:
             candidate = Path(f"/proc/self/fd/{dir_fd}").readlink() / candidate
         if candidate.absolute() != target.absolute():
@@ -522,9 +536,14 @@ def _install_path_swap(
         maybe_swap(path)
         return original_read_bytes(path)
 
-    def read_text(path: Path, *args: object, **kwargs: object) -> str:
+    def read_text(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> str:
         maybe_swap(path)
-        return original_read_text(path, *args, **kwargs)
+        return original_read_text(path, encoding=encoding, errors=errors, newline=newline)
 
     def secure_open(
         path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
@@ -642,11 +661,11 @@ def test_encrypted_secret_name_namespace_and_key_shape_are_enforced(
 ) -> None:
     original = sources.encrypted_secret.read_text(encoding="utf-8")
     for mutation in ("identity", "keys"):
-        document = yaml.safe_load(original)
+        document = load_mapping(sources.encrypted_secret)
         if mutation == "identity":
-            document["metadata"]["name"] = "wrong-name"
+            mapping_at(document, "metadata")["name"] = "wrong-name"
         else:
-            document["data"].pop(next(iter(_runtime_keys())))
+            mapping_at(document, "data").pop(next(iter(_runtime_keys())))
         sources.encrypted_secret.write_text(yaml.safe_dump(document), encoding="utf-8")
         _assert_rejected_without_disclosure(_validate(sources))
         sources.encrypted_secret.write_text(original, encoding="utf-8")
@@ -656,11 +675,11 @@ def test_encrypted_tls_secret_name_and_key_shape_are_enforced(sources: Sources) 
     path = sources.encrypted_secret.with_name("nohiki-model-egress-tls-source.sops.yaml")
     original = path.read_text(encoding="utf-8")
     for mutation in ("identity", "keys"):
-        document = yaml.safe_load(original)
+        document = load_mapping(path)
         if mutation == "identity":
-            document["metadata"]["name"] = "wrong-name"
+            mapping_at(document, "metadata")["name"] = "wrong-name"
         else:
-            document["stringData"].pop("ca.crt")
+            mapping_at(document, "stringData").pop("ca.crt")
         path.write_text(yaml.safe_dump(document), encoding="utf-8")
         _assert_rejected_without_disclosure(_validate(sources))
         path.write_text(original, encoding="utf-8")
@@ -705,9 +724,7 @@ def test_provisioner_writes_exact_encrypted_application_inventory(sources: Sourc
         expected[f"{service}-db-credentials"] = DATABASE_KEYS
         expected[f"{service}-debezium-credentials"] = DATABASE_KEYS
     assert inventory == expected
-    documents = tuple(
-        document for document in yaml.safe_load_all(output.read_text(encoding="utf-8")) if isinstance(document, dict)
-    )
+    documents = tuple(load_manifests(output.read_text(encoding="utf-8")))
     database_names = {
         f"{service}-{suffix}" for service in DATABASE_SERVICES for suffix in ("db-credentials", "debezium-credentials")
     }
@@ -798,12 +815,12 @@ def test_enabled_local_oauth_emits_the_exact_rendered_consumer_keys(
     assert _encrypted_inventory(output)["nohiki-oauth-credentials"] == OAUTH_KEYS
     recipient = validator._validate_age_key(sources.age_key)
     assert validator._validate_encrypted_app_secrets(output, recipient, enabled) == set(_encrypted_inventory(output))
-    original = tuple(yaml.safe_load_all(output.read_text(encoding="utf-8")))
+    original = tuple(load_manifests(output.read_text(encoding="utf-8")))
     oauth = next(document for document in original if document["metadata"]["name"] == "nohiki-oauth-credentials")
     assert oauth["stringData"]["github_client_id"] == ""
     assert oauth["stringData"]["github_client_secret"] == ""
     for mutation in ("partial-empty-pair", "partial-encrypted-pair", "all-empty"):
-        documents = list(yaml.safe_load_all(output.read_text(encoding="utf-8")))
+        documents = list(load_manifests(output.read_text(encoding="utf-8")))
         oauth = next(document for document in documents if document["metadata"]["name"] == "nohiki-oauth-credentials")
         data = oauth["stringData"]
         if mutation == "partial-empty-pair":
@@ -1205,21 +1222,22 @@ def test_provisioner_rejects_untrusted_sops_output_before_publish(
         if command[0] != "sops":
             return result
         output = Path(command[command.index("--output") + 1])
-        documents = list(yaml.safe_load_all(output.read_text(encoding="utf-8")))
+        documents = [dict(document) for document in load_manifests(output.read_text(encoding="utf-8"))]
         if corruption == "missing-sops":
             for document in documents:
                 document.pop("sops")
         elif corruption == "wrong-recipient":
             for document in documents:
-                document["sops"]["age"][0]["recipient"] = "age1" + "q" * 58
+                mapping_sequence_at(mapping_at(document, "sops"), "age")[0]["recipient"] = "age1" + "q" * 58
         elif corruption == "extra-recipient":
             for document in documents:
-                document["sops"]["age"].append(dict(document["sops"]["age"][0]))
+                age = mapping_sequence_at(mapping_at(document, "sops"), "age")
+                age.append(dict(age[0]))
         elif corruption == "pgp":
             for document in documents:
-                document["sops"]["pgp"] = [{"fp": "synthetic-recipient"}]
+                mapping_at(document, "sops")["pgp"] = [{"fp": "synthetic-recipient"}]
         else:
-            data = documents[0]["stringData"]
+            data = mapping_at(documents[0], "stringData")
             data[next(iter(data))] = "safe-plaintext-marker"
         output.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
         return result
@@ -1242,8 +1260,8 @@ def test_provisioner_requires_a_complete_age_recipient(
     secret_modules: tuple[ModuleType, ModuleType],
 ) -> None:
     _, provisioner = secret_modules
-    config = yaml.safe_load(sources.sops_config.read_text(encoding="utf-8"))
-    config["creation_rules"][0]["age"] = "age1short"
+    config = load_mapping(sources.sops_config)
+    mapping_sequence_at(config, "creation_rules")[0]["age"] = "age1short"
     malformed = tmp_path / "malformed-sops.yaml"
     malformed.write_text(yaml.safe_dump(config), encoding="utf-8")
 
@@ -1391,7 +1409,7 @@ def test_runtime_flux_kustomization_rejects_schema_drift(
     mutation: str,
 ) -> None:
     validator, _ = secret_modules
-    document = yaml.safe_load(sources.runtime_kustomization.read_text(encoding="utf-8"))
+    document = load_mapping(sources.runtime_kustomization)
     if mutation == "extra-top-level":
         document["unexpected"] = True
     elif mutation == "wrong-api-version":
@@ -1399,19 +1417,19 @@ def test_runtime_flux_kustomization_rejects_schema_drift(
     elif mutation == "wrong-kind":
         document["kind"] = "Secret"
     elif mutation == "extra-metadata":
-        document["metadata"]["labels"] = {"unexpected": "true"}
+        mapping_at(document, "metadata")["labels"] = {"unexpected": "true"}
     elif mutation == "extra-spec":
-        document["spec"]["force"] = True
+        mapping_at(document, "spec")["force"] = True
     elif mutation == "extra-decryption":
-        document["spec"]["decryption"]["unexpected"] = True
+        mapping_at(document, "spec", "decryption")["unexpected"] = True
     elif mutation == "extra-source-ref":
-        document["spec"]["sourceRef"]["namespace"] = "flux-system"
+        mapping_at(document, "spec", "sourceRef")["namespace"] = "flux-system"
     elif mutation == "wrong-interval":
-        document["spec"]["interval"] = "9m"
+        mapping_at(document, "spec")["interval"] = "9m"
     elif mutation.startswith("missing-spec-"):
-        document["spec"].pop(mutation.removeprefix("missing-spec-"))
+        mapping_at(document, "spec").pop(mutation.removeprefix("missing-spec-"))
     else:
-        document["spec"]["dependsOn"][0]["namespace"] = "flux-system"
+        mapping_sequence_at(mapping_at(document, "spec"), "dependsOn")[0]["namespace"] = "flux-system"
     sources.runtime_kustomization.write_text(yaml.safe_dump(document), encoding="utf-8")
 
     with pytest.raises(validator.ValidationError):
@@ -1436,7 +1454,7 @@ def test_local_secret_kustomization_rejects_schema_or_inventory_drift(
 ) -> None:
     validator, _ = secret_modules
     source = ROOT / "infra/k8s/gitops/secrets/local/kustomization.yaml"
-    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    document = load_mapping(source)
     if mutation == "extra-top-level":
         document["unexpected"] = True
     elif mutation == "wrong-api-version":
@@ -1446,9 +1464,9 @@ def test_local_secret_kustomization_rejects_schema_or_inventory_drift(
     elif mutation == "extra-metadata":
         document["metadata"] = {"name": "unexpected"}
     elif mutation == "extra-resource":
-        document["resources"].append("unexpected.yaml")
+        sequence_at(document, "resources").append("unexpected.yaml")
     else:
-        document["resources"].pop()
+        sequence_at(document, "resources").pop()
     path = tmp_path / "kustomization.yaml"
     path.write_text(yaml.safe_dump(document), encoding="utf-8")
 
@@ -1465,9 +1483,9 @@ def test_local_observability_uses_one_sops_owner_and_no_fake_eso() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    documents = tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+    documents = tuple(load_manifests(result.stdout))
     external_targets = {
-        document.get("spec", {}).get("target", {}).get("name")
+        mapping_at(dict(document), "spec", "target").get("name")
         for document in documents
         if document.get("kind") == "ExternalSecret"
     }
@@ -1486,15 +1504,15 @@ def test_local_observability_uses_one_sops_owner_and_no_fake_eso() -> None:
 
 
 def test_local_object_store_consumers_use_the_single_storage_secret() -> None:
-    base = yaml.safe_load(BASE_VALUES.read_text(encoding="utf-8"))
-    local = yaml.safe_load(LOCAL_VALUES.read_text(encoding="utf-8"))
+    base = load_mapping(BASE_VALUES)
+    local = load_mapping(LOCAL_VALUES)
     reference = [{"secretRef": {"name": "observability-storage-credentials"}}]
-    assert base["mimir-distributed"]["global"]["extraEnvFrom"] == reference
-    assert base["tempo-distributed"]["global"]["extraEnvFrom"] == reference
-    assert local["loki"]["write"]["extraEnvFrom"] == reference
-    assert local["loki"]["read"]["extraEnvFrom"] == reference
-    assert local["loki"]["backend"]["extraEnvFrom"] == reference
-    assert local["pyroscope"]["pyroscope"]["extraEnvFrom"] == reference
+    assert mapping_at(base, "mimir-distributed", "global")["extraEnvFrom"] == reference
+    assert mapping_at(base, "tempo-distributed", "global")["extraEnvFrom"] == reference
+    assert mapping_at(local, "loki", "write")["extraEnvFrom"] == reference
+    assert mapping_at(local, "loki", "read")["extraEnvFrom"] == reference
+    assert mapping_at(local, "loki", "backend")["extraEnvFrom"] == reference
+    assert mapping_at(local, "pyroscope", "pyroscope")["extraEnvFrom"] == reference
     grafana_patch = (LOCAL_OBSERVABILITY / "kustomization.yaml").read_text(encoding="utf-8")
     assert 'enabled: "true"' in grafana_patch
     assert "org_role: Viewer" in grafana_patch
@@ -1508,8 +1526,8 @@ def test_sops_policy_rejects_every_noncanonical_recipient_configuration(
     forbidden: str,
 ) -> None:
     validator, provisioner = secret_modules
-    config = yaml.safe_load(sources.sops_config.read_text(encoding="utf-8"))
-    rule = config["creation_rules"][0]
+    config = load_mapping(sources.sops_config)
+    rule = mapping_sequence_at(config, "creation_rules")[0]
     if forbidden == "extra-age":
         rule["age"] = [rule["age"], rule["age"]]
     else:
@@ -1545,13 +1563,14 @@ def test_runtime_manifest_rejects_noncanonical_sops_envelope_metadata(
     value: str | None,
 ) -> None:
     validator, _ = secret_modules
-    document = yaml.safe_load(sources.encrypted_secret.read_text(encoding="utf-8"))
+    document = load_mapping(sources.encrypted_secret)
+    sops = mapping_at(document, "sops")
     if field == "age-enc":
-        document["sops"]["age"][0]["enc"] = value
+        mapping_sequence_at(sops, "age")[0]["enc"] = value
     elif value is None:
-        document["sops"].pop(field)
+        sops.pop(field)
     else:
-        document["sops"][field] = value
+        sops[field] = value
     sources.encrypted_secret.write_text(yaml.safe_dump(document), encoding="utf-8")
 
     with pytest.raises(validator.ValidationError):
@@ -1564,11 +1583,13 @@ def test_runtime_manifest_rejects_noncanonical_sops_envelope_metadata(
 
 @pytest.mark.parametrize("forbidden", ["extra-age", "pgp", "kms", "gcp_kms", "azure_kv", "hc_vault"])
 def test_tracked_runtime_manifest_rejects_extra_recipient_backends(sources: Sources, forbidden: str) -> None:
-    document = yaml.safe_load(sources.encrypted_secret.read_text(encoding="utf-8"))
+    document = load_mapping(sources.encrypted_secret)
+    sops = mapping_at(document, "sops")
     if forbidden == "extra-age":
-        document["sops"]["age"].append(dict(document["sops"]["age"][0]))
+        age = mapping_sequence_at(sops, "age")
+        age.append(dict(age[0]))
     else:
-        document["sops"][forbidden] = [{"synthetic": "recipient"}]
+        sops[forbidden] = [{"synthetic": "recipient"}]
     sources.encrypted_secret.write_text(yaml.safe_dump(document), encoding="utf-8")
 
     _assert_rejected_without_disclosure(_validate(sources))
@@ -1617,14 +1638,17 @@ def test_runtime_provisioner_rejects_nonexact_generated_key_inventory(
         if command[0] != "sops":
             return result
         output = Path(command[command.index("--output") + 1])
-        document = yaml.safe_load(output.read_text(encoding="utf-8"))
+        document = load_mapping(output)
         key = next(iter(_runtime_keys()))
         if mutation == "missing":
-            document["data"].pop(key)
+            data = mapping_at(document, "data")
+            data.pop(key)
         elif mutation == "dead-anthropic":
-            document["data"]["anthropic_api_key"] = document["data"][key]
+            data = mapping_at(document, "data")
+            data["anthropic_api_key"] = data[key]
         else:
-            document["data"]["unexpected"] = document["data"][key]
+            data = mapping_at(document, "data")
+            data["unexpected"] = data[key]
         output.write_text(yaml.safe_dump(document), encoding="utf-8")
         return result
 
@@ -1655,13 +1679,8 @@ def test_application_ciphertext_has_exact_cnpg_reload_metadata(
     sources: Sources, secret_modules: tuple[ModuleType, ModuleType]
 ) -> None:
     validator, _ = secret_modules
-    documents = tuple(
-        document
-        for document in yaml.safe_load_all(
-            sources.encrypted_secret.with_name("nohiki-app-secrets.sops.yaml").read_text(encoding="utf-8")
-        )
-        if isinstance(document, dict)
-    )
+    path = sources.encrypted_secret.with_name("nohiki-app-secrets.sops.yaml")
+    documents = tuple(load_manifests(path.read_text(encoding="utf-8")))
     database_count = 0
     for document in documents:
         name = document["metadata"]["name"]
@@ -1694,14 +1713,17 @@ def test_validator_rejects_cnpg_reload_metadata_drift(
 ) -> None:
     validator, _ = secret_modules
     path = sources.encrypted_secret.with_name("nohiki-app-secrets.sops.yaml")
-    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
-    database = next(document for document in documents if document["metadata"]["name"].endswith("-db-credentials"))
+    documents = [dict(document) for document in load_manifests(path.read_text(encoding="utf-8"))]
+    database = next(
+        document for document in documents if string_at(document, "metadata", "name").endswith("-db-credentials")
+    )
+    metadata = mapping_at(database, "metadata")
     if mutation == "missing":
-        database["metadata"].pop("labels")
+        metadata.pop("labels")
     elif mutation == "wrong":
-        database["metadata"]["labels"]["cnpg.io/reload"] = "false"
+        mapping_at(metadata, "labels")["cnpg.io/reload"] = "false"
     else:
-        database["metadata"]["labels"]["unexpected"] = "value"
+        mapping_at(metadata, "labels")["unexpected"] = "value"
     path.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
     recipient = validator._validate_age_key(sources.age_key)
 

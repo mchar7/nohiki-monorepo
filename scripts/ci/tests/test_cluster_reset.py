@@ -20,6 +20,13 @@ from pathlib import Path
 from types import FunctionType, SimpleNamespace
 
 import pytest
+from _documents import (
+    load_mapping,
+    mapping_at,
+    mapping_sequence_at,
+    sequence_at,
+    string_at,
+)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT = _ROOT / "infra" / "k8s" / "local" / "cluster_reset.py"
@@ -474,7 +481,7 @@ def _factory_arguments(checkpoint: Path, checksum: str, evidence: Path, *, execu
 
 
 def _rewrite_checkpoint(path: Path, mutation: Callable[[dict[str, object]], None]) -> str:
-    document = json.loads(path.read_text(encoding="utf-8"))
+    document = load_mapping(path)
     mutation(document)
     path.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
     checksum = _sha256(path)
@@ -527,32 +534,36 @@ def test_checkpoint_endpoint_path_imports_with_stdlib_only(harness: Harness, tmp
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(output.read_text())["evidence"]["clusterIdentity"]["apiServer"] == harness.endpoint
+    assert string_at(load_mapping(output), "evidence", "clusterIdentity", "apiServer") == harness.endpoint
 
 
 def test_checkpoint_exact_schema_identity_redaction_and_sidecar(harness: Harness, tmp_path: Path) -> None:
     path, _ = _checkpoint(harness, tmp_path)
-    document = json.loads(path.read_text(encoding="utf-8"))
+    document = load_mapping(path)
+    metadata = mapping_at(document, "metadata")
+    evidence = mapping_at(document, "evidence")
+    cluster = mapping_at(evidence, "cluster")
+    lifecycle_tools = mapping_at(evidence, "lifecycleTools")
     assert set(document) == {"apiVersion", "kind", "metadata", "evidence"}
     assert document["apiVersion"] == "nohiki.io/v1alpha1"
     assert document["kind"] == "LocalDestructionCheckpoint"
-    assert set(document["metadata"]) == {
+    assert set(metadata) == {
         "capturedAt",
         "context",
         "namespaceAllowlist",
         "owner",
     }
-    assert document["metadata"]["context"] == _CONTEXT
-    assert document["metadata"]["namespaceAllowlist"] == ["nohiki", "flux-system"]
-    assert document["metadata"]["owner"] == "release-owner"
-    assert set(document["evidence"]) == {
+    assert metadata["context"] == _CONTEXT
+    assert metadata["namespaceAllowlist"] == ["nohiki", "flux-system"]
+    assert metadata["owner"] == "release-owner"
+    assert set(evidence) == {
         "clusterIdentity",
         "cluster",
         "git",
         "lifecycleTools",
     }
-    assert document["evidence"]["clusterIdentity"] == _identity(harness, _OLD_UID, _OLD_CREATED)
-    assert set(document["evidence"]["cluster"]) == {
+    assert evidence["clusterIdentity"] == _identity(harness, _OLD_UID, _OLD_CREATED)
+    assert set(cluster) == {
         "apiIdentity",
         "apiVersions",
         "namespaces",
@@ -566,14 +577,14 @@ def test_checkpoint_exact_schema_identity_redaction_and_sidecar(harness: Harness
         "registryImages",
         "runtimeImages",
     }
-    assert set(document["evidence"]["lifecycleTools"]) == {
+    assert set(lifecycle_tools) == {
         "kubectl",
         "flux",
         "helm",
         "sops",
         "age",
     }
-    assert "containerdImages" not in document["evidence"]["cluster"]
+    assert "containerdImages" not in cluster
     serialized = path.read_text(encoding="utf-8")
     assert "TOP-SECRET" not in serialized
     assert "certificate-authority-data" not in serialized
@@ -594,7 +605,7 @@ def test_checkpoint_normalizes_api_server_url(harness: Harness, tmp_path: Path) 
         env=environment,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(path.read_text())["evidence"]["clusterIdentity"]["apiServer"] == harness.endpoint
+    assert string_at(load_mapping(path), "evidence", "clusterIdentity", "apiServer") == harness.endpoint
 
 
 @pytest.mark.parametrize(
@@ -610,7 +621,11 @@ def test_checkpoint_normalizes_api_server_url(harness: Harness, tmp_path: Path) 
     ],
 )
 def test_checkpoint_identity_exact_type_validation(harness: Harness, tmp_path: Path, field: str, value: object) -> None:
-    identity = {"metadata": {"uid": _OLD_UID, "creationTimestamp": _OLD_CREATED}}
+    metadata: dict[str, object] = {
+        "uid": _OLD_UID,
+        "creationTimestamp": _OLD_CREATED,
+    }
+    identity: dict[str, object] = {"metadata": metadata}
     environment = dict(harness.env)
     if field == "apiServer":
         environment["FAKE_KUBECONFIG_JSON"] = json.dumps(
@@ -622,7 +637,6 @@ def test_checkpoint_identity_exact_type_validation(harness: Harness, tmp_path: P
             }
         )
     else:
-        metadata = identity["metadata"]
         metadata[{"kubeSystemUid": "uid", "kubeSystemCreatedAt": "creationTimestamp"}[field]] = value
         environment["FAKE_OLD_IDENTITY_JSON"] = json.dumps(identity)
     result = _run(
@@ -640,15 +654,11 @@ def test_checkpoint_identity_exact_type_validation(harness: Harness, tmp_path: P
 
 
 def _remove_cluster_identity(document: dict[str, object]) -> None:
-    evidence = document["evidence"]
-    assert isinstance(evidence, dict)
-    evidence.pop("clusterIdentity")
+    mapping_at(document, "evidence").pop("clusterIdentity")
 
 
 def _malform_cluster_identity(document: dict[str, object]) -> None:
-    evidence = document["evidence"]
-    assert isinstance(evidence, dict)
-    evidence["clusterIdentity"] = {"kubeSystemUid": ""}
+    mapping_at(document, "evidence")["clusterIdentity"] = {"kubeSystemUid": ""}
 
 
 def _malform_checkpoint_schema(document: dict[str, object]) -> None:
@@ -723,7 +733,7 @@ def test_every_authorization_and_checkpoint_refusal_precedes_mutation(
     assert result.returncode == 2
     assert expected in result.stderr
     assert not any(command[0] in {"purge-adapter", "start-adapter"} for command in commands)
-    assert not evidence.exists() or json.loads(evidence.read_text())["status"] != "succeeded"
+    assert not evidence.exists() or load_mapping(evidence)["status"] != "succeeded"
 
 
 def test_authorization_guard_precedence_starts_with_destructive_flag(harness: Harness, tmp_path: Path) -> None:
@@ -786,7 +796,7 @@ def test_adapter_preflight_refuses_both_variables_before_purge(
     assert result.returncode == 2
     assert variable in result.stderr
     assert not any(command[0] == "purge-adapter" for command in _commands(harness)[before:])
-    assert not evidence.exists() or json.loads(evidence.read_text())["status"] != "succeeded"
+    assert not evidence.exists() or load_mapping(evidence)["status"] != "succeeded"
 
 
 @pytest.mark.parametrize(
@@ -816,7 +826,7 @@ def test_adapter_spawn_errors_are_durable_and_never_continue(
     commands = _commands(harness)[before:]
     assert sum(row[0] == "purge-adapter" for row in commands) == expected_purge_calls
     assert not any(row[0] == "start-adapter" for row in commands)
-    document = json.loads(evidence.read_text())
+    document = load_mapping(evidence)
     assert document["status"] == "failed"
     _assert_sidecar(evidence)
 
@@ -885,9 +895,9 @@ def test_adapter_failure_and_timeout_leave_failed_evidence(
         timeout_constants=timeouts,
     )
     assert result.returncode == 2
-    document = json.loads(evidence.read_text())
+    document = load_mapping(evidence)
     assert document["status"] == "failed"
-    record = next(item for item in document["phases"] if item["phase"] == phase)
+    record = next(item for item in mapping_sequence_at(document, "phases") if item["phase"] == phase)
     assert "startedAt" in record
     assert "completedAt" in record
     assert record["exitCode"] != 0
@@ -924,8 +934,8 @@ def test_evidence_write_failure_after_purge_stops_and_preserves_last_boundary(ha
     assert "evidence" in result.stderr.lower() or "write" in result.stderr.lower()
     assert sum(row[0] == "purge-adapter" for row in _commands(harness)) == 1
     assert not any(row[0] == "start-adapter" for row in _commands(harness))
-    document = json.loads(evidence.read_text())
-    purge = next(record for record in document["phases"] if record["phase"] == "purge")
+    document = load_mapping(evidence)
+    purge = next(item for item in mapping_sequence_at(document, "phases") if item["phase"] == "purge")
     assert "startedAt" in purge
     assert "completedAt" not in purge
     _assert_sidecar(evidence)
@@ -958,7 +968,9 @@ def test_readyz_retries_then_succeeds_with_explicit_context_and_request_timeout(
     for arguments, options in calls:
         assert arguments[:5] == ("get", "--raw", "/readyz", "--context", _CONTEXT)
         assert arguments[5].startswith("--request-timeout=")
-        assert float(options["timeout"]) <= 3.0
+        timeout = options["timeout"]
+        assert isinstance(timeout, (int, float))
+        assert float(timeout) <= 3.0
 
 
 def test_node_wait_uses_remaining_deadline_beyond_general_command_cap() -> None:
@@ -972,10 +984,14 @@ def test_node_wait_uses_remaining_deadline_beyond_general_command_cap() -> None:
 
     module["_wait_nodes"].__globals__["kubectl"] = ready_after_general_cap
     module["_wait_nodes"](_CONTEXT, time.monotonic() + 65.0)
-    arguments = tuple(str(value) for value in observed["arguments"])
+    observed_arguments = observed["arguments"]
+    assert isinstance(observed_arguments, tuple)
+    arguments = tuple(str(value) for value in observed_arguments)
     wait_timeout = float(arguments[-1].removeprefix("--timeout=").removesuffix("s"))
     assert not any(value.startswith("--request-timeout=") for value in arguments)
-    assert float(observed["timeout"]) >= wait_timeout
+    observed_timeout = observed["timeout"]
+    assert isinstance(observed_timeout, (int, float))
+    assert float(observed_timeout) >= wait_timeout
     assert wait_timeout > 60.0
 
 
@@ -989,9 +1005,10 @@ def test_near_deadline_node_success_gets_fresh_identity_absence_budget(harness: 
         timeout_constants={"READINESS_TIMEOUT_SECONDS": 3.0},
     )
     assert result.returncode == 0, result.stderr
-    document = json.loads(evidence.read_text())
+    document = load_mapping(evidence)
     assert document["status"] == "succeeded"
-    assert document["phases"][-1]["phase"] == "absence"
+    phases = mapping_sequence_at(document, "phases")
+    assert phases[-1]["phase"] == "absence"
     assert document["absence"] == [
         *({"check": f"namespace {namespace} absent", "passed": True} for namespace in _ABSENT_NAMESPACES),
         {"check": "no CRD ending .fluxcd.io", "passed": True},
@@ -1024,13 +1041,13 @@ def test_post_mutation_verification_failures_are_durable(
     )
     assert result.returncode == 2
     assert expected.lower() in (result.stderr + evidence.read_text()).lower()
-    document = json.loads(evidence.read_text())
+    document = load_mapping(evidence)
     assert document["status"] == "failed"
-    assert document["metadata"]["checkpoint"] == {
+    assert mapping_at(document, "metadata", "checkpoint") == {
         "basename": checkpoint.name,
         "sha256": checksum,
     }
-    assert document["identity"]["old"] == _identity(harness, _OLD_UID, _OLD_CREATED)
+    assert mapping_at(document, "identity", "old") == _identity(harness, _OLD_UID, _OLD_CREATED)
     assert "diagnostic" in document
     assert "secret-token" not in evidence.read_text()
     assert "secret-token" not in result.stderr
@@ -1041,11 +1058,7 @@ def test_new_identity_created_after_old_but_before_transaction_fails(harness: Ha
     checkpoint, _ = _checkpoint(harness, tmp_path)
 
     def replace_created_at(document: dict[str, object]) -> None:
-        evidence = document["evidence"]
-        assert isinstance(evidence, dict)
-        identity = evidence["clusterIdentity"]
-        assert isinstance(identity, dict)
-        identity["kubeSystemCreatedAt"] = "2000-01-01T00:00:00Z"
+        mapping_at(document, "evidence", "clusterIdentity")["kubeSystemCreatedAt"] = "2000-01-01T00:00:00Z"
 
     checksum = _rewrite_checkpoint(checkpoint, replace_created_at)
     evidence = tmp_path / "transaction.json"
@@ -1060,7 +1073,7 @@ def test_new_identity_created_after_old_but_before_transaction_fails(harness: Ha
     )
     assert result.returncode == 2
     assert "transaction" in (result.stderr + evidence.read_text()).lower()
-    assert json.loads(evidence.read_text())["status"] == "failed"
+    assert load_mapping(evidence)["status"] == "failed"
     _assert_sidecar(evidence)
 
 
@@ -1078,7 +1091,7 @@ def test_each_owned_namespace_residue_fails_factory_and_zero_state(
     )
     assert reset.returncode == 2
     assert namespace in reset.stderr + transaction.read_text()
-    assert json.loads(transaction.read_text())["status"] == "failed"
+    assert load_mapping(transaction)["status"] == "failed"
     _assert_sidecar(transaction)
 
     evidence = tmp_path / "zero-state.json"
@@ -1095,7 +1108,7 @@ def test_each_owned_namespace_residue_fails_factory_and_zero_state(
     )
     assert zero.returncode == 2
     assert namespace in zero.stderr
-    assert not evidence.exists() or json.loads(evidence.read_text()).get("status") != "succeeded"
+    assert not evidence.exists() or load_mapping(evidence).get("status") != "succeeded"
 
 
 @pytest.mark.parametrize(
@@ -1118,7 +1131,7 @@ def test_flux_crd_and_node_invariants_fail_absence_verification(
     )
     assert result.returncode == 2
     assert expected.lower() in (result.stderr + transaction.read_text()).lower()
-    assert json.loads(transaction.read_text())["status"] == "failed"
+    assert load_mapping(transaction)["status"] == "failed"
     _assert_sidecar(transaction)
 
 
@@ -1254,7 +1267,10 @@ def test_success_evidence_schema_sidecar_identity_absence_and_partial_order(harn
     before = len(_commands(harness))
     result = _run(harness, *_factory_arguments(checkpoint, checksum, evidence, execute=True))
     assert result.returncode == 0, result.stderr
-    document = json.loads(evidence.read_text())
+    document = load_mapping(evidence)
+    metadata = mapping_at(document, "metadata")
+    phases = mapping_sequence_at(document, "phases")
+    absence = mapping_sequence_at(document, "absence")
     assert set(document) == {
         "apiVersion",
         "kind",
@@ -1266,36 +1282,37 @@ def test_success_evidence_schema_sidecar_identity_absence_and_partial_order(harn
     }
     assert document["apiVersion"] == "nohiki.io/v1alpha1"
     assert document["kind"] == "LocalFactoryResetTransaction"
-    assert set(document["metadata"]) == {"startedAt", "context", "owner", "checkpoint"}
-    assert document["metadata"]["context"] == _CONTEXT
-    assert document["metadata"]["owner"] == "release-owner"
-    assert document["metadata"]["checkpoint"] == {
+    assert set(metadata) == {"startedAt", "context", "owner", "checkpoint"}
+    assert metadata["context"] == _CONTEXT
+    assert metadata["owner"] == "release-owner"
+    assert mapping_at(metadata, "checkpoint") == {
         "basename": checkpoint.name,
         "sha256": checksum,
     }
     assert document["status"] == "succeeded"
-    assert document["identity"] == {
+    assert mapping_at(document, "identity") == {
         "old": _identity(harness, _OLD_UID, _OLD_CREATED),
         "new": _identity(harness, _NEW_UID, _NEW_CREATED),
     }
-    assert [record["phase"] for record in document["phases"]] == list(_PHASES)
-    for record in document["phases"]:
+    assert [record["phase"] for record in phases] == list(_PHASES)
+    for record in phases:
         assert set(record) >= {"phase", "startedAt", "completedAt"}
-        dt.datetime.fromisoformat(record["startedAt"])
-        dt.datetime.fromisoformat(record["completedAt"])
+        dt.datetime.fromisoformat(string_at(record, "startedAt"))
+        dt.datetime.fromisoformat(string_at(record, "completedAt"))
         allowed = {"phase", "startedAt", "completedAt", "detail"}
         if record["phase"] in {"purge", "start"}:
             allowed |= {"argv", "exitCode"}
-            assert Path(record["argv"][0]).is_absolute()
+            argv = sequence_at(record, "argv")
+            assert isinstance(argv[0], str)
+            assert Path(argv[0]).is_absolute()
             assert record["exitCode"] == 0
         else:
             assert "argv" not in record
             assert "exitCode" not in record
         assert set(record) <= allowed
-    absence = document["absence"]
     assert len(absence) == len(_ABSENT_NAMESPACES) + 1
     assert all(set(record) == {"check", "passed"} and record["passed"] is True for record in absence)
-    checks = [record["check"] for record in absence]
+    checks = [string_at(record, "check") for record in absence]
     assert all(any(namespace in check for check in checks) for namespace in _ABSENT_NAMESPACES)
     assert any("fluxcd.io" in check for check in checks)
     _assert_sidecar(evidence)
@@ -1412,9 +1429,10 @@ def test_zero_state_checkpoint_binding_and_recovery_identity_match(harness: Harn
     assert recovery_result.returncode == 0, recovery_result.stderr
     _assert_sidecar(transaction)
     assert commit.read_text(encoding="ascii") == f"complete {transaction_checksum}\n"
-    document = json.loads(recovery.read_text())
-    assert document["evidence"]["clusterIdentity"] == _identity(harness, _NEW_UID, _NEW_CREATED)
-    assert document["evidence"]["clusterIdentity"] == json.loads(transaction.read_text())["identity"]["new"]
+    document = load_mapping(recovery)
+    cluster_identity = mapping_at(document, "evidence", "clusterIdentity")
+    assert cluster_identity == _identity(harness, _NEW_UID, _NEW_CREATED)
+    assert cluster_identity == mapping_at(load_mapping(transaction), "identity", "new")
     _assert_sidecar(recovery)
 
 
@@ -1442,26 +1460,27 @@ def test_recovery_refuses_invalid_or_nonmatching_reset_transaction(harness: Harn
     transaction_checksum = _sha256(transaction)
     recovery_environment = harness.env
     if case != "checksum":
-        document = json.loads(transaction.read_text())
+        document = load_mapping(transaction)
         if case == "identity":
-            document["identity"]["new"]["kubeSystemUid"] = "wrong-transaction-uid"
+            mapping_at(document, "identity", "new")["kubeSystemUid"] = "wrong-transaction-uid"
         elif case == "failed-status":
             document["status"] = "failed"
             document["diagnostic"] = "synthetic"
         elif case == "missing-phases":
             document["phases"] = []
         elif case == "absence":
-            document["absence"][0]["passed"] = False
+            mapping_sequence_at(document, "absence")[0]["passed"] = False
         elif case == "old-identity":
-            document["identity"]["old"]["kubeSystemUid"] = "wrong-old-uid"
+            mapping_at(document, "identity", "old")["kubeSystemUid"] = "wrong-old-uid"
         elif case == "not-fresh":
-            document["identity"]["new"] = dict(document["identity"]["old"])
+            identity = mapping_at(document, "identity")
+            identity["new"] = dict(mapping_at(identity, "old"))
             recovery_environment = harness.env | {
                 "FAKE_NEW_UID": _OLD_UID,
                 "FAKE_NEW_CREATED": _OLD_CREATED,
             }
         else:
-            document["metadata"]["context"] = "wrong-context"
+            mapping_at(document, "metadata")["context"] = "wrong-context"
         transaction.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
         transaction_checksum = _sha256(transaction)
         transaction.with_name(transaction.name + ".sha256").write_text(
@@ -1504,8 +1523,9 @@ def test_post_start_endpoint_binding_precedes_all_readiness_calls(harness: Harne
     commands = _commands(harness)[before:]
     assert not any(row[1:4] == ["get", "--raw", "/readyz"] for row in commands)
     assert not any(len(row) > 1 and row[1] == "wait" for row in commands)
-    document = json.loads(evidence.read_text())
-    assert document["phases"][-1]["phase"] == "apiReady"
+    document = load_mapping(evidence)
+    phases = mapping_sequence_at(document, "phases")
+    assert phases[-1]["phase"] == "apiReady"
     assert document["status"] == "failed"
 
 
@@ -1521,8 +1541,8 @@ def test_adapter_timeout_process_lookup_race_is_durable(harness: Harness, tmp_pa
     )
     assert result.returncode == 2
     assert "traceback" not in result.stderr.lower()
-    document = json.loads(evidence.read_text())
-    purge = next(phase for phase in document["phases"] if phase["phase"] == "purge")
+    document = load_mapping(evidence)
+    purge = next(item for item in mapping_sequence_at(document, "phases") if item["phase"] == "purge")
     assert purge["exitCode"] == 124
     assert document["status"] == "failed"
     _assert_sidecar(evidence)
@@ -1542,7 +1562,7 @@ def test_hung_kubectl_process_obeys_monotonic_deadline(harness: Harness, tmp_pat
     assert float(timeout_probe.read_text()) <= 10.0
     assert result.returncode == 2
     assert "timed out" in result.stderr.lower() or "deadline" in result.stderr.lower()
-    assert json.loads(evidence.read_text())["status"] == "failed"
+    assert load_mapping(evidence)["status"] == "failed"
     _assert_sidecar(evidence)
 
 
@@ -1613,7 +1633,7 @@ def test_malformed_kubeconfig_url_refuses_without_traceback_and_is_durable_after
             env=harness.env | {"FAKE_POST_ENDPOINT": "https://[bad"},
         )
         assert evidence.exists()
-        assert json.loads(evidence.read_text())["status"] == "failed"
+        assert load_mapping(evidence)["status"] == "failed"
     else:
         result = _run(
             harness,
@@ -1639,7 +1659,7 @@ def test_invalid_adapter_utf8_is_replaced_in_durable_failure(harness: Harness, t
     )
     assert result.returncode == 2
     assert "traceback" not in result.stderr.lower()
-    document = json.loads(evidence.read_text())
+    document = load_mapping(evidence)
     assert document["status"] == "failed"
     assert document["diagnostic"] == "sensitive diagnostic redacted"
 
@@ -1653,9 +1673,9 @@ def test_failed_identity_and_absence_phases_retain_observations(harness: Harness
         env=harness.env | {"FAKE_NEW_UID": _OLD_UID},
     )
     assert identity_result.returncode == 2
-    identity = json.loads(identity_evidence.read_text())["identity"]
-    assert identity["old"]["kubeSystemUid"] == _OLD_UID
-    assert identity["observed"]["kubeSystemUid"] == _OLD_UID
+    identity = mapping_at(load_mapping(identity_evidence), "identity")
+    assert mapping_at(identity, "old")["kubeSystemUid"] == _OLD_UID
+    assert mapping_at(identity, "observed")["kubeSystemUid"] == _OLD_UID
 
     harness.log.unlink()
     fresh_harness = harness.env | {"FAKE_RESIDUAL_NAMESPACE": "nohiki-registry"}
@@ -1666,7 +1686,7 @@ def test_failed_identity_and_absence_phases_retain_observations(harness: Harness
         env=fresh_harness,
     )
     assert absence_result.returncode == 2
-    absence = json.loads(absence_evidence.read_text())["absence"]
+    absence = load_mapping(absence_evidence)["absence"]
     assert absence == [
         {"check": "namespace nohiki absent", "passed": True},
         {"check": "namespace nohiki-foundation absent", "passed": True},

@@ -6,9 +6,19 @@ import re
 import subprocess
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 import yaml
+from _documents import (
+    ComposeFile,
+    ContainerEnv,
+    Manifest,
+    Scalar,
+    containers_of,
+    load_compose,
+    load_manifests,
+    load_mapping,
+)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
@@ -26,7 +36,17 @@ _MODEL_EGRESS_CLIENTS = {
 }
 _PROVIDER_API_KEYS = ("OPENROUTER", "OPENAI", "ANTHROPIC")
 
-_ROUTES = {
+type _Model = tuple[str, str]
+
+
+class _Route(TypedDict):
+    prefix: str
+    provider: tuple[_Model, ...]
+    compose_chains: bool
+    chains: dict[str, tuple[_Model, ...]]
+
+
+_ROUTES: dict[str, _Route] = {
     "nohiki-job-ingest-enrichment-service": {
         "prefix": "JOB_INGEST_ENRICHMENT_",
         "provider": (("openai:gpt-5.6-luna", "medium"),),
@@ -52,23 +72,22 @@ def _text(path: Path) -> str:
 
 
 @cache
-def _compose() -> dict[str, Any]:
-    return yaml.safe_load(_text(_COMPOSE))
+def _compose() -> ComposeFile:
+    return load_compose(_COMPOSE)
 
 
 def _source_llm_values(tmp_path: Path) -> Path:
     values = {
-        deployment.removeprefix("nohiki-"): {
-            "llm": yaml.safe_load(_text(_CHART / "charts" / deployment.removeprefix("nohiki-") / "values.yaml"))["llm"]
-        }
+        service: {"llm": load_mapping(_CHART / "charts" / service / "values.yaml")["llm"]}
         for deployment in _ROUTES
+        for service in (deployment.removeprefix("nohiki-"),)
     }
     path = tmp_path / "source-llm-values.yaml"
     path.write_text(yaml.safe_dump(values), encoding="utf-8")
     return path
 
 
-def _render_local(tmp_path: Path) -> tuple[dict[str, Any], ...]:
+def _render_local(tmp_path: Path) -> tuple[Manifest, ...]:
     result = subprocess.run(
         [
             "helm",
@@ -86,20 +105,20 @@ def _render_local(tmp_path: Path) -> tuple[dict[str, Any], ...]:
         capture_output=True,
         text=True,
     )
-    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+    return tuple(load_manifests(result.stdout))
 
 
-def _deployment_env(documents: tuple[dict[str, Any], ...], name: str) -> dict[str, dict[str, Any]]:
+def _deployment_env(documents: tuple[Manifest, ...], name: str) -> dict[str, ContainerEnv]:
     deployment = next(
         document
         for document in documents
-        if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == name
+        if document.get("kind") == "Deployment" and document["metadata"]["name"] == name
     )
-    entries = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
-    return {entry["name"]: entry for entry in entries}
+    container = containers_of(deployment)[0]
+    return {entry["name"]: entry for entry in container["env"]}
 
 
-def _expected_route_env(route: dict[str, Any], *, include_chains: bool = True) -> tuple[dict[str, str], set[str]]:
+def _expected_route_env(route: _Route, *, include_chains: bool = True) -> tuple[dict[str, str], set[str]]:
     prefix = route["prefix"]
     values: dict[str, str] = {}
     base_urls: set[str] = set()
@@ -132,6 +151,7 @@ def test_local_helm_llm_routes_use_gateway_and_secret_contract(tmp_path: Path) -
             assert env[name] == {"name": name, "value": value}
         for name in route_base_urls:
             model_name = env[name.removesuffix("__BASE_URL") + "__MODEL"]["value"]
+            assert isinstance(model_name, str)
             suffix = "" if model_name.startswith("anthropic:") else "/v1"
             assert env[name] == {"name": name, "value": f"{_GATEWAY_ORIGIN}{suffix}"}
             health_name = name.removesuffix("__BASE_URL") + "__HEALTH_URL"
@@ -154,8 +174,8 @@ def test_local_helm_llm_routes_use_gateway_and_secret_contract(tmp_path: Path) -
         entry["name"]
         for document in documents
         if document.get("kind") == "Deployment"
-        for container in document["spec"]["template"]["spec"]["containers"]
-        for entry in container.get("env", ())
+        for container in containers_of(document)
+        for entry in container.get("env", [])
         if "LLM__" in entry["name"] and entry["name"].endswith("__BASE_URL")
     }
     assert rendered_llm_base_urls == expected_base_urls
@@ -177,13 +197,15 @@ def test_tracked_helm_llm_values_have_no_endpoint_defaults() -> None:
 def test_compose_llm_base_url_is_external_with_no_tracked_default() -> None:
     compose = _compose()
     actual: dict[str, str] = {}
-    for service in compose["services"].values():
+    services = compose["services"]
+    for service in services.values():
         environment = service.get("environment", {})
         if not isinstance(environment, dict):
             continue
-        actual.update(
-            {name: value for name, value in environment.items() if "LLM__" in name and name.endswith("__BASE_URL")}
-        )
+        for name, value in environment.items():
+            if "LLM__" in name and name.endswith("__BASE_URL"):
+                assert isinstance(value, str)
+                actual[name] = value
 
     expected = {
         name: _EXTERNAL_BASE_URL
@@ -192,7 +214,8 @@ def test_compose_llm_base_url_is_external_with_no_tracked_default() -> None:
     }
     assert actual == expected
     compose_text = _text(_COMPOSE)
-    assert compose["x-llm-provider-endpoints"]["NOHIKI_LLM_OPENAI_BASE_URL"] == _EXTERNAL_BASE_URL
+    provider_endpoints = compose["x-llm-provider-endpoints"]
+    assert provider_endpoints["NOHIKI_LLM_OPENAI_BASE_URL"] == _EXTERNAL_BASE_URL
     assert "${NOHIKI_LLM_OPENAI_BASE_URL:-" not in compose_text
     assert re.search(r"(?m)^NOHIKI_LLM_BASE_URL=", _text(_ENV_EXAMPLE)) is None
     assert not re.search(r"(?im)^\s*[^#].*LLM__.*BASE_URL:\s*https?://", compose_text)
@@ -200,11 +223,14 @@ def test_compose_llm_base_url_is_external_with_no_tracked_default() -> None:
 
 def test_compose_llm_model_order_and_reasoning_match_helm_contract() -> None:
     compose = _compose()
-    environments = {
-        service["environment"]["SERVICE_NAME"]: service["environment"]
-        for service in compose["services"].values()
-        if isinstance(service.get("environment"), dict) and "SERVICE_NAME" in service["environment"]
-    }
+    environments: dict[str, dict[str, Scalar]] = {}
+    services = compose["services"]
+    for service in services.values():
+        environment = service.get("environment")
+        if isinstance(environment, dict) and "SERVICE_NAME" in environment:
+            service_name = environment["SERVICE_NAME"]
+            assert isinstance(service_name, str)
+            environments[service_name] = environment
 
     for deployment, route in _ROUTES.items():
         service_name = deployment.removeprefix("nohiki-")

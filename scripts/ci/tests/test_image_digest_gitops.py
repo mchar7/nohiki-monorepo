@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _documents import WorkflowInputValue, load_manifests, load_mapping, load_workflow
 
 _ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT = _ROOT / "scripts" / "ci" / "image_digests.py"
@@ -67,7 +68,7 @@ def _render(values_name: str, extra_values: Path | None = None) -> subprocess.Co
 
 def _images(value: object) -> list[str]:
     if isinstance(value, dict):
-        images = [value["image"]] if isinstance(value.get("image"), str) else []
+        images = [image] if isinstance(image := value.get("image"), str) else []
         return images + [image for child in value.values() for image in _images(child)]
     if isinstance(value, list):
         return [image for child in value for image in _images(child)]
@@ -80,14 +81,21 @@ def _assert_schedule_tick_image(actual: str, expected: str) -> None:
 
 
 @cache
-def _matrix_include() -> list[dict[str, object]]:
-    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+def _matrix_include() -> list[dict[str, WorkflowInputValue]]:
+    workflow = load_workflow(_WORKFLOW)
     return workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
 
 
 @cache
 def _names() -> tuple[str, ...]:
-    return tuple(entry["name"] for entry in _matrix_include())
+    names: list[str] = []
+    for entry in _matrix_include():
+        match entry.get("name"):
+            case str(name):
+                names.append(name)
+            case _:
+                pytest.fail("build matrix entries must have string names")
+    return tuple(names)
 
 
 def _record(name: str, index: int = 0, *, repository: str = _SYNTHETIC_REPOSITORY) -> dict[str, str]:
@@ -165,16 +173,24 @@ def test_assemble_accepts_exact_matrix_and_is_deterministic(tmp_path: Path) -> N
     first_output = (tmp_path / "first" / "digests.yaml").read_text(encoding="utf-8")
     second_output = (tmp_path / "second" / "digests.yaml").read_text(encoding="utf-8")
     assert first_output == second_output
-    document = yaml.safe_load(first_output)
-    digests = document["global"]["imageDigests"]
-    assert set(digests) == {record["image"] for record in records}
-    assert set(digests.values()) == {record["digest"] for record in records}
-    assert "imageDigestProvenance" not in document["global"]
+    match load_mapping(tmp_path / "first" / "digests.yaml"):
+        case {"global": {"imageDigests": dict(digests), **global_values}}:
+            pass
+        case _:
+            pytest.fail("generated digest values must contain global.imageDigests")
+    typed_digests: dict[str, object] = {}
+    for key, value in digests.items():
+        if not isinstance(key, str):
+            pytest.fail("generated image digest keys must be strings")
+        typed_digests[key] = value
+    assert set(typed_digests) == {record["image"] for record in records}
+    assert set(typed_digests.values()) == {record["digest"] for record in records}
+    assert "imageDigestProvenance" not in global_values
     cpu_key = f"{_SYNTHETIC_PREFIX}/ml-compute-service"
     gpu_key = f"{_SYNTHETIC_PREFIX}/ml-compute-service-gpu"
-    assert cpu_key in digests
-    assert gpu_key in digests
-    assert digests[cpu_key] != digests[gpu_key]
+    assert cpu_key in typed_digests
+    assert gpu_key in typed_digests
+    assert typed_digests[cpu_key] != typed_digests[gpu_key]
 
 
 @pytest.mark.parametrize(
@@ -282,12 +298,13 @@ def test_production_helmrelease_consumes_generated_digest_overlay() -> None:
         text=True,
         check=True,
     ).stdout
-    release = next(
-        document
-        for document in yaml.safe_load_all(rendered)
-        if isinstance(document, dict) and document.get("kind") == "HelmRelease"
-    )
-    assert release["spec"]["chart"]["spec"]["valuesFiles"] == [
+    release = next(document for document in load_manifests(rendered) if document["kind"] == "HelmRelease")
+    match release:
+        case {"spec": {"chart": {"spec": {"valuesFiles": values_files}}}}:
+            pass
+        case _:
+            pytest.fail("HelmRelease must contain spec.chart.spec.valuesFiles")
+    assert values_files == [
         "infra/k8s/helm/values.yaml",
         "infra/k8s/helm/values.prod.yaml",
         "infra/k8s/helm/values.prod.identity.yaml",
@@ -313,7 +330,7 @@ def test_complete_digest_map_renders_all_enabled_first_party_images_immutable(
 ) -> None:
     result = _render("values.prod.yaml", _digest_values(tmp_path))
     assert result.returncode == 0, result.stderr
-    documents = [document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict)]
+    documents = load_manifests(result.stdout)
     images = [image for image in _images(documents) if image.startswith(_FIRST_PARTY_PREFIX)]
     assert images
     assert all("@sha256:" in image and ":sha-" not in image for image in images)

@@ -3,10 +3,9 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
-import yaml
+from _documents import Manifest, load_manifests, load_mapping
 from helm_test_utils import runtime_eso_args
 from test_image_digest_gitops import _digest_values
 
@@ -78,7 +77,7 @@ _FORBIDDEN_PREFIXES = (
 )
 
 
-def _render(values_file: str, tmp_path: Path | None = None) -> list[dict[str, Any]]:
+def _render(values_file: str, tmp_path: Path | None = None) -> list[Manifest]:
     command = [
         "helm",
         "template",
@@ -92,6 +91,7 @@ def _render(values_file: str, tmp_path: Path | None = None) -> list[dict[str, An
         "nohiki",
     ]
     if values_file == "values.prod.yaml":
+        assert tmp_path is not None
         digest_values = _digest_values(tmp_path)
         command.extend(
             [
@@ -111,7 +111,7 @@ def _render(values_file: str, tmp_path: Path | None = None) -> list[dict[str, An
         text=True,
         check=True,
     )
-    return [document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict)]
+    return load_manifests(result.stdout)
 
 
 def _container_images(value: object) -> list[str]:
@@ -120,9 +120,10 @@ def _container_images(value: object) -> list[str]:
         for key, child in value.items():
             if key in {"containers", "initContainers"} and isinstance(child, list):
                 images.extend(
-                    container["image"]
+                    image
                     for container in child
-                    if isinstance(container, dict) and isinstance(container.get("image"), str)
+                    if isinstance(container, dict)
+                    if isinstance(image := container.get("image"), str)
                 )
             else:
                 images.extend(_container_images(child))
@@ -160,34 +161,57 @@ def test_observability_images_use_exact_refs_and_workload_counts(values_file: st
 
 
 def test_loki_and_cache_images_are_aligned_without_config_changes() -> None:
-    values = yaml.safe_load((_CHART / "values.yaml").read_text())
-    loki = values["loki"]
+    values = load_mapping(_CHART / "values.yaml")
+    match values:
+        case {
+            "loki": {
+                "loki": {"image": {"tag": str(loki_tag)}, "auth_enabled": auth_enabled},
+                "lokiCanary": {"image": {"tag": str(canary_tag)}},
+                "chunksCache": {"image": {"tag": str(chunks_cache_tag)}},
+                "resultsCache": {"image": {"tag": str(results_cache_tag)}},
+                "memcached": {"image": {"tag": str(memcached_tag)}},
+                "deploymentMode": deployment_mode,
+            },
+            "tempo-distributed": {
+                "memcached": {"image": {"tag": str(tempo_cache_tag)}},
+                "tempo": {"structuredConfig": {"multitenancy_enabled": tempo_multitenancy}},
+            },
+            "mimir-distributed": {"mimir": {"structuredConfig": {"multitenancy_enabled": mimir_multitenancy}}},
+        }:
+            pass
+        case _:
+            pytest.fail("observability values must contain the expected image and tenancy fields")
+    cache_tags = {chunks_cache_tag, results_cache_tag, memcached_tag}
 
-    assert loki["loki"]["image"]["tag"].split("@", 1)[0] == loki["lokiCanary"]["image"]["tag"].split("@", 1)[0]
-    assert {loki[cache]["image"]["tag"] for cache in ("chunksCache", "resultsCache", "memcached")} == {
-        "1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7"
-    }
-    assert values["tempo-distributed"]["memcached"]["image"]["tag"] == next(
-        iter({loki[cache]["image"]["tag"] for cache in ("chunksCache", "resultsCache", "memcached")})
-    )
-    assert loki["deploymentMode"] == "SimpleScalable"
-    assert loki["loki"]["auth_enabled"] is True
-    assert values["mimir-distributed"]["mimir"]["structuredConfig"]["multitenancy_enabled"] is True
-    assert values["tempo-distributed"]["tempo"]["structuredConfig"]["multitenancy_enabled"] is True
+    assert loki_tag.split("@", 1)[0] == canary_tag.split("@", 1)[0]
+    assert cache_tags == {"1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7"}
+    assert tempo_cache_tag == next(iter(cache_tags))
+    assert deployment_mode == "SimpleScalable"
+    assert auth_enabled is True
+    assert mimir_multitenancy is True
+    assert tempo_multitenancy is True
 
 
 def test_compose_and_chart_runtime_images_are_exactly_aligned() -> None:
     compose = (_ROOT / "infra/compose/docker-compose.yml").read_text(encoding="utf-8")
-    values = yaml.safe_load((_CHART / "values.yaml").read_text(encoding="utf-8"))
-    docling = yaml.safe_load((_CHART / "charts/docling-serve/values.yaml").read_text(encoding="utf-8"))
+    values = load_mapping(_CHART / "values.yaml")
+    docling = load_mapping(_CHART / "charts/docling-serve/values.yaml")
 
     mimir = "3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d"
     prometheus_tag = "v3.13.1"
     prometheus_digest = "3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893"
     docling_tag = "v1.26.0@sha256:7e07522e0240c1db3ff5b837ffa969c2ecd5a71664c0e0369f5a69fc169e30ba"
 
-    assert values["mimir-distributed"]["image"]["tag"] == mimir
-    assert values["kube-prometheus-stack"]["prometheus"]["prometheusSpec"]["image"] == {
+    match values:
+        case {
+            "mimir-distributed": {"image": {"tag": rendered_mimir_tag}},
+            "kube-prometheus-stack": {"prometheus": {"prometheusSpec": {"image": prometheus_image}}},
+        }:
+            pass
+        case _:
+            pytest.fail("chart values must contain the Mimir and Prometheus image settings")
+    assert rendered_mimir_tag == mimir
+    assert prometheus_image == {
         "repository": "prometheus/prometheus",
         "tag": prometheus_tag,
         "sha": prometheus_digest,
