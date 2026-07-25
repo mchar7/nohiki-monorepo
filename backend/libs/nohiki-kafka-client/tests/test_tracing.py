@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from nohiki_kafka_client.observability.tracing import (
     ConsumerSpanParams,
     KafkaHeaderCarrier,
@@ -15,6 +16,8 @@ from nohiki_kafka_client.observability.tracing import (
     inject_trace_context,
 )
 from opentelemetry import trace
+
+pytestmark = pytest.mark.usefixtures("configure_otel_test_provider")
 
 
 class TestKafkaHeaderCarrier:

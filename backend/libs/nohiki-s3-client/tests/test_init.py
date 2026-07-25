@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+from collections.abc import Generator
 
 import pytest
 from nohiki_s3_client import S3Client, S3Settings, _s3_client_cache, get_s3_client
@@ -26,8 +27,10 @@ def s3_settings() -> S3Settings:
 
 
 @pytest.fixture(autouse=True)
-def clear_cache() -> None:
-    """Clear the S3 client cache before each test."""
+def clear_cache() -> Generator[None]:
+    """Clear the S3 client cache before and after each test."""
+    _s3_client_cache.clear()
+    yield
     _s3_client_cache.clear()
 
 

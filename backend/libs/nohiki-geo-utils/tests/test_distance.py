@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 from nohiki.common.v1 import (
     CountryCode,
@@ -11,8 +13,16 @@ from nohiki.common.v1 import (
 )
 from nohiki_geo_utils.distance import (
     GeodesicEstimator,
+    _cached_geodesic_distance,
     calculate_distance,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_geodesic_cache() -> Generator[None]:
+    _cached_geodesic_distance.cache_clear()
+    yield
+    _cached_geodesic_distance.cache_clear()
 
 
 class TestCalculateDistance:
@@ -37,8 +47,16 @@ class TestCalculateDistance:
         assert calculate_distance(loc1, None) is None
 
     def test_returns_none_when_coords_missing(self) -> None:
-        loc1 = Location(city="San Francisco", country=CountryCode.USA, location_type=LocationType.PHYSICAL)
-        loc2 = Location(city="Los Angeles", country=CountryCode.USA, location_type=LocationType.PHYSICAL)
+        loc1 = Location(
+            city="San Francisco",
+            country=CountryCode.USA,
+            location_type=LocationType.PHYSICAL,
+        )
+        loc2 = Location(
+            city="Los Angeles",
+            country=CountryCode.USA,
+            location_type=LocationType.PHYSICAL,
+        )
         assert calculate_distance(loc1, loc2) is None
 
     def test_calculates_distance_between_cities(self) -> None:
@@ -145,7 +163,11 @@ class TestGeodesicEstimator:
 
     def test_estimate_raises_without_coordinates(self) -> None:
         estimator = GeodesicEstimator()
-        origin = Location(city="San Francisco", country=CountryCode.USA, location_type=LocationType.PHYSICAL)
+        origin = Location(
+            city="San Francisco",
+            country=CountryCode.USA,
+            location_type=LocationType.PHYSICAL,
+        )
         destination = Location(
             city="Los Angeles",
             country=CountryCode.USA,

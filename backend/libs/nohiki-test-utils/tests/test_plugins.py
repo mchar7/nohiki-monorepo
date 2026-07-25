@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from importlib import reload
+import importlib
+import sys
 from unittest.mock import MagicMock, patch
 
-import nohiki_test_utils
 import pytest
 from nohiki_test_utils import plugins
 
@@ -20,14 +20,19 @@ class TestPytestConfigure:
         assert any("integration" in str(m) for m in markers)
 
     def test_plugin_and_package_exports_reload_cleanly(self) -> None:
-        """Entrypoint and lazy package exports remain valid on normal Python reload."""
-        reloaded_package = reload(nohiki_test_utils)
-        reloaded_plugin = reload(plugins)
+        """Entrypoint and lazy package exports remain valid on a fresh import."""
+        with patch.dict(sys.modules):
+            for name in tuple(sys.modules):
+                if name == "nohiki_test_utils" or name.startswith("nohiki_test_utils."):
+                    del sys.modules[name]
 
-        assert callable(reloaded_package.docker_daemon_available)
-        assert reloaded_plugin.pytest_collection_modifyitems is not None
-        with pytest.raises(AttributeError, match="has no attribute 'missing_export'"):
-            reloaded_package.__getattr__("missing_export")
+            reloaded_package = importlib.import_module("nohiki_test_utils")
+            reloaded_plugin = importlib.import_module("nohiki_test_utils.plugins")
+
+            assert callable(reloaded_package.docker_daemon_available)
+            assert reloaded_plugin.pytest_collection_modifyitems is not None
+            with pytest.raises(AttributeError, match="has no attribute 'missing_export'"):
+                reloaded_package.__getattr__("missing_export")
 
 
 class TestCollectionModifyItems:

@@ -114,6 +114,10 @@ class TestProfileEmbeddingContentHash:
 class TestGetEmbeddingPublisher:
     """Tests for get_embedding_publisher factory."""
 
+    def teardown_method(self) -> None:
+        """Clear the cached publisher after each test."""
+        get_embedding_publisher.cache_clear()
+
     def test_returns_embedding_publisher(self) -> None:
         """get_embedding_publisher returns a configured EmbeddingPublisher."""
         mock_manifest = MagicMock()
@@ -122,8 +126,14 @@ class TestGetEmbeddingPublisher:
         mock_settings.service_name = "user-pref-service"
 
         with (
-            patch("user_pref_service.core.embedding.get_manifest", return_value=mock_manifest),
-            patch("user_pref_service.core.embedding.get_settings", return_value=mock_settings),
+            patch(
+                "user_pref_service.core.embedding.get_manifest",
+                return_value=mock_manifest,
+            ),
+            patch(
+                "user_pref_service.core.embedding.get_settings",
+                return_value=mock_settings,
+            ),
         ):
             get_embedding_publisher.cache_clear()
             publisher = get_embedding_publisher()
@@ -137,8 +147,14 @@ class TestGetEmbeddingPublisher:
         mock_settings.service_name = "user-pref-service"
 
         with (
-            patch("user_pref_service.core.embedding.get_manifest", return_value=mock_manifest),
-            patch("user_pref_service.core.embedding.get_settings", return_value=mock_settings),
+            patch(
+                "user_pref_service.core.embedding.get_manifest",
+                return_value=mock_manifest,
+            ),
+            patch(
+                "user_pref_service.core.embedding.get_settings",
+                return_value=mock_settings,
+            ),
         ):
             get_embedding_publisher.cache_clear()
             p1 = get_embedding_publisher()
@@ -155,8 +171,14 @@ class TestGetEmbeddingPublisher:
         mock_settings.service_name = "user-pref-service"
 
         with (
-            patch("user_pref_service.core.embedding.get_manifest", return_value=mock_manifest),
-            patch("user_pref_service.core.embedding.get_settings", return_value=mock_settings),
+            patch(
+                "user_pref_service.core.embedding.get_manifest",
+                return_value=mock_manifest,
+            ),
+            patch(
+                "user_pref_service.core.embedding.get_settings",
+                return_value=mock_settings,
+            ),
         ):
             get_embedding_publisher.cache_clear()
             publisher = get_embedding_publisher()

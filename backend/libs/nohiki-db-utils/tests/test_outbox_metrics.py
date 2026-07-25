@@ -8,6 +8,10 @@ from nohiki_db_utils.outbox_metrics import OutboxMetrics, get_outbox_metrics
 class TestOutboxMetrics:
     """Tests for OutboxMetrics OTel instrumentation."""
 
+    def teardown_method(self) -> None:
+        """Clear the cached metrics instance after each test."""
+        get_outbox_metrics.cache_clear()
+
     def test_singleton_instance(self) -> None:
         """get_outbox_metrics returns the same instance on repeated calls."""
         m1 = get_outbox_metrics()

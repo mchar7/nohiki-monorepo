@@ -12,7 +12,9 @@ class TestProjectionConstants:
 
     def test_projection_priority_group_id_format(self) -> None:
         """Should format priority group_id with kafka consumer group suffix."""
-        from bff_service.events.projections._constants import projection_priority_group_id
+        from bff_service.events.projections._constants import (
+            projection_priority_group_id,
+        )
 
         assert projection_priority_group_id.endswith("-projections-priority")
 
@@ -22,7 +24,7 @@ class TestProjectionConstants:
 
         assert projection_bulk_group_id.endswith("-projections-bulk")
 
-    def test_missing_database_config_raises_runtime_error(self) -> None:
+    def test_missing_database_config_raises_runtime_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should raise RuntimeError when database is not configured."""
         import importlib
         import sys
@@ -31,8 +33,7 @@ class TestProjectionConstants:
         mock_settings.kafka.consumer_group = "test-group"
         mock_settings.database = None
 
-        if "bff_service.events.projections._constants" in sys.modules:
-            del sys.modules["bff_service.events.projections._constants"]
+        monkeypatch.delitem(sys.modules, "bff_service.events.projections._constants", raising=False)
 
         with (
             patch("bff_service.core.config.get_settings", return_value=mock_settings),

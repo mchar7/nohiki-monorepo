@@ -30,7 +30,7 @@ from doc_template_service.services.template_service import (
     TemplateVersionError,
 )
 from nohiki.common.v1 import AccessScope, EventMetadata, RenderOutputFormat
-from nohiki.doc.template.v1 import DocumentRenderRequested
+from nohiki.doc.template.v1 import DocumentRenderRequested, TemplateAudience
 from nohiki_common_exceptions import ValidationError
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import MessageContext
@@ -306,7 +306,9 @@ class TestHandleTemplateRenderRequested:
         assert decoded.validation_schema is None
 
     @pytest.mark.asyncio
-    async def test_invalid_metadata_publishes_one_correlated_terminal_failure(self) -> None:
+    async def test_invalid_metadata_publishes_one_correlated_terminal_failure(
+        self,
+    ) -> None:
         """Invalid requests produce one schema-valid FAILED callback with no artifacts."""
         mock_message = MagicMock()
         mock_message.metadata = None
@@ -332,7 +334,9 @@ class TestHandleTemplateRenderRequested:
         assert bytes(event)
 
     @pytest.mark.asyncio
-    async def test_invalid_content_publishes_one_correlated_terminal_failure(self) -> None:
+    async def test_invalid_content_publishes_one_correlated_terminal_failure(
+        self,
+    ) -> None:
         """Missing template content produces exactly one terminal callback."""
         mock_message = MagicMock()
         mock_message.metadata = EventMetadata(
@@ -360,7 +364,9 @@ class TestHandleTemplateRenderRequested:
         assert bytes(event)
 
     @pytest.mark.asyncio
-    async def test_invalid_version_publishes_one_correlated_terminal_failure(self) -> None:
+    async def test_invalid_version_publishes_one_correlated_terminal_failure(
+        self,
+    ) -> None:
         """Missing template version produces exactly one terminal callback."""
         mock_message = MagicMock()
         mock_message.metadata = EventMetadata(
@@ -517,7 +523,10 @@ class TestHandleTemplateCreateRequested:
                 new_callable=AsyncMock,
                 return_value=mock_template,
             ),
-            patch("doc_template_service.events.commands.publish_template_created_event", new_callable=AsyncMock),
+            patch(
+                "doc_template_service.events.commands.publish_template_created_event",
+                new_callable=AsyncMock,
+            ),
         ):
             await handle_template_create_requested(mock_message, mock_context)
 
@@ -543,6 +552,7 @@ class TestHandleTemplateVersionAddRequested:
         mock_source_template.namespace = "default"
         mock_source_template.access_scope = AccessScope.PRIVATE
         mock_source_template.owner_id = UUID(mock_message.user_id)
+        mock_source_template.audience = TemplateAudience.DOCUMENT
 
         mock_new_template = MagicMock()
         mock_new_template.id = "33333333-3333-3333-3333-333333333333"
@@ -561,7 +571,10 @@ class TestHandleTemplateVersionAddRequested:
                 new_callable=AsyncMock,
                 return_value=mock_new_template,
             ) as mock_create,
-            patch("doc_template_service.events.commands.publish_template_updated_event", new_callable=AsyncMock),
+            patch(
+                "doc_template_service.events.commands.publish_template_updated_event",
+                new_callable=AsyncMock,
+            ),
         ):
             await handle_template_version_add_requested(mock_message, mock_context)
 
@@ -618,6 +631,7 @@ class TestHandleTemplateVersionAddRequested:
         mock_source_template.namespace = "default"
         mock_source_template.access_scope = AccessScope.PUBLIC
         mock_source_template.owner_id = None
+        mock_source_template.audience = TemplateAudience.DOCUMENT
         mock_new_template = MagicMock()
         mock_new_template.id = "33333333-3333-3333-3333-333333333333"
         mock_new_template.version = "2.0.0"
@@ -634,7 +648,10 @@ class TestHandleTemplateVersionAddRequested:
                 new_callable=AsyncMock,
                 return_value=mock_new_template,
             ) as mock_create,
-            patch("doc_template_service.events.commands.publish_template_updated_event", new_callable=AsyncMock),
+            patch(
+                "doc_template_service.events.commands.publish_template_updated_event",
+                new_callable=AsyncMock,
+            ),
         ):
             await handle_template_version_add_requested(mock_message, mock_context)
 
@@ -692,7 +709,10 @@ class TestHandleTemplateDeleteRequested:
                 "doc_template_service.events.commands.delete_template",
                 new_callable=AsyncMock,
             ),
-            patch("doc_template_service.events.commands.publish_template_deleted_event", new_callable=AsyncMock),
+            patch(
+                "doc_template_service.events.commands.publish_template_deleted_event",
+                new_callable=AsyncMock,
+            ),
         ):
             await handle_template_delete_requested(mock_message, mock_context)
 
@@ -802,6 +822,7 @@ class TestHandleTemplateVersionAddRequestedExceptions:
         mock_source_template.namespace = "default"
         mock_source_template.access_scope = AccessScope.PRIVATE
         mock_source_template.owner_id = UUID(mock_message.user_id)
+        mock_source_template.audience = TemplateAudience.DOCUMENT
 
         mock_context = _make_context()
 
@@ -839,6 +860,7 @@ class TestHandleTemplateVersionAddRequestedExceptions:
         mock_source_template.namespace = "default"
         mock_source_template.access_scope = AccessScope.PRIVATE
         mock_source_template.owner_id = UUID(mock_message.user_id)
+        mock_source_template.audience = TemplateAudience.DOCUMENT
 
         mock_context = _make_context()
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +12,15 @@ from job_correlation_evaluation_service.services.scoring.stages.deterministic_fi
 )
 from job_correlation_evaluation_service.services.scoring_service import (
     MLScoringService,
+    _compile_disallowed_pattern,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_disallowed_pattern_cache() -> Generator[None]:
+    _compile_disallowed_pattern.cache_clear()
+    yield
+    _compile_disallowed_pattern.cache_clear()
 
 
 class TestMLScoringServiceErrorHandling:

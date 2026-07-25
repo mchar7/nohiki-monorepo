@@ -178,6 +178,10 @@ class TestGetS3Metrics:
         """Clear cache before each test."""
         get_s3_metrics.cache_clear()
 
+    def teardown_method(self) -> None:
+        """Clear cache after each test."""
+        get_s3_metrics.cache_clear()
+
     def test_returns_singleton_instance(self) -> None:
         """Test that get_s3_metrics returns same instance."""
         with patch("opentelemetry.metrics.get_meter"):

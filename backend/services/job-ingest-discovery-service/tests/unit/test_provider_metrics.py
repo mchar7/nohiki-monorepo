@@ -14,7 +14,9 @@ class TestDiscoveryProviderMetrics:
             mock_meter = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from job_ingest_discovery_service.providers.metrics import DiscoveryProviderMetrics
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryProviderMetrics,
+            )
 
             metrics_instance = DiscoveryProviderMetrics()
 
@@ -45,10 +47,14 @@ class TestDiscoveryProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from job_ingest_discovery_service.providers.metrics import DiscoveryProviderMetrics
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryProviderMetrics,
+            )
 
             metrics_instance = DiscoveryProviderMetrics()
-            from job_ingest_discovery_service.providers.metrics import DiscoveryMetricData
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryMetricData,
+            )
 
             metrics_instance.record_discovery(
                 DiscoveryMetricData(
@@ -74,10 +80,14 @@ class TestDiscoveryProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from job_ingest_discovery_service.providers.metrics import DiscoveryProviderMetrics
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryProviderMetrics,
+            )
 
             metrics_instance = DiscoveryProviderMetrics()
-            from job_ingest_discovery_service.providers.metrics import DiscoveryMetricData
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryMetricData,
+            )
 
             metrics_instance.record_discovery(
                 DiscoveryMetricData(
@@ -102,10 +112,14 @@ class TestDiscoveryProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from job_ingest_discovery_service.providers.metrics import DiscoveryProviderMetrics
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryProviderMetrics,
+            )
 
             metrics_instance = DiscoveryProviderMetrics()
-            from job_ingest_discovery_service.providers.metrics import DiscoveryMetricData
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryMetricData,
+            )
 
             metrics_instance.record_discovery(
                 DiscoveryMetricData(
@@ -131,7 +145,9 @@ class TestDiscoveryProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from job_ingest_discovery_service.providers.metrics import DiscoveryProviderMetrics
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryProviderMetrics,
+            )
 
             metrics_instance = DiscoveryProviderMetrics()
             metrics_instance.record_rate_limit("jobspy", "linkedin")
@@ -148,7 +164,9 @@ class TestDiscoveryProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from job_ingest_discovery_service.providers.metrics import DiscoveryProviderMetrics
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryProviderMetrics,
+            )
 
             metrics_instance = DiscoveryProviderMetrics()
             metrics_instance.record_timeout("jsearch", "glassdoor")
@@ -165,7 +183,9 @@ class TestDiscoveryProviderMetrics:
             mock_meter.create_up_down_counter.return_value = mock_up_down
             mock_metrics.get_meter.return_value = mock_meter
 
-            from job_ingest_discovery_service.providers.metrics import DiscoveryProviderMetrics
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryProviderMetrics,
+            )
 
             metrics_instance = DiscoveryProviderMetrics()
             metrics_instance.update_source_availability("indeed", is_available=True)
@@ -182,7 +202,9 @@ class TestDiscoveryProviderMetrics:
             mock_meter.create_up_down_counter.return_value = mock_up_down
             mock_metrics.get_meter.return_value = mock_meter
 
-            from job_ingest_discovery_service.providers.metrics import DiscoveryProviderMetrics
+            from job_ingest_discovery_service.providers.metrics import (
+                DiscoveryProviderMetrics,
+            )
 
             metrics_instance = DiscoveryProviderMetrics()
             metrics_instance.update_source_availability("linkedin", is_available=False)
@@ -192,6 +214,14 @@ class TestDiscoveryProviderMetrics:
 
 class TestGetDiscoveryProviderMetrics:
     """Tests for get_discovery_provider_metrics singleton function."""
+
+    def teardown_method(self) -> None:
+        """Clear the cached metrics instance after each test."""
+        from job_ingest_discovery_service.providers.metrics import (
+            get_discovery_provider_metrics,
+        )
+
+        get_discovery_provider_metrics.cache_clear()
 
     def test_returns_singleton_instance(self) -> None:
         """Test that the function returns a singleton instance."""
@@ -210,7 +240,9 @@ class TestGetDiscoveryProviderMetrics:
 
     def test_has_expected_attributes(self) -> None:
         """Test that the singleton has all expected attributes."""
-        from job_ingest_discovery_service.providers.metrics import get_discovery_provider_metrics
+        from job_ingest_discovery_service.providers.metrics import (
+            get_discovery_provider_metrics,
+        )
 
         get_discovery_provider_metrics.cache_clear()
         metrics = get_discovery_provider_metrics()

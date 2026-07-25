@@ -14,6 +14,10 @@ from skill_graph_service.metrics.skill_canonicalization import (
 class TestSkillCanonicalizationMetrics:
     """Tests for SkillCanonicalizationMetrics class."""
 
+    def teardown_method(self) -> None:
+        """Clear the cached metrics instance after each test."""
+        get_skill_canonicalization_metrics.cache_clear()
+
     def test_record_skill_processed_with_cache_hit(self) -> None:
         """Test recording skill processing metrics with cache hit."""
         mock_counter = MagicMock()
@@ -22,7 +26,11 @@ class TestSkillCanonicalizationMetrics:
         with (
             patch.object(SkillCanonicalizationMetrics, "__init__", return_value=None),
             patch.object(SkillCanonicalizationMetrics, "_get_counter", return_value=mock_counter),
-            patch.object(SkillCanonicalizationMetrics, "_get_histogram", return_value=mock_histogram),
+            patch.object(
+                SkillCanonicalizationMetrics,
+                "_get_histogram",
+                return_value=mock_histogram,
+            ),
         ):
             metrics = SkillCanonicalizationMetrics()
             metrics.record_skill_processed("normalization", 0.5, cache_hit=True, success=True)
@@ -38,7 +46,11 @@ class TestSkillCanonicalizationMetrics:
         with (
             patch.object(SkillCanonicalizationMetrics, "__init__", return_value=None),
             patch.object(SkillCanonicalizationMetrics, "_get_counter", return_value=mock_counter),
-            patch.object(SkillCanonicalizationMetrics, "_get_histogram", return_value=mock_histogram),
+            patch.object(
+                SkillCanonicalizationMetrics,
+                "_get_histogram",
+                return_value=mock_histogram,
+            ),
         ):
             metrics = SkillCanonicalizationMetrics()
             metrics.record_skill_processed("normalization", 0.5, cache_hit=False, success=False)
@@ -54,7 +66,11 @@ class TestSkillCanonicalizationMetrics:
         with (
             patch.object(SkillCanonicalizationMetrics, "__init__", return_value=None),
             patch.object(SkillCanonicalizationMetrics, "_get_counter", return_value=mock_counter),
-            patch.object(SkillCanonicalizationMetrics, "_get_histogram", return_value=mock_histogram),
+            patch.object(
+                SkillCanonicalizationMetrics,
+                "_get_histogram",
+                return_value=mock_histogram,
+            ),
         ):
             metrics = SkillCanonicalizationMetrics()
             metrics.record_feature_extraction(0.8, success=True)
@@ -70,7 +86,11 @@ class TestSkillCanonicalizationMetrics:
         with (
             patch.object(SkillCanonicalizationMetrics, "__init__", return_value=None),
             patch.object(SkillCanonicalizationMetrics, "_get_counter", return_value=mock_counter),
-            patch.object(SkillCanonicalizationMetrics, "_get_histogram", return_value=mock_histogram),
+            patch.object(
+                SkillCanonicalizationMetrics,
+                "_get_histogram",
+                return_value=mock_histogram,
+            ),
         ):
             metrics = SkillCanonicalizationMetrics()
             metrics.record_feature_extraction(0.8, success=False)
@@ -86,7 +106,11 @@ class TestSkillCanonicalizationMetrics:
         with (
             patch.object(SkillCanonicalizationMetrics, "__init__", return_value=None),
             patch.object(SkillCanonicalizationMetrics, "_get_counter", return_value=mock_counter),
-            patch.object(SkillCanonicalizationMetrics, "_get_histogram", return_value=mock_histogram),
+            patch.object(
+                SkillCanonicalizationMetrics,
+                "_get_histogram",
+                return_value=mock_histogram,
+            ),
         ):
             metrics = SkillCanonicalizationMetrics()
             result = BatchCanonicalizationResult(

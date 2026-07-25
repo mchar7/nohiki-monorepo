@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -205,7 +206,12 @@ class TestCorrelationIdWithoutFastAPI:
         import importlib.machinery
         import sys
 
-        blocked = {"fastapi", "starlette", "starlette.middleware", "starlette.middleware.base"}
+        blocked = {
+            "fastapi",
+            "starlette",
+            "starlette.middleware",
+            "starlette.middleware.base",
+        }
 
         class _Blocker(importlib.abc.MetaPathFinder):
             def find_spec(
@@ -217,18 +223,19 @@ class TestCorrelationIdWithoutFastAPI:
                 if fullname in blocked or fullname.startswith(("fastapi.", "starlette.")):
                     raise ModuleNotFoundError(fullname)
 
-        saved = {}
-        for mod_name in list(sys.modules):
-            if mod_name in blocked or mod_name.startswith(("fastapi.", "starlette.")):
-                saved[mod_name] = sys.modules.pop(mod_name)
-        saved["nohiki_observability.correlation"] = sys.modules.pop("nohiki_observability.correlation", None)
-        saved["nohiki_observability._correlation_middleware"] = sys.modules.pop(
-            "nohiki_observability._correlation_middleware", None
-        )
-
         blocker = _Blocker()
-        sys.meta_path.insert(0, blocker)
-        try:
+        with (
+            patch.dict(sys.modules),
+            patch.object(sys, "meta_path", [blocker, *sys.meta_path]),
+        ):
+            for mod_name in tuple(sys.modules):
+                if (
+                    mod_name in blocked
+                    or mod_name == "nohiki_observability"
+                    or mod_name.startswith(("fastapi.", "starlette.", "nohiki_observability."))
+                ):
+                    del sys.modules[mod_name]
+
             mod = importlib.import_module("nohiki_observability.correlation")
             assert "nohiki_observability._correlation_middleware" not in sys.modules
             middleware_cls = mod.CorrelationIdMiddleware
@@ -236,9 +243,3 @@ class TestCorrelationIdWithoutFastAPI:
             assert middleware_mod._FASTAPI_AVAILABLE is False
             with pytest.raises(ImportError, match="FastAPI not installed"):
                 middleware_cls()
-        finally:
-            sys.meta_path.remove(blocker)
-            for k, v in saved.items():
-                if v is not None:
-                    sys.modules[k] = v
-            importlib.reload(importlib.import_module("nohiki_observability.correlation"))
