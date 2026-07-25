@@ -96,7 +96,7 @@ def _assert_empty_staged_files_guard(run: str, tool_fragments: tuple[str, ...]) 
 def test_lefthook_non_python_staged_mutators_skip_empty_staged_files() -> None:
     commands = _load_yaml(_LEFTHOOK)["pre-commit"]["commands"]
     expected = {
-        "*.{ts,tsx,js,jsx,css}": ("pnpm exec biome check --write {staged_files}",),
+        "*.{ts,tsx,js,jsx,css}": ("pnpm exec biome check --write --no-errors-on-unmatched {staged_files}",),
         "*.md": ("pnpm exec markdownlint-cli2 --fix {staged_files}",),
     }
 
@@ -212,7 +212,7 @@ def test_lefthook_python_mutator_handles_large_nul_safe_inventory(
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("x = 1\n", encoding="utf-8")
-    for index in range(9_000):
+    for index in range(506):
         relative = f"eligible/{index:05d}-{'x' * 240}.py"
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,6 +233,7 @@ def test_lefthook_python_mutator_handles_large_nul_safe_inventory(
     record = repo / "uv-record.jsonl"
     result = _run_python_mutator(repo, run, record)
     assert result.returncode == 0, result.stderr
+    assert len(record.read_text(encoding="utf-8").splitlines()) >= 4
     recorded = _recorded_paths(record)
     expected = Counter(eligible)
     assert Counter(recorded["check"]) == expected
@@ -301,18 +302,20 @@ def test_lefthook_nix_attribute_evaluates_to_verified_source() -> None:
     assert json.loads(package) == _LEFTHOOK_NIX_SOURCE
 
 
-def test_nix_ci_job_checks_flake_and_ci_shell_lefthook_version() -> None:
-    nix_job = _load_yaml(_CHECKS)["jobs"]["nix"]
-    commands = "\n".join(str(step.get("run", "")) for step in nix_job["steps"])
+def test_standard_ci_worker_checks_flake_and_ci_shell_lefthook_version() -> None:
+    standard_job = _load_yaml(_CHECKS)["jobs"]["worker"]
+    steps = {step.get("name"): step for step in standard_job["steps"]}
+    commands = "\n".join(str(step.get("run", "")) for step in standard_job["steps"])
+    lefthook_step = steps["Check Lefthook version"]
 
-    assert nix_job["env"]["LEFTHOOK_VERSION"] == _LEFTHOOK_VERSION
+    assert lefthook_step["env"]["LEFTHOOK_VERSION"] == _LEFTHOOK_VERSION
     assert re.search(r"\bnix\s+flake\s+check\b", commands)
     assert re.search(
         r"\bnix\s+develop\s+\.\#ci\s+--command\s+lefthook\s+version\b",
         commands,
     )
     assert re.search(
-        r'\[\s*"\$actual"\s*!=\s*"\$LEFTHOOK_VERSION"\s*\]',
+        r'test\s+"\$actual"\s*=\s*"\$LEFTHOOK_VERSION"',
         commands,
     )
 

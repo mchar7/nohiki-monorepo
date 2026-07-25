@@ -73,8 +73,11 @@ pre-commit:
         - "**/node_modules/**"
       root: typescript/apps/frontend/
       run: |
+        # The biome config `files.includes` is narrower than this glob (root-level configs
+        # such as vitest.config.ts are out of scope), and biome exits non-zero when every
+        # path handed to it is excluded. --no-errors-on-unmatched stops that failing commits.
         if [ -n "{staged_files}" ]; then
-          ../../../scripts/dev/env-lock.sh shared node_modules -- pnpm exec biome check --write {staged_files}
+          ../../../scripts/dev/env-lock.sh shared node_modules -- pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
         fi
       stage_fixed: true
 
