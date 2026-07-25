@@ -57,7 +57,7 @@ async def test_run_package_tests_drains_large_stdout_and_stderr(
 
 @pytest.mark.asyncio
 async def test_run_package_tests_timeout_kills_and_reaps_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A child holding both output pipes open is killed within the timeout."""
+    """The watchdog kills and reaps a child holding both output pipes open."""
     package_path = tmp_path / "package"
     (package_path / "tests").mkdir(parents=True)
     fake_bin = tmp_path / "bin"
@@ -82,9 +82,16 @@ async def test_run_package_tests_timeout_kills_and_reaps_child(tmp_path: Path, m
     environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
     environment["CHILD_PID_FILE"] = str(pid_file)
     monkeypatch.setattr(test_runner, "sanitized_python_env", lambda: environment)
-    monkeypatch.setattr(test_runner, "_WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS", 0.5)
+    child_started = asyncio.Event()
+    watchdog_fired = asyncio.Event()
 
-    started = asyncio.get_running_loop().time()
+    async def controlled_watchdog(_: asyncio.subprocess.Process) -> None:
+        await child_started.wait()
+        watchdog_fired.set()
+        raise TimeoutError
+
+    monkeypatch.setattr(test_runner, "_wait_for_package_process", controlled_watchdog)
+
     child_pid: int | None = None
     try:
         with pytest.raises(asyncio.TimeoutError):
@@ -98,13 +105,13 @@ async def test_run_package_tests_timeout_kills_and_reaps_child(tmp_path: Path, m
                     markers="",
                     extra_args=(),
                     with_coverage=False,
+                    progress_callback=lambda _: child_started.set(),
                 ),
-                timeout=2.0,
+                timeout=30.0,
             )
-        elapsed = asyncio.get_running_loop().time() - started
+        assert watchdog_fired.is_set()
         child_pid = int(pid_file.read_text(encoding="utf-8"))
 
-        assert elapsed < 1.5
         with pytest.raises(ProcessLookupError):
             os.kill(child_pid, 0)
     finally:

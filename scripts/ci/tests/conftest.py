@@ -33,13 +33,31 @@ _GIT_DISCOVERY_ENV = (
 )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _scrub_git_discovery_env() -> Iterator[None]:
+def _scrub(names: tuple[str, ...]) -> Iterator[None]:
     patch = pytest.MonkeyPatch()
-    for name in _GIT_DISCOVERY_ENV:
+    for name in names:
         patch.delenv(name, raising=False)
     yield
     patch.undo()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _scrub_git_discovery_env() -> Iterator[None]:
+    yield from _scrub(_GIT_DISCOVERY_ENV)
+
+
+# The hosted tests step exports these (checks.yml:528) and the gate CLI reads one as a
+# typer `envvar=`, so an unscrubbed suite silently exercises CI's configuration instead of
+# its own: the workspace sync is skipped and tests asserting sync behaviour never fire.
+_CI_RUNNER_ENV = (
+    "CI_CHECKS_SKIP_WORKSPACE_SYNC",
+    "CI_CHECKS_RUN_SUCCESS",
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _scrub_ci_runner_env() -> Iterator[None]:
+    yield from _scrub(_CI_RUNNER_ENV)
 
 
 @pytest.fixture(scope="session", autouse=True)
