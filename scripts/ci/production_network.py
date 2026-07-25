@@ -8,7 +8,7 @@ import ipaddress
 import json
 import re
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 from urllib.parse import urlsplit
 
 SERVICES = {
@@ -20,9 +20,18 @@ SERVICES = {
 EXPECTED_TYPE = [
     "object",
     {
-        "database": ["object", {"cidrs": ["list", "string"], "host": "string", "port": "number"}],
-        "redis": ["object", {"cidrs": ["list", "string"], "host": "string", "port": "number"}],
-        "s3": ["object", {"cidrs": ["list", "string"], "endpoint": "string", "port": "number"}],
+        "database": [
+            "object",
+            {"cidrs": ["list", "string"], "host": "string", "port": "number"},
+        ],
+        "redis": [
+            "object",
+            {"cidrs": ["list", "string"], "host": "string", "port": "number"},
+        ],
+        "s3": [
+            "object",
+            {"cidrs": ["list", "string"], "endpoint": "string", "port": "number"},
+        ],
         "kafka": [
             "object",
             {
@@ -145,7 +154,11 @@ def _generate(source: Path, destination: Path) -> None:
         "global:",
     ]
     for service in ("database", "redis"):
-        lines += [f"  {service}:", f'    host: "{values[service]["host"]}"', f"    port: {values[service]['port']}"]
+        lines += [
+            f"  {service}:",
+            f'    host: "{values[service]["host"]}"',
+            f"    port: {values[service]['port']}",
+        ]
     lines += [
         "  s3:",
         f'    endpoint: "{values["s3"]["endpoint"]}"',
@@ -158,7 +171,7 @@ def _generate(source: Path, destination: Path) -> None:
         "    managedEgress:",
     ]
     for service in ("database", "redis", "s3", "kafka"):
-        cidrs = ", ".join(values[service]["cidrs"])
+        cidrs = ", ".join(cast(list[str], values[service]["cidrs"]))
         lines += [f"      {service}:", f"        cidrs: [{cidrs}]"]
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text("\n".join((*lines, "")), encoding="utf-8")

@@ -17,7 +17,7 @@ from nohiki_test_utils import get_repo_root
 
 
 class _Digest(Protocol):
-    def update(self, data: bytes) -> object:
+    def update(self, data: bytes, /) -> object:
         """Add bytes to the digest state."""
 
 

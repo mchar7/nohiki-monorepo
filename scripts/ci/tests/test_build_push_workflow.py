@@ -95,6 +95,36 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
 
     build = jobs["build-push"]
     build_steps = {step.get("id", step["name"]): step for step in build["steps"]}
+    matrix = build["strategy"]["matrix"]["include"]
+    for image in matrix:
+        expected_lockfile = (
+            "pnpm-lock.yaml"
+            if image["name"] in {"frontend", "playwright-verification-runner"}
+            else "infra/k8s/kafka-connect/smt/build.gradle.kts"
+            if image["name"] == "kafka-connect"
+            else "uv.lock"
+        )
+        assert image["lockfile"] == expected_lockfile
+        assert (_ROOT / image["dockerfile"]).is_file()
+        assert (_ROOT / image["lockfile"]).is_file()
+
+    cache_inputs = "hashFiles(matrix.dockerfile, matrix.lockfile)"
+    assert build_steps["build"]["with"]["cache-from"] == (
+        "${{ matrix.name == 'ml-compute-service-gpu' && "
+        "format('type=registry,ref={0}/{1}:buildcache-{2}', "
+        "steps.image-base-path.outputs.image_base_path, matrix.name, "
+        f"{cache_inputs}) || format('type=gha,scope={{0}}-{{1}}', matrix.name, {cache_inputs})"
+        " }}"
+    )
+    assert build_steps["build"]["with"]["cache-to"] == (
+        "${{ matrix.name == 'ml-compute-service-gpu' && "
+        "(steps.mode.outputs.push == 'true' && "
+        "format('type=registry,ref={0}/{1}:buildcache-{2},mode=max', "
+        "steps.image-base-path.outputs.image_base_path, matrix.name, "
+        f"{cache_inputs}) || '') || format('type=gha,mode=max,scope={{0}}-{{1}}', "
+        f"matrix.name, {cache_inputs})"
+        " }}"
+    )
     assert build["needs"] == ["event-validation"]
     assert build["if"] == "needs.event-validation.outputs.authorized == 'true'"
     assert build["permissions"] == {
@@ -135,13 +165,21 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
 
     aggregate = jobs["aggregate-digests"]
     assert aggregate["needs"] == ["event-validation", "build-push"]
-    assert aggregate["permissions"] == {"contents": "read"}
-    proposal = jobs["propose-digests"]
-    assert proposal["needs"] == ["event-validation", "aggregate-digests"]
-    assert "github.event_name == 'workflow_run'" in proposal["if"]
-    assert "needs.event-validation.outputs.authorized == 'true'" in proposal["if"]
-    assert proposal["permissions"] == {"contents": "write", "pull-requests": "write"}
-    assert "id-token" not in proposal["permissions"]
+    assert aggregate["permissions"] == {
+        "actions": "read",
+        "contents": "write",
+        "pull-requests": "write",
+    }
+    assert "id-token" not in aggregate["permissions"]
+    aggregate_steps = {step.get("id", step["name"]): step for step in aggregate["steps"]}
+    proposal = aggregate_steps["Create or update digest PR"]
+    assert proposal["if"] == "env.PROPOSAL_ENABLED == 'true'"
+    assert "create-pull-request" in proposal["uses"]
+    assert {
+        job_name
+        for job_name, job in jobs.items()
+        if any(job["permissions"].get(name) == "write" for name in ("contents", "pull-requests"))
+    } == {"aggregate-digests"}
 
 
 def test_trivy_waivers_each_have_a_reason_and_expiry() -> None:

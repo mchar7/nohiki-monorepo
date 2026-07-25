@@ -40,7 +40,7 @@ jobs:
         )
       }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 1
     permissions:
       contents: read
     outputs:
@@ -114,7 +114,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Check out publication source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.validate-event.outputs.source_sha }}
           fetch-depth: 2
@@ -149,41 +149,41 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: user-auth-service, dockerfile: backend/services/user-auth-service/Dockerfile }
-          - { name: user-pref-service, dockerfile: backend/services/user-pref-service/Dockerfile }
-          - { name: user-upload-service, dockerfile: backend/services/user-upload-service/Dockerfile }
-          - { name: user-entitlement-service, dockerfile: backend/services/user-entitlement-service/Dockerfile }
-          - { name: job-storage-service, dockerfile: backend/services/job-storage-service/Dockerfile }
-          - { name: job-ingest-discovery-service, dockerfile: backend/services/job-ingest-discovery-service/Dockerfile }
-          - { name: job-ingest-schedule-service, dockerfile: backend/services/job-ingest-schedule-service/Dockerfile }
-          - { name: job-ingest-enrichment-service, dockerfile: backend/services/job-ingest-enrichment-service/Dockerfile }
-          - { name: job-query-composition-service, dockerfile: backend/services/job-query-composition-service/Dockerfile }
-          - { name: job-correlation-evaluation-service, dockerfile: backend/services/job-correlation-evaluation-service/Dockerfile }
-          - { name: skill-graph-service, dockerfile: backend/services/skill-graph-service/Dockerfile }
-          - { name: doc-template-service, dockerfile: backend/services/doc-template-service/Dockerfile }
-          - { name: doc-content-service, dockerfile: backend/services/doc-content-service/Dockerfile }
-          - { name: doc-process-service, dockerfile: backend/services/doc-process-service/Dockerfile }
-          - { name: notification-service, dockerfile: backend/services/notification-service/Dockerfile }
-          - { name: bff-service, dockerfile: backend/services/bff-service/Dockerfile }
-          - { name: frontend, context: ., dockerfile: typescript/apps/frontend/Dockerfile }
-          - { name: api-verification-runner, context: ., dockerfile: tests/Dockerfile.api-runner }
-          - { name: playwright-verification-runner, context: ., dockerfile: typescript/apps/frontend/Dockerfile.playwright-runner }
-          - { name: health-runner, context: ., dockerfile: scripts/util/health_check/Dockerfile }
-          - { name: ml-gateway-service, dockerfile: backend/services/ml-gateway-service/Dockerfile }
-          - { name: ml-compute-service, dockerfile: backend/services/ml-compute-service/Dockerfile }
+          - { name: user-auth-service, dockerfile: backend/services/user-auth-service/Dockerfile, lockfile: uv.lock }
+          - { name: user-pref-service, dockerfile: backend/services/user-pref-service/Dockerfile, lockfile: uv.lock }
+          - { name: user-upload-service, dockerfile: backend/services/user-upload-service/Dockerfile, lockfile: uv.lock }
+          - { name: user-entitlement-service, dockerfile: backend/services/user-entitlement-service/Dockerfile, lockfile: uv.lock }
+          - { name: job-storage-service, dockerfile: backend/services/job-storage-service/Dockerfile, lockfile: uv.lock }
+          - { name: job-ingest-discovery-service, dockerfile: backend/services/job-ingest-discovery-service/Dockerfile, lockfile: uv.lock }
+          - { name: job-ingest-schedule-service, dockerfile: backend/services/job-ingest-schedule-service/Dockerfile, lockfile: uv.lock }
+          - { name: job-ingest-enrichment-service, dockerfile: backend/services/job-ingest-enrichment-service/Dockerfile, lockfile: uv.lock }
+          - { name: job-query-composition-service, dockerfile: backend/services/job-query-composition-service/Dockerfile, lockfile: uv.lock }
+          - { name: job-correlation-evaluation-service, dockerfile: backend/services/job-correlation-evaluation-service/Dockerfile, lockfile: uv.lock }
+          - { name: skill-graph-service, dockerfile: backend/services/skill-graph-service/Dockerfile, lockfile: uv.lock }
+          - { name: doc-template-service, dockerfile: backend/services/doc-template-service/Dockerfile, lockfile: uv.lock }
+          - { name: doc-content-service, dockerfile: backend/services/doc-content-service/Dockerfile, lockfile: uv.lock }
+          - { name: doc-process-service, dockerfile: backend/services/doc-process-service/Dockerfile, lockfile: uv.lock }
+          - { name: notification-service, dockerfile: backend/services/notification-service/Dockerfile, lockfile: uv.lock }
+          - { name: bff-service, dockerfile: backend/services/bff-service/Dockerfile, lockfile: uv.lock }
+          - { name: frontend, context: ., dockerfile: typescript/apps/frontend/Dockerfile, lockfile: pnpm-lock.yaml }
+          - { name: api-verification-runner, context: ., dockerfile: tests/Dockerfile.api-runner, lockfile: uv.lock }
+          - { name: playwright-verification-runner, context: ., dockerfile: typescript/apps/frontend/Dockerfile.playwright-runner, lockfile: pnpm-lock.yaml }
+          - { name: health-runner, context: ., dockerfile: scripts/util/health_check/Dockerfile, lockfile: uv.lock }
+          - { name: ml-gateway-service, dockerfile: backend/services/ml-gateway-service/Dockerfile, lockfile: uv.lock }
+          - { name: ml-compute-service, dockerfile: backend/services/ml-compute-service/Dockerfile, lockfile: uv.lock }
           # Production GPU variant: same Dockerfile + single lockfile, built via the
           # CUDA builder stage (torch +cu130). Distinct image name so its digest keys a
           # separate global.imageDigests entry; only values.prod.yaml points ml-compute
           # at it, keeping local/staging on the CPU ml-compute-service image.
-          - { name: ml-compute-service-gpu, dockerfile: backend/services/ml-compute-service/Dockerfile, build_args: ML_COMPUTE_BUILDER=sync-gpu, timeout_minutes: 35 }
-          - { name: sys-tick-job, dockerfile: backend/jobs/sys-tick-job/Dockerfile }
-          - { name: snapshot-refresh-job, dockerfile: backend/jobs/snapshot-refresh-job/Dockerfile }
-          - { name: qdrant-init, dockerfile: infra/shared/qdrant-init/Dockerfile }
-          - { name: kafka-connect, context: infra/k8s/kafka-connect, dockerfile: infra/k8s/kafka-connect/Dockerfile }
-    timeout-minutes: ${{ matrix.timeout_minutes || 20 }}
+          - { name: ml-compute-service-gpu, dockerfile: backend/services/ml-compute-service/Dockerfile, build_args: ML_COMPUTE_BUILDER=sync-gpu, lockfile: uv.lock }
+          - { name: sys-tick-job, dockerfile: backend/jobs/sys-tick-job/Dockerfile, lockfile: uv.lock }
+          - { name: snapshot-refresh-job, dockerfile: backend/jobs/snapshot-refresh-job/Dockerfile, lockfile: uv.lock }
+          - { name: qdrant-init, dockerfile: infra/shared/qdrant-init/Dockerfile, lockfile: uv.lock }
+          - { name: kafka-connect, context: infra/k8s/kafka-connect, dockerfile: infra/k8s/kafka-connect/Dockerfile, lockfile: infra/k8s/kafka-connect/smt/build.gradle.kts }
+    timeout-minutes: 16
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.event-validation.outputs.source_sha }}
           persist-credentials: false
@@ -252,9 +252,9 @@ jobs:
           load: ${{ steps.mode.outputs.push != 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: ${{ matrix.name == 'ml-compute-service-gpu' && format('type=registry,ref={0}/{1}:buildcache', steps.image-base-path.outputs.image_base_path, matrix.name) || format('type=gha,scope={0}', matrix.name) }}
+          cache-from: ${{ matrix.name == 'ml-compute-service-gpu' && format('type=registry,ref={0}/{1}:buildcache-{2}', steps.image-base-path.outputs.image_base_path, matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) || format('type=gha,scope={0}-{1}', matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) }}
           # GPU registry cache is global: import always, export only on authorized pushes.
-          cache-to: ${{ matrix.name == 'ml-compute-service-gpu' && (steps.mode.outputs.push == 'true' && format('type=registry,ref={0}/{1}:buildcache,mode=max', steps.image-base-path.outputs.image_base_path, matrix.name) || '') || format('type=gha,mode=max,scope={0}', matrix.name) }}
+          cache-to: ${{ matrix.name == 'ml-compute-service-gpu' && (steps.mode.outputs.push == 'true' && format('type=registry,ref={0}/{1}:buildcache-{2},mode=max', steps.image-base-path.outputs.image_base_path, matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) || '') || format('type=gha,mode=max,scope={0}-{1}', matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) }}
           platforms: linux/amd64
           provenance: ${{ steps.mode.outputs.push == 'true' }}
 
@@ -306,19 +306,59 @@ jobs:
 
   aggregate-digests:
     needs: [ event-validation, build-push ]
-    if: ${{ needs.event-validation.outputs.authorized == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.push_to_registry == 'true') }}
+    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 1
     permissions:
-      contents: read
+      actions: read
+      contents: write
+      pull-requests: write
+    env:
+      DIGESTS_ENABLED: >-
+        ${{
+          needs.event-validation.outputs.authorized == 'true' &&
+          needs.build-push.result == 'success' &&
+          (github.event_name != 'workflow_dispatch' || github.event.inputs.push_to_registry == 'true')
+        }}
+      PROPOSAL_ENABLED: >-
+        ${{
+          github.event_name == 'workflow_run' &&
+          needs.event-validation.outputs.authorized == 'true' &&
+          needs.build-push.result == 'success'
+        }}
     steps:
+      # GitHub Actions has no workflow timeout; block mutations after pathological delay.
+      - name: Assert whole-workflow wall budget before digest mutation
+        if: env.DIGESTS_ENABLED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          run_started_at="$(
+            gh api \
+              --method GET \
+              "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --jq '.run_started_at'
+          )"
+          run_started_epoch="$(date -u --date="$run_started_at" +%s)"
+          elapsed_seconds="$(($(date -u +%s) - run_started_epoch))"
+          echo "Build-push workflow wall at mutation entry: ${elapsed_seconds}s"
+
+          if (( elapsed_seconds >= 1140 )); then
+            echo "Build-push workflow wall reached the 19-minute assertion ceiling before digest mutation." >&2
+            exit 1
+          fi
+
       - name: Checkout source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: env.DIGESTS_ENABLED == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.event-validation.outputs.source_sha }}
           persist-credentials: false
 
       - name: Download image digest records
+        if: env.DIGESTS_ENABLED == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: image-digest-*
@@ -326,11 +366,13 @@ jobs:
           merge-multiple: true
 
       - name: Assemble and validate production digests
+        if: env.DIGESTS_ENABLED == 'true'
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 scripts/ci/image_digests.py assemble --records digest-records --repository "$GITHUB_REPOSITORY" --output infra/k8s/helm/values.prod.digests.yaml
 
       - name: Upload aggregate production digests
+        if: env.DIGESTS_ENABLED == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-image-digests
@@ -338,31 +380,12 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  propose-digests:
-    needs: [ event-validation, aggregate-digests ]
-    if: ${{ github.event_name == 'workflow_run' && needs.event-validation.outputs.authorized == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Checkout successful Checks source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ needs.event-validation.outputs.source_sha }}
-          persist-credentials: false
-
-      - name: Download aggregate production digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: production-image-digests
-          path: infra/k8s/helm
-
       - name: Verify production digest overlay path
+        if: env.PROPOSAL_ENABLED == 'true'
         run: test -s infra/k8s/helm/values.prod.digests.yaml
 
       - name: Create or update digest PR
+        if: env.PROPOSAL_ENABLED == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           branch: bot/update-production-image-digests
@@ -378,3 +401,79 @@ jobs:
 
             Review and merge this generated overlay to promote the images.
           delete-branch: true
+
+      - name: Summarize workflow wall and billable time
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINAL_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+
+          run_json="$(
+            gh api \
+              --method GET \
+              "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          )"
+          jobs_json="$(
+            gh api \
+              --method GET \
+              "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100"
+          )"
+          run_started_at="$(jq -r '.run_started_at' <<< "$run_json")"
+          run_started_epoch="$(date -u --date="$run_started_at" +%s)"
+          observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          observed_epoch="$(date -u --date="$observed_at" +%s)"
+          workflow_wall_seconds="$((observed_epoch - run_started_epoch))"
+          rows_file="${RUNNER_TEMP}/build-push-job-timings.md"
+          : > "$rows_file"
+          billable_total=0
+
+          while IFS=$'\t' read -r name started_at completed_at conclusion status; do
+            completed_for_duration="$completed_at"
+            completed_display="$completed_at"
+            conclusion_display="$conclusion"
+            if [[ "$completed_at" == "pending" ]]; then
+              completed_for_duration="$observed_at"
+              completed_display="${observed_at} (observed)"
+              conclusion_display="$FINAL_JOB_STATUS"
+            fi
+            if [[ "$conclusion_display" == "pending" ]]; then
+              conclusion_display="$status"
+            fi
+
+            started_epoch="$(date -u --date="$started_at" +%s)"
+            completed_epoch="$(date -u --date="$completed_for_duration" +%s)"
+            duration_seconds="$((completed_epoch - started_epoch))"
+            billable_minutes="$(((duration_seconds + 59) / 60))"
+            billable_total="$((billable_total + billable_minutes))"
+            printf '| %s | %s | %s | %s | %ss | %sm |\n' \
+              "$name" "$started_at" "$completed_display" "$conclusion_display" \
+              "$duration_seconds" "$billable_minutes" >> "$rows_file"
+          done < <(
+            jq -r \
+              '.jobs[] | [.name, .started_at, (.completed_at // "pending"), (.conclusion // "pending"), .status] | @tsv' \
+              <<< "$jobs_json"
+          )
+
+          ratio="$(
+            jq -nr \
+              --argjson billable "$billable_total" \
+              --argjson wall "$workflow_wall_seconds" \
+              'if $wall > 0 then ($billable * 60 / $wall) else 0 end'
+          )"
+          ratio="$(printf '%.3f' "$ratio")"
+
+          {
+            echo "### Build-push workflow timing"
+            echo
+            echo "| Job | Started (UTC) | Completed (UTC) | Conclusion | Duration | Rounded billable |"
+            echo "|---|---|---|---|---:|---:|"
+            cat "$rows_file"
+            echo
+            echo "- Workflow wall: ${workflow_wall_seconds}s"
+            echo "- Rounded billable total: ${billable_total}m"
+            echo "- R = B/W: ${ratio}"
+            echo
+            echo "_The final job is measured through summary emission; GitHub records its completion afterward._"
+          } >> "$GITHUB_STEP_SUMMARY"

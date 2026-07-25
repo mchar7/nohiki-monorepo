@@ -8,164 +8,238 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import tomllib
 from dataclasses import dataclass
 
 from ci_checks.core.display import console, render_error_panel, render_summary_table
 from ci_checks.core.packages import Package
 from ci_checks.core.process_env import sanitized_python_env
 
-# Ignore lists for deptry rules
+# DEP002 entries are runtime-selected adapters or deployment extras; DEP003
+# entries are modules deliberately supplied through a declared workspace facade;
+# DEP004 entries are imported by source-shipped test helpers. Keeping the list
+# package-scoped means the same dependency remains visible everywhere else.
+_PACKAGE_IGNORES: dict[str, dict[str, tuple[str, ...]]] = {
+    "user-auth-service": {
+        "DEP002": ("authlib",),
+        "DEP003": (
+            "fastapi",
+            "pydantic_settings",
+            "sqlalchemy",
+            "starlette",
+            "uvicorn",
+        ),
+    },
+    "user-pref-service": {
+        "DEP002": ("nohiki-ml-core",),
+        "DEP003": (
+            "fastapi",
+            "nohiki_common_exceptions",
+            "pydantic",
+            "pydantic_settings",
+            "sqlalchemy",
+            "uvicorn",
+        ),
+    },
+    "user-upload-service": {"DEP003": ("fastapi", "pydantic_settings", "sqlalchemy", "uvicorn")},
+    "user-entitlement-service": {"DEP003": ("fastapi", "pydantic_settings", "sqlalchemy", "uvicorn")},
+    "job-ingest-discovery-service": {
+        "DEP003": (
+            "fastapi",
+            "opentelemetry",
+            "pydantic",
+            "pydantic_settings",
+            "uvicorn",
+        )
+    },
+    "job-ingest-schedule-service": {"DEP003": ("fastapi", "pydantic", "pydantic_settings", "sqlalchemy", "uvicorn")},
+    "job-query-composition-service": {"DEP003": ("fastapi", "pydantic", "pydantic_settings", "sqlalchemy", "uvicorn")},
+    "job-ingest-enrichment-service": {
+        "DEP002": ("alembic", "nohiki-ml-core"),
+        "DEP003": (
+            "fastapi",
+            "nohiki_common_exceptions",
+            "pydantic",
+            "pydantic_ai",
+            "pydantic_settings",
+            "sqlalchemy",
+            "uvicorn",
+        ),
+    },
+    "job-storage-service": {"DEP003": ("fastapi", "pydantic", "pydantic_settings", "sqlalchemy", "uvicorn")},
+    "job-correlation-evaluation-service": {
+        "DEP002": (
+            "joblib",
+            "nohiki-embedding-client",
+            "nohiki-llm-client",
+            "nohiki-ml-core",
+        ),
+        "DEP003": (
+            "fastapi",
+            "httpx",
+            "opentelemetry",
+            "pydantic",
+            "pydantic_settings",
+            "sqlalchemy",
+            "uvicorn",
+        ),
+    },
+    "doc-template-service": {
+        "DEP003": (
+            "fastapi",
+            "nohiki_common_exceptions",
+            "pydantic",
+            "pydantic_settings",
+            "sqlalchemy",
+            "uvicorn",
+        )
+    },
+    "doc-content-service": {"DEP003": ("fastapi", "pydantic", "pydantic_settings", "uvicorn")},
+    "doc-process-service": {
+        "DEP003": (
+            "docling_core",
+            "fastapi",
+            "pydantic",
+            "pydantic_settings",
+            "uvicorn",
+        )
+    },
+    "notification-service": {
+        "DEP002": ("nohiki-common-exceptions",),
+        "DEP003": (
+            "fastapi",
+            "opentelemetry",
+            "pydantic",
+            "pydantic_settings",
+            "sqlalchemy",
+            "uvicorn",
+        ),
+    },
+    "bff-service": {
+        "DEP003": (
+            "betterproto2",
+            "fastapi",
+            "nohiki_common_exceptions",
+            "pydantic",
+            "pydantic_settings",
+            "sqlalchemy",
+            "starlette",
+            "uvicorn",
+        )
+    },
+    "ml-gateway-service": {
+        "DEP002": ("nohiki-ml-core",),
+        "DEP003": ("fastapi", "pydantic", "pydantic_settings", "uvicorn"),
+    },
+    "ml-compute-service": {
+        "DEP002": ("huggingface-hub", "torch"),
+        "DEP003": ("fastapi", "numpy", "pydantic", "pydantic_settings", "uvicorn"),
+    },
+    "skill-graph-service": {
+        "DEP002": ("nohiki-ml-core",),
+        "DEP003": (
+            "fastapi",
+            "nohiki_common_exceptions",
+            "numpy",
+            "opentelemetry",
+            "pydantic",
+            "pydantic_settings",
+            "sqlalchemy",
+            "uvicorn",
+        ),
+    },
+    "sys-tick-job": {"DEP002": ("nohiki-observability",)},
+    "nohiki-redis-utils": {
+        "DEP003": ("nohiki_common_exceptions", "nohiki_test_utils", "opentelemetry"),
+        "DEP004": ("pytest", "testcontainers"),
+    },
+    "nohiki-db-utils": {
+        "DEP002": ("asyncpg", "nohiki-db-utils", "protobuf", "psycopg"),
+        "DEP003": ("nohiki", "nohiki_test_utils"),
+        "DEP004": ("pytest", "pytest_unused_fixtures", "testcontainers"),
+    },
+    "nohiki-fastapi-utils": {"DEP002": ("cryptography", "uvicorn")},
+    "nohiki-domain-models": {"DEP003": ("dateutil", "pydantic_core")},
+    "nohiki-kafka-client": {
+        "DEP003": ("nohiki", "opentelemetry"),
+        "DEP004": ("nohiki_test_utils", "pytest", "testcontainers"),
+    },
+    "nohiki-observability": {
+        "DEP002": (
+            "arize-phoenix-otel",
+            "httpx",
+            "nohiki-observability",
+            "openinference-instrumentation-openai",
+            "opentelemetry-instrumentation-confluent-kafka",
+            "opentelemetry-instrumentation-grpc",
+            "opentelemetry-instrumentation-redis",
+            "opentelemetry-instrumentation-requests",
+            "opentelemetry-instrumentation-system-metrics",
+            "requests",
+        ),
+        "DEP003": ("google",),
+    },
+    "nohiki-s3-client": {
+        "DEP002": ("types-aiobotocore",),
+        "DEP003": (
+            "botocore",
+            "nohiki_common_exceptions",
+            "nohiki_observability",
+            "opentelemetry",
+        ),
+    },
+    "nohiki-test-utils": {
+        "DEP002": ("faker", "pytest-asyncio"),
+        "DEP003": ("betterproto2", "fastapi", "sqlalchemy"),
+    },
+    "nohiki-ml-core": {
+        "DEP002": (
+            "fastembed",
+            "nohiki-common-exceptions",
+            "nohiki-redis-utils",
+            "nohiki-s3-client",
+            "onnxruntime",
+            "pylate",
+            "triton",
+        ),
+        "DEP003": ("opentelemetry",),
+    },
+    "nohiki-ml-manifest": {"DEP004": ("nohiki_test_utils",)},
+    "nohiki-qdrant-client": {"DEP002": ("pydantic-settings",), "DEP003": ("nohiki",)},
+    "nohiki-core-settings": {"DEP002": ("azure-keyvault-secrets",)},
+    "nohiki-llm-client": {
+        "DEP002": ("nohiki-core-settings",),
+        "DEP003": ("google", "httpx", "nohiki_common_exceptions", "openai"),
+    },
+    "nohiki-geo-utils": {"DEP002": ("aiohttp",)},
+    "qdrant-init": {"DEP002": ("nohiki-ml-core",)},
+    "tailor": {"DEP003": ("httpx", "pydantic", "pydantic_ai", "pydantic_settings", "structlog")},
+    "llm-benchmark": {"DEP003": ("click", "nohiki_test_utils", "pydantic", "pydantic_ai")},
+    "nohiki-scaffold": {"DEP003": ("click",)},
+    "job-embedding-finetuning": {"DEP002": ("accelerate",)},
+}
 
-# Workspace packages appear as DEP001/DEP002/DEP003 but are resolved by uv.
-_WORKSPACE_PKG_BASES: tuple[str, ...] = (
-    "nohiki_common_exceptions",
-    "nohiki_redis_utils",
-    "nohiki_db_utils",
-    "nohiki_fastapi_utils",
-    "nohiki_domain_models",
-    "nohiki_kafka_client",
-    "nohiki_observability",
-    "nohiki_s3_client",
-    "nohiki_test_utils",
-    "nohiki_ml_core",
-    "nohiki_ml_manifest",
-    "nohiki_core_settings",
-    "nohiki_llm_client",
-    "nohiki_geo_utils",
-    "nohiki_qdrant_client",
-    "nohiki_embedding_client",
-    "nohiki_domain_utils",
-    # betterproto2 generated namespace packages (from nohiki-domain-models)
-    "nohiki_proto",
-    "nohiki_proto_google",
-    "nohiki",
-    "tabiya_parser",
-    "bootstrap_skill_graph",
-    "skill_graph_service",
-    "sentence_transformers",
-    "torch",
-)
-
-# Test and runtime-loaded dependencies (legitimate DEP002 exceptions).
-_TEST_AND_RUNTIME: tuple[str, ...] = (
-    "pytest",
-    "pytest-asyncio",
-    "pytest-cov",
-    "pytest-mock",
-    "testcontainers",
-    "respx",
-    "freezegun",
-    "faker",
-    "moto",
-    "nohiki-test-utils",
-    "uvicorn",
-    "alembic",
-    "psycopg",
-    "asyncpg",
-    "psycopg2-binary",
-    "types-aiobotocore",
-    "aiohttp",
-    "aiofiles",
-    "pydantic-ai-slim",
-    "azure-identity",
-    "azure-keyvault-secrets",
-    "boto3",
-    "aiobotocore",
-    "onnxruntime",
-    "lightgbm",
-    "joblib",
-    "triton",
-    "pylate",
-    "fastembed",
-    "opentelemetry-instrumentation-grpc",
-    "opentelemetry-instrumentation-redis",
-    "opentelemetry-instrumentation-requests",
-    "opentelemetry-instrumentation-confluent-kafka",
-    "opentelemetry-instrumentation-system-metrics",
-    "openinference-instrumentation-openai",
-    "arize-phoenix-otel",
-    "pydantic",
-    "pydantic-settings",
-    "pydantic-extra-types",
-    "authlib",
-    "python-multipart",
-    "slowapi",
-    "sse-starlette",
-    "email-validator",
-    "grpcio",
-    "protobuf",
-    "protovalidate",
-    "cryptography",
-    "pycountry",
-    "requests",
-    "httpx",
-    "structlog",
-    "tenacity",
-    "ruff",
-    "huggingface-hub",
-)
-
-# Known transitive dependencies used indirectly (legitimate DEP003 exceptions).
-_TRANSITIVE_DEPS: tuple[str, ...] = (
-    "opentelemetry",
-    "structlog",
-    "pydantic",
-    "pydantic_settings",
-    "pydantic_core",
-    "pydantic_ai",
-    "starlette",
-    "httpx",
-    "redis",
-    "sqlalchemy",
-    "confluent_kafka",
-    "betterproto2",
-    "google",
-    "botocore",
-    "grpclib",
-    "grpc",
-    "qdrant_client",
-    "numpy",
-    "torch",
-    "sentence_transformers",
-    "sklearn",
-    "dateutil",
-    "aiohttp",
-    "tenacity",
-    "azure",
-    "fastapi",
-    "openai",
-    "uvicorn",
-    "docling_core",
-    "click",
-)
+_DEV_OPTIONAL_GROUPS = ("dev", "test", "testing")
+_DOMAIN_MODEL_MODULES = "nohiki-domain-models=nohiki|nohiki_proto_google|nohiki_domain_utils|message_pool"
 
 
-def _expand_pkg_names(bases: tuple[str, ...]) -> tuple[str, ...]:
-    """Expand package names to include both underscore and hyphen forms."""
-    expanded: list[str] = []
-    for name in bases:
-        expanded.append(name)
-        hyphenated = name.replace("_", "-")
-        if hyphenated != name:
-            expanded.append(hyphenated)
-    return tuple(expanded)
+def _ignore_string(package_name: str) -> str:
+    """Build package-scoped deptry exceptions."""
+    rules = _PACKAGE_IGNORES.get(package_name, {})
+    return ",".join(f"{rule}={'|'.join(names)}" for rule, names in rules.items())
 
 
-_WORKSPACE_PKGS: tuple[str, ...] = _expand_pkg_names(_WORKSPACE_PKG_BASES)
-
-
-def _ignore_string() -> str:
-    """Build the deptry --per-rule-ignores string.
-
-    DEP001: workspace packages are resolved by uv, not PyPI.
-    DEP002: workspace packages appear in optional-deps for extras composition;
-            test/runtime deps are used but not directly imported.
-    DEP003: workspace packages + known transitives used indirectly at runtime.
-    """
-    ws = "|".join(_WORKSPACE_PKGS)
-    dep002 = "|".join([*_WORKSPACE_PKGS, *_TEST_AND_RUNTIME])
-    dep003 = "|".join([*_WORKSPACE_PKGS, *_TRANSITIVE_DEPS])
-    return f"DEP001={ws},DEP002={dep002},DEP003={dep003}"
+def _dev_optional_groups(pkg: Package) -> tuple[str, ...]:
+    """Return optional dependency groups that contain test tooling."""
+    with (pkg.path / "pyproject.toml").open("rb") as project_file:
+        config = tomllib.load(project_file)
+    project = config.get("project")
+    if not isinstance(project, dict):
+        return ()
+    optional = project.get("optional-dependencies")
+    if not isinstance(optional, dict):
+        return ()
+    return tuple(group for group in _DEV_OPTIONAL_GROUPS if group in optional)
 
 
 @dataclass(slots=True)
@@ -197,9 +271,13 @@ async def scan_package(pkg: Package) -> DeptryResult:
         "--no-ansi",
         "--extend-exclude",
         "alembic|tests",
-        "--per-rule-ignores",
-        _ignore_string(),
+        "--package-module-name-map",
+        _DOMAIN_MODEL_MODULES,
     ]
+    if dev_groups := _dev_optional_groups(pkg):
+        cmd.extend(("--optional-dependencies-dev-groups", ",".join(dev_groups)))
+    if ignores := _ignore_string(pkg.name):
+        cmd.extend(("--per-rule-ignores", ignores))
     start = asyncio.get_event_loop().time()
     proc = await asyncio.create_subprocess_exec(
         *cmd,

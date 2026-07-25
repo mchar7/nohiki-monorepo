@@ -12,6 +12,14 @@ dependencies = [
 
 [dependency-groups]
 deadcode = ["skylos==4.30.0"]
+container-tests = [
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.8.0",
+]
+
+[tool.uv.sources]
+skylos = { git = "ssh://git@github.com/mchar7/skylos", rev = "6c9e3f1d84c1cc312f8e69c91b348a896d61b0b2" }
 
 [project.scripts]
 ci-checks = "ci_checks.app:app"

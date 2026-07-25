@@ -4,13 +4,14 @@ Pure data, no I/O. The engine (`core.change_gate`) interprets these tables;
 the CLI (`checks.gate`) supplies the diff. Contract tests pin the flag names
 against .github/workflows/checks.yml.
 
-Fail-closed tiers:
+Classification tiers:
 
-1. ``GLOBAL_TRIGGERS`` force a full run.
+1. ``BROAD_RULES`` identify policy and Python toolchain sources that require
+   the broad class.
 2. ``SURFACE_RULES`` contribute lane flags and package seeds; a file may
    match several rules and every match contributes (union semantics), so
    rule order can never suppress a lane.
-3. Files matching nothing force a full run.
+3. Files matching nothing select the broad class within this workflow.
 """
 
 import fnmatch
@@ -27,6 +28,7 @@ FLAG_NAMES: tuple[str, ...] = (
     "lint_workflows",
     "lint_docker",
     "typecheck_backend",
+    "build_backend",
     "typecheck_frontend",
     "python_any",
     "frontend_tests",
@@ -46,20 +48,13 @@ FLAG_NAMES: tuple[str, ...] = (
 # OpenAPI spec, so the API schema freshness lane must run.
 API_EXPORT_SERVICES: frozenset[str] = frozenset({"bff-service", "user-auth-service"})
 
-# Files that invalidate every lane. Deliberately small: each entry is a root
-# the whole pipeline depends on.
-GLOBAL_TRIGGERS: tuple[str, ...] = (
-    "flake.nix",
-    "flake.lock",
-    "uv.lock",
-    "pyproject.toml",  # workspace members, ruff config, dev groups
-    ".python-version",
-    ".github/workflows/checks.yml",
-    "scripts/ci/src/ci_checks/core/*",  # engine, policy, package graph, scanner
-    "scripts/ci/src/ci_checks/checks/gate.py",
-    "scripts/ci/src/ci_checks/checks/tests.py",
-    "scripts/ci/src/ci_checks/app.py",  # Typer command wiring
-    "scripts/ci/pyproject.toml",
+# Static work performed by the broad policy worker. Container and frontend
+# smoke remain path-selected rather than being implied by the commit class.
+BROAD_PYTHON_FLAGS: tuple[str, ...] = (
+    "lint_python",
+    "typecheck_backend",
+    "python_any",
+    "hygiene",
 )
 
 # Application source and toolchain changes exercise every hosted app contract.
@@ -67,13 +62,6 @@ _FRONTEND_APP_FLAGS: tuple[str, ...] = (
     "lint_frontend",
     "typecheck_frontend",
     "frontend_tests",
-    "frontend_smoke",
-)
-
-_FRONTEND_E2E_FLAGS: tuple[str, ...] = (
-    "lint_frontend",
-    "typecheck_frontend",
-    "frontend_e2e",
 )
 
 
@@ -88,6 +76,50 @@ class SurfaceRule:
     def matches(self, path: str) -> bool:
         """Return True when the posix repo-relative path matches any pattern."""
         return any(fnmatch.fnmatch(path, pattern) for pattern in self.patterns)
+
+
+# These sources define the router or the runtime in which that policy executes.
+# They fail closed to the broad Python class.
+BROAD_RULES: tuple[SurfaceRule, ...] = (
+    SurfaceRule(
+        ("flake.nix", "flake.lock"),
+        flags=(
+            "nix",
+            *BROAD_PYTHON_FLAGS,
+            *_FRONTEND_APP_FLAGS,
+            "edge_worker",
+        ),
+        packages=("ci-checks",),
+    ),
+    SurfaceRule(
+        ("uv.lock", "pyproject.toml"),
+        flags=(*BROAD_PYTHON_FLAGS, "build_backend", "api_schema_freshness"),
+        packages=("ci-checks",),
+    ),
+    SurfaceRule(
+        (".python-version",),
+        flags=(*BROAD_PYTHON_FLAGS, "build_backend"),
+        packages=("ci-checks",),
+    ),
+    SurfaceRule(
+        (".github/workflows/checks.yml",),
+        # Path-only routing cannot identify which YAML lane definition changed.
+        flags=FLAG_NAMES,
+        packages=("ci-checks",),
+    ),
+    SurfaceRule(
+        (
+            "scripts/ci/src/ci_checks/core/*",
+            "scripts/ci/src/ci_checks/checks/gate.py",
+            "scripts/ci/src/ci_checks/checks/internal_refs.py",
+            # The runner controls every package's test invocation.
+            "scripts/ci/src/ci_checks/checks/tests.py",
+            "scripts/ci/config/internal-reference-terms.toml",
+        ),
+        flags=BROAD_PYTHON_FLAGS,
+        packages=("ci-checks",),
+    ),
+)
 
 
 SURFACE_RULES: tuple[SurfaceRule, ...] = (
@@ -125,13 +157,23 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
             "typescript/apps/frontend/tsconfig.test.json",
             "typescript/apps/frontend/vite.config.ts",
             "typescript/apps/frontend/vitest.config.ts",
+            "typescript/apps/frontend/playwright.config.ts",
             "typescript/apps/frontend/Caddyfile",
         ),
         flags=_FRONTEND_APP_FLAGS,
     ),
     SurfaceRule(
+        (
+            "typescript/apps/frontend/index.html",
+            "typescript/apps/frontend/package.json",
+            "typescript/apps/frontend/vite.config.ts",
+            "typescript/apps/frontend/Caddyfile",
+        ),
+        flags=("frontend_smoke",),
+    ),
+    SurfaceRule(
         ("typescript/apps/frontend/e2e/*", "typescript/apps/frontend/e2e/**/*"),
-        flags=_FRONTEND_E2E_FLAGS,
+        flags=_FRONTEND_APP_FLAGS,
     ),
     SurfaceRule(
         (
@@ -153,12 +195,12 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         ("pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json", ".npmrc"),
         flags=(
             *_FRONTEND_APP_FLAGS,
-            "frontend_e2e",
             "edge_worker",
             "api_schema_freshness",
         ),
     ),
     SurfaceRule(("biome.json", "biome.jsonc"), flags=("lint_frontend", "edge_worker")),
+    SurfaceRule(("**/pyproject.toml",), flags=("build_backend",)),
     SurfaceRule(
         ("Dockerfile", "**/Dockerfile", "**/Dockerfile.*", ".hadolint.yaml"),
         flags=("lint_docker",),
@@ -167,7 +209,15 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     ),
     SurfaceRule(("typescript/apps/frontend/Dockerfile",), flags=("frontend_smoke",)),
     SurfaceRule(
-        ("typescript/apps/frontend/Dockerfile.playwright-runner",),
+        (
+            "package.json",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
+            "typescript/apps/frontend/*",
+            "typescript/apps/frontend/**/*",
+            "typescript/libs/biome-config/**",
+            "typescript/libs/tsconfig/**",
+        ),
         flags=("frontend_e2e",),
     ),
     SurfaceRule(
@@ -192,7 +242,12 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(("backend/services/*/alembic/**/*",), packages=("ci-checks",)),
     SurfaceRule(("lefthook.yml",), flags=("nix",), packages=("ci-checks",)),
     SurfaceRule(
-        ("Justfile", "infra/k8s/local/images.json"),
+        ("Justfile",),
+        flags=("image_matrix_parity", "api_schema_freshness", "proto_breaking"),
+        packages=("ci-checks",),
+    ),
+    SurfaceRule(
+        ("infra/k8s/local/images.json",),
         flags=("image_matrix_parity",),
         packages=("ci-checks",),
     ),
@@ -213,6 +268,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
             "LICENSE.*",
             ".github/CODEOWNERS",
             ".github/dependabot.yml",
+            ".github/renovate.json5",
             ".gitleaks.toml",
             ".commitlintrc*",
             "commitlint.config.*",

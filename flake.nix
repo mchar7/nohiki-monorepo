@@ -49,6 +49,25 @@
           '';
         };
 
+        pnpmPackage = pkgs.stdenvNoCC.mkDerivation {
+          pname = "pnpm";
+          version = "11.13.1";
+          src = pkgs.fetchurl {
+            url = "https://registry.npmjs.org/pnpm/-/pnpm-11.13.1.tgz";
+            hash = "sha512-svx2g7imUlQU59E+G6KMqt3elr9m7FQL+ut+cCuB8+C+TR8pXt9/n+A5Z0Co3ORQnFgt33mJH0VD/qMtN2RfJQ==";
+          };
+          sourceRoot = "package";
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          installPhase = ''
+            mkdir -p "$out/bin" "$out/lib/pnpm"
+            cp -R . "$out/lib/pnpm/"
+            makeWrapper ${nodejs}/bin/node "$out/bin/pnpm" \
+              --add-flags "$out/lib/pnpm/bin/pnpm.mjs"
+            ln -s pnpm "$out/bin/pn"
+            ln -s pnpm "$out/bin/pnpx"
+          '';
+        };
+
         lefthookVersion = "2.1.10";
         lefthookPackage = pkgs.buildGo126Module {
           pname = "lefthook";
@@ -135,6 +154,60 @@
           postgresql.lib
           stdenv.cc.cc.lib
         ];
+
+        mkCiPrepare = commands: pkgs.writeShellScriptBin "ci-prepare" ''
+          set -eu
+          ${commands}
+        '';
+        ciPythonPrepare = mkCiPrepare ''
+          exec scripts/dev/sync-ci-environment.sh
+        '';
+        ciNodePrepare = mkCiPrepare ''
+          exec scripts/dev/sync-ci-node-environment.sh
+        '';
+        ciPolicyPrepare = mkCiPrepare ''
+          exec scripts/dev/sync-ci-policy-environment.sh
+        '';
+        ciHygienePrepare = mkCiPrepare ''
+          scripts/dev/sync-ci-environment.sh
+          exec scripts/dev/sync-ci-node-environment.sh
+        '';
+
+        ciPythonTools = [
+          python
+          uvPackage
+          pkgs.git
+        ];
+        ciNodeTools = [
+          nodejs
+          pnpmPackage
+          pkgs.git
+        ];
+        ciPolicyTools = ciPythonTools ++ [
+          pkgs.just
+          pkgs.jq
+          pkgs.yq-go
+          pkgs.actionlint
+          pkgs.hadolint
+          pkgs.buf
+          lefthookPackage
+        ];
+        # The selected Python surface includes CI contract tests that execute
+        # the pinned repository validators, not just Python packages.
+        ciTestTools = ciPolicyTools ++ [
+          pkgs.openssh
+          pkgs.ripgrep
+          pkgs.age
+          pkgs.sops
+          pkgs.kubectl
+          pkgs.kustomize
+          pkgs.kubernetes-helm
+          pkgs.podman-compose
+          pkgs.gitleaks
+          pkgs.skopeo
+        ];
+        ciHygieneTools = ciTestTools ++ ciNodeTools;
+        ciTools = pkgs.lib.unique ciHygieneTools;
 
         baseEnv = {
           PYTHONDONTWRITEBYTECODE = "1";
@@ -260,9 +333,51 @@
 
         devShells.ci = pkgs.mkShell {
           name = "nohiki-ci";
-          packages = [ python uvPackage nodejs corepackPackage pkgs.just pkgs.git pkgs.ripgrep pkgs.age pkgs.sops pkgs.kubernetes-helm pkgs.kubectl pkgs.kustomize pkgs.podman-compose pkgs.gitleaks pkgs.actionlint pkgs.hadolint pkgs.buf pkgs.skopeo lefthookPackage ];
+          packages = ciTools ++ [ ciHygienePrepare ];
           buildInputs = nativeBuildDeps;
-          env = baseEnv;
+          env = baseEnv // {
+            COREPACK_ENABLE_NETWORK = "0";
+            UV_PYTHON_DOWNLOADS = "never";
+          };
+        };
+
+        devShells.ci-python = pkgs.mkShell {
+          name = "nohiki-ci-python";
+          packages = ciTestTools ++ [ ciPythonPrepare ];
+          buildInputs = nativeBuildDeps;
+          env = baseEnv // {
+            UV_PYTHON_DOWNLOADS = "never";
+          };
+        };
+
+        devShells.ci-node = pkgs.mkShell {
+          name = "nohiki-ci-node";
+          packages = ciNodeTools ++ [ ciNodePrepare ];
+          env = {
+            COREPACK_ENABLE_NETWORK = "0";
+          };
+        };
+
+        devShells.ci-policy = pkgs.mkShell {
+          name = "nohiki-ci-policy";
+          packages = ciPolicyTools ++ [ ciPolicyPrepare ];
+          env = {
+            PYTHONDONTWRITEBYTECODE = "1";
+            PYTHONUNBUFFERED = "1";
+            UV_LINK_MODE = "copy";
+            UV_PYTHON = "${python}/bin/python";
+            UV_PYTHON_DOWNLOADS = "never";
+          };
+        };
+
+        devShells.ci-hygiene = pkgs.mkShell {
+          name = "nohiki-ci-hygiene";
+          packages = ciHygieneTools ++ [ ciHygienePrepare ];
+          buildInputs = nativeBuildDeps;
+          env = baseEnv // {
+            COREPACK_ENABLE_NETWORK = "0";
+            UV_PYTHON_DOWNLOADS = "never";
+          };
         };
 
         formatter = pkgs.nixpkgs-fmt;

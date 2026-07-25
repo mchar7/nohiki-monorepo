@@ -235,8 +235,15 @@ def _collect_scan_paths(
     return sorted({path for path in completed.stdout.split("\0") if path.endswith(".py")})
 
 
+def _resolve_skylos_jobs() -> str:
+    override = os.environ.get("SKYLOS_JOBS")
+    if override is not None:
+        return override
+    return str(max(1, os.process_cpu_count() or 1))
+
+
 def _build_skylos_cmd(scan_paths: list[str], options: DeadCodeScanOptions) -> list[str]:
-    """Construct the locked Skylos command for repo-root dead-code scanning.
+    """Construct the locked Skylos command for a scoped dead-code scan.
 
     Args:
         scan_paths: Scope paths to analyze.
@@ -248,7 +255,7 @@ def _build_skylos_cmd(scan_paths: list[str], options: DeadCodeScanOptions) -> li
     cmd = [
         sys.executable,
         "-m",
-        "skylos.cli",
+        "ci_checks.checks.skylos_cache",
         *scan_paths,
         "--json",
         "--category",
@@ -256,6 +263,9 @@ def _build_skylos_cmd(scan_paths: list[str], options: DeadCodeScanOptions) -> li
         f"--confidence={options.confidence}",
         # sovereign CI: no third-party upload surface, ever
         "--no-upload",
+        "--cache-static",
+        "--cache-static-tier",
+        os.environ.get("SKYLOS_CACHE_STATIC_TIER", "content"),
         # false-positive whitelist lives in [tool.skylos.whitelist]
         "--config-file",
         str(REPO_ROOT / "pyproject.toml"),
@@ -411,7 +421,15 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
     Returns:
         Per-package grouped scan results.
     """
-    env = sanitized_python_env(extra={"OTEL_SDK_DISABLED": "true", "SKYLOS_GREP_BUDGET": "120"})
+    env = sanitized_python_env(
+        extra={
+            "OTEL_SDK_DISABLED": "true",
+            "SKYLOS_GREP_BUDGET": "120",
+            # The fork treats this as the parent of cache/runs/v1/static.
+            "SKYLOS_CACHE_DIR": os.environ.get("SKYLOS_CACHE_DIR", str(REPO_ROOT / ".skylos")),
+            "SKYLOS_JOBS": _resolve_skylos_jobs(),
+        }
+    )
     if not options.no_grep_verify and shutil.which("rg", path=env.get("PATH")) is None:
         results = [
             DeadCodeResult(

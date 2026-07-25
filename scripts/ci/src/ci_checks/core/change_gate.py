@@ -5,14 +5,15 @@ a deterministic mapping from inputs to a decision, so the whole engine is
 unit-testable without git or GitHub.
 """
 
-import json
 from dataclasses import dataclass, field
+from enum import StrEnum
 from urllib.parse import quote
 
 from ci_checks.core.change_rules import (
     API_EXPORT_SERVICES,
+    BROAD_PYTHON_FLAGS,
+    BROAD_RULES,
     FLAG_NAMES,
-    GLOBAL_TRIGGERS,
     SURFACE_RULES,
 )
 from ci_checks.core.display import LANE_DISPLAY_NAMES
@@ -23,9 +24,54 @@ from ci_checks.core.packages import (
     build_reverse_dependency_index,
     expand_to_dependents,
 )
-from ci_checks.core.test_batches import load_test_batches
 
 _BACKEND_TYPES: frozenset[PackageType] = frozenset({PackageType.SERVICE, PackageType.LIB, PackageType.JOB})
+
+
+class CommitClass(StrEnum):
+    """Amount of substantive work selected for a tested tree."""
+
+    STANDARD = "standard"
+    BROAD = "broad"
+
+
+# Worker runaway guards; the aggregator enforces class wall budgets.
+WORKER_TIMEOUT_MINUTES: dict[CommitClass, int] = {
+    commit_class: 18 if commit_class is CommitClass.BROAD else 9 for commit_class in CommitClass
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectedMainEvidence:
+    """Repository and pull-request evidence for a protected-main smoke."""
+
+    associated_pr_merged: bool
+    merge_commit_sha: str
+    checks_run_success: bool
+    tested_tree_sha: str
+    pushed_tree_sha: str
+
+    def proves_broad_tree(self, head_sha: str) -> bool:
+        """Return whether the successful Checks run tested the pushed tree."""
+        return (
+            self.associated_pr_merged
+            and self.merge_commit_sha == head_sha
+            and self.checks_run_success
+            and bool(self.tested_tree_sha)
+            and bool(self.pushed_tree_sha)
+            and self.tested_tree_sha == self.pushed_tree_sha
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EventContext:
+    """GitHub event identity used by fail-closed commit classification."""
+
+    event: str
+    base_sha: str
+    head_sha: str
+    ref_name: str = ""
+    protected_main: ProtectedMainEvidence | None = None
 
 
 @dataclass(slots=True)
@@ -37,21 +83,25 @@ class GateDecision:
     flags: set[str] = field(default_factory=set)
     affected: set[str] = field(default_factory=set)
     unmatched: list[str] = field(default_factory=list)
+    protected_main_smoke: bool = False
+
+    @property
+    def commit_class(self) -> CommitClass:
+        """Return the workflow topology selected by this decision."""
+        return CommitClass.BROAD if self.full else CommitClass.STANDARD
 
     def force_full(self, reason: str) -> None:
-        """Switch to a full run, recording why."""
+        """Select the broad class, recording why."""
         self.full = True
         self.reasons.append(reason)
 
     def flag_value(self, flag: str) -> bool:
-        """Effective value of a lane flag (full run activates everything)."""
-        return self.full or flag in self.flags
+        """Return whether a lane is selected independently of commit class."""
+        return flag in self.flags
 
 
-def _matches_global(path: str) -> bool:
-    import fnmatch
-
-    return any(path == pattern or fnmatch.fnmatch(path, pattern) for pattern in GLOBAL_TRIGGERS)
+def _usable_sha(sha: str) -> bool:
+    return bool(sha) and set(sha) != {"0"}
 
 
 def _package_rel_paths(packages: dict[str, Package]) -> dict[str, str]:
@@ -65,28 +115,63 @@ def _owning_package(path: str, rel_paths: dict[str, str]) -> str | None:
     return None
 
 
-def evaluate(changed: set[str], packages: dict[str, Package]) -> GateDecision:
-    """Classify changed files into lane flags and affected packages.
+def _apply_event_context(decision: GateDecision, context: EventContext) -> None:
+    if not _usable_sha(context.base_sha):
+        decision.flags.update(BROAD_PYTHON_FLAGS)
+        decision.force_full("missing or null base ref")
+        return
+    if not _usable_sha(context.head_sha):
+        decision.flags.update(BROAD_PYTHON_FLAGS)
+        decision.force_full("missing or null tested SHA")
+        return
+
+    match context.event:
+        case "pull_request":
+            return
+        case "push":
+            evidence = context.protected_main
+            if context.ref_name == "main" and evidence is not None and evidence.proves_broad_tree(context.head_sha):
+                decision.full = False
+                decision.protected_main_smoke = True
+                decision.reasons.clear()
+                return
+            decision.flags.update(BROAD_PYTHON_FLAGS)
+            decision.force_full("protected-main smoke evidence is missing or mismatched")
+        case _:
+            decision.flags.update(BROAD_PYTHON_FLAGS)
+            decision.force_full(f"event {context.event!r} selects broad")
+
+
+def evaluate(
+    changed: set[str],
+    packages: dict[str, Package],
+    context: EventContext | None = None,
+) -> GateDecision:
+    """Classify changed files into lane flags, packages, and commit class.
 
     Args:
-        changed: Repo-relative posix paths from the diff. Deleted paths are
-            valid inputs; nothing here touches the filesystem.
+        changed: Repo-relative posix paths from the base-SHA-to-tested-SHA
+            diff. Deleted paths are valid inputs.
         packages: Workspace packages with dependency metadata populated.
+        context: Optional GitHub event identity. Local callers may omit it;
+            workflow callers fail closed from incomplete event evidence.
 
     Returns:
-        The gate decision. ``full`` is set when any file hits a global
-        trigger or is understood by no rule (fail-closed).
+        The gate decision. Policy sources and unmapped paths select ``broad``.
     """
     decision = GateDecision()
     rel_paths = _package_rel_paths(packages)
     seeds: set[str] = set()
 
     for path in sorted(changed):
-        if _matches_global(path):
-            decision.force_full(f"global trigger: {path}")
-            continue
-
         matched = False
+        for rule in BROAD_RULES:
+            if rule.matches(path):
+                matched = True
+                decision.flags.update(rule.flags)
+                seeds.update(rule.packages)
+                decision.force_full(f"broad policy source: {path}")
+
         for rule in SURFACE_RULES:
             if rule.matches(path):
                 matched = True
@@ -100,15 +185,20 @@ def evaluate(changed: set[str], packages: dict[str, Package]) -> GateDecision:
                 decision.flags.update({"hygiene", "typecheck_backend"})
         if path.endswith(".py"):
             # Every changed Python file lints, workspace-owned or standalone;
-            # unmatched standalone files still fall through to the full run.
+            # unmatched standalone files still fall through to broad.
             decision.flags.add("lint_python")
 
         if not matched:
             decision.unmatched.append(path)
+            decision.flags.update(BROAD_PYTHON_FLAGS)
             decision.force_full(f"unmatched file: {path}")
 
     decision.affected = expand_to_dependents(seeds, build_reverse_dependency_index(packages))
     _derive_package_flags(decision, packages)
+    if context is not None:
+        _apply_event_context(decision, context)
+    if decision.full:
+        decision.affected = set(packages)
     return decision
 
 
@@ -125,68 +215,50 @@ def _derive_package_flags(decision: GateDecision, packages: dict[str, Package]) 
         decision.flags.add("api_schema_freshness")
 
 
-def tests_matrix(decision: GateDecision, packages: dict[str, Package]) -> dict[str, list[dict[str, str | bool]]]:
-    """Build the duration-balanced python-tests strategy matrix.
+def selected_test_packages(decision: GateDecision, packages: dict[str, Package]) -> tuple[str, ...]:
+    """Return the selected workspace packages that contain tests.
 
     Args:
         decision: Evaluated gate decision.
         packages: Workspace packages keyed by name.
 
     Returns:
-        A GitHub Actions matrix object containing the affected portion of each
-        committed batch, or all three complete batches for a full run.
-
-    Raises:
-        ValueError: If the committed batches do not partition the workspace.
+        Every testable workspace package for a broad decision, otherwise the
+        testable affected-package closure for a standard decision.
     """
-    if not decision.full and not decision.affected:
-        return {"include": []}
-    batches = load_test_batches()
-    assigned = [name for batch in batches for name in batch.packages]
-    workspace = set(packages)
-    if set(assigned) != workspace or len(assigned) != len(workspace):
-        missing = sorted(workspace - set(assigned))
-        extra = sorted(set(assigned) - workspace)
-        duplicates = sorted(name for name in set(assigned) if assigned.count(name) > 1)
-        msg = f"invalid Python test batch assignment: missing={missing}, extra={extra}, duplicates={duplicates}"
-        raise ValueError(msg)
-
-    include: list[dict[str, str | bool]] = []
-    for batch in batches:
-        names = sorted(
-            name for name in batch.packages if packages[name].has_tests and (decision.full or name in decision.affected)
-        )
-        if names:
-            include.append(
-                {
-                    "batch": batch.name,
-                    "packages": ",".join(names),
-                    "needs_pnpm": batch.needs_pnpm,
-                }
-            )
-    return {"include": include}
+    selected = packages.keys() if decision.full else decision.affected
+    return tuple(sorted(name for name in selected if name in packages and packages[name].has_tests))
 
 
 def render_outputs(
     decision: GateDecision,
-    matrix: dict[str, list[dict[str, str | bool]]],
+    test_packages: tuple[str, ...],
     event: str,
 ) -> dict[str, str]:
     """Render the decision as $GITHUB_OUTPUT key/value pairs.
 
     Args:
         decision: Evaluated gate decision.
-        matrix: Result of :func:`tests_matrix` for the same decision.
+        test_packages: Selected testable package names.
         event: GitHub event name (drives ``commitlint_expected``).
 
     Returns:
         Ordered mapping of output names to lowercase string values.
     """
-    outputs: dict[str, str] = {"full": str(decision.full).lower()}
+    outputs: dict[str, str] = {
+        "commit_class": decision.commit_class.value,
+        "standard": str(decision.commit_class is CommitClass.STANDARD).lower(),
+        "broad": str(decision.commit_class is CommitClass.BROAD).lower(),
+        "worker_timeout_minutes": str(WORKER_TIMEOUT_MINUTES[decision.commit_class]),
+        "protected_main_smoke": str(decision.protected_main_smoke).lower(),
+        # Gate labels consume the full spelling as the broad-class signal.
+        "full": str(decision.full).lower(),
+        "affected_packages": ",".join(sorted(decision.affected)),
+        "test_packages": ",".join(test_packages),
+    }
     for flag in FLAG_NAMES:
         outputs[flag] = str(decision.flag_value(flag)).lower()
-    outputs["python_any"] = str(decision.full or bool(matrix["include"])).lower()
-    outputs["tests_matrix"] = json.dumps(matrix, separators=(",", ":"))
+    outputs["python_any"] = str(bool(test_packages)).lower()
     outputs["commitlint_expected"] = str(event == "pull_request").lower()
     return outputs
 
@@ -224,7 +296,7 @@ def render_summary(
         return f"[`{path}`]({url})"
 
     def render_reason(reason: str) -> str:
-        for prefix in ("global trigger: ", "unmatched file: "):
+        for prefix in ("broad policy source: ", "unmatched file: "):
             if reason.startswith(prefix):
                 return f"{prefix}{link_path(reason.removeprefix(prefix))}"
         return reason
@@ -233,11 +305,11 @@ def render_summary(
         "## Change gate",
         "",
         f"- Event: `{event}`",
-        f"- Diff: `{base_ref}...{head_ref}`",
-        f"- Verdict: {'**full run**' if decision.full else 'scoped run'}",
+        f"- Diff: `{base_ref}..{head_ref}`",
+        f"- Verdict: **{decision.commit_class}**",
     ]
     if decision.reasons:
-        lines += ["", "**Full-run reasons:**"]
+        lines += ["", "**Broad-class reasons:**"]
         lines.extend(f"- {render_reason(reason)}" for reason in decision.reasons)
     lines += ["", "| Lane | Run |", "|---|:---:|"]
     lines.extend(f"| {LANE_DISPLAY_NAMES[flag]} | {'✓' if outputs[flag] == 'true' else '—'} |" for flag in FLAG_NAMES)

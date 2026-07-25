@@ -1,37 +1,31 @@
-"""Intelligent test runner with parallel execution and live TUI.
+"""Workspace test runner with consolidated execution and live summaries.
 
-Runs each workspace package's pytest suite in its own process, with
-change-based selection (``affected``), coverage gating, and CI-friendly
-plain output.
+Runs selected workspace test suites in one pytest process, with change-based
+selection, coverage gating, and CI-friendly plain output.
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextlib
+import json
 import os
 import re
 import subprocess
+import tempfile
 import time
+import tomllib
+import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, ClassVar
+from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.live import Live
 from rich.panel import Panel
-from rich.progress import (
-    BarColumn,
-    Progress,
-    ProgressColumn,
-    SpinnerColumn,
-    Task,
-    TaskID,
-    TextColumn,
-)
 
 from ci_checks.core.packages import (
     REPO_ROOT,
@@ -44,9 +38,10 @@ from ci_checks.core.process_env import sanitized_python_env
 # Constants
 
 PYTEST_SUCCESS = 0
-PYTEST_NO_TESTS = 5
-_WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS: int = 30 * 60
+_WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS: int = 18 * 60
 _UNIT_TEST_MARKERS = "not integration and not e2e and not requires_docker and not slow"
+_PYTEST_CONTROLLER_RESULT_NAME = "pytest controller"
+_UNIT_EXCLUDED_MARKERS = frozenset({"integration", "e2e", "requires_docker", "slow"})
 
 
 # Git change detection
@@ -209,6 +204,7 @@ _COVERAGE_LINE_PATTERN = re.compile(
     re.MULTILINE,
 )
 _TOTAL_COVERAGE_PATTERN = re.compile(r"^TOTAL\s+\d+\s+\d+\s+(\d+)%", re.MULTILINE)
+_PACKAGE_COVERAGE_PATTERN = re.compile(r'addopts\s*=\s*"[^"]*--cov=([^\s"]+)')
 
 
 def _parse_coverage_output(output: str) -> CoverageResult:
@@ -226,6 +222,46 @@ def _parse_coverage_output(output: str) -> CoverageResult:
         result.files.append(FileCoverage(path=path, stmts=int(stmts), miss=int(miss), cover=float(cover)))
     if total_match := _TOTAL_COVERAGE_PATTERN.search(output):
         result.total_coverage = float(total_match.group(1))
+    return result
+
+
+def _string_object_mapping(value: object, context: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        msg = f"coverage JSON {context} must be an object"
+        raise TypeError(msg)
+    mapping: dict[str, object] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            msg = f"coverage JSON {context} keys must be strings"
+            raise TypeError(msg)
+        mapping[key] = item
+    return mapping
+
+
+def _parse_coverage_json(path: Path) -> CoverageResult:
+    """Parse a pytest-cov JSON report into a CoverageResult."""
+    if not path.is_file():
+        return CoverageResult()
+    payload = _string_object_mapping(json.loads(path.read_text(encoding="utf-8")), "root")
+    files = _string_object_mapping(payload.get("files"), "files")
+    result = CoverageResult()
+    for file_path, file_data in files.items():
+        file_mapping = _string_object_mapping(file_data, f"file {file_path}")
+        summary = _string_object_mapping(file_mapping.get("summary"), f"file {file_path} summary")
+        statements = summary.get("num_statements")
+        missed = summary.get("missing_lines")
+        percent_display = summary.get("percent_covered_display")
+        if not isinstance(statements, int) or not isinstance(missed, int) or not isinstance(percent_display, str):
+            msg = f"coverage JSON file {file_path} summary has invalid values"
+            raise TypeError(msg)
+        result.files.append(
+            FileCoverage(
+                path=file_path,
+                stmts=statements,
+                miss=missed,
+                cover=float(percent_display),
+            )
+        )
     return result
 
 
@@ -249,85 +285,24 @@ def _get_src_dir(pkg: Package) -> str:
     return "src"
 
 
-# Custom Rich progress columns
-
-
-class PerTaskTimeColumn(ProgressColumn):
-    """Elapsed time per task (uses custom start_time field, not Rich's global)."""
-
-    def __init__(self) -> None:
-        """Initialise with no extra state."""
-        super().__init__()
-
-    def render(self, task: Task) -> str:
-        """Render elapsed time since the task started."""
-        custom_start = task.fields.get("start_time")
-        if custom_start is None:
-            return "--:--"
-        elapsed = time.time() - custom_start
-        minutes, seconds = divmod(int(elapsed), 60)
-        hours, minutes = divmod(minutes, 60)
-        if hours:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes}:{seconds:02d}"
-
-
-class ModuleProgressColumn(ProgressColumn):
-    """Current/total test count column."""
-
-    def __init__(self) -> None:
-        """Initialise with no extra state."""
-        super().__init__()
-
-    def render(self, task: Task) -> str:
-        """Render 'current/total' test count, or '?/?' when unknown."""
-        current = task.fields.get("tests_current", 0)
-        total = task.fields.get("tests_total", 0)
-        return "?/?" if total == 0 else f"{current}/{total}"
-
-
-class PendingCoverageColumn(ProgressColumn):
-    """Animated coverage column -- spinner while waiting, percentage when done."""
-
-    SPINNER_FRAMES: ClassVar[list[str]] = [
-        "⠋",
-        "⠙",
-        "⠹",
-        "⠸",
-        "⠼",
-        "⠴",
-        "⠦",
-        "⠧",
-        "⠇",
-        "⠏",
-    ]
-
-    def __init__(self) -> None:
-        """Initialise spinner frame index."""
-        super().__init__()
-        self.frame_index = 0
-
-    def render(self, task: Task) -> str:
-        """Render coverage or a spinner if not yet available."""
-        coverage = task.fields.get("coverage")
-        if coverage == "off":
-            return "[dim]  off[/dim]"
-        if coverage and coverage != "--":
-            return f"[cyan]{coverage:>5}[/cyan]"
-        self.frame_index = (self.frame_index + 1) % len(self.SPINNER_FRAMES)
-        return f"[dim]{self.SPINNER_FRAMES[self.frame_index]} wait[/dim]"
-
-
 # Test execution
 
 
 def _sync_workspace(console: Console) -> None:
     """Synchronize the frozen workspace environment before parallel test execution.
 
-    Uses the canonical dev sync shape (all packages, all non-CUDA extras, deadcode
-    group) behind the exclusive venv lock so a runner invocation never narrows an
-    environment that other consumers share.
+    CI may skip this sync after installing the cached frozen workspace. Local runs use
+    the canonical dev sync shape behind the exclusive venv lock so a runner invocation
+    never narrows an environment that other consumers share.
     """
+    if os.environ.get("CI_CHECKS_SKIP_WORKSPACE_SYNC", "").casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        console.print("[blue]INFO:[/blue] Skipping workspace sync; CI already installed the frozen workspace.")
+        return
     result = subprocess.run(
         [
             "scripts/dev/env-lock.sh",
@@ -361,11 +336,6 @@ def _sync_workspace(console: Console) -> None:
     raise typer.Exit(result.returncode or 1)
 
 
-def _order_packages_for_dispatch(packages: list[Package]) -> list[Package]:
-    """Put the historically dominant ci-checks suite first, preserving all other order."""
-    return [pkg for pkg in packages if pkg.name == "ci-checks"] + [pkg for pkg in packages if pkg.name != "ci-checks"]
-
-
 def _parse_test_progress(line: str) -> int:
     """Count completed test markers in a pytest output line.
 
@@ -376,6 +346,10 @@ def _parse_test_progress(line: str) -> int:
         Number of PASSED/FAILED/ERROR/SKIPPED/XFAIL/XPASS tokens found.
     """
     return len(re.findall(r"\b(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b", line))
+
+
+async def _wait_for_package_process(proc: asyncio.subprocess.Process) -> None:
+    await asyncio.wait_for(proc.wait(), timeout=_WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS)
 
 
 async def run_package_tests(
@@ -435,12 +409,14 @@ async def run_package_tests(
         env=sanitized_python_env(),
     )
 
-    if proc.stdout is None or proc.stderr is None:
+    stdout_reader = proc.stdout
+    stderr_reader = proc.stderr
+    if stdout_reader is None or stderr_reader is None:
         if proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
         await proc.wait()
-        missing_stream = "stdout" if proc.stdout is None else "stderr"
+        missing_stream = "stdout" if stdout_reader is None else "stderr"
         return TestResult(
             name=pkg.name,
             passed=False,
@@ -455,7 +431,7 @@ async def run_package_tests(
     async def drain_stdout() -> None:
         nonlocal tests_completed
         pending = bytearray()
-        while chunk := await proc.stdout.read(65536):
+        while chunk := await stdout_reader.read(65536):
             stdout_chunks.append(chunk)
             pending.extend(chunk)
             while (newline := pending.find(b"\n")) >= 0:
@@ -470,7 +446,7 @@ async def run_package_tests(
                 progress_callback(tests_completed)
 
     async def drain_stderr() -> None:
-        while chunk := await proc.stderr.read(65536):
+        while chunk := await stderr_reader.read(65536):
             stderr_chunks.append(chunk)
 
     timeout_error: TimeoutError | None = None
@@ -478,7 +454,7 @@ async def run_package_tests(
     async def wait_for_process() -> None:
         nonlocal timeout_error
         try:
-            await asyncio.wait_for(proc.wait(), timeout=_WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS)
+            await _wait_for_package_process(proc)
         except TimeoutError as exc:
             if proc.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
@@ -508,7 +484,7 @@ async def run_package_tests(
         raise timeout_error
 
     duration_ms = int((time.time() - module_start_time) * 1000)
-    pytest_passed = proc.returncode in (PYTEST_SUCCESS, PYTEST_NO_TESTS)
+    pytest_passed = proc.returncode == PYTEST_SUCCESS
     stdout = b"".join(stdout_chunks).decode()
     stderr = b"".join(stderr_chunks).decode()
     output = stdout + stderr
@@ -525,177 +501,394 @@ async def run_package_tests(
     )
 
 
-# Parallel execution modes
+@dataclass(slots=True)
+class _PackagePytestStats:
+    """Per-package facts reported by pytest's JUnit output."""
+
+    tests_run: int = 0
+    tests_failed: int = 0
+    duration_ms: int = 0
 
 
-async def _run_tests_ci_mode(
+def _repo_relative(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _coverage_src_dir(pkg: Package) -> str:
+    pyproject = pkg.path / "pyproject.toml"
+    if pyproject.is_file() and (match := _PACKAGE_COVERAGE_PATTERN.search(pyproject.read_text(encoding="utf-8"))):
+        return match.group(1)
+    return _get_src_dir(pkg)
+
+
+def _coverage_target(pkg: Package) -> str:
+    return _repo_relative(pkg.path / _coverage_src_dir(pkg))
+
+
+def _root_coverage_values(section: str, option: str) -> list[str]:
+    current: object = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    keys = ("tool", "coverage", section, option)
+    for key in keys:
+        if not isinstance(current, dict) or key not in current:
+            msg = f"root pyproject.toml must define {'.'.join(keys)}"
+            raise ValueError(msg)
+        current = current[key]
+    if not isinstance(current, list) or not all(isinstance(value, str) for value in current):
+        msg = f"root pyproject.toml {'.'.join(keys)} must be a list of strings"
+        raise ValueError(msg)
+    return [value for value in current if isinstance(value, str)]
+
+
+def _write_consolidated_coverage_config(path: Path, packages: list[Package]) -> None:
+    source = [str((pkg.path / _coverage_src_dir(pkg)).resolve()) for pkg in packages]
+    source_targets = [Path(_coverage_target(pkg)) for pkg in packages]
+    omit = [
+        pattern
+        for pattern in _root_coverage_values("run", "omit")
+        if not any(target.full_match(pattern) for target in source_targets)
+    ]
+    exclude_also = _root_coverage_values("report", "exclude_lines")
+    path.write_text(
+        "\n".join(
+            [
+                "[run]",
+                f"data_file = {path.parent / '.coverage'}",
+                "source =",
+                *(f"    {value}" for value in source),
+                "omit =",
+                *(f"    {value}" for value in omit),
+                "",
+                "[report]",
+                # Extending instead of replacing preserves coverage.py's built-in exclusions.
+                "exclude_also =",
+                *(f"    {value}" for value in exclude_also),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _parse_package_coverage(path: Path, packages: list[Package]) -> dict[str, CoverageResult]:
+    combined = _parse_coverage_json(path)
+    targets = {pkg.name: Path(_coverage_target(pkg)).as_posix().removeprefix("./") for pkg in packages}
+    results: dict[str, CoverageResult] = {}
+    for pkg in packages:
+        target = targets[pkg.name]
+        files = [
+            file
+            for file in combined.files
+            if (file_path := Path(file.path).as_posix().removeprefix("./")) == target
+            or file_path.startswith(f"{target}/")
+        ]
+        statements = sum(file.stmts for file in files)
+        missed = sum(file.miss for file in files)
+        percentage = round((statements - missed) * 100 / statements) if statements else 0
+        results[pkg.name] = CoverageResult(total_coverage=float(percentage), files=files)
+    return results
+
+
+def _test_helper_module_owners(packages: list[Package]) -> dict[str, set[str]]:
+    owners: dict[str, set[str]] = {}
+    for pkg in packages:
+        for path in (pkg.path / "tests").rglob("*.py"):
+            if path.name.startswith("test_") or path.name in {
+                "__init__.py",
+                "conftest.py",
+            }:
+                continue
+            owners.setdefault(path.name, set()).add(pkg.name)
+    return owners
+
+
+def _pythonpath_test_dirs(packages: list[Package]) -> list[Path]:
+    ci_checks = next((pkg for pkg in packages if pkg.name == "ci-checks"), None)
+    if ci_checks is None:
+        return []
+    helper_owners = _test_helper_module_owners(packages)
+    ci_helpers = {
+        path.name
+        for path in (ci_checks.path / "tests").rglob("*.py")
+        if not path.name.startswith("test_") and path.name not in {"__init__.py", "conftest.py"}
+    }
+    collisions = {name: helper_owners[name] for name in ci_helpers if len(helper_owners[name]) > 1}
+    if collisions:
+        details = ", ".join(f"{name}: {', '.join(sorted(owners))}" for name, owners in sorted(collisions.items()))
+        message = f"Cannot isolate consolidated pytest helper imports: {details}"
+        raise RuntimeError(message)
+    return [ci_checks.path / "tests"]
+
+
+def _pytest_marker_name(node: ast.expr) -> str | None:
+    candidate = node.func if isinstance(node, ast.Call) else node
+    if (
+        isinstance(candidate, ast.Attribute)
+        and isinstance(candidate.value, ast.Attribute)
+        and isinstance(candidate.value.value, ast.Name)
+        and candidate.value.value.id == "pytest"
+        and candidate.value.attr == "mark"
+    ):
+        return candidate.attr
+    return None
+
+
+def _has_excluded_marker(decorators: list[ast.expr], excluded: frozenset[str]) -> bool:
+    return any(_pytest_marker_name(decorator) in excluded for decorator in decorators)
+
+
+def _module_has_excluded_pytestmark(module: ast.Module, excluded: frozenset[str]) -> bool:
+    for statement in module.body:
+        if not isinstance(statement, ast.Assign) or not any(
+            isinstance(target, ast.Name) and target.id == "pytestmark" for target in statement.targets
+        ):
+            continue
+        values = statement.value.elts if isinstance(statement.value, (ast.List, ast.Tuple)) else [statement.value]
+        if any(_pytest_marker_name(value) in excluded for value in values):
+            return True
+    return False
+
+
+def _class_tests_are_excluded(node: ast.ClassDef, excluded: frozenset[str]) -> tuple[bool, bool]:
+    if _has_excluded_marker(node.decorator_list, excluded):
+        return True, True
+    if node.bases:
+        return False, True
+    found = False
+    for statement in node.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)) and statement.name.startswith("test"):
+            found = True
+            if not _has_excluded_marker(statement.decorator_list, excluded):
+                return False, True
+        elif isinstance(statement, ast.ClassDef) and statement.name.startswith("Test"):
+            nested_excluded, nested_found = _class_tests_are_excluded(statement, excluded)
+            found = found or nested_found
+            if not nested_excluded:
+                return False, found
+    return True, found
+
+
+def _test_module_is_wholly_excluded(path: Path, excluded: frozenset[str]) -> bool:
+    try:
+        module = ast.parse(path.read_bytes(), filename=str(path))
+    except OSError, SyntaxError:
+        return False
+    if _module_has_excluded_pytestmark(module, excluded):
+        return True
+    found = False
+    for statement in module.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)) and statement.name.startswith("test"):
+            found = True
+            if not _has_excluded_marker(statement.decorator_list, excluded):
+                return False
+        elif isinstance(statement, ast.ClassDef) and statement.name.startswith("Test"):
+            class_excluded, class_found = _class_tests_are_excluded(statement, excluded)
+            found = found or class_found
+            if not class_excluded:
+                return False
+        elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            if any(
+                isinstance(target, ast.Name)
+                and (target.id.startswith("test") or target.id.startswith("Test"))
+                and target.id != "pytestmark"
+                for target in targets
+            ):
+                return False
+    return found
+
+
+def _unit_excluded_test_modules(packages: list[Package], markers: str) -> list[Path]:
+    if markers != _UNIT_TEST_MARKERS:
+        return []
+    return [
+        path
+        for pkg in packages
+        for path in sorted((pkg.path / "tests").rglob("test_*.py"))
+        if _test_module_is_wholly_excluded(path, _UNIT_EXCLUDED_MARKERS)
+    ]
+
+
+def _junit_prefix(pkg: Package) -> str:
+    path = _repo_relative(pkg.path)
+    return Path(path).as_posix().replace("/", ".") + ".tests"
+
+
+def _parse_package_stats(junit_path: Path, packages: list[Package]) -> dict[str, _PackagePytestStats]:
+    stats = {pkg.name: _PackagePytestStats() for pkg in packages}
+    classname_prefixes = sorted(((_junit_prefix(pkg), pkg.name) for pkg in packages), reverse=True)
+    file_prefixes = sorted(
+        (
+            (
+                Path(_repo_relative(pkg.path / "tests")).as_posix().removeprefix("./"),
+                pkg.name,
+            )
+            for pkg in packages
+        ),
+        reverse=True,
+    )
+    # pytest writes this local temporary file; it is not an untrusted input.
+    for testcase in ET.parse(junit_path).getroot().iter("testcase"):  # noqa: S314
+        classname = testcase.get("classname", "")
+        file = Path(testcase.get("file", "")).as_posix().removeprefix("./")
+        package_name = next((name for prefix, name in file_prefixes if file.startswith(prefix)), None)
+        if package_name is None:
+            package_name = next(
+                (name for prefix, name in classname_prefixes if classname.startswith(prefix)),
+                None,
+            )
+        if package_name is None:
+            continue
+        package_stats = stats[package_name]
+        package_stats.tests_run += 1
+        package_stats.duration_ms += round(float(testcase.get("time", "0")) * 1000)
+        if testcase.find("failure") is not None or testcase.find("error") is not None:
+            package_stats.tests_failed += 1
+    return stats
+
+
+async def run_consolidated_tests(
     packages: list[Package],
     markers: str,
     extra_args: tuple[str, ...],
-    max_workers: int,
-    console: Console,
     *,
-    with_coverage: bool,
+    pytest_workers: int,
+    with_coverage: bool = True,
 ) -> list[TestResult]:
-    """Run tests in CI mode with a simple tabular output.
-
-    Uses asyncio.TaskGroup so unhandled exceptions surface immediately
-    rather than being silently returned as BaseException values.
+    """Run all selected packages in one pytest process.
 
     Args:
-        packages: Packages to test.
-        markers: pytest -m expression.
+        packages: Packages whose test directories pytest should collect.
+        markers: pytest -m expression to filter tests.
         extra_args: Additional pytest arguments.
-        max_workers: Maximum concurrent test processes.
-        console: Rich console for output.
-        with_coverage: Whether to collect coverage data.
+        pytest_workers: Memory- and CPU-bounded xdist worker count.
+        with_coverage: Whether to enable per-package pytest-cov reporting.
 
     Returns:
-        List of TestResult in input order.
+        One attributed result per selected package, plus a controller result on a nonzero pytest exit.
     """
-    semaphore = asyncio.Semaphore(max_workers)
-    cov_header = "  Cov% " if with_coverage else ""
-    console.print(f"\n{'Module':<40}  Tests   Time    Status{cov_header}")
+    with tempfile.TemporaryDirectory(prefix="ci-checks-pytest-") as temp_dir:
+        junit_path = Path(temp_dir) / "junit.xml"
+        coverage_config = Path(temp_dir) / "coverage.ini"
+        coverage_json = Path(temp_dir) / "coverage.json"
+        cmd = [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            f"--rootdir={REPO_ROOT}",
+            *(_repo_relative(pkg.path / "tests") for pkg in packages),
+            *(f"--ignore={_repo_relative(path)}" for path in _unit_excluded_test_modules(packages, markers)),
+            "--tb=short",
+            f"--junitxml={junit_path}",
+            "-o",
+            "junit_family=legacy",
+            "-n",
+            str(pytest_workers),
+            "--dist=worksteal",
+        ]
+        if with_coverage:
+            _write_consolidated_coverage_config(coverage_config, packages)
+            cmd.extend(
+                [
+                    "--cov",
+                    f"--cov-config={coverage_config}",
+                    f"--cov-report=json:{coverage_json}",
+                    "--cov-fail-under=0",
+                ]
+            )
+        if markers:
+            cmd.extend(["-m", markers])
+        cmd.extend(extra_args)
+
+        test_env = sanitized_python_env()
+        test_paths = [str(path) for path in _pythonpath_test_dirs(packages)]
+        if existing_pythonpath := test_env.get("PYTHONPATH"):
+            test_paths.append(existing_pythonpath)
+        if test_paths:
+            test_env["PYTHONPATH"] = os.pathsep.join(test_paths)
+
+        started = time.time()
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=REPO_ROOT,
+            env=test_env,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=_WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS,
+            )
+        except TimeoutError:
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            await proc.wait()
+            raise
+
+        output = stdout.decode() + stderr.decode()
+        exit_code = proc.returncode if proc.returncode is not None else -1
+        stats = (
+            _parse_package_stats(junit_path, packages)
+            if junit_path.is_file()
+            else {pkg.name: _PackagePytestStats() for pkg in packages}
+        )
+        coverage = (
+            _parse_package_coverage(coverage_json, packages)
+            if with_coverage
+            else {pkg.name: CoverageResult() for pkg in packages}
+        )
+        failed_packages = {name for name, package_stats in stats.items() if package_stats.tests_failed}
+        wall_duration_ms = int((time.time() - started) * 1000)
+        results: list[TestResult] = []
+        for pkg in packages:
+            package_stats = stats[pkg.name]
+            has_tests = package_stats.tests_run > 0
+            if not has_tests:
+                package_output = f"No selected tests were collected for package {pkg.name}."
+            elif package_stats.tests_failed:
+                package_output = output
+            else:
+                package_output = ""
+            results.append(
+                TestResult(
+                    name=pkg.name,
+                    passed=has_tests and package_stats.tests_failed == 0,
+                    duration_ms=package_stats.duration_ms or (wall_duration_ms if not has_tests else 0),
+                    output=package_output,
+                    tests_run=package_stats.tests_run,
+                    tests_failed=package_stats.tests_failed,
+                    coverage=coverage[pkg.name],
+                    pkg_type=pkg.pkg_type,
+                )
+            )
+        if exit_code != PYTEST_SUCCESS:
+            controller_output = f"pytest controller exited with status {exit_code}."
+            if not failed_packages:
+                controller_output = f"{controller_output}\n\n{output}"
+            results.append(
+                TestResult(
+                    name=_PYTEST_CONTROLLER_RESULT_NAME,
+                    passed=False,
+                    duration_ms=wall_duration_ms,
+                    output=controller_output,
+                )
+            )
+        return results
+
+
+def _display_consolidated_results(results: list[TestResult], console: Console, *, with_coverage: bool) -> None:
+    cov_header = " Cov% " if with_coverage else ""
+    console.print(f"\n{'Module':<40} {'Tests':>5} {'Time':>6} {'Status':>9}{cov_header}")
     console.print("-" * 70)
-
-    results: list[TestResult | None] = [None] * len(packages)
-    pkg_index = {pkg.name: i for i, pkg in enumerate(packages)}
-
-    async def run(pkg: Package) -> None:
-        async with semaphore:
-            result = await run_package_tests(pkg, markers, extra_args, with_coverage=with_coverage)
+    for result in results:
         icon = "✓ PASS" if result.passed else "✗ FAIL"
         cov_info = f"  {result.coverage.total_coverage:>3.0f}%" if with_coverage else ""
-        tests_run = 0
-        if match := re.search(r"(\d+) passed", result.output):
-            tests_run = int(match.group(1))
-        console.print(f"{result.name:<40}  {tests_run:>5}   {result.duration_ms // 1000:>3}s   {icon}{cov_info}")
-        results[pkg_index[pkg.name]] = result
-
-    async with asyncio.TaskGroup() as tg:
-        for pkg in _order_packages_for_dispatch(packages):
-            tg.create_task(run(pkg))
-
-    return [r for r in results if r is not None]
-
-
-def _update_progress_on_completion(
-    progress: Progress,
-    task_id: TaskID,
-    result: TestResult,
-    name: str,
-    *,
-    with_coverage: bool,
-    force_total: int | None = None,
-) -> None:
-    """Update a progress bar row when a package's tests complete.
-
-    Args:
-        progress: Rich Progress instance.
-        task_id: The task row to update.
-        result: Completed test result.
-        name: Package name for display.
-        with_coverage: Whether to show coverage percentage.
-        force_total: Override total if inventory never arrived.
-    """
-    cov_str = f"{result.coverage.total_coverage:.0f}%" if with_coverage else "--"
-    status_style = "green" if result.passed else "red"
-    status_icon = "✓" if result.passed else "✗"
-    tests_total = force_total if force_total is not None else progress.tasks[task_id].fields.get("tests_total", 0)
-    progress.update(
-        task_id,
-        description=f"[{status_style}]{status_icon} {name}",
-        completed=tests_total,
-        tests_current=tests_total,
-        coverage=cov_str,
-    )
-
-
-async def _run_tests_interactive(
-    packages: list[Package],
-    markers: str,
-    extra_args: tuple[str, ...],
-    max_workers: int,
-    console: Console,
-    *,
-    with_coverage: bool,
-) -> list[TestResult]:
-    """Run tests with an interactive Rich TUI progress display.
-
-    Each package gets one pytest process; progress is derived from that process's
-    verbose result stream rather than a separate collection run.
-
-    Args:
-        packages: Packages to test.
-        markers: pytest -m expression.
-        extra_args: Additional pytest arguments.
-        max_workers: Maximum concurrent test processes.
-        console: Rich console for output.
-        with_coverage: Whether to collect coverage data.
-
-    Returns:
-        List of TestResult in input order.
-    """
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description:<40}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        ModuleProgressColumn(),
-        PerTaskTimeColumn(),
-        PendingCoverageColumn(),
-        console=console,
-        expand=True,
-    )
-
-    async def run_with_progress(pkg: Package) -> TestResult:
-        task_id = progress.add_task(
-            f"[cyan]{pkg.name}",
-            total=None,
-            completed=0,
-            tests_current=0,
-            tests_total=0,
-            coverage="--" if with_coverage else "off",
-            start_time=time.time(),
-        )
-        progress.update(task_id, description=f"[yellow]⏳ {pkg.name}")
-        tests_completed_count = 0
-
-        async with semaphore:
-            progress.update(task_id, description=f"[blue]🔄 {pkg.name}")
-
-            def progress_callback(completed: int) -> None:
-                nonlocal tests_completed_count
-                tests_completed_count = completed
-                progress.update(task_id, tests_current=completed, completed=completed)
-
-            result = await run_package_tests(
-                pkg,
-                markers,
-                extra_args,
-                with_coverage=with_coverage,
-                progress_callback=progress_callback,
-            )
-            final_total = max(tests_completed_count, 1)
-            progress.update(task_id, total=final_total, tests_total=final_total)
-            _update_progress_on_completion(
-                progress,
-                task_id,
-                result,
-                pkg.name,
-                with_coverage=with_coverage,
-                force_total=final_total,
-            )
-            return result
-
-    with Live(progress, console=console, refresh_per_second=10):
-        semaphore = asyncio.Semaphore(max_workers)
-        async with asyncio.TaskGroup() as tg:
-            test_tasks = {
-                pkg.name: tg.create_task(run_with_progress(pkg)) for pkg in _order_packages_for_dispatch(packages)
-            }
-
-    return [test_tasks[pkg.name].result() for pkg in packages]
+        console.print(f"{result.name:<40} {result.tests_run:>5} {result.duration_ms / 1000:>5.1f}s {icon:>9}{cov_info}")
 
 
 async def run_tests_parallel(
@@ -708,41 +901,33 @@ async def run_tests_parallel(
     ci_mode: bool,
     with_coverage: bool = True,
 ) -> list[TestResult]:
-    """Dispatch to CI or interactive parallel test execution.
+    """Run all selected tests in one memory- and CPU-bounded pytest process.
 
     Args:
         packages: Packages to test.
         markers: pytest -m expression.
         extra_args: Additional pytest arguments.
-        max_workers: Maximum concurrent test processes.
+        max_workers: Maximum xdist workers allowed by the memory budget.
         console: Rich console for output.
-        ci_mode: Use plain-text CI output when True.
+        ci_mode: Retained for the stable CLI output contract.
         with_coverage: Whether to collect coverage data.
 
     Returns:
-        List of TestResult.
+        List of per-package TestResult values.
     """
+    del ci_mode
     _sync_workspace(console)
     available_workers = os.process_cpu_count() or 1
-    pytest_workers = max(1, available_workers // max(1, max_workers))
-    bounded_args = ("-n", str(pytest_workers), *extra_args)
-    if ci_mode:
-        return await _run_tests_ci_mode(
-            packages,
-            markers,
-            bounded_args,
-            max_workers,
-            console,
-            with_coverage=with_coverage,
-        )
-    return await _run_tests_interactive(
+    pytest_workers = max(1, min(available_workers, max_workers))
+    results = await run_consolidated_tests(
         packages,
         markers,
-        bounded_args,
-        max_workers,
-        console,
+        extra_args,
+        pytest_workers=pytest_workers,
         with_coverage=with_coverage,
     )
+    _display_consolidated_results(results, console, with_coverage=with_coverage)
+    return results
 
 
 # Display helpers
@@ -769,6 +954,8 @@ class _CoverageRowData:
 
 def _coverage_meets_policy(result: TestResult) -> bool:
     """Return whether a result satisfies its package-type coverage policy."""
+    if not any(file.stmts for file in result.coverage.files):
+        return True
     gate = get_coverage_gate(result.pkg_type)
     return not gate.get_failing_files(result.coverage) and gate.check_module(result.coverage)
 
@@ -909,7 +1096,7 @@ def display_failures(results: list[TestResult], console: Console, *, ci_mode: bo
     for result in failed:
         if ci_mode:
             console.print(f"\n{'=' * 60}\nFAILED: {result.name}\n{'=' * 60}")
-            console.print(result.output)
+            console.print(result.output, markup=False)
         else:
             console.print(
                 Panel(

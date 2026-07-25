@@ -8,38 +8,39 @@ on:
     # edited: title changes must re-lint because the PR title becomes the merge commit subject
     types: [opened, synchronize, reopened, edited]
 
-# actions: write lets cache-nix-action purge superseded nix store caches;
-# without it the purge list call fails and aborts the post-job cache save.
 permissions:
   contents: read
-  actions: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.action == 'edited' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
-    name: Change gate
+    name: Router
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 3
     permissions:
+      actions: read
       contents: read
-      pull-requests: write
-      issues: write
+      pull-requests: read
     outputs:
+      commit_class: ${{ steps.gate.outputs.commit_class }}
+      standard: ${{ steps.gate.outputs.standard }}
+      broad: ${{ steps.gate.outputs.broad }}
+      worker_timeout_minutes: ${{ steps.guards.outputs.worker_timeout_minutes }}
+      protected_main_smoke: ${{ steps.gate.outputs.protected_main_smoke }}
       full: ${{ steps.gate.outputs.full }}
+      nix: ${{ steps.gate.outputs.nix }}
       lint_python: ${{ steps.gate.outputs.lint_python }}
       lint_frontend: ${{ steps.gate.outputs.lint_frontend }}
       lint_proto: ${{ steps.gate.outputs.lint_proto }}
       lint_markdown: ${{ steps.gate.outputs.lint_markdown }}
       lint_workflows: ${{ steps.gate.outputs.lint_workflows }}
       lint_docker: ${{ steps.gate.outputs.lint_docker }}
-      nix: ${{ steps.gate.outputs.nix }}
       typecheck_backend: ${{ steps.gate.outputs.typecheck_backend }}
       typecheck_frontend: ${{ steps.gate.outputs.typecheck_frontend }}
       python_any: ${{ steps.gate.outputs.python_any }}
-      tests_matrix: ${{ steps.gate.outputs.tests_matrix }}
       frontend_tests: ${{ steps.gate.outputs.frontend_tests }}
       frontend_smoke: ${{ steps.gate.outputs.frontend_smoke }}
       frontend_e2e: ${{ steps.gate.outputs.frontend_e2e }}
@@ -49,21 +50,64 @@ jobs:
       api_schema_freshness: ${{ steps.gate.outputs.api_schema_freshness }}
       image_matrix_parity: ${{ steps.gate.outputs.image_matrix_parity }}
       proto_breaking: ${{ steps.gate.outputs.proto_breaking }}
+      build_backend: ${{ steps.gate.outputs.build_backend }}
+      affected_packages: ${{ steps.gate.outputs.affected_packages }}
+      test_packages: ${{ steps.gate.outputs.test_packages }}
       commitlint_expected: ${{ steps.gate.outputs.commitlint_expected }}
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Start router timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Record router identity
+        env:
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          {
+            echo "### Router identity"
+            echo "- run_id=$GITHUB_RUN_ID"
+            echo "- tested_sha=$GITHUB_SHA"
+            echo "- event=$GITHUB_EVENT_NAME"
+            echo "- event_action=${EVENT_ACTION:-none}"
+            if [ "$GITHUB_EVENT_NAME" = push ]; then
+              echo "- command_inventory=ci-checks gate-evidence; ci-checks gate"
+            else
+              echo "- command_inventory=ci-checks gate; git rev-parse HEAD^{tree}; jq attestation"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Set up uv and Python
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        id: setup-uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.28"
           python-version: "3.14.6"
           enable-cache: true
           cache-dependency-glob: uv.lock
+
+      - name: Prepare router environment
+        run: uv sync --locked --package ci-checks -q
+
+      - name: Mark router work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Gather protected-main evidence
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run --no-sync ci-checks gate-evidence \
+            --event "$GITHUB_EVENT_NAME" \
+            --repository "$GITHUB_REPOSITORY" \
+            --head-sha "$GITHUB_SHA" \
+            --github-env "$GITHUB_ENV"
 
       - name: Compute change gate
         id: gate
@@ -72,252 +116,860 @@ jobs:
           HEAD: ${{ github.sha }}
           EVENT: ${{ github.event_name }}
         run: |
-          uv sync --locked --package ci-checks
           uv run --no-sync ci-checks gate --event "$EVENT" --base-ref "$BASE" --head-ref "$HEAD" \
-            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --comment-file gate-comment.md
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish gate verdict to PR
-        if: github.event_name == 'pull_request'
-        # Advisory: fork and Dependabot PRs get a read-only token; a 403
-        # here must not fail the required gate job.
-        continue-on-error: true
+
+      - name: Derive worker guard
+        id: guards
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
+          COMMIT_CLASS: ${{ steps.gate.outputs.commit_class }}
         run: |
-          marker='<!-- nohiki-change-gate -->'
-          existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
-          if [ -n "$existing" ]; then
-            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@gate-comment.md > /dev/null
-          else
-            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@gate-comment.md > /dev/null
-          fi
-
-      - name: Sync area labels
-        if: github.event_name == 'pull_request'
-        # Advisory: fork and Dependabot PRs get a read-only token; a 403
-        # here must not fail the required gate job.
-        continue-on-error: true
+          case "$COMMIT_CLASS" in
+            standard) wall_budget_seconds=600 ;;
+            broad) wall_budget_seconds=720 ;;
+            *)
+              echo "cannot derive a guard for commit class: $COMMIT_CLASS" >&2
+              exit 1
+              ;;
+          esac
+          # A timeout is a hang guard, not the class budget verdict. Parallel broad units
+          # share one fan-in wall clock, so each uses the same wall-plus-grace guard.
+          hang_grace_minutes=2
+          timeout=$((wall_budget_seconds / 60 + hang_grace_minutes))
+          echo "worker_timeout_minutes=$timeout" >> "$GITHUB_OUTPUT"
+      - name: Write Checks attestation
+        if: github.event_name == 'pull_request' && github.event.action != 'edited'
         env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          LABELS: ${{ steps.gate.outputs.labels }}
+          COMMIT_CLASS: ${{ steps.gate.outputs.commit_class }}
+          EVENT_ACTION: ${{ github.event.action }}
         run: |
-          current=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
-          sync() {
-            label="$1"; color="$2"; active="$3"
-            if [ "$active" = "true" ]; then
-              gh label create "$label" --repo "$REPO" --force --color "$color" \
-                --description "Gate-managed label" > /dev/null
-              if ! grep -qxF "$label" <<< "$current"; then
-                gh api -X POST "repos/$REPO/issues/$PR/labels" -f "labels[]=$label" > /dev/null
-              fi
-            elif grep -qxF "$label" <<< "$current"; then
-              encoded=$(printf %s "$label" | jq -sRr @uri)
-              gh api -X DELETE "repos/$REPO/issues/$PR/labels/$encoded" > /dev/null
-            fi
-          }
-          while IFS=$'\t' read -r label color active; do
-            sync "$label" "$color" "$active"
-          done < <(jq -r '.[] | [.name, .color, .active] | @tsv' <<< "$LABELS")
+          tested_tree_sha="$(git rev-parse 'HEAD^{tree}')"
+          jq -n \
+            --arg tested_tree_sha "$tested_tree_sha" \
+            --arg event_action "$EVENT_ACTION" \
+            --arg commit_class "$COMMIT_CLASS" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            '{tested_tree_sha: $tested_tree_sha, event_action: $event_action, commit_class: $commit_class, run_id: $run_id}' \
+            > checks-attestation.json
 
-  nix:
-    needs: [changes]
-    if: needs.changes.outputs.nix == 'true'
-    name: Nix toolchain parity
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      LEFTHOOK_VERSION: '2.1.10'
 
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Upload Checks attestation
+        if: github.event_name == 'pull_request' && github.event.action != 'edited'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          persist-credentials: false
+          name: checks-attestation
+          path: checks-attestation.json
+          if-no-files-found: error
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
-      - name: Cache nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Check flake
-        run: nix flake check
-
-      - name: Check Lefthook version
+      - name: Report router timing
+        if: always()
+        env:
+          UV_CACHE_HIT: ${{ steps.setup-uv.outputs.cache-hit }}
+          UV_CACHE_KEY: ${{ steps.setup-uv.outputs.cache-key }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
         run: |
-          actual="$(nix develop .#ci --command lefthook version)"
-          if [ "$actual" != "$LEFTHOOK_VERSION" ]; then
-            echo "expected Lefthook $LEFTHOOK_VERSION, got: $actual" >&2
-            exit 1
-          fi
+          now="$(date +%s)"
+          if [[ "$UV_CACHE_HIT" == true ]]; then uv_outcome=hit; else uv_outcome=miss; fi
+          printf 'cache_outcomes=uv=%s:%s setup_seconds=%s unique_work_seconds=%s\n' \
+            "$uv_outcome" "${UV_CACHE_KEY:-unknown}" \
+            "$((UNIQUE_STARTED - JOB_STARTED))" "$((now - UNIQUE_STARTED))" >> "$GITHUB_STEP_SUMMARY"
 
-  lint:
-    needs: [changes]
-    name: Lint (non-fixing surface)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          # gitleaks scans the full commit history
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Cache uv downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
-
-      - name: Resolve pnpm store path
-        id: pnpm-store
-        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: |
-          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
-          nix develop .#ci --command bash -euc '
-            export UV_PYTHON="$(command -v python)"
-            uv sync --frozen
-          '
-
-      - name: Lint Python
-        if: needs.changes.outputs.lint_python == 'true'
-        run: >
-          nix develop .#ci --command uv run --no-sync ruff check --output-format=github
-          --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
-
-      - name: Check Python formatting
-        if: needs.changes.outputs.lint_python == 'true'
-        run: >
-          nix develop .#ci --command uv run --no-sync ruff format --check
-          --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
-
-      - name: Install frontend dependencies
-        if: needs.changes.outputs.lint_frontend == 'true'
-        run: nix develop .#ci --command pnpm install --frozen-lockfile
-
-      - name: Lint frontend
-        if: needs.changes.outputs.lint_frontend == 'true'
-        run: nix develop .#ci --command pnpm --filter nohiki-frontend exec biome ci --reporter=github .
-
-      - name: Check i18n keys
-        if: needs.changes.outputs.lint_frontend == 'true'
-        run: nix develop .#ci --command pnpm --filter nohiki-frontend run i18n:check
-
-      - name: Lint Markdown
-        if: needs.changes.outputs.lint_markdown == 'true'
-        run: >
-          nix develop .#ci --command pnpm exec markdownlint-cli2 '**/*.md' '!**/node_modules/**'
-
-      - name: Lint protos
-        if: needs.changes.outputs.lint_proto == 'true'
-        run: nix develop .#ci --command bash -euc 'cd proto && buf lint'
-
-      - name: Scan for secrets (gitleaks)
-        run: nix develop .#ci --command gitleaks detect --source . --no-banner --redact
-
-      - name: Lint workflows (actionlint)
-        if: needs.changes.outputs.lint_workflows == 'true'
-        run: nix develop .#ci --command actionlint
-
-      - name: Lint Dockerfiles (hadolint)
-        if: needs.changes.outputs.lint_docker == 'true'
-        run: >
-          git ls-files -z -- '*Dockerfile' '*Dockerfile.*'
-          ':(exclude)*.dockerignore' ':(exclude)*.j2'
-          | xargs -0 -r nix develop .#ci --command hadolint
 
   commitlint:
-    name: Commit messages (conventional)
-    if: github.event_name == 'pull_request'
+    name: PR title (conventional)
+    needs: [changes]
+    if: needs.changes.outputs.commitlint_expected == 'true' && github.event.action == 'edited'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
+    timeout-minutes: 6
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Start title-policy timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # commitlint walks the PR commit range
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
-
-      - name: Set up Node
-        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+      - name: Set up title policy
+        id: setup-ci
+        uses: ./.github/actions/setup-ci
         with:
-          node-version: "26"
-          cache: pnpm
+          node: "true"
+          full-node-workspace: "true"
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Mark title-policy work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Validate PR commit messages
-        run: >
-          pnpm exec commitlint
-          --from ${{ github.event.pull_request.base.sha }}
-          --to ${{ github.event.pull_request.head.sha }}
-          --verbose
 
       - name: Validate PR title (merge commit subject)
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | pnpm exec commitlint --verbose
 
-  frontend-smoke:
-    needs: [changes]
-    if: needs.changes.outputs.frontend_smoke == 'true'
-    name: Frontend production container smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+      - name: Report title-policy timing
+        if: always()
+        env:
+          CACHE_OUTCOMES: ${{ steps.setup-ci.outputs.cache-telemetry }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
+        run: |
+          now="$(date +%s)"
+          printf 'cache_outcomes=%s setup_seconds=%s unique_work_seconds=%s\n' \
+            "${CACHE_OUTCOMES:-unknown:none}" \
+            "$((UNIQUE_STARTED - JOB_STARTED))" "$((now - UNIQUE_STARTED))" >> "$GITHUB_STEP_SUMMARY"
+          echo 'command_inventory=pnpm install; commitlint PR title' >> "$GITHUB_STEP_SUMMARY"
 
+  worker:
+    name: Scoped worker
+    needs: [changes]
+    if: github.event.action != 'edited' && needs.changes.outputs.standard == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
+    permissions:
+      actions: write
+      contents: read
+    env:
+      NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' }}
+      FULL_PYTHON_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' }}
+      NODE_SETUP_SELECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true') }}
+      DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.lint_markdown == 'true' && needs.changes.outputs.affected_packages == '' }}
+      SKYLOS_CACHE_DIR: ${{ github.workspace }}/.skylos
+      SKYLOS_CACHE_STATIC_TIER: content
+    outputs:
+      node_group_executed: ${{ steps.setup-ci.outputs.node-group-executed }}
+      commitlint_executed: ${{ steps.commitlint-range.outcome == 'success' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Start worker timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+
+      - name: Set up selected environments
+        id: setup-ci
+        uses: ./.github/actions/setup-ci
+        with:
+          ready-cache: ${{ env.NIX_SETUP_SELECTED }}
+          save-ready-cache: ${{ github.event_name == 'push' }}
+          node: ${{ env.NODE_SETUP_SELECTED }}
+          full-node-workspace: ${{ needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true' }}
+          skylos-cache: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.affected_packages != '' }}
+          skylos-deploy-key: ${{ secrets.SKYLOS_DEPLOY_KEY }}
+          commit-class: ${{ needs.changes.outputs.commit_class }}
+          base-sha: ${{ github.event.pull_request.base.sha || github.event.before }}
+          head-sha: ${{ github.sha }}
+
+      - name: Mark unique work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Protected-main smoke
+        if: needs.changes.outputs.protected_main_smoke == 'true'
+        run: nix develop .#ci --command uv run --no-sync ci-checks --help > /dev/null
+
+      - name: Check flake
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.nix == 'true'
+        run: nix flake check
+
+      - name: Check Lefthook version
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.nix == 'true'
+        env:
+          LEFTHOOK_VERSION: '2.1.10'
+        run: |
+          actual="$(nix develop .#ci --command lefthook version)"
+          test "$actual" = "$LEFTHOOK_VERSION" || {
+            echo "expected Lefthook $LEFTHOOK_VERSION, got: $actual" >&2
+            exit 1
+          }
+
+      - name: Lint Python
+        if: needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.lint_python == 'true')
+        env:
+          # Ruff runs before Skylos, which fingerprints the workspace by walking it and
+          # hashing every file whose path components avoid its EXCLUDED_DIRS. `.ruff_cache`
+          # is not in that set, so its ~283 files enter the fingerprint, and their contents
+          # track source mtimes that every fresh checkout changes. Left in the workspace it
+          # forces a Skylos inner-key miss on each hosted run even when the outer
+          # actions/cache restore succeeds: measured 196s miss vs 9s hit.
+          RUFF_CACHE_DIR: ${{ runner.temp }}/ruff-cache
+          BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          export UV_PROJECT_ENVIRONMENT=.venv
+          mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- \
+            '*.py' ':(exclude)**/alembic/**' ':(exclude)**/nohiki-domain-models/**')
+          ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
+            ruff check --output-format=github "${files[@]}"
+
+      - name: Check Python formatting
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.lint_python == 'true'
+        env:
+          RUFF_CACHE_DIR: ${{ runner.temp }}/ruff-cache
+          BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          export UV_PROJECT_ENVIRONMENT=.venv
+          mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- \
+            '*.py' ':(exclude)**/alembic/**' ':(exclude)**/nohiki-domain-models/**')
+          ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
+            ruff format --check "${files[@]}"
+
+      - name: Lint Markdown
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.lint_markdown == 'true'
+        env:
+          BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.md')
+          ((${#files[@]} == 0)) || pnpm exec markdownlint-cli2 "${files[@]}"
+
+      - name: Lint protos
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.lint_proto == 'true'
+        run: nix develop .#ci --command bash -euc 'cd proto && buf lint'
+
+      - name: Lint workflows (actionlint)
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.lint_workflows == 'true'
+        run: nix develop .#ci --command actionlint
+
+      - name: Lint frontend
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.lint_frontend == 'true'
+        run: pnpm --filter nohiki-frontend exec biome ci --reporter=github .
+
+      - name: Check i18n keys
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.lint_frontend == 'true'
+        run: pnpm --filter nohiki-frontend run i18n:check
+
+      - name: Lint Dockerfiles (hadolint)
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.lint_docker == 'true'
+        run: >
+          git ls-files -z -- '*Dockerfile' '*Dockerfile.*'
+          ':(exclude)*.dockerignore' ':(exclude)*.j2'
+          | xargs -0 -r nix develop .#ci --command hadolint
+
+      - name: Scan changed content for secrets
+        if: env.DOCS_ONLY == 'true'
+        env:
+          BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          git diff --binary "$BASE_SHA..$HEAD_SHA" |
+            docker run --rm -i --workdir /repo \
+              -v "$PWD/.gitleaks.toml:/repo/.gitleaks.toml:ro" \
+              ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+              stdin --config /repo/.gitleaks.toml --no-banner --redact
+
+      - name: Scan repository for secrets
+        if: env.DOCS_ONLY != 'true'
+        run: |
+          docker run --rm --workdir /repo -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            detect --source . --config .gitleaks.toml --no-banner --redact
+
+      - name: Typecheck backend
+        if: needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.typecheck_backend == 'true')
+        env:
+          PACKAGE_SCOPE: ${{ needs.changes.outputs.broad == 'true' && 'ALL' || needs.changes.outputs.affected_packages }}
+        run: |
+          mapfile -t paths < <(nix develop .#ci --command uv run --no-sync python -c '
+          import sys, tomllib
+          selection = sys.argv[1]
+          names = None if selection == "ALL" else set(selection.split(","))
+          lock = tomllib.load(open("uv.lock", "rb"))
+          print(*(p["source"]["editable"] for p in lock["package"]
+                  if "editable" in p.get("source", {}) and (names is None or p["name"] in names)), sep="\n")
+          ' "$PACKAGE_SCOPE")
+          test "${#paths[@]}" -gt 0
+          nix develop .#ci --command uv run --no-sync ty check "${paths[@]}" \
+            --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+
+      - name: Check selected dead code
+        if: needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.affected_packages != '')
+        id: deadcode
+        env:
+          PACKAGE_SCOPE: ${{ needs.changes.outputs.broad == 'true' && 'ALL' || needs.changes.outputs.affected_packages }}
+          # Hosted workers expose two cores; pinning jobs keeps the fork's cache identity stable.
+          SKYLOS_JOBS: "2"
+        run: |
+          nix develop .#ci --command uv run --no-sync ci-checks deadcode \
+            --scope all --packages "$PACKAGE_SCOPE" --ci --fail --no-provenance \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Save Skylos static analysis cache
+        if: always() && (steps.deadcode.conclusion == 'success' || steps.deadcode.conclusion == 'failure') && steps.setup-ci.outputs.skylos-cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.skylos
+          key: ${{ steps.setup-ci.outputs.skylos-cache-primary-key }}
+
+      - name: Typecheck frontend
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.typecheck_frontend == 'true'
+        run: pnpm -C typescript/apps/frontend type-check
+
+      - name: Run selected Python tests
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.python_any == 'true'
+        env:
+          TEST_PACKAGES: ${{ needs.changes.outputs.test_packages }}
+          SUMMARY_TITLE: ${{ needs.changes.outputs.commit_class }}
+          CI_CHECKS_SKIP_WORKSPACE_SYNC: "1"
+          OTEL_SDK_DISABLED: "true"
+          UV_NO_SYNC: "1"
+          COVERAGE_CORE: "sysmon"
+        run: |
+          test -n "$TEST_PACKAGES"
+          nix develop .#ci --command uv run --no-sync ci-checks tests all --scope all \
+            --packages "$TEST_PACKAGES" --ci --workers 2 --summary "$GITHUB_STEP_SUMMARY" \
+            --summary-title "$SUMMARY_TITLE"
+
+      - name: Test frontend
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.frontend_tests == 'true'
+        # 50% resolves to ONE worker on the 2-vCPU runner, idling half the machine. Measured
+        # under `taskset -c 0-1`: 1 worker 294s, 2 workers 260s (2212 tests, identical result).
+        run: pnpm -C typescript/apps/frontend test --run --maxWorkers=100%
+
+      - name: Lint edge worker
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.edge_worker == 'true'
+        run: >
+          pnpm --filter @nohiki/auth-listings-worker exec biome ci --reporter=github src/
+
+      - name: Typecheck edge worker
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.edge_worker == 'true'
+        run: >
+          pnpm --filter @nohiki/auth-listings-worker exec tsc --noEmit
+
+      - name: Test edge worker
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.edge_worker == 'true'
+        run: >
+          pnpm --filter @nohiki/auth-listings-worker exec vitest run
+
+      - name: Validate PR commit messages
+        id: commitlint-range
+        if: needs.changes.outputs.commitlint_expected == 'true'
+        run: >
+          pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }}
+          --to ${{ github.event.pull_request.head.sha }} --verbose
+
+      - name: Validate PR title (merge commit subject)
+        if: needs.changes.outputs.commitlint_expected == 'true'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | pnpm exec commitlint --verbose
+
+      - name: Check dependencies
+        if: needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.hygiene == 'true')
+        env:
+          PACKAGE_SCOPE: ${{ needs.changes.outputs.broad == 'true' && 'ALL' || needs.changes.outputs.affected_packages }}
+        run: nix develop .#ci --command uv run --no-sync ci-checks deptry --packages "$PACKAGE_SCOPE" --ci
+      - name: Scan architecture
+        if: needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.hygiene == 'true')
+        run: >
+          nix develop .#ci --command env -u LD_LIBRARY_PATH
+          uvx --override semgrep-overrides.txt semgrep scan
+          --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/
+
+
+      - name: Check build backends
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.build_backend == 'true'
+        env:
+          AFFECTED_PACKAGES: ${{ needs.changes.outputs.affected_packages }}
+        run: >
+          nix develop .#ci --command uv run --no-sync ci-checks build-backend
+          --packages "$AFFECTED_PACKAGES" --ci --strict
+
+      - name: Check API schema freshness
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.api_schema_freshness == 'true'
+        run: nix develop .#ci --command just api-schema-check
+
+      - name: Check image matrix parity
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.image_matrix_parity == 'true'
+        run: nix develop .#ci --command just image-matrix-check
+
+      - name: Check proto compatibility
+        if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.proto_breaking == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if git cat-file -e "${BASE_SHA}^{commit}" && git ls-tree --name-only "$BASE_SHA" proto/ | grep -q .; then
+            nix develop .#ci --command bash -euc "cd proto && buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'"
+          else
+            echo "Skipping: proto/ is absent from the checked-out base commit"
+          fi
+
+      - name: Report worker timing
+        if: always()
+        env:
+          CACHE_OUTCOMES: ${{ steps.setup-ci.outputs.cache-telemetry }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
+        run: |
+          now="$(date +%s)"
+          setup_seconds=$((UNIQUE_STARTED - JOB_STARTED))
+          unique_seconds=$((now - UNIQUE_STARTED))
+          printf 'cache_outcomes=%s setup_seconds=%s unique_work_seconds=%s\n' \
+            "${CACHE_OUTCOMES:-unknown:none}" "$setup_seconds" "$unique_seconds" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Executed command inventory"
+            record() {
+              if [ "${{ needs.changes.outputs.protected_main_smoke }}" != true ] && [ "$1" = true ]; then
+                echo "- \`$2\`"
+              fi
+            }
+            if [ "${{ needs.changes.outputs.protected_main_smoke }}" = true ]; then
+              # shellcheck disable=SC2016 # Markdown code spans are literal.
+              echo '- `ci-checks --help (protected-main smoke)`'
+            fi
+            record "${{ needs.changes.outputs.nix }}" 'nix flake check; lefthook version'
+            record "${{ needs.changes.outputs.lint_python }}" 'ruff check/format (changed Python files)'
+            record "${{ needs.changes.outputs.lint_markdown }}" 'markdownlint-cli2 (changed Markdown files)'
+            record "${{ needs.changes.outputs.lint_proto }}" 'buf lint'
+            record "${{ needs.changes.outputs.lint_workflows }}" 'actionlint'
+            record "${{ needs.changes.outputs.lint_docker }}" 'hadolint (tracked Dockerfiles)'
+            record "${{ needs.changes.outputs.lint_frontend }}" 'Biome; i18n:check'
+            record "${{ needs.changes.outputs.typecheck_backend }}" 'ty check affected package closure'
+            record "${{ needs.changes.outputs.typecheck_frontend }}" 'frontend type-check'
+            record "${{ needs.changes.outputs.python_any }}" 'ci-checks tests affected package closure'
+            record "${{ needs.changes.outputs.frontend_tests }}" 'frontend Vitest'
+            record "${{ needs.changes.outputs.edge_worker }}" 'Biome; tsc; Vitest edge worker'
+            record "${{ needs.changes.outputs.hygiene }}" 'ci-checks deptry --packages affected closure; Semgrep architecture scan'
+            record "${{ needs.changes.outputs.build_backend }}" 'ci-checks build-backend --packages affected closure'
+            record "${{ needs.changes.outputs.api_schema_freshness }}" 'just api-schema-check'
+            record "${{ needs.changes.outputs.image_matrix_parity }}" 'just image-matrix-check'
+            record "${{ needs.changes.outputs.proto_breaking }}" 'buf breaking'
+            record "${{ needs.changes.outputs.commitlint_expected }}" 'commitlint PR range; commitlint PR title'
+            # shellcheck disable=SC2016 # Markdown code spans are literal.
+            echo '- changed-content or repository-wide `gitleaks` scan'
+            echo "affected_packages=${{ needs.changes.outputs.affected_packages }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
+  broad-environment:
+    name: Broad environment
+    needs: [changes]
+    if: github.event.action != 'edited' && github.event_name == 'push' && needs.changes.outputs.broad == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Start environment timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prewarm complete environment
+        id: setup-ci
+        uses: ./.github/actions/setup-ci
+        with:
+          ready-cache: "true"
+          lookup-only: "true"
+          save-ready-cache: "true"
+          skylos-deploy-key: ${{ secrets.SKYLOS_DEPLOY_KEY }}
+
+      - name: Report environment timing
+        if: always()
+        env:
+          CACHE_OUTCOMES: ${{ steps.setup-ci.outputs.cache-telemetry }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+        run: |
+          now="$(date +%s)"
+          printf 'cache_outcomes=%s setup_seconds=%s unique_work_seconds=0\n' \
+            "${CACHE_OUTCOMES:-unknown:none}" "$((now - JOB_STARTED))" >> "$GITHUB_STEP_SUMMARY"
+          echo 'command_inventory=restore or build complete CI environment' >> "$GITHUB_STEP_SUMMARY"
+
+  broad-python:
+    name: Broad Python tests
+    needs: [changes, broad-environment]
+    if: always() && github.event.action != 'edited' && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Start worker timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python test environment
+        id: setup-ci
+        uses: ./.github/actions/setup-ci
+        with:
+          ready-cache: "true"
+          skylos-deploy-key: ${{ secrets.SKYLOS_DEPLOY_KEY }}
+
+      - name: Mark unique work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Run selected Python tests
+        env:
+          TEST_PACKAGES: ${{ needs.changes.outputs.test_packages }}
+          SUMMARY_TITLE: ${{ needs.changes.outputs.commit_class }}
+          CI_CHECKS_SKIP_WORKSPACE_SYNC: "1"
+          OTEL_SDK_DISABLED: "true"
+          UV_NO_SYNC: "1"
+          COVERAGE_CORE: "sysmon"
+        run: |
+          test -n "$TEST_PACKAGES"
+          nix develop .#ci --command uv run --no-sync ci-checks tests all --scope all \
+            --packages "$TEST_PACKAGES" --ci --workers 2 --summary "$GITHUB_STEP_SUMMARY" \
+            --summary-title "$SUMMARY_TITLE"
+
+      - name: Report worker timing
+        if: always()
+        env:
+          CACHE_OUTCOMES: ${{ steps.setup-ci.outputs.cache-telemetry }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
+        run: |
+          now="$(date +%s)"
+          printf 'cache_outcomes=%s setup_seconds=%s unique_work_seconds=%s\n' \
+            "${CACHE_OUTCOMES:-unknown:none}" "$((UNIQUE_STARTED - JOB_STARTED))" \
+            "$((now - UNIQUE_STARTED))" >> "$GITHUB_STEP_SUMMARY"
+          echo 'command_inventory=ci-checks tests full package closure' >> "$GITHUB_STEP_SUMMARY"
+
+  broad-frontend:
+    name: Broad frontend and commit policy
+    needs: [changes, broad-environment]
+    if: always() && github.event.action != 'edited' && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Start worker timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up frontend environment
+        id: setup-ci
+        uses: ./.github/actions/setup-ci
+        with:
+          ready-cache: "true"
+          skylos-deploy-key: ${{ secrets.SKYLOS_DEPLOY_KEY }}
+          node: "true"
+          full-node-workspace: "true"
+
+      - name: Mark unique work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Lint Markdown
+        env:
+          BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.md')
+          ((${#files[@]} == 0)) || pnpm exec markdownlint-cli2 "${files[@]}"
+
+      - name: Lint frontend
+        run: pnpm --filter nohiki-frontend exec biome ci --reporter=github .
+
+      - name: Check i18n keys
+        run: pnpm --filter nohiki-frontend run i18n:check
+
+      - name: Typecheck frontend
+        run: pnpm -C typescript/apps/frontend type-check
+
+      - name: Test frontend
+        # 50% resolves to ONE worker on the 2-vCPU runner, idling half the machine. Measured
+        # under `taskset -c 0-1`: 1 worker 294s, 2 workers 260s (2212 tests, identical result).
+        run: pnpm -C typescript/apps/frontend test --run --maxWorkers=100%
+
+      - name: Lint edge worker
+        run: >
+          pnpm --filter @nohiki/auth-listings-worker exec biome ci --reporter=github src/
+
+      - name: Typecheck edge worker
+        run: >
+          pnpm --filter @nohiki/auth-listings-worker exec tsc --noEmit
+
+      - name: Test edge worker
+        run: >
+          pnpm --filter @nohiki/auth-listings-worker exec vitest run
+
+      - name: Validate PR commit messages
+        run: >
+          pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }}
+          --to ${{ github.event.pull_request.head.sha }} --verbose
+
+      - name: Validate PR title (merge commit subject)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | pnpm exec commitlint --verbose
+
+      - name: Report worker timing
+        if: always()
+        env:
+          CACHE_OUTCOMES: ${{ steps.setup-ci.outputs.cache-telemetry }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
+        run: |
+          now="$(date +%s)"
+          printf 'cache_outcomes=%s setup_seconds=%s unique_work_seconds=%s\n' \
+            "${CACHE_OUTCOMES:-unknown:none}" \
+            "$((UNIQUE_STARTED - JOB_STARTED))" "$((now - UNIQUE_STARTED))" >> "$GITHUB_STEP_SUMMARY"
+          echo 'command_inventory=markdownlint; frontend and edge lint/typecheck/test; commitlint' \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  broad-hygiene:
+    name: Broad backend hygiene
+    needs: [changes, broad-environment]
+    if: always() && github.event.action != 'edited' && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
+    permissions:
+      actions: write
+      contents: read
+    env:
+      SKYLOS_CACHE_DIR: ${{ github.workspace }}/.skylos
+      SKYLOS_CACHE_STATIC_TIER: content
+    steps:
+      - name: Start worker timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up hygiene environment
+        id: setup-ci
+        uses: ./.github/actions/setup-ci
+        with:
+          ready-cache: "true"
+          node: "true"
+          full-node-workspace: "true"
+          skylos-cache: "true"
+          skylos-deploy-key: ${{ secrets.SKYLOS_DEPLOY_KEY }}
+          commit-class: ${{ needs.changes.outputs.commit_class }}
+          base-sha: ${{ github.event.pull_request.base.sha || github.event.before }}
+          head-sha: ${{ github.sha }}
+
+      - name: Mark unique work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Scan repository for secrets
+        run: |
+          docker run --rm --workdir /repo -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            detect --source . --config .gitleaks.toml --no-banner --redact
+
+      - name: Typecheck backend
+        run: |
+          mapfile -t paths < <(nix develop .#ci --command uv run --no-sync python -c '
+          import tomllib
+          lock = tomllib.load(open("uv.lock", "rb"))
+          print(*(p["source"]["editable"] for p in lock["package"] if "editable" in p.get("source", {})), sep="\n")
+          ')
+          test "${#paths[@]}" -gt 0
+          nix develop .#ci --command uv run --no-sync ty check "${paths[@]}" \
+            --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+
+      - name: Check selected dead code
+        id: deadcode
+        env:
+          SKYLOS_JOBS: "2"
+        run: |
+          nix develop .#ci --command uv run --no-sync ci-checks deadcode \
+            --scope all --packages ALL --ci --fail --no-provenance \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Save Skylos static analysis cache
+        if: always() && (steps.deadcode.conclusion == 'success' || steps.deadcode.conclusion == 'failure') && steps.setup-ci.outputs.skylos-cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.skylos
+          key: ${{ steps.setup-ci.outputs.skylos-cache-primary-key }}
+
+      - name: Check dependencies
+        run: nix develop .#ci --command uv run --no-sync ci-checks deptry --packages ALL --ci
+
+      - name: Scan architecture
+        run: >
+          nix develop .#ci --command env -u LD_LIBRARY_PATH
+          uvx --override semgrep-overrides.txt semgrep scan
+          --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/
+
+      - name: Check build backends
+        env:
+          AFFECTED_PACKAGES: ${{ needs.changes.outputs.affected_packages }}
+        run: >
+          nix develop .#ci --command uv run --no-sync ci-checks build-backend
+          --packages "$AFFECTED_PACKAGES" --ci --strict
+
+      - name: Check API schema freshness
+        run: nix develop .#ci --command just api-schema-check
+
+      - name: Report worker timing
+        if: always()
+        env:
+          CACHE_OUTCOMES: ${{ steps.setup-ci.outputs.cache-telemetry }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
+        run: |
+          now="$(date +%s)"
+          printf 'cache_outcomes=%s setup_seconds=%s unique_work_seconds=%s\n' \
+            "${CACHE_OUTCOMES:-unknown:none}" "$((UNIQUE_STARTED - JOB_STARTED))" \
+            "$((now - UNIQUE_STARTED))" >> "$GITHUB_STEP_SUMMARY"
+          echo 'command_inventory=gitleaks; ty; deadcode; deptry; semgrep; build-backend; api-schema' \
+            >> "$GITHUB_STEP_SUMMARY"
+
+
+  broad-policy:
+    name: Broad policy and lint
+    needs: [changes, broad-environment]
+    if: always() && github.event.action != 'edited' && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Start worker timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up policy environment
+        id: setup-ci
+        uses: ./.github/actions/setup-ci
+        with:
+          ready-cache: "true"
+          skylos-deploy-key: ${{ secrets.SKYLOS_DEPLOY_KEY }}
+
+      - name: Mark unique work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Check flake
+        run: nix flake check
+
+      - name: Check Lefthook version
+        env:
+          LEFTHOOK_VERSION: '2.1.10'
+        run: |
+          actual="$(nix develop .#ci --command lefthook version)"
+          test "$actual" = "$LEFTHOOK_VERSION" || {
+            echo "expected Lefthook $LEFTHOOK_VERSION, got: $actual" >&2
+            exit 1
+          }
+
+      - name: Lint Python
+        env:
+          RUFF_CACHE_DIR: ${{ runner.temp }}/ruff-cache
+        run: |
+          export UV_PROJECT_ENVIRONMENT=.venv
+          nix develop .#ci --command uv run --no-sync ruff check --output-format=github \
+            --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+
+      - name: Check Python formatting
+        env:
+          RUFF_CACHE_DIR: ${{ runner.temp }}/ruff-cache
+        run: |
+          export UV_PROJECT_ENVIRONMENT=.venv
+          nix develop .#ci --command uv run --no-sync ruff format --check \
+            --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+
+      - name: Lint protos
+        run: nix develop .#ci --command bash -euc 'cd proto && buf lint'
+
+      - name: Lint workflows (actionlint)
+        run: nix develop .#ci --command actionlint
+
+      - name: Lint Dockerfiles (hadolint)
+        run: >
+          git ls-files -z -- '*Dockerfile' '*Dockerfile.*'
+          ':(exclude)*.dockerignore' ':(exclude)*.j2'
+          | xargs -0 -r nix develop .#ci --command hadolint
+
+      - name: Check image matrix parity
+        run: nix develop .#ci --command just image-matrix-check
+
+      - name: Check proto compatibility
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if git cat-file -e "${BASE_SHA}^{commit}" && git ls-tree --name-only "$BASE_SHA" proto/ | grep -q .; then
+            nix develop .#ci --command bash -euc "cd proto && buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'"
+          else
+            echo "Skipping: proto/ is absent from the checked-out base commit"
+          fi
+
+      - name: Report worker timing
+        if: always()
+        env:
+          CACHE_OUTCOMES: ${{ steps.setup-ci.outputs.cache-telemetry }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
+        run: |
+          now="$(date +%s)"
+          printf 'cache_outcomes=%s setup_seconds=%s unique_work_seconds=%s\n' \
+            "${CACHE_OUTCOMES:-unknown:none}" \
+            "$((UNIQUE_STARTED - JOB_STARTED))" "$((now - UNIQUE_STARTED))" >> "$GITHUB_STEP_SUMMARY"
+          echo 'command_inventory=nix; ruff; buf; actionlint; hadolint; image parity; proto compatibility' \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  container-contracts:
+    name: Container contracts
+    needs: [changes]
+    if: github.event.action != 'edited' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Start worker timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Docker Buildx
+        if: needs.changes.outputs.frontend_smoke == 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+      - name: Set up container contract environment
+        id: setup-ci
+        uses: ./.github/actions/setup-ci
+        with:
+          ready-cache: "true"
+          skylos-deploy-key: ${{ secrets.SKYLOS_DEPLOY_KEY }}
+
+      - name: Mark unique work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Build production frontend image
+        if: needs.changes.outputs.frontend_smoke == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -327,43 +979,8 @@ jobs:
           cache-from: type=gha,scope=frontend-smoke
           cache-to: type=gha,scope=frontend-smoke,mode=max
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Cache uv downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
-      - name: Cache workspace virtual environment
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
-
-
-      - name: Install workspace (all packages + extras)
-        run: |
-          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
-          nix develop .#ci --command bash -euc '
-            export UV_PYTHON="$(command -v python)"
-            uv sync --all-packages --all-extras --no-extra cuda --frozen
-          '
-
       - name: Smoke production frontend container
+        if: needs.changes.outputs.frontend_smoke == 'true'
         run: >
           nix develop .#ci --command uv run --no-sync pytest
           scripts/ci/tests/test_frontend_delivery.py::test_frontend_container_build_and_hardened_runtime_smoke
@@ -371,20 +988,48 @@ jobs:
           CONTAINER_RUNTIME: docker
           FRONTEND_SMOKE_IMAGE: nohiki-frontend-smoke:ci
 
-  frontend-e2e:
-    needs: [changes]
-    if: needs.changes.outputs.frontend_e2e == 'true'
-    name: Playwright runner container smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+      - name: Validate OpenTelemetry collector image and configs
+        if: needs.changes.outputs.otel_collector == 'true'
+        run: >
+          nix develop .#ci --command uv run --no-sync pytest
+          scripts/ci/tests/test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary
 
+      - name: Report worker timing
+        if: always()
+        env:
+          CACHE_OUTCOMES: ${{ steps.setup-ci.outputs.cache-telemetry }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
+        run: |
+          now="$(date +%s)"
+          printf 'cache_outcomes=%s setup_seconds=%s unique_work_seconds=%s\n' \
+            "${CACHE_OUTCOMES:-unknown:none}" "$((UNIQUE_STARTED - JOB_STARTED))" \
+            "$((now - UNIQUE_STARTED))" >> "$GITHUB_STEP_SUMMARY"
+          echo "command_inventory=complete CI environment; selected frontend image smoke; OTel collector manifest/image pytest" >> "$GITHUB_STEP_SUMMARY"
+
+  playwright-image:
+    name: Playwright runner image
+    needs: [changes]
+    if: github.event.action != 'edited' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.frontend_e2e == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Start worker timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Mark unique work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - name: Build Playwright runner image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -402,596 +1047,214 @@ jobs:
           --entrypoint typescript/apps/frontend/node_modules/.bin/playwright
           nohiki-playwright-runner-smoke:ci --version
 
-  edge-worker:
-    needs: [changes]
-    if: needs.changes.outputs.edge_worker == 'true'
-    name: Edge worker quality
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Resolve pnpm store path
-        id: pnpm-store
-        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
-
-      - name: Install frontend dependencies
-        run: nix develop .#ci --command pnpm install --frozen-lockfile
-
-      - name: Lint edge worker
-        run: >
-          nix develop .#ci --command pnpm --filter @nohiki/auth-listings-worker
-          exec biome ci --reporter=github src/
-
-      - name: Typecheck edge worker
-        run: >
-          nix develop .#ci --command pnpm --filter @nohiki/auth-listings-worker
-          exec tsc --noEmit
-
-      - name: Test edge worker
-        run: >
-          nix develop .#ci --command pnpm --filter @nohiki/auth-listings-worker
-          exec vitest run
-
-  otel-collector:
-    needs: [changes]
-    if: needs.changes.outputs.otel_collector == 'true'
-    name: OpenTelemetry collector container validation
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Cache uv downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
-
-      - name: Cache workspace virtual environment
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
-
-      - name: Install workspace (all packages + extras)
-        run: |
-          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
-          nix develop .#ci --command bash -euc '
-            export UV_PYTHON="$(command -v python)"
-            uv sync --all-packages --all-extras --no-extra cuda --frozen
-          '
-
-      - name: Validate OpenTelemetry collector image and configs
-        run: >
-          nix develop .#ci --command uv run --no-sync pytest
-          scripts/ci/tests/test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary
-
-  typecheck:
-    needs: [changes]
-    if: needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true'
-    name: Backend and frontend typecheck
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Cache uv downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
-      - name: Cache workspace virtual environment
-        if: needs.changes.outputs.typecheck_backend == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
-
-
-      - name: Resolve pnpm store path
-        if: needs.changes.outputs.typecheck_frontend == 'true'
-        id: pnpm-store
-        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        if: needs.changes.outputs.typecheck_frontend == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
-
-      - name: Install workspace (all packages + extras)
-        if: needs.changes.outputs.typecheck_backend == 'true'
-        run: |
-          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
-          nix develop .#ci --command bash -euc '
-            export UV_PYTHON="$(command -v python)"
-            uv sync --all-packages --all-extras --no-extra cuda --frozen
-          '
-
-      - name: Install frontend dependencies
-        if: needs.changes.outputs.typecheck_frontend == 'true'
-        run: nix develop .#ci --command pnpm install --frozen-lockfile
-
-      - name: Typecheck backend
-        if: needs.changes.outputs.typecheck_backend == 'true'
-        run: >
-          nix develop .#ci --command uv run --no-sync ty check backend/
-          --exclude '**/alembic/**'
-          --exclude '**/nohiki-domain-models/**'
-          --exclude '**/tests/**'
-
-      - name: Typecheck frontend
-        if: needs.changes.outputs.typecheck_frontend == 'true'
-        run: nix develop .#ci --command pnpm -C typescript/apps/frontend type-check
-
-  python-tests:
-    needs: [changes]
-    if: needs.changes.outputs.python_any == 'true'
-    name: Python tests (${{ matrix.batch }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: true
-      matrix: ${{ fromJSON(needs.changes.outputs.tests_matrix) }}
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Cache uv downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
-      - name: Cache workspace virtual environment
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
-
-
-      - name: Resolve pnpm store path
-        if: matrix.needs_pnpm
-        id: pnpm-store
-        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        if: matrix.needs_pnpm
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
-
-      - name: Install workspace (all packages + extras)
-        run: |
-          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
-          nix develop .#ci --command bash -euc '
-            export UV_PYTHON="$(command -v python)"
-            uv sync --all-packages --all-extras --no-extra cuda --frozen
-            if [ "${{ matrix.needs_pnpm }}" = "true" ]; then
-              pnpm install --frozen-lockfile
-            fi
-          '
-
-      - name: Run batch tests
-        run: |
-          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
-          nix develop .#ci --command bash -euc '
-            export UV_PYTHON="$(command -v python)"
-            uv run --no-sync ci-checks tests all --scope all --packages "${{ matrix.packages }}" \
-              --ci --workers 2 --summary "$GITHUB_STEP_SUMMARY" --summary-title "${{ matrix.batch }}"
-          '
+      - name: Report worker timing
+        if: always()
         env:
-          OTEL_SDK_DISABLED: "true"
-          UV_NO_SYNC: "1"
-          COVERAGE_CORE: "sysmon"
-
-  frontend-tests:
-    needs: [changes]
-    if: needs.changes.outputs.frontend_tests == 'true'
-    name: Frontend tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Resolve pnpm store path
-        id: pnpm-store
-        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
-
-      - name: Install frontend dependencies
-        run: nix develop .#ci --command pnpm install --frozen-lockfile
-
-      # 50% had the lowest full-suite wall time without increasing peak RSS in the local 50/75/100% benchmark.
-      - name: Test frontend
-        run: nix develop .#ci --command pnpm -C typescript/apps/frontend test --run --maxWorkers=50%
-
-  hygiene:
-    needs: [changes]
-    if: needs.changes.outputs.hygiene == 'true'
-    name: Python hygiene
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Cache uv downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
-      - name: Cache workspace virtual environment
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .venv
-          key: venv-deadcode-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
-
-      - name: Install workspace (all packages + extras)
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
         run: |
-          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
-          nix develop .#ci --command bash -euc '
-            export UV_PYTHON="$(command -v python)"
-            uv sync --all-packages --all-extras --no-extra cuda --group deadcode --frozen
-          '
-      - name: Check dead code
-        run: >
-          nix develop .#ci --command uv run --no-sync ci-checks deadcode
-          --scope all --ci --fail --no-provenance --summary "$GITHUB_STEP_SUMMARY"
-
-      - name: Check dependencies
-        run: nix develop .#ci --command uv run --no-sync ci-checks deptry --scope all --ci
-
-      - name: Scan architecture
-        run: >
-          nix develop .#ci --command env -u LD_LIBRARY_PATH
-          uvx --override semgrep-overrides.txt semgrep scan
-          --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/
-
-      - name: Check build backends
-        run: nix develop .#ci --command uv run --no-sync ci-checks build-backend --scope all --ci --strict
-
-  api-schema-freshness:
-    needs: [changes]
-    if: needs.changes.outputs.api_schema_freshness == 'true'
-    name: API schema freshness
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Cache uv downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-${{ runner.os }}-
-      - name: Cache workspace virtual environment
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
-
-
-      - name: Resolve pnpm store path
-        id: pnpm-store
-        run: echo "path=$(nix develop .#ci --command pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
-
-      - name: Install workspace (all packages + extras)
-        run: |
-          # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
-          nix develop .#ci --command bash -euc '
-            export UV_PYTHON="$(command -v python)"
-            uv sync --all-packages --all-extras --no-extra cuda --frozen
-          '
-
-      - name: Install frontend dependencies
-        run: nix develop .#ci --command pnpm install --frozen-lockfile
-
-      - name: Check API schema freshness
-        run: nix develop .#ci --command just api-schema-check
-
-
-  image-matrix-parity:
-    needs: [changes]
-    if: needs.changes.outputs.image_matrix_parity == 'true'
-    name: Image matrix parity
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache Nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Check image matrix parity
-        run: nix develop .#ci --command just image-matrix-check
-
-  proto-breaking:
-    needs: [changes]
-    if: needs.changes.outputs.proto_breaking == 'true'
-    name: Proto breaking changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
-
-      - name: Cache nix store
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Check proto compatibility
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          if git cat-file -e "${BASE_SHA}^{commit}" && git ls-tree --name-only "$BASE_SHA" proto/ | grep -q .; then
-            nix develop .#ci --command bash -euc "cd proto && buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'"
-          else
-            echo "Skipping: proto/ is absent from the checked-out base commit"
-          fi
+          now="$(date +%s)"
+          printf 'cache_outcomes=buildkit=unknown:none setup_seconds=%s unique_work_seconds=%s\n' \
+            "$((UNIQUE_STARTED - JOB_STARTED))" "$((now - UNIQUE_STARTED))" >> "$GITHUB_STEP_SUMMARY"
+          echo "command_inventory=Buildx Playwright image; playwright --version" >> "$GITHUB_STEP_SUMMARY"
 
   checks:
     name: Checks
-    if: always()
+    if: always() && github.event.action != 'edited'
     needs:
       - changes
-      - nix
-      - lint
       - commitlint
-      - frontend-smoke
-      - frontend-e2e
-      - edge-worker
-      - otel-collector
-      - typecheck
-      - python-tests
-      - frontend-tests
-      - hygiene
-      - api-schema-freshness
-      - image-matrix-parity
-      - proto-breaking
+      - worker
+      - broad-environment
+      - broad-python
+      - broad-frontend
+      - broad-hygiene
+      - broad-policy
+      - container-contracts
+      - playwright-image
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-
+    timeout-minutes: 3
+    permissions:
+      actions: read
+      contents: read
     steps:
-      - name: Require every check
+      - name: Start fan-in timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Mark fan-in work start
+        id: unique
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Require every selected check
+        env:
+          COMMITLINT_EXPECTED: ${{ needs.changes.outputs.commitlint_expected == 'true' && github.event.action == 'edited' }}
+          WORK_EXPECTED: ${{ needs.changes.outputs.standard == 'true' }}
+          BROAD_EXPECTED: ${{ needs.changes.outputs.broad == 'true' }}
+          BROAD_ENV_EXPECTED: ${{ needs.changes.outputs.broad == 'true' && github.event_name == 'push' }}
+          WORKER_COMMITLINT_EXPECTED: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.commitlint_expected == 'true' }}
+          WORKER_COMMITLINT: ${{ needs.worker.outputs.commitlint_executed }}
+          NODE_GROUP_EXPECTED: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.edge_worker == 'true') }}
+          WORKER_NODE_GROUP: ${{ needs.worker.outputs.node_group_executed }}
+          CONTAINER_EXPECTED: ${{ github.event.action != 'edited' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
+          PLAYWRIGHT_EXPECTED: ${{ github.event.action != 'edited' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.frontend_e2e == 'true' }}
         run: |
           test '${{ needs.changes.result }}' = success
-          test '${{ needs.lint.result }}' = success
-          test '${{ needs.nix.result }}' = success || {
-            test '${{ needs.nix.result }}' = skipped &&
-              test '${{ needs.changes.outputs.nix }}' != true
+          test '${{ needs.changes.outputs.full }}' = '${{ needs.changes.outputs.broad }}'
+          case '${{ needs.changes.outputs.commit_class }}' in
+            standard)
+              test '${{ needs.changes.outputs.standard }}' = true
+              test '${{ needs.changes.outputs.broad }}' = false
+              ;;
+            broad)
+              test '${{ needs.changes.outputs.standard }}' = false
+              test '${{ needs.changes.outputs.broad }}' = true
+              ;;
+            *)
+              echo "router emitted an invalid commit class" >&2
+              exit 1
+              ;;
+          esac
+          require() {
+            result="$1"; expected="$2"; name="$3"
+            if [ "$expected" = true ]; then
+              test "$result" = success || {
+                echo "$name was selected but concluded $result" >&2
+                return 1
+              }
+            else
+              test "$result" = skipped || {
+                echo "$name was not selected but concluded $result" >&2
+                return 1
+              }
+            fi
           }
-          test '${{ needs.frontend-smoke.result }}' = success || {
-            test '${{ needs.frontend-smoke.result }}' = skipped &&
-              test '${{ needs.changes.outputs.frontend_smoke }}' != true
-          }
-          test '${{ needs.typecheck.result }}' = success || {
-            test '${{ needs.typecheck.result }}' = skipped &&
-              test '${{ needs.changes.outputs.typecheck_backend }}' != true &&
-              test '${{ needs.changes.outputs.typecheck_frontend }}' != true
-          }
-          test '${{ needs.python-tests.result }}' = success || {
-            test '${{ needs.python-tests.result }}' = skipped &&
-              test '${{ needs.changes.outputs.python_any }}' != true
-          }
-          test '${{ needs.frontend-tests.result }}' = success || {
-            test '${{ needs.frontend-tests.result }}' = skipped &&
-              test '${{ needs.changes.outputs.frontend_tests }}' != true
-          }
-          test '${{ needs.hygiene.result }}' = success || {
-            test '${{ needs.hygiene.result }}' = skipped &&
-              test '${{ needs.changes.outputs.hygiene }}' != true
-          }
-          test '${{ needs.frontend-e2e.result }}' = success || {
-            test '${{ needs.frontend-e2e.result }}' = skipped &&
-              test '${{ needs.changes.outputs.frontend_e2e }}' != true
-          }
-          test '${{ needs.edge-worker.result }}' = success || {
-            test '${{ needs.edge-worker.result }}' = skipped &&
-              test '${{ needs.changes.outputs.edge_worker }}' != true
-          }
-          test '${{ needs.otel-collector.result }}' = success || {
-            test '${{ needs.otel-collector.result }}' = skipped &&
-              test '${{ needs.changes.outputs.otel_collector }}' != true
-          }
-          test '${{ needs.api-schema-freshness.result }}' = success || {
-            test '${{ needs.api-schema-freshness.result }}' = skipped &&
-              test '${{ needs.changes.outputs.api_schema_freshness }}' != true
-          }
-          test '${{ needs.image-matrix-parity.result }}' = success || {
-            test '${{ needs.image-matrix-parity.result }}' = skipped &&
-              test '${{ needs.changes.outputs.image_matrix_parity }}' != true
-          }
-          test '${{ needs.proto-breaking.result }}' = success || {
-            test '${{ needs.proto-breaking.result }}' = skipped &&
-              test '${{ needs.changes.outputs.proto_breaking }}' != true
-          }
-          if [ '${{ github.event_name }}' = push ]; then
-            test '${{ needs.commitlint.result }}' = skipped
+          require '${{ needs.commitlint.result }}' "$COMMITLINT_EXPECTED" commitlint
+          require '${{ needs.worker.result }}' "$WORK_EXPECTED" worker
+          require '${{ needs.broad-environment.result }}' "$BROAD_ENV_EXPECTED" broad-environment
+          require '${{ needs.broad-python.result }}' "$BROAD_EXPECTED" broad-python
+          require '${{ needs.broad-frontend.result }}' "$BROAD_EXPECTED" broad-frontend
+          require '${{ needs.broad-hygiene.result }}' "$BROAD_EXPECTED" broad-hygiene
+          require '${{ needs.broad-policy.result }}' "$BROAD_EXPECTED" broad-policy
+          if [ "$WORKER_COMMITLINT_EXPECTED" = true ]; then
+            test "$WORKER_COMMITLINT" = true || {
+              echo "the selected worker did not execute commit policy" >&2
+              exit 1
+            }
           else
-            test '${{ needs.commitlint.result }}' = success
+            test "$WORKER_COMMITLINT" != true
           fi
+          if [ "$NODE_GROUP_EXPECTED" = true ]; then
+            test "$WORKER_NODE_GROUP" = true || {
+              echo "the selected worker did not execute the Node command group" >&2
+              exit 1
+            }
+          else
+            test "$WORKER_NODE_GROUP" != true
+          fi
+          require '${{ needs.container-contracts.result }}' "$CONTAINER_EXPECTED" container-contracts
+          require '${{ needs.playwright-image.result }}' "$PLAYWRIGHT_EXPECTED" playwright-image
+
+      - name: Download router attestation
+        if: github.event_name == 'pull_request' && github.event.action != 'edited'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: checks-attestation
+          path: checks-attestation
+
+      - name: Validate router attestation
+        if: github.event_name == 'pull_request' && github.event.action != 'edited'
+        env:
+          COMMIT_CLASS: ${{ needs.changes.outputs.commit_class }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          jq -e \
+            --arg commit_class "$COMMIT_CLASS" \
+            --arg event_action "$EVENT_ACTION" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            '.run_id == $run_id
+              and .event_action == $event_action
+              and .commit_class == $commit_class
+              and (.tested_tree_sha | test("^[0-9a-f]{40}$"))' \
+            checks-attestation/checks-attestation.json > /dev/null
+
+      - name: Report workflow accounting
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          JOB_STARTED: ${{ steps.timing.outputs.started }}
+          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
+        run: |
+          now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          run="$(gh api "repos/$REPO/actions/runs/$RUN_ID")"
+          run_started="$(jq -r '.run_started_at' <<< "$run")"
+          wall_seconds=$(( $(date -u -d "$now_iso" +%s) - $(date -u -d "$run_started" +%s) ))
+          pages="$(gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100")"
+          jobs="$(jq -c '[.[] | .jobs[] | select(.started_at != null)]' <<< "$pages")"
+          billable_minutes="$(jq --arg now "$now_iso" '
+            [.[]
+              | (((.completed_at // $now) | fromdateiso8601) - (.started_at | fromdateiso8601))
+              | (. / 60 | ceil)
+            ] | add // 0
+          ' <<< "$jobs")"
+          ratio="$(jq -nr --argjson billable "$billable_minutes" --argjson wall "$wall_seconds" '
+            if $wall == 0 then 0 else ($billable * 60 / $wall) end
+          ')"
+          case '${{ needs.changes.outputs.commit_class }}' in
+            standard)
+              class_wall_budget_seconds=600
+              class_billable_budget_minutes=10
+              class_ratio_budget=1.3
+              ;;
+            broad)
+              class_wall_budget_seconds=720
+              class_billable_budget_minutes=30
+              class_ratio_budget=3.0
+              ;;
+            *)
+              echo "cannot account for an invalid commit class" >&2
+              exit 1
+              ;;
+          esac
+          {
+            echo "### Checks workflow accounting"
+            echo
+            echo "| Job | Exact seconds | Rounded billable minutes | Conclusion |"
+            echo "|---|---:|---:|---|"
+            jq -r --arg now "$now_iso" '
+              .[] |
+              (((.completed_at // $now) | fromdateiso8601) - (.started_at | fromdateiso8601)) as $seconds |
+              (.conclusion // "in_progress") as $concl |
+              "| \(.name) | \($seconds) | \(($seconds / 60) | ceil) | \($concl) |"
+            ' <<< "$jobs"
+            echo
+            echo "- run_id=$RUN_ID"
+            echo "- wall_seconds=$wall_seconds"
+            echo "- reconstructed_billable_minutes=$billable_minutes"
+            echo "- R=$ratio"
+            echo "- wall_budget_seconds=$class_wall_budget_seconds"
+            echo "- billable_budget_minutes=$class_billable_budget_minutes"
+            echo "- R_budget=$class_ratio_budget"
+            echo "- command_inventory=router attestation validation; jobs API accounting aggregation"
+            echo "- setup_seconds=$((UNIQUE_STARTED - JOB_STARTED))"
+            echo "- unique_work_seconds=$(($(date +%s) - UNIQUE_STARTED))"
+          } >> "$GITHUB_STEP_SUMMARY"
+          budget_failure=0
+          if ((wall_seconds >= class_wall_budget_seconds)); then
+            echo "wall budget breached: observed=${wall_seconds}s budget<${class_wall_budget_seconds}s" >&2
+            budget_failure=1
+          fi
+          if ((billable_minutes > class_billable_budget_minutes)); then
+            echo "billable budget breached: observed=${billable_minutes}m budget<=${class_billable_budget_minutes}m" >&2
+            budget_failure=1
+          fi
+          if jq -en \
+            --argjson observed "$ratio" \
+            --argjson budget "$class_ratio_budget" \
+            '$observed > $budget' > /dev/null; then
+            echo "parallel-overhead ratio breached: observed=$ratio budget<=$class_ratio_budget" >&2
+            budget_failure=1
+          fi
+          exit "$budget_failure"

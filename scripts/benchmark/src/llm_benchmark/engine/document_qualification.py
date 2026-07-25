@@ -6,7 +6,7 @@ import io
 import json
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, cast
@@ -317,7 +317,7 @@ def _resolve_path(value: object, path: str) -> object:
         match = re.fullmatch(r"([^\[]+)(?:\[(\d+)\])?", part)
         if match is None or not isinstance(current, dict):
             raise KeyError(path)
-        current = current[match.group(1)]
+        current = cast("dict[str, object]", current)[match.group(1)]
         if (index := match.group(2)) is not None:
             if not isinstance(current, list):
                 raise KeyError(path)
@@ -364,7 +364,7 @@ def _factual_field_values(value: object, path: str = "$") -> tuple[str, ...]:
     match value:
         case dict():
             values: list[str] = []
-            for key, child in value.items():
+            for key, child in cast("dict[str, object]", value).items():
                 child_path = f"{path}.{key}"
                 if isinstance(child, str) and any(marker in key.casefold() for marker in markers):
                     values.append(child)
@@ -453,7 +453,7 @@ def evaluate_source_fidelity(
     )
 
 
-def _issue_evidence(issues: list[object]) -> GateEvidence:
+def _issue_evidence(issues: Sequence[object]) -> GateEvidence:
     severities = [str(getattr(issue, "severity", "")) for issue in issues]
     errors = severities.count("error")
     warnings = severities.count("warning")
@@ -749,7 +749,9 @@ class DocumentQualificationRunner:
             self._provider,
             instrumentation_enabled=llm_settings.instrumentation.enabled,
         )
-        self._pricing = {route.approved.alias: resolve_pricing_snapshot(route.model_config) for route in self._routes}
+        self._pricing: dict[str, PricingSnapshot] = {
+            route.approved.alias: resolve_pricing_snapshot(route.model_config) for route in self._routes
+        }
         for snapshot in self._pricing.values():
             snapshot.maximum_call_cost(
                 max_input_tokens=1,
@@ -1043,7 +1045,7 @@ class DocumentQualificationRunner:
         route: ValidatedDocumentRoute,
         fixture_ids: tuple[str, ...],
         fixture_by_id: dict[str, DocumentQualificationFixture],
-        completed: set[tuple[str, str, int]],
+        completed: frozenset[tuple[str, str, int]],
         runs: int,
         output_path: Path,
     ) -> tuple[DocumentQualificationResult, bool]:

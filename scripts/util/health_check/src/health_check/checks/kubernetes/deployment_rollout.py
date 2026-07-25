@@ -113,7 +113,7 @@ def _check_image_identity(
         for raw_container in pod_containers(pod):
             if not isinstance(raw_container, dict):
                 continue
-            container = cast("JsonObject", raw_container)
+            container = raw_container
             name = string_field(container, "name")
             declared_image = string_field(container, "declared_image")
             runtime_image = string_field(container, "image")
@@ -158,9 +158,7 @@ def _pod_evidence(pod: JsonObject, issues: list[str]) -> JsonObject:
     pod_status = object_field(pod, "status")
     containers = pod_containers(pod)
     restart_count = sum(
-        integer_field(cast("JsonObject", container), "restart_count")
-        for container in containers
-        if isinstance(container, dict)
+        integer_field(container, "restart_count") for container in containers if isinstance(container, dict)
     )
     ready = pod_ready(pod)
     phase = string_field(pod_status, "phase", "Unknown")
@@ -173,9 +171,9 @@ def _pod_evidence(pod: JsonObject, issues: list[str]) -> JsonObject:
     if restart_count:
         issues.append(f"{pod_name}: pod has restarted {restart_count} time(s)")
     issues.extend(
-        f"{pod_name}: container {string_field(cast('JsonObject', raw_container), 'name')!r} is in CrashLoopBackOff"
+        f"{pod_name}: container {string_field(raw_container, 'name')!r} is in CrashLoopBackOff"
         for raw_container in containers
-        if isinstance(raw_container, dict) and _waiting_reason(cast("JsonObject", raw_container)) == "CrashLoopBackOff"
+        if isinstance(raw_container, dict) and _waiting_reason(raw_container) == "CrashLoopBackOff"
     )
 
     return {
@@ -329,7 +327,7 @@ class K8sDeploymentRolloutCheck(HealthCheck):
             schema=_EVIDENCE_SCHEMA,
             data={
                 "namespace": platform.namespace,
-                "issues": issues,
+                "issues": cast("JsonValue", issues),
                 "deployments": deployments,
             },
         )

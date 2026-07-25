@@ -1,0 +1,222 @@
+name: Set up CI lane
+description: Restore one complete CI environment, with lightweight Node-only setup for policy-only jobs.
+inputs:
+  ready-cache:
+    description: Install Nix and restore or build the complete Python and Node environment.
+    default: "false"
+  lookup-only:
+    description: Check for the exact complete-environment entry before deciding whether to build it.
+    default: "false"
+  save-ready-cache:
+    description: Save a reconciled complete environment from a trusted cache-writer job.
+    default: "false"
+  node:
+    description: Make Node dependencies available to the consumer.
+    default: "false"
+  full-node-workspace:
+    description: Install the full pnpm workspace on the lightweight Node-only path.
+    default: "false"
+  skylos-cache:
+    description: Prepare private-fork access and restore the Skylos static cache.
+    default: "false"
+  skylos-deploy-key:
+    description: Read-only deploy key used to fetch the pinned Skylos fork.
+    default: ""
+  commit-class:
+    description: Gate-selected commit class used in the Skylos cache key.
+    default: ""
+  base-sha:
+    description: Gate base SHA used in the Skylos cache key.
+    default: ""
+  head-sha:
+    description: Tested SHA used in the Skylos cache key.
+    default: ""
+outputs:
+  ready-cache-hit:
+    description: Exact complete-environment cache result.
+    value: ${{ steps.ready-cache-lookup.outputs.hit-primary-key == 'true' || steps.ready-cache.outputs.hit-primary-key == 'true' }}
+  node-group-executed:
+    description: Whether a selected Node command group has its dependencies.
+    value: ${{ inputs.node == 'true' && (steps.ready-cache.outputs.hit-primary-key == 'true' || steps.node-install.outcome == 'success') }}
+  skylos-cache-hit:
+    description: Exact Skylos static-analysis cache result.
+    value: ${{ steps.skylos-cache.outputs.cache-hit }}
+  skylos-cache-primary-key:
+    description: Primary Skylos cache key selected by the restore action.
+    value: ${{ steps.skylos-cache.outputs.cache-primary-key }}
+  cache-telemetry:
+    description: Observed cache outcomes and the keys that supplied restored content.
+    value: ${{ steps.cache-telemetry.outputs.summary }}
+runs:
+  using: composite
+  steps:
+    - name: Look up complete CI environment
+      if: inputs.ready-cache == 'true' && inputs.lookup-only == 'true'
+      id: ready-cache-lookup
+      uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+      with:
+        primary-key: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-ci/action.yml', 'flake.nix', 'flake.lock', 'uv.lock', '**/pyproject.toml', '.python-version', 'scripts/dev/sync-ci-environment.sh', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json', 'typescript/**/package.json') }}
+        lookup-only: true
+        paths: |
+          .venv
+          node_modules
+          typescript/apps/*/node_modules
+          typescript/libs/*/node_modules
+          typescript/services/*/node_modules
+          typescript/edge/*/node_modules
+
+    - name: Install Nix
+      if: inputs.ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true')
+      uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+
+    - name: Restore complete CI environment
+      if: inputs.ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true')
+      id: ready-cache
+      uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+      with:
+        primary-key: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-ci/action.yml', 'flake.nix', 'flake.lock', 'uv.lock', '**/pyproject.toml', '.python-version', 'scripts/dev/sync-ci-environment.sh', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json', 'typescript/**/package.json') }}
+        restore-prefixes-first-match: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-
+        paths: |
+          .venv
+          node_modules
+          typescript/apps/*/node_modules
+          typescript/libs/*/node_modules
+          typescript/services/*/node_modules
+          typescript/edge/*/node_modules
+
+    # The router and edited-title job are smaller than the fixed Nix bootstrap cost.
+    - name: Install pnpm
+      if: inputs.ready-cache != 'true' && inputs.node == 'true'
+      uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+    - name: Set up Node
+      if: inputs.ready-cache != 'true' && inputs.node == 'true'
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "26"
+
+    - name: Resolve pnpm store path
+      if: inputs.ready-cache != 'true' && inputs.node == 'true'
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore pnpm store
+      id: pnpm-cache
+      if: inputs.ready-cache != 'true' && inputs.node == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-v2-${{ runner.os }}-${{ runner.arch }}-
+
+
+    - name: Root complete CI shell
+      if: inputs.ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true') && steps.ready-cache.outputs.hit-primary-key != 'true'
+      shell: bash
+      run: nix build .#devShells.x86_64-linux.ci --out-link "$RUNNER_TEMP/ci-shell"
+
+    - name: Install workspace (CI closure)
+      id: workspace-sync
+      if: inputs.ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true') && steps.ready-cache.outputs.hit-primary-key != 'true'
+      shell: bash
+      env:
+        SKYLOS_DEPLOY_KEY: ${{ inputs.skylos-deploy-key }}
+      run: |
+        test -n "$SKYLOS_DEPLOY_KEY"
+        install -m 700 -d "$RUNNER_TEMP"
+        printf '%s\n' "$SKYLOS_DEPLOY_KEY" > "$RUNNER_TEMP/skylos_key"
+        chmod 600 "$RUNNER_TEMP/skylos_key"
+        printf '%s\n' \
+          'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+          > "$RUNNER_TEMP/skylos_known_hosts"
+        trap 'rm -f "$RUNNER_TEMP/skylos_key" "$RUNNER_TEMP/skylos_known_hosts"' EXIT
+        export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/skylos_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/skylos_known_hosts"
+        nix develop .#ci --command scripts/dev/sync-ci-environment.sh
+
+    - name: Install Node dependencies
+      id: node-install
+      if: (inputs.ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true') && steps.ready-cache.outputs.hit-primary-key != 'true') || (inputs.ready-cache != 'true' && inputs.node == 'true')
+      shell: bash
+      env:
+        READY_CACHE: ${{ inputs.ready-cache }}
+        FULL_NODE_WORKSPACE: ${{ inputs.full-node-workspace }}
+      run: |
+        if [[ "$READY_CACHE" == "true" ]]; then
+          nix develop .#ci --command pnpm install --frozen-lockfile
+        elif [[ "$FULL_NODE_WORKSPACE" == "true" ]]; then
+          pnpm install --frozen-lockfile
+        else
+          pnpm --filter nohiki-monorepo install --frozen-lockfile
+        fi
+
+    - name: Save pnpm store
+      if: inputs.ready-cache != 'true' && inputs.node == 'true' && steps.pnpm-cache.outputs.cache-hit != 'true' && steps.node-install.outcome == 'success'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+    - name: Save complete CI environment
+      if: inputs.ready-cache == 'true' && inputs.save-ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true') && steps.ready-cache.outputs.hit-primary-key != 'true' && steps.workspace-sync.outcome == 'success' && steps.node-install.outcome == 'success' && github.event_name == 'push'
+      uses: nix-community/cache-nix-action/save@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+      with:
+        primary-key: ${{ steps.ready-cache.outputs.primary-key }}
+        paths: |
+          .venv
+          node_modules
+          typescript/apps/*/node_modules
+          typescript/libs/*/node_modules
+          typescript/services/*/node_modules
+          typescript/edge/*/node_modules
+        gc-max-store-size-linux: 4G
+        purge: true
+        purge-prefixes: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-
+        purge-created: 0
+        purge-primary-key: never
+
+
+    # Saving stays after the producer step in each caller so failed scans can still warm the cache.
+    - name: Restore Skylos static analysis cache
+      if: inputs.skylos-cache == 'true'
+      id: skylos-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ github.workspace }}/.skylos
+        key: skylos-static-v3-${{ runner.os }}-${{ hashFiles('uv.lock') }}-${{ inputs.commit-class }}-${{ inputs.base-sha }}-${{ inputs.head-sha }}
+        restore-keys: |
+          skylos-static-v3-${{ runner.os }}-${{ hashFiles('uv.lock') }}-
+
+    - name: Record observed cache outcomes
+      id: cache-telemetry
+      if: always()
+      shell: bash
+      env:
+        READY_SELECTED: ${{ inputs.ready-cache }}
+        READY_EXACT: ${{ steps.ready-cache-lookup.outputs.hit-primary-key == 'true' || steps.ready-cache.outputs.hit-primary-key == 'true' }}
+        READY_PARTIAL: ${{ steps.ready-cache.outputs.hit-first-match }}
+        READY_KEY: ${{ steps.ready-cache-lookup.outputs.hit-primary-key == 'true' && steps.ready-cache-lookup.outputs.primary-key || steps.ready-cache.outputs.restored-key }}
+        PNPM_SELECTED: ${{ inputs.ready-cache != 'true' && inputs.node == 'true' }}
+        PNPM_EXACT: ${{ steps.pnpm-cache.outputs.cache-hit }}
+        PNPM_KEY: ${{ steps.pnpm-cache.outputs.cache-matched-key }}
+        SKYLOS_SELECTED: ${{ inputs.skylos-cache }}
+        SKYLOS_EXACT: ${{ steps.skylos-cache.outputs.cache-hit }}
+        SKYLOS_KEY: ${{ steps.skylos-cache.outputs.cache-matched-key }}
+      run: |
+        cache_result() {
+          local selected="$1" exact="$2" partial="$3" key="$4"
+          if [[ "$selected" != true ]]; then
+            printf 'not-used:none'
+          elif [[ "$exact" == true ]]; then
+            printf 'hit:%s' "${key:-unknown}"
+          elif [[ "$partial" == true || -n "$key" ]]; then
+            printf 'partial:%s' "${key:-unknown}"
+          else
+            printf 'miss:none'
+          fi
+        }
+        summary="ready=$(cache_result "$READY_SELECTED" "$READY_EXACT" "$READY_PARTIAL" "$READY_KEY")"
+        summary+=" pnpm=$(cache_result "$PNPM_SELECTED" "$PNPM_EXACT" false "$PNPM_KEY")"
+        summary+=" skylos=$(cache_result "$SKYLOS_SELECTED" "$SKYLOS_EXACT" false "$SKYLOS_KEY")"
+        echo "summary=$summary" >> "$GITHUB_OUTPUT"

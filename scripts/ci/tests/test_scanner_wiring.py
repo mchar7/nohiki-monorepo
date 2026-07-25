@@ -5,16 +5,14 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import json
-import re
 import subprocess
 import sys
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
 
 import pytest
-import yaml
+from _documents import load_mapping
 from ci_checks.app import app
 from ci_checks.checks import deadcode as deadcode_check
 from ci_checks.checks.deadcode import (
@@ -24,16 +22,19 @@ from ci_checks.checks.deadcode import (
     SeverityLevel,
     _build_skylos_cmd,
     _collect_scan_paths,
+    _resolve_skylos_jobs,
 )
 from ci_checks.core.packages import Package, PackageType
 from typer.testing import CliRunner
 
 _ROOT = Path(__file__).resolve().parents[3]
+
+
 _CI_PROJECT = tomllib.loads((_ROOT / "scripts" / "ci" / "pyproject.toml").read_text(encoding="utf-8"))
 _ROOT_PROJECT = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-_LEFTHOOK_CONFIG = yaml.safe_load((_ROOT / "lefthook.yml").read_text(encoding="utf-8"))
+_LEFTHOOK_CONFIG = load_mapping(_ROOT / "lefthook.yml")
 _SEMGREP_OVERRIDES = (_ROOT / "semgrep-overrides.txt").read_text(encoding="utf-8").splitlines()
-_DEADCODE_SWEEP = yaml.safe_load((_ROOT / ".github" / "workflows" / "deadcode-sweep.yml").read_text(encoding="utf-8"))
+_DEADCODE_SWEEP = _ROOT / ".github" / "workflows" / "deadcode-sweep.yml"
 
 
 def _run_git(repo: Path, *args: str) -> None:
@@ -67,6 +68,21 @@ def _options(*, summary: Path | None = None) -> DeadCodeScanOptions:
     )
 
 
+def test_skylos_jobs_resolution_honors_override_and_host_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Skylos concurrency must follow an explicit override or the available host CPUs."""
+    monkeypatch.setenv("SKYLOS_JOBS", "7")
+    assert _resolve_skylos_jobs() == "7"
+
+    monkeypatch.delenv("SKYLOS_JOBS")
+    monkeypatch.setattr("ci_checks.checks.deadcode.os.process_cpu_count", lambda: 20)
+    assert _resolve_skylos_jobs() == "20"
+
+    monkeypatch.setattr("ci_checks.checks.deadcode.os.process_cpu_count", lambda: 0)
+    assert _resolve_skylos_jobs() == "1"
+
+
 @pytest.mark.asyncio
 async def test_deadcode_fails_closed_without_ripgrep(
     monkeypatch: pytest.MonkeyPatch,
@@ -81,6 +97,7 @@ async def test_deadcode_fails_closed_without_ripgrep(
 
     monkeypatch.setattr(deadcode_check, "sanitized_python_env", capture_env)
     monkeypatch.setattr(deadcode_check.shutil, "which", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("ci_checks.checks.deadcode.os.process_cpu_count", lambda: 2)
 
     async def unexpected_spawn(*_args: object, **_kwargs: object) -> None:
         raise AssertionError
@@ -90,7 +107,12 @@ async def test_deadcode_fails_closed_without_ripgrep(
 
     results = await deadcode_check.scan_scope([package], _options())
 
-    assert captured_extra == {"OTEL_SDK_DISABLED": "true", "SKYLOS_GREP_BUDGET": "120"}
+    assert captured_extra == {
+        "OTEL_SDK_DISABLED": "true",
+        "SKYLOS_GREP_BUDGET": "120",
+        "SKYLOS_CACHE_DIR": str(_ROOT / ".skylos"),
+        "SKYLOS_JOBS": "2",
+    }
     assert [(result.name, result.passed, result.error) for result in results] == [
         (
             "scanner-preflight",
@@ -208,7 +230,7 @@ async def test_deadcode_summary_uses_sha_pinned_finding_links(
     expected_version: str,
 ) -> None:
     """The lane summary must bind every source link to the analyzed commit."""
-    finding = {
+    finding: dict[str, object] = {
         "name": "dead_symbol",
         "file": "scripts/ci/src/ci_checks/app.py",
         "line": 53,
@@ -294,19 +316,28 @@ def test_deadcode_inputs_ignore_local_caches_and_generated_outputs(
     assert _collect_scan_paths([generated], include_tests=False, repo_root=tmp_path) == []
 
 
-def test_deadcode_command_uses_locked_skylos_offline_whole_graph() -> None:
-    """The scanner must use the workspace lock, stay offline, and verify the whole graph."""
+def test_deadcode_command_uses_pinned_fork_static_cache_offline() -> None:
+    """The scanner must use the locked fork, stay offline, and cache the whole graph."""
     command = _build_skylos_cmd(
         ["package/src/live.py"],
         _options(),
     )
 
-    assert command[:3] == [sys.executable, "-m", "skylos.cli"]
-    assert len(deadcode_dependencies := _CI_PROJECT["dependency-groups"]["deadcode"]) == 1
-    assert re.fullmatch(r"skylos==\d+\.\d+\.\d+", deadcode_dependencies[0])
+    assert command[:3] == [sys.executable, "-m", "ci_checks.checks.skylos_cache"]
+    assert command[3 : command.index("--json")] == ["package/src/live.py"]
+    assert _CI_PROJECT["dependency-groups"]["deadcode"] == ["skylos==4.30.0"]
+    assert _CI_PROJECT["tool"]["uv"]["sources"]["skylos"] == {
+        "git": "ssh://git@github.com/mchar7/skylos",
+        "rev": "6c9e3f1d84c1cc312f8e69c91b348a896d61b0b2",
+    }
     assert "uvx" not in command
-    assert "--cache" not in command
-    # name-only baseline fingerprints suppress globally; the clean corpus needs no baseline
+    cache_index = command.index("--cache-static")
+    assert command[cache_index : cache_index + 3] == [
+        "--cache-static",
+        "--cache-static-tier",
+        "content",
+    ]
+    # Name-only baseline fingerprints suppress globally; the clean corpus needs no baseline.
     assert "--baseline" not in command
     assert "--no-upload" in command
     assert "--summary" not in command
@@ -345,15 +376,30 @@ def test_deadcode_whitelist_is_path_scoped_and_collision_safe() -> None:
         "_validate_topic_naming",
         "_validate_topic_name",
     }
-    skylos = cast("dict[str, object]", cast("dict[str, object]", _ROOT_PROJECT["tool"])["skylos"])
-    whitelist = cast("dict[str, object]", skylos["whitelist"])
-    overrides = cast("dict[str, dict[str, list[str]]]", skylos["overrides"])
-    patterns = [pattern for rules in overrides.values() for pattern in rules["whitelist"]]
+    tool = _ROOT_PROJECT["tool"]
+    assert isinstance(tool, dict)
+    skylos = tool["skylos"]
+    assert isinstance(skylos, dict)
+    whitelist = skylos["whitelist"]
+    assert isinstance(whitelist, dict)
+    overrides = skylos["overrides"]
+    assert isinstance(overrides, dict)
+    override_paths: list[str] = []
+    patterns: list[str] = []
+    for path, rules in overrides.items():
+        assert isinstance(path, str)
+        assert isinstance(rules, dict)
+        override_paths.append(path)
+        rule_patterns = rules["whitelist"]
+        assert isinstance(rule_patterns, list)
+        for pattern in rule_patterns:
+            assert isinstance(pattern, str)
+            patterns.append(pattern)
 
     assert whitelist.get("names") == []
     assert not whitelist.get("documented")
-    assert all("*" not in path and "?" not in path and "[" not in path for path in overrides)
-    assert all((_ROOT / path).is_file() for path in overrides)
+    assert all("*" not in path and "?" not in path and "[" not in path for path in override_paths)
+    assert all((_ROOT / path).is_file() for path in override_paths)
     assert {
         name for name in expected_names if any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
     } == expected_names
@@ -382,56 +428,59 @@ def test_deadcode_baseline_gate_passes_known_findings_and_fails_new_findings() -
     assert not deadcode_check.render_results([new], fail_on_findings=True)
 
 
-def test_weekly_deadcode_sweep_keeps_full_grep_verification() -> None:
-    """The scheduled safety net must retain the expensive full-corpus verifier."""
-    jobs = cast("Mapping[str, object]", cast("Mapping[str, object]", _DEADCODE_SWEEP)["jobs"])
-    sweep = cast("Mapping[str, object]", jobs["sweep"])
-    steps = cast("list[Mapping[str, object]]", sweep["steps"])
-    scan = next(step for step in steps if step.get("id") == "scan")
-    command = cast("str", scan["run"])
-
-    assert "--scope all" in command
-    assert '--summary "$GITHUB_STEP_SUMMARY"' in command
-    assert "--baseline" not in command
-    assert "--no-grep-verify" not in command
-
-    assert not any(step.get("name") == "Cache Skylos analysis" for step in steps)
-
-    install = next(step for step in steps if step.get("name") == "Install workspace (all packages + extras)")
-    assert "--group deadcode" in cast("str", install["run"])
+def test_periodic_deadcode_sweep_is_absent() -> None:
+    """Dead-code violations must be caught at the PR gate, not by periodic work."""
+    assert not _DEADCODE_SWEEP.exists()
 
 
 def test_deadcode_gate_disables_history_provenance() -> None:
     """A clean gate verdict cannot depend on refs absent from a shallow clone."""
-    pre_push = cast("Mapping[str, object]", _LEFTHOOK_CONFIG)["pre-push"]
-    groups = cast("list[object]", cast("Mapping[str, object]", pre_push)["jobs"])
-    deadcode_jobs = [
-        cast("Mapping[str, object]", job)
-        for group in groups
-        if isinstance(group, dict) and isinstance(group.get("group"), dict)
-        for job in cast("Mapping[str, object]", group["group"]).get("jobs", [])
-        if isinstance(job, dict) and job.get("name") == "deadcode"
-    ]
+    pre_push = _LEFTHOOK_CONFIG["pre-push"]
+    assert isinstance(pre_push, Mapping)
+    groups = pre_push.get("jobs")
+    assert isinstance(groups, list)
+    deadcode_commands: list[str] = []
+    for group in groups:
+        assert isinstance(group, Mapping)
+        grouped = group.get("group")
+        if not isinstance(grouped, Mapping):
+            continue
+        jobs = grouped.get("jobs")
+        assert isinstance(jobs, list)
+        for job in jobs:
+            assert isinstance(job, Mapping)
+            if job.get("name") == "deadcode":
+                command = job.get("run")
+                assert isinstance(command, str)
+                deadcode_commands.append(command)
 
-    assert len(deadcode_jobs) == 1
-    assert cast("str", deadcode_jobs[0]["run"]).endswith("--no-provenance")
+    assert len(deadcode_commands) == 1
+    assert deadcode_commands[0].endswith("--no-provenance")
 
 
 def test_semgrep_uses_pinned_sovereign_host_runtime() -> None:
     """The uv scanner must not inherit Nix libraries or contact Semgrep services."""
-    pre_push = cast("Mapping[str, object]", _LEFTHOOK_CONFIG)["pre-push"]
-    jobs = cast("Mapping[str, object]", pre_push)["jobs"]
-    semgrep_jobs = [
-        cast("Mapping[str, object]", job)
-        for group in cast("list[object]", jobs)
-        if isinstance(group, dict) and isinstance(group.get("group"), dict)
-        for job in cast("Mapping[str, object]", group["group"]).get("jobs", [])
-        if isinstance(job, dict) and job.get("name") == "semgrep"
-    ]
+    pre_push = _LEFTHOOK_CONFIG["pre-push"]
+    assert isinstance(pre_push, Mapping)
+    groups = pre_push.get("jobs")
+    assert isinstance(groups, list)
+    semgrep_commands: list[str] = []
+    for group in groups:
+        assert isinstance(group, Mapping)
+        grouped = group.get("group")
+        if not isinstance(grouped, Mapping):
+            continue
+        jobs = grouped.get("jobs")
+        assert isinstance(jobs, list)
+        for job in jobs:
+            assert isinstance(job, Mapping)
+            if job.get("name") == "semgrep":
+                command = job.get("run")
+                assert isinstance(command, str)
+                semgrep_commands.append(command)
     overrides = _SEMGREP_OVERRIDES
-
-    assert len(semgrep_jobs) == 1
-    command = cast("str", semgrep_jobs[0]["run"])
+    assert len(semgrep_commands) == 1
+    command = semgrep_commands[0]
     assert command.startswith("env -u LD_LIBRARY_PATH uvx --override ")
     assert "--metrics=off" in command
     assert "--disable-version-check" in command

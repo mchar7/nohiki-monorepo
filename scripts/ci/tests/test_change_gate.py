@@ -1,26 +1,29 @@
-import json
+import fnmatch
+import os
 import subprocess
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import typer
+from ci_checks import app as ci_app_module
 from ci_checks.checks import gate as checks_gate
 from ci_checks.checks import tests as checks_tests
 from ci_checks.checks.gate import gate_cmd
-from ci_checks.core import change_gate as change_gate_module
 from ci_checks.core import packages as packages_module
 from ci_checks.core.change_gate import (
+    CommitClass,
+    EventContext,
     GateDecision,
+    ProtectedMainEvidence,
     evaluate,
     render_outputs,
     render_summary,
+    selected_test_packages,
 )
-from ci_checks.core.change_gate import (
-    tests_matrix as build_tests_matrix,
-)
-from ci_checks.core.change_rules import FLAG_NAMES
-from ci_checks.core.display import GATE_LABELS, LANE_DISPLAY_NAMES
+from ci_checks.core.change_rules import FLAG_NAMES, SURFACE_RULES
+from ci_checks.core.display import LANE_DISPLAY_NAMES
 from ci_checks.core.packages import (
     REPO_ROOT,
     Package,
@@ -30,7 +33,6 @@ from ci_checks.core.packages import (
     expand_to_dependents,
     load_packages_with_deps,
 )
-from ci_checks.core.test_batches import TestBatch as BatchSpec
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -69,8 +71,15 @@ def _synthetic_packages() -> dict[str, Package]:
     }
 
 
-@pytest.mark.parametrize("changed", [{"mystery.bin"}, {"uv.lock"}, {"scripts/ci/src/ci_checks/app.py"}])
-def test_evaluate_fails_closed_for_unmatched_and_global_files(
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"mystery.bin"},
+        {"uv.lock"},
+        {"scripts/ci/src/ci_checks/core/change_gate.py"},
+    ],
+)
+def test_evaluate_fails_closed_for_unmatched_and_broad_policy_files(
     changed: set[str],
 ) -> None:
     decision = evaluate(changed, _synthetic_packages())
@@ -80,6 +89,179 @@ def test_evaluate_fails_closed_for_unmatched_and_global_files(
     if changed == {"mystery.bin"}:
         assert decision.unmatched == ["mystery.bin"]
         assert decision.reasons == ["unmatched file: mystery.bin"]
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("docs/guide.md", CommitClass.STANDARD),
+        ("backend/libs/lib-a/src/lib_a.py", CommitClass.STANDARD),
+        (".github/workflows/checks.yml", CommitClass.BROAD),
+        ("scripts/ci/src/ci_checks/core/change_rules.py", CommitClass.BROAD),
+        ("scripts/ci/src/ci_checks/checks/gate.py", CommitClass.BROAD),
+        ("scripts/ci/src/ci_checks/checks/internal_refs.py", CommitClass.BROAD),
+        ("scripts/ci/src/ci_checks/checks/tests.py", CommitClass.BROAD),
+        ("scripts/ci/src/ci_checks/core/repository.py", CommitClass.BROAD),
+        ("scripts/ci/config/internal-reference-terms.toml", CommitClass.BROAD),
+    ],
+)
+def test_commit_class_boundaries(path: str, expected: CommitClass) -> None:
+    decision = evaluate(
+        {path},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.commit_class is expected
+    assert not decision.unmatched
+
+
+def test_unmapped_path_fails_closed_without_unrelated_frontend_smoke() -> None:
+    decision = evaluate(
+        {"unmapped/tracked.file"},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.commit_class is CommitClass.BROAD
+    assert decision.unmatched == ["unmapped/tracked.file"]
+    assert "frontend_smoke" not in decision.flags
+    assert decision.affected == set(_synthetic_packages())
+
+
+def test_renovate_config_has_no_ci_effect() -> None:
+    decision = evaluate(
+        {".github/renovate.json5"},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert not decision.unmatched
+    assert not decision.flags
+    assert not decision.affected
+
+
+def test_checks_workflow_self_change_selects_every_lane() -> None:
+    decision = evaluate(
+        {".github/workflows/checks.yml"},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.flags == set(FLAG_NAMES)
+
+
+def test_uv_lock_selects_api_schema_freshness() -> None:
+    decision = evaluate(
+        {"uv.lock"},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert "api_schema_freshness" in decision.flags
+
+
+def test_justfile_selects_owned_checks() -> None:
+    decision = evaluate(
+        {"Justfile"},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert {
+        "api_schema_freshness",
+        "image_matrix_parity",
+        "proto_breaking",
+    } <= decision.flags
+
+
+def _valid_protected_evidence(head_sha: str = "head") -> ProtectedMainEvidence:
+    return ProtectedMainEvidence(
+        associated_pr_merged=True,
+        merge_commit_sha=head_sha,
+        checks_run_success=True,
+        tested_tree_sha="tree",
+        pushed_tree_sha="tree",
+    )
+
+
+def test_protected_main_broad_green_same_tree_selects_standard_smoke() -> None:
+    decision = evaluate(
+        {"uv.lock"},
+        _synthetic_packages(),
+        EventContext(
+            event="push",
+            base_sha="base",
+            head_sha="head",
+            ref_name="main",
+            protected_main=_valid_protected_evidence(),
+        ),
+    )
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert decision.protected_main_smoke
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        None,
+        replace(_valid_protected_evidence(), associated_pr_merged=False),
+        replace(_valid_protected_evidence(), merge_commit_sha=""),
+        replace(_valid_protected_evidence(), merge_commit_sha="other"),
+        replace(_valid_protected_evidence(), checks_run_success=False),
+        replace(_valid_protected_evidence(), tested_tree_sha=""),
+        replace(_valid_protected_evidence(), pushed_tree_sha=""),
+        replace(_valid_protected_evidence(), tested_tree_sha="other"),
+        replace(_valid_protected_evidence(), pushed_tree_sha="other"),
+    ],
+)
+def test_protected_main_missing_or_mismatched_evidence_fails_closed(
+    evidence: ProtectedMainEvidence | None,
+) -> None:
+    decision = evaluate(
+        {"docs/guide.md"},
+        _synthetic_packages(),
+        EventContext(
+            event="push",
+            base_sha="base",
+            head_sha="head",
+            ref_name="main",
+            protected_main=evidence,
+        ),
+    )
+
+    assert decision.commit_class is CommitClass.BROAD
+    assert not decision.protected_main_smoke
+
+
+def test_initial_push_null_before_sha_fails_closed_even_with_valid_evidence() -> None:
+    decision = evaluate(
+        {"docs/guide.md"},
+        _synthetic_packages(),
+        EventContext(
+            event="push",
+            base_sha="0" * 40,
+            head_sha="head",
+            ref_name="main",
+            protected_main=_valid_protected_evidence(),
+        ),
+    )
+
+    assert decision.commit_class is CommitClass.BROAD
+    assert decision.reasons == ["missing or null base ref"]
+
+
+def test_missing_tested_sha_fails_closed() -> None:
+    decision = evaluate(
+        {"docs/guide.md"},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha=""),
+    )
+
+    assert decision.commit_class is CommitClass.BROAD
+    assert decision.reasons == ["missing or null tested SHA"]
 
 
 @pytest.mark.parametrize(
@@ -134,7 +316,7 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
     [
         (
             "typescript/apps/frontend/src/App.tsx",
-            {"lint_frontend", "typecheck_frontend", "frontend_tests", "frontend_smoke"},
+            {"lint_frontend", "typecheck_frontend", "frontend_tests", "frontend_e2e"},
         ),
         (
             "typescript/apps/frontend/src/api/schema.d.ts",
@@ -142,13 +324,13 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
                 "lint_frontend",
                 "typecheck_frontend",
                 "frontend_tests",
-                "frontend_smoke",
                 "api_schema_freshness",
+                "frontend_e2e",
             },
         ),
         (
             "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
-            {"lint_frontend", "typecheck_frontend", "frontend_e2e"},
+            {"lint_frontend", "typecheck_frontend", "frontend_tests", "frontend_e2e"},
         ),
         (
             "typescript/edge/auth-listings-worker/src/index.ts",
@@ -160,8 +342,8 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
                 "lint_frontend",
                 "typecheck_frontend",
                 "frontend_tests",
-                "frontend_smoke",
                 "edge_worker",
+                "frontend_e2e",
             },
         ),
     ],
@@ -175,12 +357,118 @@ def test_evaluate_typescript_surfaces_without_python(path: str, expected: set[st
 
 
 @pytest.mark.parametrize(
+    "path",
+    [
+        "typescript/apps/frontend/index.html",
+        "typescript/apps/frontend/package.json",
+        "typescript/apps/frontend/vite.config.ts",
+        "typescript/apps/frontend/Caddyfile",
+    ],
+)
+def test_frontend_smoke_selects_only_build_contract_inputs(path: str) -> None:
+    decision = evaluate({path}, _synthetic_packages())
+
+    assert "frontend_smoke" in decision.flags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "pnpm-lock.yaml",
+        "package.json",
+        "pnpm-workspace.yaml",
+        "typescript/apps/frontend/e2e/playwright.config.ts",
+        "typescript/apps/frontend/e2e/playwright.k8s.config.ts",
+        "typescript/apps/frontend/Dockerfile.playwright-runner",
+        "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
+        "typescript/apps/frontend/package.json",
+        "typescript/libs/biome-config/biome.json",
+        "typescript/libs/tsconfig/base.json",
+    ],
+)
+def test_frontend_e2e_selects_every_runner_image_input(path: str) -> None:
+    assert "frontend_e2e" in evaluate({path}, _synthetic_packages()).flags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "biome.json",
+        "typescript/edge/auth-listings-worker/package.json",
+    ],
+)
+def test_frontend_e2e_ignores_inputs_outside_the_runner_image(path: str) -> None:
+    assert "frontend_e2e" not in evaluate({path}, _synthetic_packages()).flags
+
+
+def test_flake_broad_change_selects_every_nix_runtime_owner() -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate({"flake.nix"}, packages)
+
+    assert decision.commit_class is CommitClass.BROAD
+    assert {
+        "nix",
+        "lint_python",
+        "typecheck_backend",
+        "python_any",
+        "hygiene",
+        "lint_frontend",
+        "typecheck_frontend",
+        "frontend_tests",
+        "edge_worker",
+    } <= decision.flags
+    assert not {"frontend_smoke", "frontend_e2e", "otel_collector"} & decision.flags
+    expected_test_packages = tuple(sorted(name for name, package in packages.items() if package.has_tests))
+    selected_tests = selected_test_packages(decision, packages)
+    assert selected_tests == expected_test_packages
+    assert render_outputs(decision, selected_tests, "pull_request")["test_packages"] == ",".join(expected_test_packages)
+
+
+def test_broad_change_can_co_select_frontend_smoke_and_otel_collector() -> None:
+    decision = evaluate(
+        {
+            "scripts/ci/src/ci_checks/core/change_rules.py",
+            "typescript/apps/frontend/Dockerfile",
+            "infra/k8s/observability/base/otel/collector.yaml",
+        },
+        load_packages_with_deps(Scope.ALL),
+    )
+
+    assert decision.commit_class is CommitClass.BROAD
+    assert {"frontend_smoke", "frontend_e2e", "otel_collector"} <= decision.flags
+
+
+def test_frontend_e2e_rule_patterns_each_match_a_tracked_path() -> None:
+    tracked = set(
+        subprocess.run(
+            ["git", "ls-files"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    )
+    runner_rule = next(rule for rule in SURFACE_RULES if rule.flags == ("frontend_e2e",))
+
+    for pattern in runner_rule.patterns:
+        assert any(fnmatch.fnmatch(path, pattern) for path in tracked), pattern
+
+
+def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
+    packages = _synthetic_packages()
+
+    assert "build_backend" in evaluate({"scripts/tool-a/pyproject.toml"}, packages).flags
+    assert "build_backend" in evaluate({"uv.lock"}, packages).flags
+    assert "build_backend" not in evaluate({"backend/libs/lib-a/src/lib_a.py"}, packages).flags
+
+
+@pytest.mark.parametrize(
     ("path", "expected_full", "flags"),
     [
         (
             "typescript/apps/frontend/Dockerfile",
             "false",
-            {"frontend_smoke", "lint_docker", "python_any", "hygiene"},
+            {"frontend_smoke", "frontend_e2e", "lint_docker", "python_any", "hygiene"},
         ),
         (
             "typescript/apps/frontend/Dockerfile.playwright-runner",
@@ -202,7 +490,11 @@ def test_evaluate_typescript_surfaces_without_python(path: str, expected: set[st
             "false",
             {"image_matrix_parity", "python_any", "hygiene"},
         ),
-        ("unknown.bin", "true", set()),
+        (
+            "unknown.bin",
+            "true",
+            {"lint_python", "python_any", "hygiene", "typecheck_backend"},
+        ),
     ],
 )
 def test_evaluate_container_and_generated_surfaces(path: str, expected_full: str, flags: set[str]) -> None:
@@ -280,11 +572,9 @@ def test_evaluate_precision_for_ci_engine_contract_seeds_and_python_sources(
     assert affected <= decision.affected
     assert present <= decision.flags
     assert decision.flags.isdisjoint(absent)
-    if affected:
-        matrix_packages = {
-            name for entry in build_tests_matrix(decision, packages)["include"] for name in entry["packages"].split(",")
-        }
-        assert affected <= matrix_packages
+    selected = packages.keys() if decision.full else decision.affected
+    expected_tests = tuple(sorted(name for name in selected if name in packages and packages[name].has_tests))
+    assert selected_test_packages(decision, packages) == expected_tests
 
 
 def test_dependency_loader_reads_runtime_extras_and_pep735_groups(
@@ -330,9 +620,8 @@ lint = ["lint-dep"]
     }
 
 
-def test_tests_matrix_full_and_scoped_excludes_packages_without_tests(
+def test_selected_test_packages_full_and_scoped_exclude_packages_without_tests(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     package_specs = (
         ("z-service", PackageType.SERVICE, True),
@@ -347,69 +636,64 @@ def test_tests_matrix_full_and_scoped_excludes_packages_without_tests(
         if has_tests:
             (path / "tests").mkdir()
         packages[name] = Package(name, path, package_type)
-    monkeypatch.setattr(
-        change_gate_module,
-        "load_test_batches",
-        lambda: (
-            BatchSpec(name="batch-1", packages=("z-service", "a-service"), needs_pnpm=True),
-            BatchSpec(name="batch-2", packages=("untested-lib",), needs_pnpm=False),
-            BatchSpec(name="batch-3", packages=("tested-lib",), needs_pnpm=False),
-        ),
-    )
 
-    full = build_tests_matrix(GateDecision(full=True), packages)
-    assert full == {
-        "include": [
-            {"batch": "batch-1", "packages": "a-service,z-service", "needs_pnpm": True},
-            {"batch": "batch-3", "packages": "tested-lib", "needs_pnpm": False},
-        ]
-    }
-
-    scoped = build_tests_matrix(GateDecision(affected=set(packages)), packages)
-    assert scoped == full
+    expected = ("a-service", "tested-lib", "z-service")
+    assert selected_test_packages(GateDecision(full=True), packages) == expected
+    assert selected_test_packages(GateDecision(affected=set(packages)), packages) == expected
+    assert selected_test_packages(GateDecision(affected={"untested-lib"}), packages) == ()
 
 
 def test_lane_display_names_cover_gate_flags_exactly() -> None:
     assert set(LANE_DISPLAY_NAMES) == set(FLAG_NAMES)
 
 
-def test_gate_labels_have_distinct_stable_colors() -> None:
-    assert GATE_LABELS == {
-        "python_any": ("area:backend", "1D76DB"),
-        "frontend_tests": ("area:frontend", "D4C5F9"),
-        "lint_proto": ("area:proto", "FBCA04"),
-        "lint_docker": ("area:docker", "0E8A16"),
-        "lint_workflows": ("area:workflows", "5319E7"),
-        "lint_markdown": ("area:docs", "0075CA"),
-        "full": ("ci:full-run", "B60205"),
-    }
-    assert len({color for _, color in GATE_LABELS.values()}) == len(GATE_LABELS)
+def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
+    scoped = render_outputs(
+        GateDecision(flags={"lint_python"}, affected={"svc-b", "lib-a"}),
+        ("lib-a",),
+        "push",
+    )
 
-
-def test_render_outputs_serializes_flags_matrix_and_event_contract() -> None:
-    matrix = {"include": [{"batch": "batch-2", "packages": "lib-a", "needs_pnpm": False}]}
-    scoped = render_outputs(GateDecision(flags={"lint_python"}), matrix, "push")
-
+    assert scoped["commit_class"] == "standard"
+    assert scoped["standard"] == "true"
+    assert scoped["broad"] == "false"
+    assert scoped["protected_main_smoke"] == "false"
     assert scoped["lint_python"] == "true"
     assert scoped["nix"] == "false"
-    assert set(scoped.values()) - {"true", "false", scoped["tests_matrix"]} == set()
-    assert json.loads(scoped["tests_matrix"]) == matrix
-    assert scoped["tests_matrix"] == ('{"include":[{"batch":"batch-2","packages":"lib-a","needs_pnpm":false}]}')
+    assert scoped["worker_timeout_minutes"] == "9"
+    assert (
+        set(scoped.values())
+        - {
+            "true",
+            "false",
+            "standard",
+            "lib-a,svc-b",
+            "lib-a",
+            "9",
+        }
+        == set()
+    )
+    assert scoped["affected_packages"] == "lib-a,svc-b"
+    assert scoped["test_packages"] == "lib-a"
     assert scoped["commitlint_expected"] == "false"
-    assert render_outputs(GateDecision(), {"include": []}, "pull_request")["commitlint_expected"] == "true"
+    assert render_outputs(GateDecision(), (), "pull_request")["commitlint_expected"] == "true"
 
-    full = render_outputs(GateDecision(full=True), {"include": []}, "push")
-    assert all(full[name] == "true" for name in FLAG_NAMES)
+    broad = render_outputs(GateDecision(full=True), (), "push")
+    assert broad["commit_class"] == "broad"
+    assert broad["standard"] == "false"
+    assert broad["broad"] == broad["full"] == "true"
+    assert broad["worker_timeout_minutes"] == "18"
+    assert all(broad[name] == "false" for name in FLAG_NAMES)
 
 
 def test_render_summary_uses_friendly_lanes_and_checkmarks() -> None:
     decision = GateDecision(flags={"lint_markdown"})
-    outputs = render_outputs(decision, {"include": []}, "pull_request")
+    outputs = render_outputs(decision, (), "pull_request")
 
     summary = render_summary(decision, outputs, "pull_request", "base123", "head456")
 
-    assert "`base123...head456`" in summary
-    assert "Verdict: scoped run" in summary
+    assert "`base123..head456`" in summary
+    assert "Verdict: **standard**" in summary
     assert "| Markdown lint | ✓ |" in summary
     assert "| Python lint | — |" in summary
     assert all(f"| {name} |" in summary for name in LANE_DISPLAY_NAMES.values())
@@ -418,13 +702,13 @@ def test_render_summary_uses_friendly_lanes_and_checkmarks() -> None:
     assert "false" not in summary
 
 
-def test_render_summary_links_full_run_file_reasons() -> None:
+def test_render_summary_links_broad_class_file_reasons() -> None:
     decision = GateDecision(
         full=True,
-        reasons=["global trigger: uv.lock", "unmatched file: odd files/data.bin"],
+        reasons=["broad policy source: uv.lock", "unmatched file: odd files/data.bin"],
         unmatched=["odd files/data.bin"],
     )
-    outputs = render_outputs(decision, {"include": []}, "pull_request")
+    outputs = render_outputs(decision, (), "pull_request")
 
     summary = render_summary(
         decision,
@@ -436,8 +720,10 @@ def test_render_summary_links_full_run_file_reasons() -> None:
         head_sha="head456",
     )
 
-    assert "**Full-run reasons:**" in summary
-    assert ("- global trigger: [`uv.lock`](https://github.com/mchar7/nohiki-monorepo/blob/head456/uv.lock)") in summary
+    assert "**Broad-class reasons:**" in summary
+    assert (
+        "- broad policy source: [`uv.lock`](https://github.com/mchar7/nohiki-monorepo/blob/head456/uv.lock)"
+    ) in summary
     assert (
         "- unmatched file: [`odd files/data.bin`]"
         "(https://github.com/mchar7/nohiki-monorepo/blob/head456/odd%20files/data.bin)"
@@ -449,7 +735,7 @@ def test_render_summary_links_full_run_file_reasons() -> None:
 
 def test_render_summary_keeps_paths_plain_without_github_context() -> None:
     decision = GateDecision(full=True, reasons=["unmatched file: mystery.bin"], unmatched=["mystery.bin"])
-    outputs = render_outputs(decision, {"include": []}, "push")
+    outputs = render_outputs(decision, (), "push")
 
     summary = render_summary(decision, outputs, "push", "base", "HEAD")
 
@@ -457,13 +743,28 @@ def test_render_summary_keeps_paths_plain_without_github_context() -> None:
     assert "https://github.com/" not in summary
 
 
+def test_gate_diff_uses_exact_base_and_tested_shas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "one.py\ntwo.py\n", "")
+
+    monkeypatch.setattr(checks_gate.subprocess, "run", run)
+
+    assert checks_gate._diff_files("base", "tested") == {"one.py", "two.py"}
+    assert calls == [["git", "diff", "--name-only", "--no-renames", "base..tested"]]
+
+
 @pytest.mark.parametrize(
     ("event", "base_ref", "expected_full", "expected_diff_calls"),
     [
-        ("push", "base123", "true", 0),
+        ("push", "base123", "true", 1),
         ("pull_request", "base123", "false", 1),
         ("push", "0" * 40, "true", 0),
-        ("workflow_dispatch", "base123", "true", 0),
+        ("workflow_dispatch", "base123", "true", 1),
     ],
 )
 def test_gate_cli_scopes_only_supported_events_with_usable_base(
@@ -485,11 +786,6 @@ def test_gate_cli_scopes_only_supported_events_with_usable_base(
 
     monkeypatch.setattr(checks_gate, "_diff_files", diff_files)
     monkeypatch.setattr(checks_gate, "load_packages_with_deps", lambda _scope: _synthetic_packages())
-    monkeypatch.setattr(
-        change_gate_module,
-        "load_test_batches",
-        lambda: (BatchSpec(name="batch-1", packages=tuple(_synthetic_packages()), needs_pnpm=False),),
-    )
 
     result = CliRunner().invoke(
         app,
@@ -501,28 +797,34 @@ def test_gate_cli_scopes_only_supported_events_with_usable_base(
     assert parsed["full"] == expected_full
     assert len(calls) == expected_diff_calls
     if expected_full == "true":
-        assert all(parsed[flag] == "true" for flag in FLAG_NAMES)
-        assert json.loads(parsed["tests_matrix"])["include"] == [
-            {
-                "batch": "batch-1",
-                "packages": "bff-service,nohiki-domain-models",
-                "needs_pnpm": False,
-            }
-        ]
-        assert json.loads(parsed["labels"]) == [
-            {"name": name, "color": color, "active": "true"} for name, color in GATE_LABELS.values()
-        ]
+        assert parsed["commit_class"] == "broad"
+        assert parsed["broad"] == "true"
+        assert parsed["standard"] == "false"
+        assert parsed["test_packages"] == ",".join(
+            selected_test_packages(GateDecision(full=True), _synthetic_packages())
+        )
+        assert parsed["frontend_smoke"] == "false"
     else:
         assert parsed["lint_markdown"] == "true"
         assert parsed["hygiene"] == "false"
-        assert json.loads(parsed["tests_matrix"]) == {"include": []}
+        assert parsed["test_packages"] == ""
 
 
-def test_gate_cli_uses_repository_env_for_sticky_comment_links(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(checks_gate, "_diff_files", lambda _base, _head: {"uv.lock"})
+def test_gate_cli_selects_every_lane_when_the_diff_cannot_be_resolved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unresolvable diff must fail closed across flag-only consumers, not just the class."""
+
+    def failing_diff(_base: str, _head: str) -> set[str]:
+        message = "fatal: bad object base123"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(checks_gate, "_diff_files", failing_diff)
+    monkeypatch.setattr(checks_gate, "load_packages_with_deps", lambda _scope: _synthetic_packages())
     app = typer.Typer()
     app.command("gate")(gate_cmd)
-    comment = tmp_path / "gate-comment.md"
+    output = tmp_path / "github-output"
 
     result = CliRunner().invoke(
         app,
@@ -531,18 +833,58 @@ def test_gate_cli_uses_repository_env_for_sticky_comment_links(tmp_path: Path, m
             "pull_request",
             "--base-ref",
             "base123",
-            "--head-ref",
-            "head456",
-            "--comment-file",
-            str(comment),
+            "--github-output",
+            str(output),
         ],
-        env={"GITHUB_REPOSITORY": "mchar7/nohiki-monorepo"},
     )
 
     assert result.exit_code == 0, result.output
-    body = comment.read_text()
-    assert body.startswith("<!-- nohiki-change-gate -->\n")
-    assert "[`uv.lock`](https://github.com/mchar7/nohiki-monorepo/blob/head456/uv.lock)" in body
+    parsed = dict(line.split("=", maxsplit=1) for line in output.read_text().splitlines())
+    assert parsed["full"] == "true"
+    # Container contracts and the Playwright image dispatch on their flag alone, so a broad
+    # class does not reach them; every lane must be selected when the router knows nothing.
+    assert [flag for flag in FLAG_NAMES if parsed[flag] != "true"] == []
+
+
+def test_gate_cli_consumes_protected_main_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(checks_gate, "_diff_files", lambda _base, _head: {"uv.lock"})
+    monkeypatch.setattr(checks_gate, "load_packages_with_deps", lambda _scope: _synthetic_packages())
+    output = tmp_path / "github-output"
+    app = typer.Typer()
+    app.command("gate")(gate_cmd)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--event",
+            "push",
+            "--base-ref",
+            "base",
+            "--head-ref",
+            "head",
+            "--ref-name",
+            "main",
+            "--github-output",
+            str(output),
+        ],
+        env={
+            "CI_ASSOCIATED_PR_MERGED": "true",
+            "CI_MERGE_COMMIT_SHA": "head",
+            "CI_CHECKS_RUN_SUCCESS": "true",
+            "CI_TESTED_TREE_SHA": "tree",
+            "CI_PUSHED_TREE_SHA": "tree",
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    parsed = dict(line.split("=", maxsplit=1) for line in output.read_text().splitlines())
+    assert parsed["commit_class"] == "standard"
+    assert parsed["standard"] == "true"
+    assert parsed["broad"] == parsed["full"] == "false"
+    assert parsed["protected_main_smoke"] == "true"
 
 
 def test_get_changed_files_raises_on_staged_git_failure(
@@ -689,3 +1031,308 @@ def test_standalone_python_file_still_lints() -> None:
     decision = evaluate({"scripts/util/export-openapi.py"}, packages)
     assert not decision.full
     assert "lint_python" in decision.flags
+
+
+_FAKE_GH = r"""#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import shutil
+import sys
+
+args = sys.argv[1:]
+fixture_data = json.loads(pathlib.Path(os.environ["FAKE_GH_FIXTURES"]).read_text(encoding="utf-8"))
+fixture = fixture_data[os.environ["FAKE_GH_SCENARIO"]]
+log = pathlib.Path(os.environ["FAKE_GH_LOG"])
+with log.open("a", encoding="utf-8") as stream:
+    stream.write("\t".join(args) + "\n")
+
+if args and args[0] == "api":
+    endpoint = args[1]
+    if endpoint.endswith("/pulls"):
+        if fixture.get("fail_api") == "pulls":
+            print("recorded API failure", file=sys.stderr)
+            raise SystemExit(9)
+        payload = fixture["pulls"]
+    elif "/actions/workflows/checks.yml/runs" in endpoint:
+        payload = fixture["runs"]
+    elif "/commits/" in endpoint:
+        payload = fixture["commit"]
+    else:
+        print("unexpected API endpoint: " + endpoint, file=sys.stderr)
+        raise SystemExit(97)
+    print(json.dumps(payload))
+    raise SystemExit(0)
+
+if args[:2] == ["run", "download"]:
+    run_id = args[2]
+    attestation = fixture["attestations"].get(run_id)
+    if attestation is None:
+        print("recorded artifact absence", file=sys.stderr)
+        raise SystemExit(8)
+    destination = pathlib.Path(args[args.index("--dir") + 1])
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "checks-attestation.json").write_text(json.dumps(attestation), encoding="utf-8")
+    raise SystemExit(0)
+
+print("unexpected gh argv: " + json.dumps(args), file=sys.stderr)
+raise SystemExit(97)
+"""
+
+_EVIDENCE_FIXTURES = REPO_ROOT / "scripts/ci/tests/fixtures/gate_evidence_scenarios.json"
+
+
+@pytest.fixture
+def gate_evidence_harness(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    gh = bindir / "gh"
+    gh.write_text(_FAKE_GH, encoding="utf-8")
+    gh.chmod(0o755)
+    log = tmp_path / "gh.log"
+    environment = {
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "FAKE_GH_FIXTURES": str(_EVIDENCE_FIXTURES),
+        "FAKE_GH_LOG": str(log),
+    }
+    return environment, log
+
+
+def _run_gate_evidence(
+    tmp_path: Path,
+    harness: tuple[dict[str, str], Path],
+    scenario: str,
+) -> tuple[dict[str, str], list[list[str]], str]:
+    environment, log = harness
+    github_env = tmp_path / f"{scenario}.env"
+    result = CliRunner().invoke(
+        ci_app_module.app,
+        [
+            "gate-evidence",
+            "--event",
+            "push",
+            "--repository",
+            "mchar7/nohiki-monorepo",
+            "--head-sha",
+            "merge-sha",
+            "--github-env",
+            str(github_env),
+        ],
+        env=environment | {"FAKE_GH_SCENARIO": scenario},
+    )
+    assert result.exit_code == 0, result.output
+    values = dict(line.split("=", maxsplit=1) for line in github_env.read_text(encoding="utf-8").splitlines())
+    calls = [line.split("\t") for line in log.read_text(encoding="utf-8").splitlines()]
+    return values, calls, result.output
+
+
+def test_gate_evidence_extracts_success_through_fake_gh_subprocess(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    values, calls, _output = _run_gate_evidence(tmp_path, gate_evidence_harness, "success")
+
+    assert values == {
+        "CI_ASSOCIATED_PR_MERGED": "true",
+        "CI_MERGE_COMMIT_SHA": "merge-sha",
+        "CI_CHECKS_RUN_SUCCESS": "true",
+        "CI_TESTED_TREE_SHA": "tree-merge",
+        "CI_PUSHED_TREE_SHA": "tree-merge",
+    }
+    assert any(call[:3] == ["run", "download", "101"] for call in calls)
+
+
+def test_gate_evidence_exposes_merge_ref_tree_mismatch_for_fail_closed_gate(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    values, _calls, _output = _run_gate_evidence(tmp_path, gate_evidence_harness, "tree_mismatch")
+    evidence = ProtectedMainEvidence(
+        associated_pr_merged=values["CI_ASSOCIATED_PR_MERGED"] == "true",
+        merge_commit_sha=values["CI_MERGE_COMMIT_SHA"],
+        checks_run_success=values["CI_CHECKS_RUN_SUCCESS"] == "true",
+        tested_tree_sha=values["CI_TESTED_TREE_SHA"],
+        pushed_tree_sha=values["CI_PUSHED_TREE_SHA"],
+    )
+
+    assert values["CI_TESTED_TREE_SHA"] == "tree-merge-ref"
+    assert values["CI_PUSHED_TREE_SHA"] == "tree-pushed"
+    assert not evidence.proves_broad_tree("merge-sha")
+
+
+def test_gate_evidence_missing_latest_artifact_falls_back_to_older_attested_run(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    values, calls, _output = _run_gate_evidence(tmp_path, gate_evidence_harness, "title_only_latest")
+    downloads = [call[2] for call in calls if call[:2] == ["run", "download"]]
+
+    assert values["CI_CHECKS_RUN_SUCCESS"] == "true"
+    assert values["CI_TESTED_TREE_SHA"] == "tree-merge"
+    assert downloads == ["102", "101"]
+
+
+def test_gate_evidence_ignores_failed_latest_run(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    values, calls, _output = _run_gate_evidence(tmp_path, gate_evidence_harness, "failed_latest")
+    downloads = [call[2] for call in calls if call[:2] == ["run", "download"]]
+
+    assert values["CI_CHECKS_RUN_SUCCESS"] == "true"
+    assert downloads == ["101"]
+
+
+def test_gate_evidence_selects_latest_of_multiple_successful_runs(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    values, calls, _output = _run_gate_evidence(tmp_path, gate_evidence_harness, "multiple_runs")
+    downloads = [call[2] for call in calls if call[:2] == ["run", "download"]]
+
+    assert values["CI_TESTED_TREE_SHA"] == "tree-latest"
+    assert downloads == ["104"]
+
+
+@pytest.mark.parametrize("scenario", ["stale_base", "api_failure", "ambiguous_pr"])
+def test_gate_evidence_failures_emit_empty_evidence(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+    scenario: str,
+) -> None:
+    values, _calls, output = _run_gate_evidence(tmp_path, gate_evidence_harness, scenario)
+
+    assert values == {
+        "CI_ASSOCIATED_PR_MERGED": "false",
+        "CI_MERGE_COMMIT_SHA": "",
+        "CI_CHECKS_RUN_SUCCESS": "false",
+        "CI_TESTED_TREE_SHA": "",
+        "CI_PUSHED_TREE_SHA": "",
+    }
+    assert "Protected-main evidence unavailable:" in output
+
+
+def _consumer_packages(tmp_path: Path) -> list[Package]:
+    return [Package(name, tmp_path / name, PackageType.LIB) for name in ("first", "second")]
+
+
+def test_deptry_packages_filters_within_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    available = _consumer_packages(tmp_path)
+    captured: list[str] = []
+
+    async def scan(
+        selected: list[Package],
+        _scanner: object,
+        _workers: int,
+        _console: Console,
+        *,
+        ci_mode: bool,
+        ci_suffix: object,
+    ) -> list[object]:
+        del ci_mode, ci_suffix
+        captured.extend(package.name for package in selected)
+        return []
+
+    monkeypatch.setattr(ci_app_module, "load_packages", lambda _scope, **_kwargs: available)
+    monkeypatch.setattr(ci_app_module, "scan_parallel", scan)
+    monkeypatch.setattr(ci_app_module._deptry, "render_results", lambda _results: True)
+
+    result = CliRunner().invoke(ci_app_module.app, ["deptry", "--packages", "second"])
+
+    assert result.exit_code == 0, result.output
+    assert captured == ["second"]
+
+
+def test_deadcode_packages_filters_within_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    available = _consumer_packages(tmp_path)
+    captured: list[str] = []
+
+    async def scan(selected: list[Package], _options: object) -> list[object]:
+        captured.extend(package.name for package in selected)
+        return []
+
+    monkeypatch.setattr(ci_app_module, "load_packages", lambda _scope, **_kwargs: available)
+    monkeypatch.setattr(ci_app_module._deadcode, "scan_scope", scan)
+    monkeypatch.setattr(
+        ci_app_module._deadcode,
+        "render_results",
+        lambda _results, *, fail_on_findings: not fail_on_findings or True,
+    )
+
+    result = CliRunner().invoke(ci_app_module.app, ["deadcode", "--packages", "second", "--ci"])
+
+    assert result.exit_code == 0, result.output
+    assert captured == ["second"]
+
+
+def test_build_backend_packages_filters_within_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    available = _consumer_packages(tmp_path)
+    captured: list[str] = []
+
+    def scan(package: Package) -> object:
+        captured.append(package.name)
+        return object()
+
+    monkeypatch.setattr(ci_app_module, "load_packages", lambda _scope, **_kwargs: available)
+    monkeypatch.setattr(ci_app_module._build_backend, "scan_package", scan)
+    monkeypatch.setattr(
+        ci_app_module._build_backend,
+        "render_results",
+        lambda _results, *, strict: not strict or True,
+    )
+
+    result = CliRunner().invoke(ci_app_module.app, ["build-backend", "--packages", "first"])
+
+    assert result.exit_code == 0, result.output
+    assert captured == ["first"]
+
+
+def test_consumer_packages_intersects_command_eligibility(tmp_path: Path) -> None:
+    first, second = _consumer_packages(tmp_path)
+
+    assert ci_app_module._filter_packages([first], "second", {first.name, second.name}) == []
+
+
+@pytest.mark.parametrize("command", ["deptry", "build-backend"])
+def test_consumer_packages_empty_csv_is_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    monkeypatch.setattr(
+        ci_app_module,
+        "load_packages",
+        lambda _scope, **_kwargs: _consumer_packages(tmp_path),
+    )
+
+    result = CliRunner().invoke(ci_app_module.app, [command, "--packages", ""])
+
+    assert result.exit_code == 0, result.output
+    assert "selected" in result.output
+
+
+@pytest.mark.parametrize("command", ["deptry", "build-backend"])
+def test_consumer_packages_unknown_name_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    monkeypatch.setattr(
+        ci_app_module,
+        "load_packages",
+        lambda _scope, **_kwargs: _consumer_packages(tmp_path),
+    )
+
+    result = CliRunner().invoke(ci_app_module.app, [command, "--packages", "missing"])
+
+    assert result.exit_code == 2
+    assert "Unknown packages" in result.output

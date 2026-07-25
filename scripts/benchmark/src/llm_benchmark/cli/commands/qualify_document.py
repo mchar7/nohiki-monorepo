@@ -9,6 +9,7 @@ from typing import Annotated, Protocol
 import click
 import typer
 from nohiki_llm_client import LLMInstrumentationSettings, LLMSettings
+from typer._types import TyperChoice
 
 from llm_benchmark.cli._helpers import load_api_keys, load_credential_free_chain
 from llm_benchmark.display.console import console
@@ -234,7 +235,7 @@ def qualify_document(
         typer.Option(
             "--route",
             help="Route alias to dispatch; repeat for a subset",
-            click_type=click.Choice(list(APPROVED_ROUTE_ALIASES)),
+            click_type=TyperChoice(APPROVED_ROUTE_ALIASES),
         ),
     ] = None,
     fixtures: Annotated[
@@ -284,7 +285,7 @@ def qualify_document(
         settings = LLMSettings(
             provider=resolved_chain,
             chains={chain: resolved_chain},
-            instrumentation={"enabled": False},
+            instrumentation=LLMInstrumentationSettings(enabled=False),
         )
         runner = _build_runner(
             llm_settings=settings,

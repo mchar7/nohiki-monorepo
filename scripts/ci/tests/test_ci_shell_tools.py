@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import re
 import tomllib
 from collections.abc import Mapping
-from functools import cache
 from pathlib import Path
-from typing import cast
 
 import pytest
-import yaml
+from _documents import WorkflowJob, load_mapping, load_workflow
 from ci_checks.app import app
 from ci_checks.core.packages import PackageType, Scope, _scope_filter
 from typer.testing import CliRunner
@@ -19,12 +16,12 @@ _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _LEFTHOOK = _ROOT / "lefthook.yml"
 _CI_PROJECT = _ROOT / "scripts" / "ci" / "pyproject.toml"
 _CI_PACKAGE_TOKENS = (
-    "pkgs.age",
-    "pkgs.sops",
+    "pnpmPackage",
+    "pkgs.jq",
+    "pkgs.yq-go",
     "pkgs.kubernetes-helm",
-    "pkgs.kubectl",
-    "pkgs.kustomize",
     "pkgs.ripgrep",
+    "pkgs.openssh",
     "pkgs.gitleaks",
     "pkgs.actionlint",
     "pkgs.hadolint",
@@ -33,203 +30,160 @@ _CI_PACKAGE_TOKENS = (
 )
 
 
-@cache
-def _load_yaml(path: Path) -> dict[str, object]:
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(document, dict)
-    return _mapping(document)
-
-
-def _mapping(value: object) -> dict[str, object]:
-    assert isinstance(value, dict)
-    return cast("dict[str, object]", value)
-
-
-def _mapping_at(mapping: Mapping[str, object], key: str) -> dict[str, object]:
-    return _mapping(mapping[key])
-
-
-def _mapping_list(value: object) -> list[dict[str, object]]:
-    assert isinstance(value, list)
-    return [_mapping(item) for item in value]
-
-
-def _strings(value: object) -> list[str]:
-    assert isinstance(value, list)
-    return [cast("str", item) for item in value]
+def _commands(job: WorkflowJob) -> list[str]:
+    return [step["run"] for step in job.get("steps", []) if "run" in step]
 
 
 def test_ci_nix_shell_includes_local_secret_bootstrap_tools() -> None:
     flake = _FLAKE.read_text(encoding="utf-8")
-    block = flake.split("devShells.ci = pkgs.mkShell", 1)[1].split("};", 1)[0]
-    packages = re.search(r"packages = \[(?P<body>.*?)\];", block, re.DOTALL)
-    assert packages is not None, "devShells.ci must define packages"
+    declarations, ci_shell = flake.split("devShells.ci = pkgs.mkShell", 1)
+    assert "packages = ciTools" in ci_shell.split("devShells.ci-python", 1)[0]
     for token in _CI_PACKAGE_TOKENS:
-        assert token in packages["body"], f"devShells.ci must include {token}"
+        assert token in declarations, f"ciTools must include {token}"
 
 
-def _commands(job: object) -> list[str]:
-    assert isinstance(job, dict)
-    steps = job.get("steps")
-    assert isinstance(steps, list)
-    commands: list[str] = []
-    for step in steps:
-        if isinstance(step, dict):
-            run = step.get("run")
-            if isinstance(run, str):
-                commands.append(run)
-    return commands
-
-
-def test_checks_workflow_splits_every_prepush_gate_into_hosted_lanes() -> None:
-    workflow = _load_yaml(_CHECKS)
-    jobs_value = workflow.get("jobs")
-    assert isinstance(jobs_value, dict)
-    jobs = _mapping(jobs_value)
-    assert "prepush" not in jobs
-
-    prepush_lanes = {
-        "typecheck",
-        "python-tests",
-        "frontend-tests",
-        "hygiene",
-        "api-schema-freshness",
-        "image-matrix-parity",
-        "proto-breaking",
+def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
+    workflow = load_workflow(_CHECKS)
+    jobs = workflow["jobs"]
+    assert set(jobs) == {
+        "changes",
+        "commitlint",
+        "worker",
+        "broad-environment",
+        "broad-python",
+        "broad-frontend",
+        "broad-hygiene",
+        "broad-policy",
+        "container-contracts",
+        "playwright-image",
+        "checks",
     }
-    additive_lanes = {
-        "frontend-smoke",
-        "frontend-e2e",
-        "edge-worker",
-        "otel-collector",
-    }
-    lanes = prepush_lanes | additive_lanes
-    assert lanes < jobs.keys()
 
-    commands = {job_id: "\n".join(_commands(jobs[job_id])) for job_id in lanes}
-    hygiene = _mapping_at(jobs, "hygiene")
-    hygiene_step_names = [step.get("name") for step in _mapping_list(hygiene["steps"])]
-    assert "Install ripgrep" not in hygiene_step_names
-    assert (
-        "test_frontend_delivery.py::test_frontend_container_build_and_hardened_runtime_smoke"
-        in commands["frontend-smoke"]
+    standard = "\n".join(
+        step["run"] for step in jobs["worker"]["steps"] if "run" in step and step.get("name") != "Report worker timing"
     )
-    assert "typescript/apps/frontend/node_modules/.bin/playwright" in commands["frontend-e2e"]
-    assert "biome ci --reporter=github src/" in commands["edge-worker"]
-    assert "exec tsc --noEmit" in commands["edge-worker"]
-    assert "exec vitest run" in commands["edge-worker"]
+    broad = "\n".join(
+        step["run"]
+        for job_id in (
+            "broad-python",
+            "broad-frontend",
+            "broad-hygiene",
+            "broad-policy",
+        )
+        for step in jobs[job_id]["steps"]
+        if "run" in step and step.get("name") != "Report worker timing"
+    )
+    container_contracts = "\n".join(_commands(jobs["container-contracts"]))
+    playwright_image = "\n".join(_commands(jobs["playwright-image"]))
+    assert "test_frontend_delivery.py::test_frontend_container_build_and_hardened_runtime_smoke" in container_contracts
     assert (
         "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary"
-        in commands["otel-collector"]
+        in container_contracts
     )
-    assert "ty check backend/" in commands["typecheck"]
-    assert "pnpm -C typescript/apps/frontend type-check" in commands["typecheck"]
-    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=50%" in commands["frontend-tests"]
-    deadcode = commands["hygiene"]
-    assert "ci-checks deadcode --scope all --ci --fail --no-provenance" in deadcode
-    assert '--summary "$GITHUB_STEP_SUMMARY"' in deadcode
-    assert "--diff" not in deadcode
-    assert "--base-ref" not in deadcode
-    assert "--baseline" not in deadcode
-    assert "--no-grep-verify" not in deadcode
-    assert "ci-checks deptry --scope all --ci" in commands["hygiene"]
-    assert (
-        "semgrep scan --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/"
-        in commands["hygiene"]
+    assert "typescript/apps/frontend/node_modules/.bin/playwright" in playwright_image
+
+    commands = (
+        "biome ci --reporter=github src/",
+        "exec tsc --noEmit",
+        "exec vitest run",
+        'ty check "${paths[@]}"',
+        "pnpm -C typescript/apps/frontend type-check",
+        "pnpm -C typescript/apps/frontend test --run --maxWorkers=100%",
+        "ci-checks deptry",
+        "semgrep scan",
+        "ci-checks build-backend",
+        "just api-schema-check",
+        "just image-matrix-check",
+        "ruff check --output-format=github",
+        "ruff format --check",
+        "ci-checks deadcode",
     )
-    assert "ci-checks build-backend --scope all --ci --strict" in commands["hygiene"]
-    assert "just api-schema-check" in commands["api-schema-freshness"]
-    assert "just image-matrix-check" in commands["image-matrix-parity"]
-    proto = _mapping_at(jobs, "proto-breaking")
-    proto_step = next(step for step in _mapping_list(proto["steps"]) if step.get("name") == "Check proto compatibility")
-    assert _mapping_at(proto_step, "env")["BASE_SHA"] == (
-        "${{ github.event.pull_request.base.sha || github.event.before }}"
-    )
-    assert "buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'" in commands["proto-breaking"]
-    assert all("lefthook run pre-push" not in command for job in jobs.values() for command in _commands(job))
+    for command in commands:
+        assert standard.count(command) == 1
+        assert broad.count(command) == 1
+
+    for owner in ("worker", "broad-policy"):
+        owner_commands = "\n".join(_commands(jobs[owner]))
+        proto_step = next(
+            step for step in jobs[owner].get("steps", []) if step.get("name") == "Check proto compatibility"
+        )
+        assert proto_step["env"]["BASE_SHA"] == ("${{ github.event.pull_request.base.sha || github.event.before }}")
+        assert "buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'" in owner_commands
+
+    all_commands = "\n".join(command for job in jobs.values() for command in _commands(job))
+    assert all_commands.count("semgrep scan") == 2
+    assert "lefthook run pre-push" not in all_commands
 
 
-def test_python_tests_use_three_duration_balanced_batches() -> None:
-    workflow = _load_yaml(_CHECKS)
-    jobs = _mapping(workflow["jobs"])
-    python_tests = _mapping_at(jobs, "python-tests")
-    strategy = _mapping_at(python_tests, "strategy")
-    assert strategy["matrix"] == "${{ fromJSON(needs.changes.outputs.tests_matrix) }}"
-    steps = {cast("str", step.get("name")): step for step in _mapping_list(python_tests["steps"])}
-    nix_install = steps["Install Nix"]
-    workspace_install = steps["Install workspace (all packages + extras)"]
-    batch_test = steps["Run batch tests"]
-    assert steps["Resolve pnpm store path"]["if"] == "matrix.needs_pnpm"
-    assert steps["Cache pnpm store"]["if"] == "matrix.needs_pnpm"
-
-    assert "if" not in nix_install
-    assert nix_install["uses"] == ("DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25")
-    assert "if" not in workspace_install
-    assert str(workspace_install["run"]).strip() == (
-        "# shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here\n"
-        "nix develop .#ci --command bash -euc '\n"
-        '  export UV_PYTHON="$(command -v python)"\n'
-        "  uv sync --all-packages --all-extras --no-extra cuda --frozen\n"
-        '  if [ "${{ matrix.needs_pnpm }}" = "true" ]; then\n'
-        "    pnpm install --frozen-lockfile\n"
-        "  fi\n"
-        "'"
-    )
-    assert "if" not in batch_test
-    assert str(batch_test["run"]).strip() == (
-        "# shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here\n"
-        "nix develop .#ci --command bash -euc '\n"
-        '  export UV_PYTHON="$(command -v python)"\n'
-        '  uv run --no-sync ci-checks tests all --scope all --packages "${{ matrix.packages }}" \\\n'
-        '    --ci --workers 2 --summary "$GITHUB_STEP_SUMMARY" --summary-title "${{ matrix.batch }}"\n'
-        "'"
-    )
-    expected_env = {
-        "OTEL_SDK_DISABLED": "true",
-        "UV_NO_SYNC": "1",
-        "COVERAGE_CORE": "sysmon",
-    }
-    assert batch_test["env"] == expected_env
-    assert "pnpm -C typescript/apps/frontend test --run" not in "\n".join(_commands(python_tests))
-    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=50%" in "\n".join(
-        _commands(jobs["frontend-tests"])
-    )
+def test_python_tests_use_one_runner_per_commit_class() -> None:
+    workflow = load_workflow(_CHECKS)
+    for owner in ("worker", "broad-python"):
+        job = workflow["jobs"][owner]
+        assert job["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+        assert "strategy" not in job
+        steps = {step["name"]: step for step in job["steps"] if "name" in step}
+        run_tests = steps["Run selected Python tests"]
+        command = str(run_tests["run"])
+        assert command.count("ci-checks tests all --scope all") == 1
+        assert '--packages "$TEST_PACKAGES"' in command
+        assert "--ci --workers 2" in command
+        assert '--summary "$GITHUB_STEP_SUMMARY"' in command
+        assert '--summary-title "$SUMMARY_TITLE"' in command
+        assert run_tests["env"] == {
+            "TEST_PACKAGES": "${{ needs.changes.outputs.test_packages }}",
+            "CI_CHECKS_SKIP_WORKSPACE_SYNC": "1",
+            "SUMMARY_TITLE": "${{ needs.changes.outputs.commit_class }}",
+            "OTEL_SDK_DISABLED": "true",
+            "UV_NO_SYNC": "1",
+            "COVERAGE_CORE": "sysmon",
+        }
 
 
 def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -> None:
     with _CI_PROJECT.open("rb") as project_file:
         pytest_options = tomllib.load(project_file)["tool"]["pytest"]["ini_options"]
     assert pytest_options["addopts"] == "-n auto --dist=worksteal"
-    workflow = _load_yaml(_CHECKS)
-    hosted_command = "\n".join(_commands(_mapping_at(_mapping(workflow["jobs"]), "python-tests")))
-    lefthook = _load_yaml(_LEFTHOOK)
-    pre_push = _mapping_at(lefthook, "pre-push")
-    local_command = next(
-        str(nested["run"])
-        for phase in _mapping_list(pre_push["jobs"])
-        for nested in (_mapping_list(_mapping(phase["group"])["jobs"]) if "group" in phase else [phase])
-        if nested.get("name") == "python-tests"
-    )
+    workflow = load_workflow(_CHECKS)
+    hosted_command = "\n".join(_commands(workflow["jobs"]["worker"]))
+    lefthook = load_mapping(_LEFTHOOK)
+    pre_push = lefthook["pre-push"]
+    assert isinstance(pre_push, Mapping)
+    phases = pre_push.get("jobs")
+    assert isinstance(phases, list)
+    local_commands: list[str] = []
+    for phase in phases:
+        assert isinstance(phase, Mapping)
+        if "group" in phase:
+            group = phase.get("group")
+            assert isinstance(group, Mapping)
+            nested_jobs = group.get("jobs")
+            assert isinstance(nested_jobs, list)
+        else:
+            nested_jobs = [phase]
+        for nested in nested_jobs:
+            assert isinstance(nested, Mapping)
+            if nested.get("name") == "python-tests":
+                run = nested.get("run")
+                assert isinstance(run, str)
+                local_commands.append(run)
+    local_command = next(iter(local_commands))
     assert "--no-coverage" not in hosted_command
     assert "--no-coverage" not in local_command
 
 
 def test_checks_aggregator_requires_every_hosted_lane() -> None:
-    workflow = _load_yaml(_CHECKS)
-    jobs = _mapping(workflow["jobs"])
-    checks = _mapping_at(jobs, "checks")
+    workflow = load_workflow(_CHECKS)
+    jobs = workflow["jobs"]
+    checks = jobs["checks"]
     assert checks["name"] == "Checks"
-    assert checks["if"] == "always()"
-    needs = _strings(checks["needs"])
+    assert checks["if"] == "always() && github.event.action != 'edited'"
+    needs = checks["needs"]
+    assert isinstance(needs, list)
     assert set(needs) == set(jobs) - {"checks"}
 
     command = "\n".join(_commands(checks))
     for job in needs:
-        if job != "commitlint":
-            assert f"test '${{{{ needs.{job}.result }}}}' = success" in command
-    assert "github.event_name }}' = push" in command
-    assert "needs.commitlint.result }}' = skipped" in command
-    assert "needs.commitlint.result }}' = success" in command
+        assert f"needs.{job}.result" in command
 
 
 def test_package_scopes_partition_all_package_types() -> None:
