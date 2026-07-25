@@ -6,7 +6,7 @@ description = "Semantic similarity threshold analysis for skill matching using J
 requires-python = ">=3.14"
 dependencies = [
     "numpy>=2.5.1",
-    "sentence-transformers>=5.6.0",
+    "sentence-transformers>=5.3.0,<5.4",
     "rich>=13.0",
     "typer>=0.26.8",
 ]
@@ -15,9 +15,5 @@ dependencies = [
 skill-semantic = "skill_semantic_analysis.cli:app"
 
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = ["skill_semantic_analysis", "skill_semantic_analysis.analysis"]
-package-dir = {"skill_semantic_analysis" = "."}
+requires = ["uv_build>=0.11.7,<0.12"]
+build-backend = "uv_build"
