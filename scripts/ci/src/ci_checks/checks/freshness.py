@@ -1,9 +1,11 @@
-"""Pinned base-image digest freshness probe.
+"""Pinned container-reference freshness probe.
 
-Registries garbage-collect manifests when tags are re-pushed, so a
-digest-pinned ``FROM`` can silently stop resolving. This check probes every
-pinned digest in tracked Dockerfiles and fails when one is dead, surfacing
-rot on a schedule instead of inside a release build.
+Registries garbage-collect manifests when tags are re-pushed and release
+CDNs delete old artifacts, so a digest-pinned reference or a checksum-pinned
+download can silently stop resolving. This check probes every pinned
+reference in tracked Dockerfiles -- ``FROM``, registry ``COPY --from``, and
+``ADD --checksum`` URLs -- and fails when one is dead, surfacing rot on a
+schedule instead of inside a release build.
 
 Requires ``skopeo`` (provided by ``devShells.ci``).
 """
@@ -13,8 +15,10 @@ import os
 import re
 import subprocess
 import tempfile
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http import HTTPStatus
 
 import typer
 from rich.console import Console
@@ -22,11 +26,22 @@ from rich.table import Table
 
 from ci_checks.core.packages import REPO_ROOT
 
-# FROM [--platform=...] name[:tag]@sha256:digest: the only pin shape we allow.
-_PIN_RE = re.compile(
-    r"^FROM\s+(?:--platform=\S+\s+)?(?P<ref>\S+?@sha256:[0-9a-f]{64})",
+# FROM [--platform=...] ref and COPY [--flag ...] --from=ref, both pinned as
+# name[:tag]@sha256:digest. The mandatory digest is what separates a registry
+# reference from a build-stage name, which can never carry one.
+_REGISTRY_PIN_RE = re.compile(
+    r"^(?:FROM\s+(?:--platform=\S+\s+)?|COPY\s+(?:--\S+\s+)*?--from=)(?P<ref>\S+?@sha256:[0-9a-f]{64})",
     re.IGNORECASE | re.MULTILINE,
 )
+
+# ADD [--flag ...] --checksum=sha256:digest <url>: a content pin on a plain
+# download, optionally split across a line continuation.
+_CHECKSUM_PIN_RE = re.compile(
+    r"^ADD\s+(?=(?:--\S+\s+)*--checksum=sha256:[0-9a-f]{64}\s)(?:--\S+\s+)+(?:\\\s+)?(?P<ref>https?://\S+)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_URL_TIMEOUT_SECONDS = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,13 +83,15 @@ def collect_pins(dockerfiles: list[str]) -> dict[str, list[str]]:
         dockerfiles: Repo-relative Dockerfile paths.
 
     Returns:
-        Pinned ``name[:tag]@sha256:...`` reference -> sorted using files.
+        Pinned reference -> sorted using files. A reference is either a
+        ``name[:tag]@sha256:...`` registry pin or a checksum-pinned URL.
     """
     pins: dict[str, list[str]] = {}
     for path in dockerfiles:
         text = (REPO_ROOT / path).read_text(encoding="utf-8")
-        for match in _PIN_RE.finditer(text):
-            pins.setdefault(match.group("ref"), []).append(path)
+        for pattern in (_REGISTRY_PIN_RE, _CHECKSUM_PIN_RE):
+            for match in pattern.finditer(text):
+                pins.setdefault(match.group("ref"), []).append(path)
     return {ref: sorted(set(files)) for ref, files in pins.items()}
 
 
@@ -102,17 +119,41 @@ def _skopeo(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def probe_pin(ref: str) -> PinProbe:
-    """Probe one pinned reference against its registry.
+def _probe_url(ref: str) -> PinProbe:
+    """Probe a checksum-pinned download URL.
 
     Args:
-        ref: ``name[:tag]@sha256:...`` reference from a Dockerfile.
+        ref: ``http(s)://`` URL from an ``ADD --checksum`` instruction.
 
     Returns:
-        Probe outcome; ``alive`` is True only when the exact digest still
+        Probe outcome; ``tag_digest`` is always empty because a content pin
+        has no moving tag to drift against.
+    """
+    # S310: the collector regex fixes the scheme to http(s); no caller-supplied URL reaches here.
+    request = urllib.request.Request(ref, method="HEAD")  # noqa: S310
+    try:
+        with urllib.request.urlopen(request, timeout=_URL_TIMEOUT_SECONDS) as response:  # noqa: S310
+            status = int(response.status)
+    except OSError as exc:
+        return PinProbe(ref=ref, alive=False, tag_digest="", detail=str(exc)[:200])
+    alive = status == HTTPStatus.OK
+    return PinProbe(ref=ref, alive=alive, tag_digest="", detail="" if alive else f"HTTP {status}")
+
+
+def probe_pin(ref: str) -> PinProbe:
+    """Probe one pinned reference against its origin.
+
+    Args:
+        ref: ``name[:tag]@sha256:...`` registry reference from a Dockerfile,
+            or a checksum-pinned ``http(s)://`` URL.
+
+    Returns:
+        Probe outcome; ``alive`` is True only when the exact pin still
         resolves. ``tag_digest`` reports where the tag points now (empty
         when the reference carries no tag or the lookup fails).
     """
+    if ref.startswith(("http://", "https://")):
+        return _probe_url(ref)
     tagged, _, digest = ref.partition("@")
     head, sep, candidate = tagged.rpartition(":")
     # A colon only introduces a tag in the final path component; otherwise
@@ -129,7 +170,7 @@ def probe_pin(ref: str) -> PinProbe:
 
 
 def freshness_cmd() -> None:
-    """Fail when any digest-pinned base image no longer resolves.
+    """Fail when any pinned reference no longer resolves.
 
     Raises:
         typer.Exit: Code 1 when at least one pin is dead or no pins exist
@@ -138,20 +179,20 @@ def freshness_cmd() -> None:
     console = Console()
     pins = collect_pins(_tracked_dockerfiles())
     if not pins:
-        console.print("[red]no digest-pinned FROM lines found; collector is broken[/red]")
+        console.print("[red]no digest-pinned references found; collector is broken[/red]")
         raise typer.Exit(1)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         probes = list(pool.map(probe_pin, sorted(pins)))
 
-    table = Table(title=f"Base-image digest freshness ({len(probes)} pins)")
+    table = Table(title=f"Pinned reference freshness ({len(probes)} pins)")
     table.add_column("pin")
     table.add_column("status")
     table.add_column("tag now")
     dead = 0
     for probe in probes:
         _, _, digest = probe.ref.partition("@")
-        drift = "same" if probe.tag_digest == digest else (probe.tag_digest[:19] or "?")
+        drift = "n/a" if not digest else ("same" if probe.tag_digest == digest else probe.tag_digest[:19] or "?")
         if probe.alive:
             table.add_row(probe.ref, "[green]alive[/green]", drift)
         else:
@@ -164,6 +205,6 @@ def freshness_cmd() -> None:
             if not probe.alive:
                 for path in pins[probe.ref]:
                     console.print(f"[red]{path}: {probe.ref}[/red]")
-        console.print(f"[red]{dead} pinned base digest(s) no longer resolve; repin before the next build[/red]")
+        console.print(f"[red]{dead} pinned reference(s) no longer resolve; repin before the next build[/red]")
         raise typer.Exit(1)
-    console.print(f"[green]all {len(probes)} pinned base digests resolve[/green]")
+    console.print(f"[green]all {len(probes)} pinned references resolve[/green]")
