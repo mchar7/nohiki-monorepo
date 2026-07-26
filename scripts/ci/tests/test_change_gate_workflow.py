@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from _documents import WorkflowJob, WorkflowStep, load_workflow
+from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, mapping_sequence_at
 from ci_checks.core.change_gate import (
     CommitClass,
     GateDecision,
@@ -19,6 +19,7 @@ from ci_checks.core.packages import Scope, load_packages_with_deps
 _ROOT = Path(__file__).resolve().parents[3]
 _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _FRESHNESS = _ROOT / ".github" / "workflows" / "digest-freshness.yml"
+_SETUP_CI = _ROOT / ".github" / "actions" / "setup-ci" / "action.yml"
 
 
 def _jobs() -> dict[str, WorkflowJob]:
@@ -241,7 +242,7 @@ def test_standard_worker_and_broad_shards_own_each_lane_once() -> None:
         assert "needs.broad-environment.result == 'skipped'" in condition
         assert jobs[job_id]["needs"] == ["changes", "broad-environment"]
     prewarm = jobs["broad-environment"]
-    assert "github.event_name == 'push'" in prewarm["if"]
+    assert "github.event_name" not in prewarm["if"]
     assert "needs.changes.outputs.broad == 'true'" in prewarm["if"]
     prewarm_setup = next(step for step in _steps(prewarm) if step.get("uses") == "./.github/actions/setup-ci")
     assert prewarm_setup["with"]["lookup-only"] == "true"
@@ -294,6 +295,14 @@ def test_standard_worker_and_broad_shards_own_each_lane_once() -> None:
         "node_group_executed": "${{ steps.setup-ci.outputs.node-group-executed }}",
         "commitlint_executed": "${{ steps.commitlint-range.outcome == 'success' }}",
     }
+
+
+def test_ready_cache_save_runs_on_every_event_behind_a_key_guard() -> None:
+    steps = mapping_sequence_at(load_mapping(_SETUP_CI), "runs", "steps")
+    save = next(step for step in steps if step.get("name") == "Save complete CI environment")
+    condition = str(save["if"])
+    assert "github.event_name" not in condition
+    assert "steps.ready-cache.outputs.primary-key != ''" in condition
 
 
 def test_python_test_lane_uses_gate_scope_once_per_class() -> None:

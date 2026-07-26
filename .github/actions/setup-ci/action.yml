@@ -158,8 +158,9 @@ runs:
         path: ${{ steps.pnpm-store.outputs.path }}
         key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
 
+    # An empty primary-key makes the save action throw at module init, so a restore that exited early must skip it.
     - name: Save complete CI environment
-      if: inputs.ready-cache == 'true' && inputs.save-ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true') && steps.ready-cache.outputs.hit-primary-key != 'true' && steps.workspace-sync.outcome == 'success' && steps.node-install.outcome == 'success' && github.event_name == 'push'
+      if: inputs.ready-cache == 'true' && inputs.save-ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true') && steps.ready-cache.outputs.hit-primary-key != 'true' && steps.workspace-sync.outcome == 'success' && steps.node-install.outcome == 'success' && steps.ready-cache.outputs.primary-key != ''
       uses: nix-community/cache-nix-action/save@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
       with:
         primary-key: ${{ steps.ready-cache.outputs.primary-key }}
