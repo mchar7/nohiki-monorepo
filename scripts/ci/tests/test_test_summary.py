@@ -660,9 +660,7 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
         for job_id, job in workflow["jobs"].items()
         if "needs.changes.outputs.standard == 'true'" in str(job.get("if", ""))
     ] == ["worker"]
-    assert workflow["jobs"]["worker"]["if"] == (
-        "github.event.action != 'edited' && needs.changes.outputs.standard == 'true'"
-    )
+    assert workflow["jobs"]["worker"]["if"] == "needs.changes.outputs.standard == 'true'"
     for job_id in selected_units[1:]:
         assert "needs.changes.outputs.broad == 'true'" in workflow["jobs"][job_id]["if"]
 

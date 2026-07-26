@@ -226,7 +226,7 @@ jobs:
   worker:
     name: Scoped worker
     needs: [changes]
-    if: github.event.action != 'edited' && needs.changes.outputs.standard == 'true'
+    if: needs.changes.outputs.standard == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     permissions:
@@ -552,7 +552,7 @@ jobs:
   broad-environment:
     name: Broad environment
     needs: [changes]
-    if: github.event.action != 'edited' && needs.changes.outputs.broad == 'true'
+    if: needs.changes.outputs.broad == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     permissions:
@@ -590,7 +590,7 @@ jobs:
   broad-python:
     name: Broad Python tests
     needs: [changes, broad-environment]
-    if: always() && github.event.action != 'edited' && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     permissions:
@@ -646,7 +646,7 @@ jobs:
   broad-frontend:
     name: Broad frontend and commit policy
     needs: [changes, broad-environment]
-    if: always() && github.event.action != 'edited' && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     permissions:
@@ -735,7 +735,7 @@ jobs:
   broad-hygiene:
     name: Broad backend hygiene
     needs: [changes, broad-environment]
-    if: always() && github.event.action != 'edited' && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     permissions:
@@ -841,7 +841,7 @@ jobs:
   broad-policy:
     name: Broad policy and lint
     needs: [changes, broad-environment]
-    if: always() && github.event.action != 'edited' && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.broad == 'true' && (needs.broad-environment.result == 'success' || needs.broad-environment.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     permissions:
@@ -938,7 +938,7 @@ jobs:
   container-contracts:
     name: Container contracts
     needs: [changes]
-    if: github.event.action != 'edited' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true')
+    if: needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 13
     permissions:
@@ -1010,7 +1010,7 @@ jobs:
   playwright-image:
     name: Playwright runner image
     needs: [changes]
-    if: github.event.action != 'edited' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.frontend_e2e == 'true'
+    if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.frontend_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 9
     permissions:
@@ -1060,7 +1060,7 @@ jobs:
 
   checks:
     name: Checks
-    if: always() && github.event.action != 'edited'
+    if: always()
     needs:
       - changes
       - commitlint
@@ -1091,13 +1091,13 @@ jobs:
           COMMITLINT_EXPECTED: ${{ needs.changes.outputs.commitlint_expected == 'true' && github.event.action == 'edited' }}
           WORK_EXPECTED: ${{ needs.changes.outputs.standard == 'true' }}
           BROAD_EXPECTED: ${{ needs.changes.outputs.broad == 'true' }}
-          BROAD_ENV_EXPECTED: ${{ needs.changes.outputs.broad == 'true' && github.event.action != 'edited' }}
+          BROAD_ENV_EXPECTED: ${{ needs.changes.outputs.broad == 'true' }}
           WORKER_COMMITLINT_EXPECTED: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.commitlint_expected == 'true' }}
           WORKER_COMMITLINT: ${{ needs.worker.outputs.commitlint_executed }}
           NODE_GROUP_EXPECTED: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.edge_worker == 'true') }}
           WORKER_NODE_GROUP: ${{ needs.worker.outputs.node_group_executed }}
-          CONTAINER_EXPECTED: ${{ github.event.action != 'edited' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
-          PLAYWRIGHT_EXPECTED: ${{ github.event.action != 'edited' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.frontend_e2e == 'true' }}
+          CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
+          PLAYWRIGHT_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.frontend_e2e == 'true' }}
         run: |
           test '${{ needs.changes.result }}' = success
           test '${{ needs.changes.outputs.full }}' = '${{ needs.changes.outputs.broad }}'

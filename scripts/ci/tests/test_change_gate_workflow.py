@@ -382,7 +382,9 @@ def test_title_edits_have_independent_concurrency_and_check_identities() -> None
         "needs.changes.outputs.commitlint_expected == 'true' && github.event.action == 'edited'"
     )
     assert substantive["name"] == "Checks"
-    assert substantive["if"] == "always() && github.event.action != 'edited'"
+    # Checks is a required context on protected main, so suppressing it on an edited event would
+    # leave the head without its required conclusion and let a title-only pass stand for validation.
+    assert substantive["if"] == "always()"
 
 
 def test_changes_job_computes_gate_from_full_history() -> None:

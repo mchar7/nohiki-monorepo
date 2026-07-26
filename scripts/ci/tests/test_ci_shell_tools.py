@@ -176,7 +176,7 @@ def test_checks_aggregator_requires_every_hosted_lane() -> None:
     jobs = workflow["jobs"]
     checks = jobs["checks"]
     assert checks["name"] == "Checks"
-    assert checks["if"] == "always() && github.event.action != 'edited'"
+    assert checks["if"] == "always()"
     needs = checks["needs"]
     assert isinstance(needs, list)
     assert set(needs) == set(jobs) - {"checks"}
