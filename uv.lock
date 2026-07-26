@@ -3816,6 +3816,7 @@ version = "0.1.0"
 source = { editable = "backend/libs/nohiki-test-utils" }
 dependencies = [
     { name = "faker" },
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "nohiki-domain-models" },
     { name = "polyfactory" },
@@ -3827,6 +3828,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "faker", specifier = ">=38.2.0" },
+    { name = "fastapi", specifier = ">=0.120.4" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "nohiki-domain-models", editable = "backend/libs/nohiki-domain-models" },
     { name = "polyfactory", specifier = ">=3.2.0,<4" },
