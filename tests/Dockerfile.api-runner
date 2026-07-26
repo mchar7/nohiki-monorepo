@@ -4,7 +4,19 @@ FROM registry.k8s.io/kubectl:v1.35.0@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c
 FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /usr/local/bin/uv
 WORKDIR /workspace
-COPY . .
+# Transitive first-party closure of tests/pyproject.toml, enumerated so nothing else can
+# reach the published runtime stage. uv tolerates the absent workspace members.
+COPY pyproject.toml uv.lock ./
+COPY backend/libs/nohiki-common-exceptions ./backend/libs/nohiki-common-exceptions/
+COPY backend/libs/nohiki-core-settings ./backend/libs/nohiki-core-settings/
+COPY backend/libs/nohiki-db-utils ./backend/libs/nohiki-db-utils/
+COPY backend/libs/nohiki-domain-models ./backend/libs/nohiki-domain-models/
+COPY backend/libs/nohiki-kafka-client ./backend/libs/nohiki-kafka-client/
+COPY backend/libs/nohiki-ml-manifest ./backend/libs/nohiki-ml-manifest/
+COPY backend/libs/nohiki-observability ./backend/libs/nohiki-observability/
+COPY backend/libs/nohiki-test-utils ./backend/libs/nohiki-test-utils/
+COPY scripts/util/health_check ./scripts/util/health_check/
+COPY tests ./tests/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --project tests --no-dev
 
@@ -13,9 +25,23 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 RUN groupadd --gid 10001 verifier && useradd --uid 10001 --gid verifier --create-home verifier
 WORKDIR /workspace
-COPY --from=builder --chown=verifier:verifier /workspace /workspace
+# uv installs workspace members editable, so the environment's .pth files resolve back into
+# the builder's source trees: the closure travels with the venv or imports fail at collection.
+COPY --from=builder --chown=verifier:verifier /workspace/.venv ./.venv
+COPY --from=builder --chown=verifier:verifier /workspace/backend ./backend
+COPY --from=builder --chown=verifier:verifier /workspace/scripts ./scripts
+COPY --from=builder --chown=verifier:verifier /workspace/tests ./tests
+# tests/api/test_document_sse_contract.py asserts against the published contract.
+COPY --chown=verifier:verifier docs/api/nohiki.openapi.json ./docs/api/
 USER 10001:10001
-ENV PATH="/workspace/tests/.venv/bin:$PATH" \
+# The workspace root manifest stays out of the image, so the two discovery walks that would
+# otherwise find it are anchored explicitly: uv's project environment, and
+# nohiki_test_utils.paths.get_repo_root. UV_NO_SYNC keeps `uv run` from re-resolving
+# against a registry the verification namespace cannot reach.
+ENV PATH="/workspace/.venv/bin:$PATH" \
+    PROJECT_ROOT=/workspace \
+    UV_PROJECT_ENVIRONMENT=/workspace/.venv \
+    UV_NO_SYNC=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 ENTRYPOINT ["python", "tests/api/run_k8s_verification.py"]
