@@ -552,7 +552,7 @@ jobs:
   broad-environment:
     name: Broad environment
     needs: [changes]
-    if: github.event.action != 'edited' && github.event_name == 'push' && needs.changes.outputs.broad == 'true'
+    if: github.event.action != 'edited' && needs.changes.outputs.broad == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     permissions:
@@ -1091,7 +1091,7 @@ jobs:
           COMMITLINT_EXPECTED: ${{ needs.changes.outputs.commitlint_expected == 'true' && github.event.action == 'edited' }}
           WORK_EXPECTED: ${{ needs.changes.outputs.standard == 'true' }}
           BROAD_EXPECTED: ${{ needs.changes.outputs.broad == 'true' }}
-          BROAD_ENV_EXPECTED: ${{ needs.changes.outputs.broad == 'true' && github.event_name == 'push' }}
+          BROAD_ENV_EXPECTED: ${{ needs.changes.outputs.broad == 'true' && github.event.action != 'edited' }}
           WORKER_COMMITLINT_EXPECTED: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.commitlint_expected == 'true' }}
           WORKER_COMMITLINT: ${{ needs.worker.outputs.commitlint_executed }}
           NODE_GROUP_EXPECTED: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.edge_worker == 'true') }}
