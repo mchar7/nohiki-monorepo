@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
+from _documents import load_mapping, mapping_at
 
 _ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT = _ROOT / "scripts" / "ci" / "production_network.py"
@@ -44,7 +44,7 @@ _TYPE = [
         ],
     },
 ]
-_VALUE = {
+_VALUE: dict[str, dict[str, object]] = {
     "database": {
         "host": "pg-nohiki-prod.postgres.database.azure.com",
         "port": 5432,
@@ -112,7 +112,7 @@ def test_generator_emits_exact_runtime_network_values_and_is_idempotent(
     )
     _PRODUCTION_NETWORK._generate(tmp_path / "opentofu-output.json", output)
     assert output.read_text(encoding="utf-8") == first_text
-    assert yaml.safe_load(first_text) == {
+    assert load_mapping(output) == {
         "global": {
             "database": {"host": _VALUE["database"]["host"], "port": 5432},
             "redis": {"host": _VALUE["redis"]["host"], "port": 6380},
@@ -131,11 +131,7 @@ def test_generator_emits_exact_runtime_network_values_and_is_idempotent(
 
 def _mutate(path: tuple[str, ...], value: object) -> dict[str, object]:
     document = _document()
-    target: object = document
-    for key in path[:-1]:
-        assert isinstance(target, dict)
-        target = target[key]
-    assert isinstance(target, dict)
+    target = mapping_at(document, *path[:-1])
     target[path[-1]] = value
     return document
 

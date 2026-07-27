@@ -11,8 +11,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 import yaml
-
-type Manifest = dict[str, object]
+from _documents import Manifest, load_manifests, load_mapping, load_workflow
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra/k8s/helm"
@@ -136,7 +135,7 @@ def _render(
     for value in set_values:
         command.extend(("--set-string", value))
     result = subprocess.run(command, cwd=_ROOT, check=True, capture_output=True, text=True)
-    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+    return tuple(load_manifests(result.stdout))
 
 
 def _render_environment(values_name: str, tmp_path: Path) -> tuple[Manifest, ...]:
@@ -152,9 +151,8 @@ def _render_environment(values_name: str, tmp_path: Path) -> tuple[Manifest, ...
         str(_CHART / values_name),
     ]
     if environment == "prod":
-        matrix = yaml.safe_load(_IMAGE_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"][
-            "include"
-        ]
+        workflow = load_workflow(_IMAGE_MATRIX)
+        matrix = workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
         digests = {
             f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": f"sha256:{index + 1:064x}"
             for index, entry in enumerate(matrix)
@@ -183,7 +181,7 @@ def _render_environment(values_name: str, tmp_path: Path) -> tuple[Manifest, ...
             )
         )
     result = subprocess.run(command, cwd=_ROOT, check=True, capture_output=True, text=True)
-    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+    return tuple(load_manifests(result.stdout))
 
 
 @pytest.fixture(scope="module")
@@ -215,9 +213,7 @@ def environment_rendered(
 
 def _named(documents: tuple[Manifest, ...], kind: str, name: str) -> Manifest:
     return next(
-        document
-        for document in documents
-        if document.get("kind") == kind and document.get("metadata", {}).get("name") == name
+        document for document in documents if document.get("kind") == kind and document["metadata"]["name"] == name
     )
 
 
@@ -230,48 +226,113 @@ def _agentgateway_crds() -> dict[str, Manifest]:
             for member in members
             for stream in (archive.extractfile(member),)
             if stream is not None
-            for document in yaml.safe_load_all(stream.read())
-            if isinstance(document, dict) and document.get("kind") == "CustomResourceDefinition"
+            for document in load_manifests(stream.read().decode())
+            if document.get("kind") == "CustomResourceDefinition"
         ]
-    return {document["spec"]["names"]["kind"]: document for document in documents}
+    crds: dict[str, Manifest] = {}
+    for document in documents:
+        spec = document["spec"]
+        assert isinstance(spec, dict)
+        names: object = spec.get("names")
+        assert isinstance(names, dict)
+        kind = names.get("kind")
+        assert isinstance(kind, str)
+        crds[kind] = document
+    return crds
 
 
 @cache
 def _gateway_api_crds() -> dict[str, Manifest]:
     documents = (
         document
-        for document in yaml.safe_load_all(_GATEWAY_API_CRDS.read_text(encoding="utf-8"))
-        if isinstance(document, dict) and document.get("kind") == "CustomResourceDefinition"
+        for document in load_manifests(_GATEWAY_API_CRDS.read_text(encoding="utf-8"))
+        if document.get("kind") == "CustomResourceDefinition"
     )
-    return {document["spec"]["names"]["kind"]: document for document in documents}
+    crds: dict[str, Manifest] = {}
+    for document in documents:
+        spec = document["spec"]
+        assert isinstance(spec, dict)
+        names: object = spec.get("names")
+        assert isinstance(names, dict)
+        kind = names.get("kind")
+        assert isinstance(kind, str)
+        crds[kind] = document
+    return crds
 
 
-def _schema(crd: Manifest, version: str) -> Manifest:
-    return next(item for item in crd["spec"]["versions"] if item["name"] == version)["schema"]["openAPIV3Schema"]
+def _schema(crd: Manifest, version: str) -> dict[object, object]:
+    spec = crd["spec"]
+    assert isinstance(spec, dict)
+    versions: object = spec.get("versions")
+    assert isinstance(versions, list)
+    version_spec = next(item for item in versions if isinstance(item, dict) and item.get("name") == version)
+    schema: object = version_spec.get("schema")
+    assert isinstance(schema, dict)
+    openapi_schema: object = schema.get("openAPIV3Schema")
+    assert isinstance(openapi_schema, dict)
+    return {key: openapi_schema.get(key) for key in openapi_schema}
 
 
-def _secret_refs(pod_spec: Manifest) -> set[tuple[str, str]]:
+def _secret_refs(pod_spec: object) -> set[tuple[str, str]]:
     refs: set[tuple[str, str]] = set()
     for node in _walk(pod_spec):
         if not isinstance(node, dict):
             continue
         key_ref = node.get("secretKeyRef")
-        if isinstance(key_ref, dict) and isinstance(key_ref.get("name"), str) and isinstance(key_ref.get("key"), str):
-            refs.add((key_ref["name"], key_ref["key"]))
+        if isinstance(key_ref, dict):
+            name = key_ref.get("name")
+            key = key_ref.get("key")
+            if isinstance(name, str) and isinstance(key, str):
+                refs.add((name, key))
         secret = node.get("secret")
-        if isinstance(secret, dict) and isinstance(secret.get("secretName"), str):
-            for item in secret.get("items", []):
-                refs.add((secret["secretName"], item["key"]))
+        if not isinstance(secret, dict):
+            continue
+        secret_name = secret.get("secretName")
+        items = secret.get("items", [])
+        if not isinstance(secret_name, str) or not isinstance(items, list):
+            continue
+        for item in items:
+            assert isinstance(item, dict)
+            key = item.get("key")
+            assert isinstance(key, str)
+            refs.add((secret_name, key))
     return refs
 
 
-def _matches_selector(labels: dict[str, str], selector: Manifest) -> bool:
-    return all(labels.get(key) == value for key, value in selector.get("matchLabels", {}).items())
+def _matches_selector(labels: object, selector: object) -> bool:
+    assert isinstance(labels, dict)
+    assert all(isinstance(key, str) and isinstance(value, str) for key, value in labels.items())
+    assert isinstance(selector, dict)
+    match_labels = selector.get("matchLabels", {})
+    assert isinstance(match_labels, dict)
+    assert all(isinstance(key, str) and isinstance(value, str) for key, value in match_labels.items())
+    return all(labels.get(key) == value for key, value in match_labels.items())
 
 
 def _container_env(deployment: Manifest) -> dict[str, str]:
-    container = deployment["spec"]["template"]["spec"]["containers"][0]
-    return {item["name"]: item["value"] for item in container["env"] if "value" in item}
+    spec = deployment["spec"]
+    assert isinstance(spec, dict)
+    template: object = spec.get("template")
+    assert isinstance(template, dict)
+    pod_spec: object = template.get("spec")
+    assert isinstance(pod_spec, dict)
+    containers: object = pod_spec.get("containers")
+    assert isinstance(containers, list)
+    container = containers[0]
+    assert isinstance(container, dict)
+    env: object = container.get("env")
+    assert isinstance(env, list)
+    entries: dict[str, str] = {}
+    for item in env:
+        assert isinstance(item, dict)
+        if "value" not in item:
+            continue
+        name = item.get("name")
+        value = item.get("value")
+        assert isinstance(name, str)
+        assert isinstance(value, str)
+        entries[name] = value
+    return entries
 
 
 def test_rendered_gateway_resources_validate_against_vendored_1_3_1_schemas(
@@ -304,7 +365,7 @@ def test_rendered_gateway_resources_validate_against_vendored_1_3_1_schemas(
             }
             and (
                 document.get("kind") not in {"Gateway", "HTTPRoute"}
-                or document.get("metadata", {}).get("name", "").startswith(_GATEWAY_NAME)
+                or (document.get("metadata", {})).get("name", "").startswith(_GATEWAY_NAME)
             )
         ]
         assert len(resources) == _GATEWAY_RESOURCE_COUNTS[environment]
@@ -321,15 +382,23 @@ def test_gateway_is_one_private_https_clusterip_with_certificate_sni_and_ca(
     rendered: tuple[Manifest, ...],
 ) -> None:
     parameters = _named(rendered, "AgentgatewayParameters", _GATEWAY_NAME)
-    assert parameters["spec"]["service"]["spec"] == {"type": "ClusterIP"}
+    parameter_spec = parameters["spec"]
+    assert isinstance(parameter_spec, dict)
+    service: object = parameter_spec.get("service")
+    assert isinstance(service, dict)
+    assert service.get("spec") == {"type": "ClusterIP"}
     gateway = _named(rendered, "Gateway", _GATEWAY_NAME)
-    assert gateway["spec"]["gatewayClassName"] == "agentgateway"
-    assert gateway["spec"]["infrastructure"]["parametersRef"] == {
+    gateway_spec = gateway["spec"]
+    assert isinstance(gateway_spec, dict)
+    assert gateway_spec.get("gatewayClassName") == "agentgateway"
+    infrastructure: object = gateway_spec.get("infrastructure")
+    assert isinstance(infrastructure, dict)
+    assert infrastructure.get("parametersRef") == {
         "group": "agentgateway.dev",
         "kind": "AgentgatewayParameters",
         "name": _GATEWAY_NAME,
     }
-    assert gateway["spec"]["listeners"] == [
+    assert gateway_spec.get("listeners") == [
         {
             "name": "model-https",
             "hostname": _GATEWAY_HOST,
@@ -354,17 +423,19 @@ def test_exact_supported_lanes_use_agentgateway_backends_and_preserve_models(
     }.items():
         expected_paths = _ROUTE_PATHS_BY_ENVIRONMENT[environment]
         routes = {
-            document["metadata"]["name"]: document
+            (document)["metadata"]["name"]: document
             for document in documents
             if document.get("kind") == "HTTPRoute"
-            and document["metadata"]["name"].startswith(f"{_GATEWAY_NAME}-")
-            and document["metadata"]["name"] != f"{_GATEWAY_NAME}-healthz"
+            and (document)["metadata"]["name"].startswith(f"{_GATEWAY_NAME}-")
+            and (document)["metadata"]["name"] != f"{_GATEWAY_NAME}-healthz"
         }
         assert set(routes) == set(expected_paths)
         for name, path in expected_paths.items():
             route = routes[name]
-            assert route["spec"]["hostnames"] == [_GATEWAY_HOSTS_BY_ENVIRONMENT[environment]]
-            assert route["spec"]["parentRefs"] == [
+            route_spec = route["spec"]
+            assert isinstance(route_spec, dict)
+            assert route_spec.get("hostnames") == [_GATEWAY_HOSTS_BY_ENVIRONMENT[environment]]
+            assert route_spec.get("parentRefs") == [
                 {
                     "group": "gateway.networking.k8s.io",
                     "kind": "Gateway",
@@ -372,9 +443,12 @@ def test_exact_supported_lanes_use_agentgateway_backends_and_preserve_models(
                     "sectionName": "model-https",
                 }
             ]
-            rule = route["spec"]["rules"][0]
-            assert rule["matches"] == [{"path": {"type": "Exact", "value": path}}]
-            assert rule["backendRefs"] == [
+            rules: object = route_spec.get("rules")
+            assert isinstance(rules, list)
+            rule = rules[0]
+            assert isinstance(rule, dict)
+            assert rule.get("matches") == [{"path": {"type": "Exact", "value": path}}]
+            assert rule.get("backendRefs") == [
                 {
                     "group": "agentgateway.dev",
                     "kind": "AgentgatewayBackend",
@@ -383,47 +457,61 @@ def test_exact_supported_lanes_use_agentgateway_backends_and_preserve_models(
             ]
 
         backends = [document for document in documents if document.get("kind") == "AgentgatewayBackend"]
-        assert {backend["metadata"]["name"] for backend in backends} == set(expected_paths)
-        assert not any(
-            "model" in provider
-            for backend in backends
-            for group in backend["spec"]["ai"]["groups"]
-            for provider in group["providers"]
-        )
-
-        providers_by_name = {
-            provider["name"]: provider
-            for backend in backends
-            for group in backend["spec"]["ai"]["groups"]
-            for provider in group["providers"]
-        }
+        assert {(backend)["metadata"]["name"] for backend in backends} == set(expected_paths)
+        backend_groups: dict[str, list[object]] = {}
+        for backend in backends:
+            spec = backend["spec"]
+            assert isinstance(spec, dict)
+            ai: object = spec.get("ai")
+            assert isinstance(ai, dict)
+            groups = ai.get("groups")
+            assert isinstance(groups, list)
+            backend_groups[backend["metadata"]["name"]] = list(groups)
+        providers_by_name: dict[str, dict[object, object]] = {}
+        for groups in backend_groups.values():
+            for group in groups:
+                assert isinstance(group, dict)
+                providers = group.get("providers")
+                assert isinstance(providers, list)
+                for provider in providers:
+                    assert isinstance(provider, dict)
+                    assert "model" not in provider
+                    provider_name = provider.get("name")
+                    assert isinstance(provider_name, str)
+                    providers_by_name[provider_name] = {key: provider.get(key) for key in provider}
         assert set(providers_by_name) == _PROVIDER_NAMES_BY_ENVIRONMENT[environment]
-        assert providers_by_name["openai-responses"]["host"] == "api.openai.com"
-        assert providers_by_name["openai-responses"]["port"] == 443
-        assert providers_by_name["openai-responses"]["path"] == "/v1/responses"
-        assert providers_by_name["openai-responses"]["openai"] == {}
-        assert providers_by_name["openrouter-completions"]["host"] == "openrouter.ai"
-        assert providers_by_name["openrouter-completions"]["custom"] == {
+        assert providers_by_name["openai-responses"].get("host") == "api.openai.com"
+        assert providers_by_name["openai-responses"].get("port") == 443
+        assert providers_by_name["openai-responses"].get("path") == "/v1/responses"
+        assert providers_by_name["openai-responses"].get("openai") == {}
+        assert providers_by_name["openrouter-completions"].get("host") == "openrouter.ai"
+        assert providers_by_name["openrouter-completions"].get("custom") == {
             "formats": [{"type": "Completions", "path": "/api/v1/chat/completions"}]
         }
-        assert providers_by_name["openai-responses"]["policies"]["tls"] == {
+        openai_policies = providers_by_name["openai-responses"].get("policies")
+        assert isinstance(openai_policies, dict)
+        assert openai_policies.get("tls") == {
             "sni": "api.openai.com",
             "verifySubjectAltNames": ["api.openai.com"],
         }
-        assert providers_by_name["openrouter-completions"]["policies"]["tls"] == {
+        openrouter_policies = providers_by_name["openrouter-completions"].get("policies")
+        assert isinstance(openrouter_policies, dict)
+        assert openrouter_policies.get("tls") == {
             "sni": "openrouter.ai",
             "verifySubjectAltNames": ["openrouter.ai"],
         }
         assert "openrouter-responses" not in providers_by_name
         if environment == "managed":
             anthropic = providers_by_name["anthropic-messages"]
-            assert anthropic["anthropic"] == {}
-            assert anthropic["path"] == "/v1/messages"
-            assert anthropic["policies"]["auth"] == {
+            assert anthropic.get("anthropic") == {}
+            assert anthropic.get("path") == "/v1/messages"
+            anthropic_policies = anthropic.get("policies")
+            assert isinstance(anthropic_policies, dict)
+            assert anthropic_policies.get("auth") == {
                 "secretRef": {"name": "nohiki-model-egress-anthropic"},
                 "location": {"header": {"name": "x-api-key"}},
             }
-            assert anthropic["policies"]["tls"] == {
+            assert anthropic_policies.get("tls") == {
                 "sni": "api.anthropic.com",
                 "verifySubjectAltNames": ["api.anthropic.com"],
             }
@@ -439,17 +527,31 @@ def test_every_environment_routes_openai_luna_sol_models_only_through_native_ope
 ) -> None:
     documents = environment_rendered[values_name]
     backend = _named(documents, "AgentgatewayBackend", "nohiki-model-egress-responses")
-    groups = backend["spec"]["ai"]["groups"]
+    spec = backend["spec"]
+    assert isinstance(spec, dict)
+    ai: object = spec.get("ai")
+    assert isinstance(ai, dict)
+    groups = ai.get("groups")
+    assert isinstance(groups, list)
     assert len(groups) == 1
-    assert len(groups[0]["providers"]) == 1
-    provider = groups[0]["providers"][0]
-    assert provider["name"] == "openai-responses"
-    assert provider["host"] == "api.openai.com"
-    assert provider["port"] == 443
-    assert provider["path"] == "/v1/responses"
-    assert provider["openai"] == {}
-    assert provider["policies"]["auth"]["secretRef"] == {"name": "nohiki-model-egress-openai"}
-    assert provider["policies"]["tls"] == {
+    group = groups[0]
+    assert isinstance(group, dict)
+    providers = group.get("providers")
+    assert isinstance(providers, list)
+    assert len(providers) == 1
+    provider = providers[0]
+    assert isinstance(provider, dict)
+    assert provider.get("name") == "openai-responses"
+    assert provider.get("host") == "api.openai.com"
+    assert provider.get("port") == 443
+    assert provider.get("path") == "/v1/responses"
+    assert provider.get("openai") == {}
+    policies = provider.get("policies")
+    assert isinstance(policies, dict)
+    auth: object = policies.get("auth")
+    assert isinstance(auth, dict)
+    assert auth.get("secretRef") == {"name": "nohiki-model-egress-openai"}
+    assert policies.get("tls") == {
         "sni": "api.openai.com",
         "verifySubjectAltNames": ["api.openai.com"],
     }
@@ -494,19 +596,23 @@ def test_healthz_is_an_exact_unauthenticated_direct_response_route(
         ],
         "traffic": {"directResponse": {"status": 200, "body": "ok"}},
     }
-    assert not any(
-        policy["spec"].get("targetRefs")
-        == [
-            {
-                "group": "gateway.networking.k8s.io",
-                "kind": "HTTPRoute",
-                "name": route_name,
-            }
-        ]
-        and "apiKeyAuthentication" in policy["spec"].get("traffic", {})
-        for policy in rendered
-        if policy.get("kind") == "AgentgatewayPolicy"
-    )
+    authenticated_target = [
+        {
+            "group": "gateway.networking.k8s.io",
+            "kind": "HTTPRoute",
+            "name": route_name,
+        }
+    ]
+    for candidate in rendered:
+        if candidate.get("kind") != "AgentgatewayPolicy":
+            continue
+        candidate_spec = candidate["spec"]
+        assert isinstance(candidate_spec, dict)
+        if candidate_spec.get("targetRefs") != authenticated_target:
+            continue
+        traffic = candidate_spec.get("traffic", {})
+        assert isinstance(traffic, dict)
+        assert "apiKeyAuthentication" not in traffic
 
 
 def test_models_lane_is_not_claimed_when_vendored_schema_does_not_support_it(
@@ -514,7 +620,14 @@ def test_models_lane_is_not_claimed_when_vendored_schema_does_not_support_it(
 ) -> None:
     if _AGENTGATEWAY_CRDS.is_file():
         backend_schema = _schema(_agentgateway_crds()["AgentgatewayBackend"], "v1alpha1")
-        enums = [node["enum"] for node in _walk(backend_schema) if isinstance(node, dict) and "enum" in node]
+        enums: list[list[str]] = []
+        for node in _walk(backend_schema):
+            if not isinstance(node, dict) or "enum" not in node:
+                continue
+            enum = node.get("enum")
+            assert isinstance(enum, list)
+            assert all(isinstance(item, str) for item in enum)
+            enums.append([item for item in enum if isinstance(item, str)])
         custom_formats = next(
             enum for enum in enums if {"Responses", "Completions", "Messages"} <= set(enum) and "Detect" not in enum
         )
@@ -534,38 +647,61 @@ def test_route_auth_selectors_authorize_only_the_declared_client_matrix(
     }.items():
         route_clients = _ROUTE_CLIENTS_BY_ENVIRONMENT[environment]
         policies = [document for document in documents if document.get("kind") == "AgentgatewayPolicy"]
-        auth_policies = [policy for policy in policies if "apiKeyAuthentication" in policy["spec"].get("traffic", {})]
+        auth_policies: list[Manifest] = []
+        for policy in policies:
+            spec = policy["spec"]
+            assert isinstance(spec, dict)
+            traffic: object = spec.get("traffic", {})
+            assert isinstance(traffic, dict)
+            if "apiKeyAuthentication" in traffic:
+                auth_policies.append(policy)
         assert len(auth_policies) == len(route_clients)
 
         expected_clients = set().union(*route_clients.values())
-        client_labels = {
-            document["metadata"]["name"]: document["spec"]["target"]["template"]["metadata"]["labels"]
-            for document in documents
-            if document.get("kind") == "ExternalSecret" and document.get("metadata", {}).get("name") in expected_clients
-        }
+        client_labels: dict[str, object] = {}
+        for document in documents:
+            if document.get("kind") != "ExternalSecret" or document["metadata"]["name"] not in expected_clients:
+                continue
+            spec = document["spec"]
+            assert isinstance(spec, dict)
+            target: object = spec.get("target")
+            assert isinstance(target, dict)
+            template: object = target.get("template")
+            assert isinstance(template, dict)
+            metadata: object = template.get("metadata")
+            assert isinstance(metadata, dict)
+            labels = metadata.get("labels")
+            assert isinstance(labels, dict)
+            assert all(isinstance(key, str) and isinstance(value, str) for key, value in labels.items())
+            client_labels[document["metadata"]["name"]] = labels
         assert set(client_labels) == expected_clients
 
-        selectors: dict[str, Manifest] = {}
+        selectors: dict[str, object] = {}
         for policy in auth_policies:
             route_name = policy["metadata"]["name"].removesuffix("-client-auth")
-            assert policy["spec"]["targetRefs"] == [
+            policy_spec = policy["spec"]
+            assert isinstance(policy_spec, dict)
+            assert policy_spec.get("targetRefs") == [
                 {
                     "group": "gateway.networking.k8s.io",
                     "kind": "HTTPRoute",
                     "name": route_name,
                 }
             ]
-            auth = policy["spec"]["traffic"]["apiKeyAuthentication"]
-            assert auth["mode"] == "Strict"
+            traffic: object = policy_spec.get("traffic")
+            assert isinstance(traffic, dict)
+            auth: object = traffic.get("apiKeyAuthentication")
+            assert isinstance(auth, dict)
+            assert auth.get("mode") == "Strict"
             route = route_name.removeprefix(f"{_GATEWAY_NAME}-")
-            assert auth["secretSelector"] == {"matchLabels": {f"{_ROUTE_SELECTOR_PREFIX}{route}": "true"}}
+            assert auth.get("secretSelector") == {"matchLabels": {f"{_ROUTE_SELECTOR_PREFIX}{route}": "true"}}
             assert "secretRef" not in auth
             expected_header = "x-api-key" if route == "messages" else "Authorization"
             expected_header_config = {"name": expected_header}
             if expected_header == "Authorization":
                 expected_header_config["prefix"] = "Bearer"
-            assert auth["location"] == {"header": expected_header_config}
-            selectors[route_name] = auth["secretSelector"]
+            assert auth.get("location") == {"header": expected_header_config}
+            selectors[route_name] = auth.get("secretSelector")
 
         assert set(selectors) == set(route_clients)
         actual_matrix = {
@@ -585,50 +721,94 @@ def test_route_auth_selectors_authorize_only_the_declared_client_matrix(
             "nohiki-model-egress-tls",
             "nohiki-model-egress-ca",
         }
-        sensitive_labels = [
-            document["spec"]["target"].get("template", {}).get("metadata", {}).get("labels", {})
-            for document in documents
-            if document.get("kind") == "ExternalSecret"
-            and document.get("metadata", {}).get("name") in sensitive_secret_names
-        ]
+        sensitive_labels: list[object] = []
+        for document in documents:
+            if document.get("kind") != "ExternalSecret" or document["metadata"]["name"] not in sensitive_secret_names:
+                continue
+            spec = document["spec"]
+            assert isinstance(spec, dict)
+            target: object = spec.get("target")
+            assert isinstance(target, dict)
+            template: object = target.get("template", {})
+            assert isinstance(template, dict)
+            metadata: object = template.get("metadata", {})
+            assert isinstance(metadata, dict)
+            labels = metadata.get("labels", {})
+            assert isinstance(labels, dict)
+            assert all(isinstance(key, str) and isinstance(value, str) for key, value in labels.items())
+            sensitive_labels.append(labels)
         assert all(
             not _matches_selector(labels, selector) for labels in sensitive_labels for selector in selectors.values()
         )
 
         provider_external_secrets = {
-            document["metadata"]["name"]
+            (document)["metadata"]["name"]
             for document in documents
             if document.get("kind") == "ExternalSecret"
-            and document.get("metadata", {}).get("name", "").startswith(f"{_GATEWAY_NAME}-")
-            and document["metadata"]["name"] not in expected_clients
-            and document["metadata"]["name"] not in {"nohiki-model-egress-tls", "nohiki-model-egress-ca"}
+            and (document.get("metadata", {})).get("name", "").startswith(f"{_GATEWAY_NAME}-")
+            and (document)["metadata"]["name"] not in expected_clients
+            and (document)["metadata"]["name"] not in {"nohiki-model-egress-tls", "nohiki-model-egress-ca"}
         }
         assert provider_external_secrets == expected_provider_secrets
         assert not any(
-            document.get("kind") == "Secret" and document.get("metadata", {}).get("name") in _PROVIDER_SECRETS
+            document.get("kind") == "Secret" and (document.get("metadata", {})).get("name") in _PROVIDER_SECRETS
             for document in documents
         ), "provider credentials must come from ExternalSecret, never a rendered Secret"
 
-        providers = [
-            provider
-            for backend in documents
-            if backend.get("kind") == "AgentgatewayBackend"
-            for group in backend["spec"]["ai"]["groups"]
-            for provider in group["providers"]
-        ]
-        assert {
-            provider["policies"]["auth"]["secretRef"]["name"] for provider in providers
-        } == expected_provider_secrets
+        providers: list[dict[object, object]] = []
+        for backend in documents:
+            if backend.get("kind") != "AgentgatewayBackend":
+                continue
+            spec = backend["spec"]
+            assert isinstance(spec, dict)
+            ai: object = spec.get("ai")
+            assert isinstance(ai, dict)
+            groups = ai.get("groups")
+            assert isinstance(groups, list)
+            for group in groups:
+                assert isinstance(group, dict)
+                group_providers = group.get("providers")
+                assert isinstance(group_providers, list)
+                for provider in group_providers:
+                    assert isinstance(provider, dict)
+                    providers.append({key: provider.get(key) for key in provider})
+        provider_secret_names: set[str] = set()
+        for provider in providers:
+            policies = provider.get("policies")
+            assert isinstance(policies, dict)
+            auth: object = policies.get("auth")
+            assert isinstance(auth, dict)
+            secret_ref: object = auth.get("secretRef")
+            assert isinstance(secret_ref, dict)
+            secret_name = secret_ref.get("name")
+            assert isinstance(secret_name, str)
+            provider_secret_names.add(secret_name)
+        assert provider_secret_names == expected_provider_secrets
         if environment == "managed":
             anthropic = next(provider for provider in providers if "anthropic" in provider)
-            assert anthropic["policies"]["auth"]["location"] == {"header": {"name": "x-api-key"}}
+            policies = anthropic.get("policies")
+            assert isinstance(policies, dict)
+            auth: object = policies.get("auth")
+            assert isinstance(auth, dict)
+            assert auth.get("location") == {"header": {"name": "x-api-key"}}
 
 
 def test_client_route_labels_are_declared_per_client_and_emit_the_responses_only_matrix(
     rendered: tuple[Manifest, ...],
 ) -> None:
-    model_egress = yaml.safe_load((_CHART / "values.yaml").read_text(encoding="utf-8"))["global"]["modelEgress"]
-    clients = {client["name"]: client for client in model_egress["clients"]}
+    values = load_mapping(_CHART / "values.yaml")
+    global_values = values["global"]
+    assert isinstance(global_values, dict)
+    model_egress = global_values.get("modelEgress")
+    assert isinstance(model_egress, dict)
+    client_values = model_egress.get("clients")
+    assert isinstance(client_values, list)
+    clients: dict[str, dict[object, object]] = {}
+    for client in client_values:
+        assert isinstance(client, dict)
+        name = client.get("name")
+        assert isinstance(name, str)
+        clients[name] = {key: client.get(key) for key in client}
     assert clients == {
         "doc-content-service": {
             "name": "doc-content-service",
@@ -644,15 +824,27 @@ def test_client_route_labels_are_declared_per_client_and_emit_the_responses_only
         },
     }
 
-    client_secrets = {
-        document["metadata"]["name"]: document["spec"]["target"]["template"]["metadata"]["labels"]
-        for document in rendered
-        if document.get("kind") == "ExternalSecret"
-        and document.get("metadata", {}).get("name", "").startswith("nohiki-model-egress-client-")
-    }
-    assert client_secrets == {
-        client["secretName"]: {"nohiki.io/model-egress-route-responses": "true"} for client in clients.values()
-    }
+    client_secrets: dict[str, object] = {}
+    for document in rendered:
+        if document.get("kind") != "ExternalSecret" or not document["metadata"]["name"].startswith(
+            "nohiki-model-egress-client-"
+        ):
+            continue
+        spec = document["spec"]
+        assert isinstance(spec, dict)
+        target: object = spec.get("target")
+        assert isinstance(target, dict)
+        template: object = target.get("template")
+        assert isinstance(template, dict)
+        metadata: object = template.get("metadata")
+        assert isinstance(metadata, dict)
+        client_secrets[document["metadata"]["name"]] = metadata.get("labels")
+    expected_client_secrets: dict[str, object] = {}
+    for client in clients.values():
+        secret_name = client.get("secretName")
+        assert isinstance(secret_name, str)
+        expected_client_secrets[secret_name] = {"nohiki.io/model-egress-route-responses": "true"}
+    assert client_secrets == expected_client_secrets
 
 
 @pytest.mark.parametrize("allowed_routes", [[], ["unknown"]])
@@ -693,20 +885,22 @@ def test_client_allowed_routes_must_be_nonempty_and_reference_a_declared_backend
 def test_chart_model_mapping_and_rendered_deployments_match_luna_sol_policy(
     rendered: tuple[Manifest, ...],
 ) -> None:
-    expected = {
-        "job-ingest-enrichment-service": {
-            "provider": ("openai:gpt-5.6-luna", "medium"),
-            "chains": {
+    expected: dict[str, tuple[tuple[str, str], dict[str, tuple[str, str]]]] = {
+        "job-ingest-enrichment-service": (
+            ("openai:gpt-5.6-luna", "medium"),
+            {
                 "extraction": ("openai:gpt-5.6-luna", "medium"),
                 "skill_clarification": ("openai:gpt-5.6-luna", "medium"),
             },
-        },
-        "doc-content-service": {
-            "provider": ("openai:gpt-5.6-sol", "high"),
-            "chains": {"doc_tailoring": ("openai:gpt-5.6-sol", "high")},
-        },
+        ),
+        "doc-content-service": (
+            ("openai:gpt-5.6-sol", "high"),
+            {"doc_tailoring": ("openai:gpt-5.6-sol", "high")},
+        ),
     }
-    compose = yaml.safe_load((_ROOT / "infra/compose/docker-compose.yml").read_text(encoding="utf-8"))["services"]
+    compose_document = load_mapping(_ROOT / "infra/compose/docker-compose.yml")
+    compose = compose_document["services"]
+    assert isinstance(compose, dict)
     compose_expectations = {
         "nohiki-svc-job-ingest-enrichment": {
             "JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__MODEL": "openai:gpt-5.6-luna",
@@ -720,27 +914,36 @@ def test_chart_model_mapping_and_rendered_deployments_match_luna_sol_policy(
         },
     }
     for service, expectation in compose_expectations.items():
-        environment = compose[service]["environment"]
-        assert {key: environment[key] for key in expectation} == expectation
-    for service, policy in expected.items():
-        values = yaml.safe_load((_CHART / "charts" / service / "values.yaml").read_text(encoding="utf-8"))["llm"]
-        assert values["provider"]["models"] == [
-            {"model": policy["provider"][0], "reasoningEffort": policy["provider"][1]}
-        ]
-        assert "reasoningEffort" not in values["provider"]
-        assert set(values["chains"]) == set(policy["chains"])
-        for chain, (model, effort) in policy["chains"].items():
-            assert values["chains"][chain]["models"] == [{"model": model, "reasoningEffort": effort}]
-            assert "reasoningEffort" not in values["chains"][chain]
+        service_values = compose.get(service)
+        assert isinstance(service_values, dict)
+        environment = service_values.get("environment")
+        assert isinstance(environment, dict)
+        assert {key: environment.get(key) for key in expectation} == expectation
+    for service, ((provider_model, provider_effort), chains) in expected.items():
+        values_document = load_mapping(_CHART / "charts" / service / "values.yaml")
+        values = values_document["llm"]
+        assert isinstance(values, dict)
+        provider = values.get("provider")
+        assert isinstance(provider, dict)
+        assert provider.get("models") == [{"model": provider_model, "reasoningEffort": provider_effort}]
+        assert "reasoningEffort" not in provider
+        values_chains = values.get("chains")
+        assert isinstance(values_chains, dict)
+        assert set(values_chains) == set(chains)
+        for chain, (model, effort) in chains.items():
+            chain_values = values_chains.get(chain)
+            assert isinstance(chain_values, dict)
+            assert chain_values.get("models") == [{"model": model, "reasoningEffort": effort}]
+            assert "reasoningEffort" not in chain_values
 
         env = _container_env(_named(rendered, "Deployment", f"nohiki-{service}"))
         prefix = "JOB_INGEST_ENRICHMENT_" if service.startswith("job-") else "DOC_CONTENT_"
-        assert env[f"{prefix}LLM__PROVIDER__MODELS__0__MODEL"] == policy["provider"][0]
-        assert env[f"{prefix}LLM__PROVIDER__MODELS__0__REASONING_EFFORT"] == policy["provider"][1]
+        assert env[f"{prefix}LLM__PROVIDER__MODELS__0__MODEL"] == provider_model
+        assert env[f"{prefix}LLM__PROVIDER__MODELS__0__REASONING_EFFORT"] == provider_effort
         assert f"{prefix}LLM__PROVIDER__REASONING_EFFORT" not in env
         model_keys = {key for key in env if key.startswith(f"{prefix}LLM__") and key.endswith("__MODEL")}
         expected_model_keys = {f"{prefix}LLM__PROVIDER__MODELS__0__MODEL"}
-        for chain, (model, effort) in policy["chains"].items():
+        for chain, (model, effort) in chains.items():
             chain_key = chain.upper()
             expected_model_keys.add(f"{prefix}LLM__CHAINS__{chain_key}__MODELS__0__MODEL")
             assert env[f"{prefix}LLM__CHAINS__{chain_key}__MODELS__0__MODEL"] == model
@@ -753,19 +956,37 @@ def test_correlation_deployment_has_no_dead_llm_configuration_or_secret_mounts(
     rendered: tuple[Manifest, ...],
 ) -> None:
     deployment = _named(rendered, "Deployment", "nohiki-job-correlation-evaluation-service")
-    pod_spec = deployment["spec"]["template"]["spec"]
-    env_names = {item["name"] for container in pod_spec["containers"] for item in container.get("env", [])}
+    spec = deployment["spec"]
+    assert isinstance(spec, dict)
+    template: object = spec.get("template")
+    assert isinstance(template, dict)
+    pod_spec: object = template.get("spec")
+    assert isinstance(pod_spec, dict)
+    containers: object = pod_spec.get("containers")
+    assert isinstance(containers, list)
+    env_names: set[str] = set()
+    for container in containers:
+        assert isinstance(container, dict)
+        env: object = container.get("env", [])
+        assert isinstance(env, list)
+        for item in env:
+            assert isinstance(item, dict)
+            name = item.get("name")
+            assert isinstance(name, str)
+            env_names.add(name)
     assert not any(name.startswith("JOB_CORRELATION_EVAL_LLM__") for name in env_names)
     assert not any(secret.startswith("nohiki-model-egress-client-") for secret, _ in _secret_refs(pod_spec))
     assert not any(
         isinstance(node, str) and ("model-egress" in node or node == "/run/secrets/llm") for node in _walk(pod_spec)
     )
 
-    values = yaml.safe_load(
-        (_CHART / "charts/job-correlation-evaluation-service/values.yaml").read_text(encoding="utf-8")
-    )
-    assert values["llm"]["enabled"] is False
-    assert values["secrets"].get("llm", False) is False
+    values = load_mapping(_CHART / "charts/job-correlation-evaluation-service/values.yaml")
+    llm = values["llm"]
+    assert isinstance(llm, dict)
+    assert llm.get("enabled") is False
+    secrets = values["secrets"]
+    assert isinstance(secrets, dict)
+    assert secrets.get("llm", False) is False
 
 
 def test_provider_tls_health_priority_and_timeouts_have_only_supported_fields(
@@ -786,20 +1007,49 @@ def test_provider_tls_health_priority_and_timeouts_have_only_supported_fields(
     }.items():
         backends = [document for document in documents if document.get("kind") == "AgentgatewayBackend"]
         for backend in backends:
-            assert backend["spec"]["ai"]["groups"]
-            for group in backend["spec"]["ai"]["groups"]:
-                assert group["providers"]
-                for provider in group["providers"]:
-                    policies = provider["policies"]
-                    assert policies["tls"]["sni"] in policies["tls"]["verifySubjectAltNames"]
-                    assert policies["http"] == {"requestTimeout": "180s"}
-                    assert policies["tcp"] == {"connectTimeout": "10s"}
+            spec = backend["spec"]
+            assert isinstance(spec, dict)
+            ai: object = spec.get("ai")
+            assert isinstance(ai, dict)
+            groups = ai.get("groups")
+            assert isinstance(groups, list)
+            assert groups
+            for group in groups:
+                assert isinstance(group, dict)
+                providers = group.get("providers")
+                assert isinstance(providers, list)
+                assert providers
+                for provider in providers:
+                    assert isinstance(provider, dict)
+                    policies = provider.get("policies")
+                    assert isinstance(policies, dict)
+                    tls: object = policies.get("tls")
+                    assert isinstance(tls, dict)
+                    sni = tls.get("sni")
+                    subject_alt_names = tls.get("verifySubjectAltNames")
+                    assert isinstance(sni, str)
+                    assert isinstance(subject_alt_names, list)
+                    assert sni in subject_alt_names
+                    assert policies.get("http") == {"requestTimeout": "180s"}
+                    assert policies.get("tcp") == {"connectTimeout": "10s"}
 
-        health_policies = {
-            policy["spec"]["targetRefs"][0]["name"]: policy["spec"]["backend"]["health"]
-            for policy in documents
-            if policy.get("kind") == "AgentgatewayPolicy" and "backend" in policy["spec"]
-        }
+        health_policies: dict[str, object] = {}
+        for policy in documents:
+            if policy.get("kind") != "AgentgatewayPolicy":
+                continue
+            spec = policy["spec"]
+            assert isinstance(spec, dict)
+            backend: object = spec.get("backend")
+            if backend is None:
+                continue
+            assert isinstance(backend, dict)
+            target_refs: object = spec.get("targetRefs")
+            assert isinstance(target_refs, list)
+            target_ref = target_refs[0]
+            assert isinstance(target_ref, dict)
+            target_name = target_ref.get("name")
+            assert isinstance(target_name, str)
+            health_policies[target_name] = backend.get("health")
         assert set(health_policies) == set(_ROUTE_PATHS_BY_ENVIRONMENT[environment])
         assert all(health == expected_health for health in health_policies.values())
 
@@ -821,12 +1071,13 @@ def test_provider_tls_health_priority_and_timeouts_have_only_supported_fields(
             for node in _walk(document)
         )
 
-    assert not any(
-        isinstance(node, dict) and ("retry" in node or "rateLimit" in node)
-        for document in rendered
-        if document.get("kind") == "AgentgatewayPolicy"
-        for node in _walk(document["spec"].get("traffic", {}))
-    )
+    for document in rendered:
+        if document.get("kind") != "AgentgatewayPolicy":
+            continue
+        spec = document["spec"]
+        assert isinstance(spec, dict)
+        traffic: object = spec.get("traffic", {})
+        assert not any(isinstance(node, dict) and ("retry" in node or "rateLimit" in node) for node in _walk(traffic))
 
 
 def test_environment_rate_limits_are_exact_schema_valid_and_bounded(
@@ -834,40 +1085,71 @@ def test_environment_rate_limits_are_exact_schema_valid_and_bounded(
     managed_rendered: tuple[Manifest, ...],
 ) -> None:
     policy_schema = _schema(_agentgateway_crds()["AgentgatewayPolicy"], "v1alpha1")
-    local_traffic_policies = {
-        policy["spec"]["targetRefs"][0]["name"]: policy
-        for policy in rendered
-        if policy.get("kind") == "AgentgatewayPolicy"
-        and policy.get("metadata", {}).get("name", "").endswith("-traffic")
-    }
+    local_traffic_policies: dict[str, Manifest] = {}
+    for policy in rendered:
+        if policy.get("kind") != "AgentgatewayPolicy" or not policy["metadata"]["name"].endswith("-traffic"):
+            continue
+        spec = policy["spec"]
+        assert isinstance(spec, dict)
+        target_refs: object = spec.get("targetRefs")
+        assert isinstance(target_refs, list)
+        target_ref = target_refs[0]
+        assert isinstance(target_ref, dict)
+        target_name = target_ref.get("name")
+        assert isinstance(target_name, str)
+        local_traffic_policies[target_name] = policy
+        traffic: object = spec.get("traffic")
+        assert isinstance(traffic, dict)
+        assert "rateLimit" not in traffic
     assert set(local_traffic_policies) == set(_ROUTE_PATHS_BY_ENVIRONMENT["local"])
-    assert all("rateLimit" not in policy["spec"]["traffic"] for policy in local_traffic_policies.values())
 
-    managed_traffic_policies = {
-        policy["spec"]["targetRefs"][0]["name"]: policy
-        for policy in managed_rendered
-        if policy.get("kind") == "AgentgatewayPolicy"
-        and policy.get("metadata", {}).get("name", "").endswith("-traffic")
-    }
+    managed_traffic_policies: dict[str, Manifest] = {}
+    for policy in managed_rendered:
+        if policy.get("kind") != "AgentgatewayPolicy" or not policy["metadata"]["name"].endswith("-traffic"):
+            continue
+        spec = policy["spec"]
+        assert isinstance(spec, dict)
+        target_refs: object = spec.get("targetRefs")
+        assert isinstance(target_refs, list)
+        target_ref = target_refs[0]
+        assert isinstance(target_ref, dict)
+        target_name = target_ref.get("name")
+        assert isinstance(target_name, str)
+        managed_traffic_policies[target_name] = policy
     assert set(managed_traffic_policies) == set(_MANAGED_RATE_LIMITS)
     for route, expected in _MANAGED_RATE_LIMITS.items():
         policy = managed_traffic_policies[route]
         jsonschema.Draft202012Validator(policy_schema).validate(policy)
-        assert policy["spec"]["traffic"]["rateLimit"] == {"local": expected}
-        assert all(0 < item.get("requests", item.get("tokens", 0)) <= 120_000 for item in expected)
-        assert all(0 < item["burst"] <= 20_000 for item in expected)
-        assert "retry" not in policy["spec"]["traffic"]
+        spec = policy["spec"]
+        assert isinstance(spec, dict)
+        traffic: object = spec.get("traffic")
+        assert isinstance(traffic, dict)
+        assert traffic.get("rateLimit") == {"local": expected}
+        for item in expected:
+            limit = item.get("requests", item.get("tokens", 0))
+            burst = item.get("burst")
+            assert isinstance(limit, int)
+            assert isinstance(burst, int)
+            assert 0 < limit <= 120_000
+            assert 0 < burst <= 20_000
+        assert "retry" not in traffic
 
 
 def test_apps_receive_gateway_url_client_key_and_ca_but_no_provider_or_tls_key(
     rendered: tuple[Manifest, ...],
 ) -> None:
     deployments = {
-        document["metadata"]["name"]: document for document in rendered if document.get("kind") == "Deployment"
+        (document)["metadata"]["name"]: document for document in rendered if document.get("kind") == "Deployment"
     }
     client_readers: dict[str, set[str]] = {secret: set() for secret, _ in _CLIENT_SECRETS.values()}
     for name, (client_secret, client_key) in _CLIENT_SECRETS.items():
-        pod_spec = deployments[name]["spec"]["template"]["spec"]
+        deployment = deployments[name]
+        spec = deployment["spec"]
+        assert isinstance(spec, dict)
+        template: object = spec.get("template")
+        assert isinstance(template, dict)
+        pod_spec: object = template.get("spec")
+        assert isinstance(pod_spec, dict)
         refs = _secret_refs(pod_spec)
         gateway_refs = {ref for ref in refs if ref[0].startswith("nohiki-model-egress")}
         assert gateway_refs == {
@@ -880,28 +1162,28 @@ def test_apps_receive_gateway_url_client_key_and_ca_but_no_provider_or_tls_key(
         assert not ({secret for secret, _ in refs} & _PROVIDER_SECRETS), name
         assert ("nohiki-model-egress-tls", "tls.key") not in refs, name
 
-        env = pod_spec["containers"][0]["env"]
-        base_urls = [item["value"] for item in env if item["name"].endswith("__BASE_URL")]
+        env = _container_env(deployment)
+        base_urls = [value for env_name, value in env.items() if env_name.endswith("__BASE_URL")]
         assert base_urls, name
         assert set(base_urls) <= {
             _GATEWAY_ORIGIN,
             f"{_GATEWAY_ORIGIN}/v1",
         }, name
-        models = [item["value"] for item in env if item["name"].endswith("__MODEL")]
+        models = [value for env_name, value in env.items() if env_name.endswith("__MODEL")]
         assert models, name
-        model_env_names = {item["name"] for item in env if item["name"].endswith("__MODEL")}
-        health_env = {item["name"]: item["value"] for item in env if item["name"].endswith("__HEALTH_URL")}
+        model_env_names = {env_name for env_name in env if env_name.endswith("__MODEL")}
+        health_env = {env_name: value for env_name, value in env.items() if env_name.endswith("__HEALTH_URL")}
         assert model_env_names, name
         assert set(health_env) == {
             f"{model_name.removesuffix('__MODEL')}__HEALTH_URL" for model_name in model_env_names
         }, name
         assert set(health_env.values()) == {f"{_GATEWAY_ORIGIN}/healthz"}, name
-        tls_env = {item["name"]: item["value"] for item in env if item["name"].endswith("__TLS_CA_FILE")}
+        tls_env = {env_name: value for env_name, value in env.items() if env_name.endswith("__TLS_CA_FILE")}
         assert set(tls_env) == {
             f"{model_name.removesuffix('__MODEL')}__TLS_CA_FILE" for model_name in model_env_names
         }, name
         assert set(tls_env.values()) == {"/etc/nohiki/model-egress/ca.crt"}, name
-        assert not {"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"} & {item["name"] for item in env}, name
+        assert not {"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"} & set(env), name
     assert client_readers == {secret: {deployment} for deployment, (secret, _) in _CLIENT_SECRETS.items()}
     assert not any(node == "nohiki-model-egress-client" for document in rendered for node in _walk(document)), (
         "the shared model-egress client Secret must not remain"
@@ -912,10 +1194,15 @@ def test_non_llm_skill_graph_never_joins_the_gateway_lane(
     rendered: tuple[Manifest, ...],
 ) -> None:
     deployment = _named(rendered, "Deployment", "nohiki-skill-graph-service")
-    pod_spec = deployment["spec"]["template"]["spec"]
+    spec = deployment["spec"]
+    assert isinstance(spec, dict)
+    template: object = spec.get("template")
+    assert isinstance(template, dict)
+    pod_spec: object = template.get("spec")
+    assert isinstance(pod_spec, dict)
     refs = _secret_refs(pod_spec)
     assert not any(secret == "nohiki-llm-runtime" or secret.startswith("nohiki-model-egress") for secret, _ in refs)
-    env_names = {item["name"] for item in pod_spec["containers"][0]["env"]}
+    env_names = set(_container_env(deployment))
     assert not any("LLM__" in name for name in env_names)
     policy = _named(rendered, "NetworkPolicy", "nohiki-skill-graph-service")
     assert not any(node == _GATEWAY_NAME for node in _walk(policy))
@@ -933,21 +1220,27 @@ def test_legacy_disable_value_cannot_bypass_gateway_cutover(
         "HTTPRoute",
     }
     expected_gateway_resources = {
-        (document["kind"], document["metadata"]["name"])
+        (document["kind"], (document)["metadata"]["name"])
         for document in rendered
         if document.get("kind") in gateway_kinds
-        and document.get("metadata", {}).get("name", "").startswith(_GATEWAY_NAME)
+        and (document.get("metadata", {})).get("name", "").startswith(_GATEWAY_NAME)
     }
     actual_gateway_resources = {
-        (document["kind"], document["metadata"]["name"])
+        (document["kind"], (document)["metadata"]["name"])
         for document in false_override
         if document.get("kind") in gateway_kinds
-        and document.get("metadata", {}).get("name", "").startswith(_GATEWAY_NAME)
+        and (document.get("metadata", {})).get("name", "").startswith(_GATEWAY_NAME)
     }
     assert actual_gateway_resources == expected_gateway_resources
 
     for name, (client_secret, client_key) in _CLIENT_SECRETS.items():
-        pod_spec = _named(false_override, "Deployment", name)["spec"]["template"]["spec"]
+        deployment = _named(false_override, "Deployment", name)
+        spec = deployment["spec"]
+        assert isinstance(spec, dict)
+        template: object = spec.get("template")
+        assert isinstance(template, dict)
+        pod_spec: object = template.get("spec")
+        assert isinstance(pod_spec, dict)
         refs = _secret_refs(pod_spec)
         assert (client_secret, client_key) in refs, name
         assert ("nohiki-model-egress-ca", "ca.crt") in refs, name
@@ -959,22 +1252,47 @@ def test_network_policy_allows_clients_only_to_gateway_and_gateway_only_to_contr
 ) -> None:
     policies = [document for document in rendered if document.get("kind") == "NetworkPolicy"]
     gateway = _named(rendered, "NetworkPolicy", _GATEWAY_NAME)
-    assert gateway["spec"]["podSelector"]["matchLabels"] == {"gateway.networking.k8s.io/gateway-name": _GATEWAY_NAME}
-    assert len(gateway["spec"]["ingress"]) == 2
-    client_ingress = [
-        rule for rule in gateway["spec"]["ingress"] if rule.get("ports") == [{"port": 8443, "protocol": "TCP"}]
-    ]
+    gateway_spec = gateway["spec"]
+    assert isinstance(gateway_spec, dict)
+    pod_selector: object = gateway_spec.get("podSelector")
+    assert isinstance(pod_selector, dict)
+    assert pod_selector.get("matchLabels") == {"gateway.networking.k8s.io/gateway-name": _GATEWAY_NAME}
+    ingress_value: object = gateway_spec.get("ingress")
+    assert isinstance(ingress_value, list)
+    ingress: list[dict[object, object]] = []
+    for rule in ingress_value:
+        assert isinstance(rule, dict)
+        ingress.append({key: rule.get(key) for key in rule})
+    assert len(ingress) == 2
+    client_ingress = [rule for rule in ingress if rule.get("ports") == [{"port": 8443, "protocol": "TCP"}]]
     assert len(client_ingress) == 1
-    assert {tuple(sorted(peer["podSelector"]["matchLabels"].items())) for peer in client_ingress[0]["from"]} == {
+    client_peers = client_ingress[0].get("from")
+    assert isinstance(client_peers, list)
+    actual_client_selectors: set[tuple[tuple[str, str], ...]] = set()
+    for peer in client_peers:
+        assert isinstance(peer, dict)
+        selector = peer.get("podSelector")
+        assert isinstance(selector, dict)
+        match_labels = selector.get("matchLabels")
+        assert isinstance(match_labels, dict)
+        assert all(isinstance(key, str) and isinstance(value, str) for key, value in match_labels.items())
+        actual_client_selectors.add(
+            tuple(
+                sorted(
+                    (key, value)
+                    for key, value in match_labels.items()
+                    if isinstance(key, str) and isinstance(value, str)
+                )
+            )
+        )
+    assert actual_client_selectors == {
         (
             ("app.kubernetes.io/instance", "nohiki"),
             ("app.kubernetes.io/name", name.removeprefix("nohiki-")),
         )
         for name in _CLIENT_SECRETS
     }
-    metrics_ingress = [
-        rule for rule in gateway["spec"]["ingress"] if rule.get("ports") == [{"port": 15020, "protocol": "TCP"}]
-    ]
+    metrics_ingress = [rule for rule in ingress if rule.get("ports") == [{"port": 15020, "protocol": "TCP"}]]
     assert metrics_ingress == [
         {
             "from": [
@@ -990,9 +1308,13 @@ def test_network_policy_allows_clients_only_to_gateway_and_gateway_only_to_contr
             "ports": [{"port": 15020, "protocol": "TCP"}],
         }
     ]
-    gateway_otlp_rules = [
-        rule for rule in gateway["spec"]["egress"] if rule.get("ports") == [{"port": 4317, "protocol": "TCP"}]
-    ]
+    egress_value: object = gateway_spec.get("egress")
+    assert isinstance(egress_value, list)
+    egress: list[dict[object, object]] = []
+    for rule in egress_value:
+        assert isinstance(rule, dict)
+        egress.append({key: rule.get(key) for key in rule})
+    gateway_otlp_rules = [rule for rule in egress if rule.get("ports") == [{"port": 4317, "protocol": "TCP"}]]
     assert gateway_otlp_rules == [
         {
             "to": [{"podSelector": {"matchLabels": {"app.kubernetes.io/instance": "nohiki.nohiki-collector"}}}],
@@ -1000,9 +1322,12 @@ def test_network_policy_allows_clients_only_to_gateway_and_gateway_only_to_contr
         }
     ], "non-production OTLP egress must select the local collector pods exactly"
 
-    gateway_ip_rules = [
-        rule for rule in gateway["spec"]["egress"] if any("ipBlock" in peer for peer in rule.get("to", []))
-    ]
+    gateway_ip_rules: list[dict[object, object]] = []
+    for rule in egress:
+        destinations = rule.get("to", [])
+        assert isinstance(destinations, list)
+        if any(isinstance(peer, dict) and "ipBlock" in peer for peer in destinations):
+            gateway_ip_rules.append(rule)
     assert gateway_ip_rules == [
         {
             "to": [
@@ -1025,35 +1350,62 @@ def test_network_policy_allows_clients_only_to_gateway_and_gateway_only_to_contr
     ], "only the gateway may reach public provider HTTPS, with private/LAN ranges excluded"
     client_selector = {"gateway.networking.k8s.io/gateway-name": _GATEWAY_NAME}
     for name in _CLIENT_SECRETS:
-        labels = _named(rendered, "Deployment", name)["spec"]["template"]["metadata"]["labels"]
-        selected = [
-            policy
-            for policy in policies
-            if all(
-                labels.get(key) == value for key, value in policy["spec"]["podSelector"].get("matchLabels", {}).items()
-            )
-        ]
-        rules = [rule for policy in selected for rule in policy["spec"].get("egress", [])]
-        gateway_rules = [
-            rule
-            for rule in rules
-            if any(peer.get("podSelector", {}).get("matchLabels") == client_selector for peer in rule.get("to", []))
-        ]
+        deployment = _named(rendered, "Deployment", name)
+        spec = deployment["spec"]
+        assert isinstance(spec, dict)
+        template: object = spec.get("template")
+        assert isinstance(template, dict)
+        metadata: object = template.get("metadata")
+        assert isinstance(metadata, dict)
+        labels = metadata.get("labels")
+        assert isinstance(labels, dict)
+        selected: list[Manifest] = []
+        for policy in policies:
+            policy_spec = policy["spec"]
+            assert isinstance(policy_spec, dict)
+            selector: object = policy_spec.get("podSelector")
+            if _matches_selector(labels, selector):
+                selected.append(policy)
+        rules: list[dict[object, object]] = []
+        for policy in selected:
+            policy_spec = policy["spec"]
+            assert isinstance(policy_spec, dict)
+            policy_rules: object = policy_spec.get("egress", [])
+            assert isinstance(policy_rules, list)
+            for rule in policy_rules:
+                assert isinstance(rule, dict)
+                rules.append({key: rule.get(key) for key in rule})
+        gateway_rules: list[dict[object, object]] = []
+        for rule in rules:
+            destinations = rule.get("to", [])
+            assert isinstance(destinations, list)
+            for peer in destinations:
+                assert isinstance(peer, dict)
+                selector = peer.get("podSelector", {})
+                assert isinstance(selector, dict)
+                if selector.get("matchLabels") == client_selector:
+                    gateway_rules.append(rule)
+                    break
         assert gateway_rules == [
             {
                 "to": [{"podSelector": {"matchLabels": client_selector}}],
                 "ports": [{"port": 8443, "protocol": "TCP"}],
             }
         ], name
-        public_or_lan_model_rules = [
-            rule
-            for rule in rules
-            if any(
-                peer.get("ipBlock", {}).get("cidr") in {"0.0.0.0/0", "192.168.1.200/32"}
-                and any(port.get("port") in {443, 8317} for port in rule.get("ports", []))
-                for peer in rule.get("to", [])
-            )
-        ]
+        public_or_lan_model_rules: list[dict[object, object]] = []
+        for rule in rules:
+            destinations = rule.get("to", [])
+            ports = rule.get("ports", [])
+            assert isinstance(destinations, list)
+            assert isinstance(ports, list)
+            has_model_port = any(isinstance(port, dict) and port.get("port") in {443, 8317} for port in ports)
+            for peer in destinations:
+                assert isinstance(peer, dict)
+                ip_block = peer.get("ipBlock", {})
+                assert isinstance(ip_block, dict)
+                if ip_block.get("cidr") in {"0.0.0.0/0", "192.168.1.200/32"} and has_model_port:
+                    public_or_lan_model_rules.append(rule)
+                    break
         if name == "nohiki-job-ingest-enrichment-service":
             assert public_or_lan_model_rules == [
                 {
@@ -1082,11 +1434,25 @@ def test_network_policy_allows_clients_only_to_gateway_and_gateway_only_to_contr
 def test_configuration_only_override_switches_provider_priority_ca_and_model(
     tmp_path: Path,
 ) -> None:
-    model_egress = copy.deepcopy(
-        yaml.safe_load((_CHART / "values.yaml").read_text(encoding="utf-8"))["global"]["modelEgress"]
-    )
-    model_egress["enabled"] = True
-    model_egress["backends"][0]["groups"].append(
+    values = load_mapping(_CHART / "values.yaml")
+    global_values = values["global"]
+    assert isinstance(global_values, dict)
+    model_egress_value = copy.deepcopy(global_values.get("modelEgress"))
+    assert isinstance(model_egress_value, dict)
+    model_egress: dict[object, object] = {key: model_egress_value.get(key) for key in model_egress_value}
+    backend_values = model_egress.get("backends")
+    assert isinstance(backend_values, list)
+    backends: list[object] = list(backend_values)
+    model_egress["backends"] = backends
+    primary_backend_value = backends[0]
+    assert isinstance(primary_backend_value, dict)
+    primary_backend: dict[object, object] = {key: primary_backend_value.get(key) for key in primary_backend_value}
+    backends[0] = primary_backend
+    group_values = primary_backend.get("groups")
+    assert isinstance(group_values, list)
+    override_groups: list[object] = list(group_values)
+    primary_backend["groups"] = override_groups
+    override_groups.append(
         {
             "providers": [
                 {
@@ -1115,11 +1481,28 @@ def test_configuration_only_override_switches_provider_priority_ca_and_model(
     )
     switched = _render(values=override)
     backend = _named(switched, "AgentgatewayBackend", "nohiki-model-egress-responses")
-    assert len(backend["spec"]["ai"]["groups"]) == 2
-    failover = backend["spec"]["ai"]["groups"][1]["providers"]
-    assert failover[0]["name"] == "openai-failover"
-    assert failover[0]["policies"]["auth"]["secretRef"] == {"name": "nohiki-model-egress-openai"}
-    assert failover[0]["policies"]["tls"]["caCertificateRefs"] == [{"name": "model-provider-ca"}]
+    spec = backend["spec"]
+    assert isinstance(spec, dict)
+    ai: object = spec.get("ai")
+    assert isinstance(ai, dict)
+    groups = ai.get("groups")
+    assert isinstance(groups, list)
+    assert len(groups) == 2
+    failover_group = groups[1]
+    assert isinstance(failover_group, dict)
+    failover = failover_group.get("providers")
+    assert isinstance(failover, list)
+    failover_provider = failover[0]
+    assert isinstance(failover_provider, dict)
+    assert failover_provider.get("name") == "openai-failover"
+    failover_policies = failover_provider.get("policies")
+    assert isinstance(failover_policies, dict)
+    auth: object = failover_policies.get("auth")
+    assert isinstance(auth, dict)
+    assert auth.get("secretRef") == {"name": "nohiki-model-egress-openai"}
+    tls: object = failover_policies.get("tls")
+    assert isinstance(tls, dict)
+    assert tls.get("caCertificateRefs") == [{"name": "model-provider-ca"}]
     deployment = _named(switched, "Deployment", "nohiki-doc-content-service")
     env = _container_env(deployment)
     assert env["DOC_CONTENT_LLM__PROVIDER__MODELS__0__MODEL"] == "openrouter:openai/gpt-4.1"
@@ -1130,14 +1513,14 @@ def test_gateway_metrics_service_monitor_targets_only_agentgateway_data_plane(
     rendered: tuple[Manifest, ...],
 ) -> None:
     monitor = _named(rendered, "ServiceMonitor", "agentgateway-proxy")
-    assert monitor["metadata"]["labels"] == {
+    assert (monitor)["metadata"]["labels"] == {
         "app.kubernetes.io/name": "agentgateway-proxy",
         "app.kubernetes.io/instance": "nohiki",
         "app.kubernetes.io/component": "model-egress",
         "app.kubernetes.io/part-of": "nohiki",
         "release": "nohiki",
     }
-    assert monitor["spec"] == {
+    assert (monitor)["spec"] == {
         "selector": {"matchLabels": {"gateway.networking.k8s.io/gateway-class-name": "agentgateway"}},
         "namespaceSelector": {"matchNames": ["nohiki"]},
         "endpoints": [
@@ -1152,14 +1535,19 @@ def test_gateway_metrics_service_monitor_targets_only_agentgateway_data_plane(
 
     prometheus_resources = [document for document in rendered if document.get("kind") == "Prometheus"]
     assert len(prometheus_resources) == 1
-    selector = prometheus_resources[0]["spec"]["serviceMonitorSelector"]
+    prometheus_spec = prometheus_resources[0]["spec"]
+    assert isinstance(prometheus_spec, dict)
+    selector: object = prometheus_spec.get("serviceMonitorSelector")
     monitors = [document for document in rendered if document.get("kind") == "ServiceMonitor"]
     assert monitor in monitors
     assert monitors
     unmatched = {
-        item["metadata"]["name"]
+        (item)["metadata"]["name"]
         for item in monitors
-        if not _matches_selector(item["metadata"].get("labels", {}), selector)
+        if not _matches_selector(
+            (item)["metadata"].get("labels", {}),
+            selector,
+        )
     }
     assert unmatched == set(), (
         f"Prometheus selector {selector!r} does not select emitted ServiceMonitors: {sorted(unmatched)}"
@@ -1167,15 +1555,25 @@ def test_gateway_metrics_service_monitor_targets_only_agentgateway_data_plane(
 
 
 def test_llm_dashboard_queries_gateway_requests_tokens_latency_and_errors() -> None:
-    dashboard_manifest = yaml.safe_load(
-        (_ROOT / "infra/k8s/observability/base/grafana/dashboards/nohiki-llm.yaml").read_text(encoding="utf-8")
-    )
+    dashboard_manifest = load_mapping(_ROOT / "infra/k8s/observability/base/grafana/dashboards/nohiki-llm.yaml")
     assert dashboard_manifest["kind"] == "GrafanaDashboard"
-    dashboard = json.loads(dashboard_manifest["spec"]["json"])
-    canonical = json.loads((_ROOT / "infra/shared/dashboards/nohiki-llm.json").read_text(encoding="utf-8"))
+    dashboard_spec = dashboard_manifest["spec"]
+    assert isinstance(dashboard_spec, dict)
+    dashboard_json = dashboard_spec.get("json")
+    assert isinstance(dashboard_json, str)
+    dashboard = json.loads(dashboard_json)
+    assert isinstance(dashboard, dict)
+    canonical = load_mapping(_ROOT / "infra/shared/dashboards/nohiki-llm.json")
     assert dashboard == canonical
-    assert dashboard["uid"] == "nohiki-llm"
-    panels = {panel["title"]: panel for panel in dashboard["panels"]}
+    assert dashboard.get("uid") == "nohiki-llm"
+    panel_values = dashboard.get("panels")
+    assert isinstance(panel_values, list)
+    panels: dict[str, dict[object, object]] = {}
+    for panel in panel_values:
+        assert isinstance(panel, dict)
+        title = panel.get("title")
+        assert isinstance(title, str)
+        panels[title] = dict(panel)
     expected_queries = {
         "Model Gateway Requests": "agentgateway_requests_total",
         "Gateway Tokens by Provider and Model": "agentgateway_gen_ai_client_token_usage_sum",
@@ -1185,39 +1583,64 @@ def test_llm_dashboard_queries_gateway_requests_tokens_latency_and_errors() -> N
     }
     assert set(expected_queries) <= set(panels)
     for title, metric in expected_queries.items():
-        targets = panels[title]["targets"]
+        targets = panels[title].get("targets")
+        assert isinstance(targets, list)
         assert len(targets) == 1
-        assert metric in targets[0]["expr"]
-        assert targets[0]["datasource"] == {"type": "prometheus", "uid": "mimir"}
+        target = targets[0]
+        assert isinstance(target, dict)
+        expression = target.get("expr")
+        assert isinstance(expression, str)
+        assert metric in expression
+        assert target.get("datasource") == {"type": "prometheus", "uid": "mimir"}
 
 
 def test_local_and_managed_environments_use_distinct_secret_delivery_without_private_defaults() -> None:
-    base = yaml.safe_load((_CHART / "values.yaml").read_text(encoding="utf-8"))
-    local = yaml.safe_load((_CHART / "values.local.yaml").read_text(encoding="utf-8"))
-    assert "enabled" not in base["global"]["modelEgress"]
-    assert local["global"]["secrets"]["inlineSecretsEnabled"] is False
-    assert not local["global"].get("eso", {}).get("externalSecretsEnabled", False)
-
-    model_egress = base["global"]["modelEgress"]
-    assert model_egress["certificateSecretName"] == ""
-    assert model_egress["caSecretName"] == ""
+    base = load_mapping(_CHART / "values.yaml")
+    local = load_mapping(_CHART / "values.local.yaml")
+    base_global = base["global"]
+    local_global = local["global"]
+    assert isinstance(base_global, dict)
+    assert isinstance(local_global, dict)
+    model_egress = base_global.get("modelEgress")
+    assert isinstance(model_egress, dict)
+    assert "enabled" not in model_egress
+    secrets = local_global.get("secrets")
+    assert isinstance(secrets, dict)
+    assert secrets.get("inlineSecretsEnabled") is False
+    eso = local_global.get("eso", {})
+    assert isinstance(eso, dict)
+    assert not eso.get("externalSecretsEnabled", False)
+    assert model_egress.get("certificateSecretName") == ""
+    assert model_egress.get("caSecretName") == ""
     assert "clientSecretName" not in model_egress
-    credential_names = {
-        provider["credentialName"]
-        for backend in model_egress["backends"]
-        for group in backend["groups"]
-        for provider in group["providers"]
-    }
+    credential_names: set[object] = set()
+    backends = model_egress.get("backends")
+    assert isinstance(backends, list)
+    for backend in backends:
+        assert isinstance(backend, dict)
+        groups = backend.get("groups")
+        assert isinstance(groups, list)
+        for group in groups:
+            assert isinstance(group, dict)
+            providers = group.get("providers")
+            assert isinstance(providers, list)
+            for provider in providers:
+                assert isinstance(provider, dict)
+                credential_names.add(provider.get("credentialName"))
     assert credential_names == {"anthropic", "openai", "openrouter"}
     for values_name in ("values.staging.yaml", "values.prod.yaml"):
-        managed = yaml.safe_load((_CHART / values_name).read_text(encoding="utf-8"))["global"]
-        assert managed["eso"]["externalSecretsEnabled"] is True
-        assert managed["modelEgress"] == {"rateLimitsEnabled": True}, (
+        managed_document = load_mapping(_CHART / values_name)
+        managed = managed_document["global"]
+        assert isinstance(managed, dict)
+        eso = managed.get("eso")
+        assert isinstance(eso, dict)
+        assert eso.get("externalSecretsEnabled") is True
+        assert managed.get("modelEgress") == {"rateLimitsEnabled": True}, (
             "managed overlays may enable bounded gateway limits but must not inject disable switches, "
             "provider keys, or private endpoints"
         )
 
-    destinations = base["global"]["modelEgress"]["destinations"]
+    destinations = model_egress.get("destinations")
     assert destinations == [
         {
             "cidr": "0.0.0.0/0",

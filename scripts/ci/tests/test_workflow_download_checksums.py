@@ -5,9 +5,9 @@ import re
 from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
-from typing import Any
 
-import yaml
+import pytest
+from _documents import Workflow, WorkflowStep, load_mapping, load_workflow
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _WORKFLOWS = _REPOSITORY_ROOT / ".github" / "workflows"
@@ -45,39 +45,25 @@ def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-@cache
-def _load(path: Path) -> dict[str, Any]:
-    return yaml.safe_load(_read_text(path))
+def _run_scripts(workflow: Workflow) -> Iterator[str]:
+    for job in workflow["jobs"].values():
+        for step in job.get("steps", []):
+            if script := step.get("run"):
+                yield script
 
 
-def _run_scripts(value: object) -> Iterator[str]:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            if key == "run" and isinstance(child, str):
-                yield child
-            else:
-                yield from _run_scripts(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _run_scripts(child)
-
-
-def _action_steps(value: object, action: str) -> Iterator[dict[str, Any]]:
-    if isinstance(value, dict):
-        if isinstance(value.get("uses"), str) and value["uses"].startswith(f"{action}@"):
-            yield value
-        for child in value.values():
-            yield from _action_steps(child, action)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _action_steps(child, action)
+def _action_steps(workflow: Workflow, action: str) -> Iterator[WorkflowStep]:
+    for job in workflow["jobs"].values():
+        for step in job.get("steps", []):
+            if (uses := step.get("uses")) is not None and uses.startswith(f"{action}@"):
+                yield step
 
 
 def test_direct_workflow_downloads_are_verified_before_use() -> None:
     downloads = [
         (workflow_path.name, line.strip())
         for workflow_path in sorted(_WORKFLOWS.glob("*.yml"))
-        for script in _run_scripts(_load(workflow_path))
+        for script in _run_scripts(load_workflow(workflow_path))
         for line in script.splitlines()
         if _DOWNLOAD.search(line)
     ]
@@ -100,8 +86,18 @@ def test_vendored_gateway_api_crds_match_pinned_release_checksum() -> None:
 
 
 def test_foundation_chart_pins_kgateway_and_cnpg() -> None:
-    chart = _load(_FOUNDATION_CHART / "Chart.yaml")
-    versions = {dep["name"]: dep["version"] for dep in chart["dependencies"]}
+    chart = load_mapping(_FOUNDATION_CHART / "Chart.yaml")
+    match chart.get("dependencies"):
+        case list(dependencies):
+            versions: dict[str, object] = {}
+            for dependency in dependencies:
+                match dependency:
+                    case {"name": str(name), "version": version}:
+                        versions[name] = version
+                    case _:
+                        pytest.fail("chart dependency must have a string name and version")
+        case _:
+            pytest.fail("chart dependencies must be a list")
     assert versions["kgateway"] == _KGATEWAY_VERSION
     assert versions["kgateway-crds"] == _KGATEWAY_VERSION
     assert versions["cloudnative-pg"] == _CNPG_VERSION
@@ -124,7 +120,7 @@ def test_buf_comes_from_the_flake_not_workflow_actions() -> None:
     occurrences = [
         (workflow_path, step.get("with", {}).get("version"))
         for workflow_path in sorted(_WORKFLOWS.glob("*.yml"))
-        for step in _action_steps(_load(workflow_path), "bufbuild/buf-action")
+        for step in _action_steps(load_workflow(workflow_path), "bufbuild/buf-action")
     ]
 
     assert not occurrences, occurrences
@@ -137,21 +133,24 @@ def test_infrastructure_workflows_use_only_the_audited_opentofu_setup() -> None:
     setup_terraform: list[Path] = []
 
     for workflow_path in sorted(_WORKFLOWS.glob("*.yml")):
-        workflow = _load(workflow_path)
+        workflow = load_workflow(workflow_path)
         setup_steps = list(_action_steps(workflow, "opentofu/setup-opentofu"))
         if setup_steps:
             counts[workflow_path.name] = len(setup_steps)
         if list(_action_steps(workflow, "hashicorp/setup-terraform")):
             setup_terraform.append(workflow_path)
-        occurrences.extend(
-            (
-                workflow_path,
-                step["uses"].partition("@")[2],
-                step.get("with", {}).get("tofu_version"),
-                step.get("with", {}).get("tofu_wrapper", True),
+        for step in setup_steps:
+            with_inputs = step.get("with", {})
+            tofu_version = with_inputs.get("tofu_version")
+            assert tofu_version is None or isinstance(tofu_version, str)
+            occurrences.append(
+                (
+                    workflow_path,
+                    step["uses"].partition("@")[2],
+                    tofu_version,
+                    with_inputs.get("tofu_wrapper", True),
+                )
             )
-            for step in setup_steps
-        )
         setup_pins.extend(
             (workflow_path, match["ref"], match["version"])
             for match in _ACTION.finditer(_read_text(workflow_path))

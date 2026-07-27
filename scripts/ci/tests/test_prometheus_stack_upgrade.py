@@ -4,10 +4,9 @@ import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import pytest
-import yaml
+from _documents import Manifest, load_manifests, load_mapping
 from helm_test_utils import runtime_eso_args
 from test_image_digest_gitops import _digest_values
 
@@ -30,11 +29,7 @@ _WEBHOOK = (
 )
 
 
-def _load(path: Path) -> dict[str, Any]:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
-
-
-def _render(environment: str) -> list[dict[str, Any]]:
+def _render(environment: str) -> list[Manifest]:
     command = [
         "helm",
         "template",
@@ -63,49 +58,89 @@ def _render(environment: str) -> list[dict[str, Any]]:
             result = subprocess.run(command, cwd=_CHART, capture_output=True, text=True, check=True)
     else:
         result = subprocess.run(command, cwd=_CHART, capture_output=True, text=True, check=True)
-    return [doc for doc in yaml.safe_load_all(result.stdout) if isinstance(doc, dict)]
+    return load_manifests(result.stdout)
 
 
 def _images(value: object) -> set[str]:
+    images: set[str] = set()
     if isinstance(value, dict):
-        own = {value["image"]} if isinstance(value.get("image"), str) else set()
-        return own | set().union(*(_images(child) for child in value.values()))
-    if isinstance(value, list):
-        return set().union(*(_images(child) for child in value))
-    return set()
+        image = value.get("image")
+        if isinstance(image, str):
+            images.add(image)
+        for child in value.values():
+            images.update(_images(child))
+    elif isinstance(value, list):
+        for child in value:
+            images.update(_images(child))
+    return images
 
 
-def _strings(value: object) -> set[str]:
+def _collect_strings(value: object) -> set[str]:
+    strings: set[str] = set()
     if isinstance(value, dict):
-        return set().union(*(_strings(child) for child in value.values()))
-    if isinstance(value, list):
-        return set().union(*(_strings(child) for child in value))
-    return {value} if isinstance(value, str) else set()
+        for child in value.values():
+            strings.update(_collect_strings(child))
+    elif isinstance(value, list):
+        for child in value:
+            strings.update(_collect_strings(child))
+    elif isinstance(value, str):
+        strings.add(value)
+    return strings
 
 
-def _inventory(documents: list[dict[str, Any]], kind: str) -> set[str]:
-    return {doc["metadata"]["name"] for doc in documents if doc.get("kind") == kind}
+def _inventory(documents: list[Manifest], kind: str) -> set[str]:
+    return {document["metadata"]["name"] for document in documents if document["kind"] == kind}
 
 
 def test_kube_prometheus_stack_dependency_is_locked_to_87_15() -> None:
-    chart = _load(_CHART / "Chart.yaml")
-    lock = _load(_CHART / "Chart.lock")
-    assert next(d for d in chart["dependencies"] if d["name"] == "kube-prometheus-stack")["version"] == _STACK_VERSION
-    assert next(d for d in lock["dependencies"] if d["name"] == "kube-prometheus-stack")["version"] == _STACK_VERSION
+    chart = load_mapping(_CHART / "Chart.yaml")
+    lock = load_mapping(_CHART / "Chart.lock")
+    chart_dependencies = chart["dependencies"]
+    lock_dependencies = lock["dependencies"]
+    assert isinstance(chart_dependencies, list)
+    assert isinstance(lock_dependencies, list)
+    assert all(isinstance(dependency, dict) for dependency in chart_dependencies)
+    assert all(isinstance(dependency, dict) for dependency in lock_dependencies)
+    assert (
+        next(
+            dependency.get("version")
+            for dependency in chart_dependencies
+            if isinstance(dependency, dict) and dependency.get("name") == "kube-prometheus-stack"
+        )
+        == _STACK_VERSION
+    )
+    assert (
+        next(
+            dependency.get("version")
+            for dependency in lock_dependencies
+            if isinstance(dependency, dict) and dependency.get("name") == "kube-prometheus-stack"
+        )
+        == _STACK_VERSION
+    )
     assert _STACK_ARCHIVE.is_file()
 
 
 def test_operator_values_use_current_keys_and_immutable_images() -> None:
-    operator = _load(_CHART / "values.yaml")["kube-prometheus-stack"]["prometheusOperator"]
-    assert operator["image"] == {
+    values = load_mapping(_CHART / "values.yaml")
+    stack = values["kube-prometheus-stack"]
+    assert isinstance(stack, dict)
+    operator = stack.get("prometheusOperator")
+    assert isinstance(operator, dict)
+    assert operator.get("image") == {
         "tag": "v0.92.1",
         "sha": "7d9247d2351480fc74587e24681578f815f387bafb2ee7b86a852a94c4cd3774",
     }
-    assert operator["prometheusConfigReloader"]["image"] == {
+    reloader = operator.get("prometheusConfigReloader")
+    assert isinstance(reloader, dict)
+    assert reloader.get("image") == {
         "tag": "v0.92.1",
         "sha": "74550ba3e8bf93f47bc574231090d340ae9c01d25cd11ff74799e65f9fdb9a48",
     }
-    assert operator["admissionWebhooks"]["patch"]["image"] == {
+    admission_webhooks = operator.get("admissionWebhooks")
+    assert isinstance(admission_webhooks, dict)
+    patch = admission_webhooks.get("patch")
+    assert isinstance(patch, dict)
+    assert patch.get("image") == {
         "tag": "1.8.4",
         "sha": "76a2170cd0c9a7758c4ac8ac5bbe9b6f73e869a15ffb77d9f684664f7d7b96b1",
     }
@@ -118,13 +153,17 @@ def test_stack_renders_expected_workloads_and_exact_images(environment: str) -> 
     documents = _render(environment)
     images = _images(documents)
     assert {_OPERATOR, _WEBHOOK} <= images
-    assert any(_RELOADER in value for value in _strings(documents))
+    assert any(_RELOADER in value for value in _collect_strings(documents))
     workloads = {
         (kind, name)
         for kind in ("DaemonSet", "Deployment", "Job")
         for name in _inventory(documents, kind)
         if name.startswith(
-            ("nohiki-prometheus-node-exporter", "nohiki-kube-prometheus-sta", "nohiki-kube-state-metrics")
+            (
+                "nohiki-prometheus-node-exporter",
+                "nohiki-kube-prometheus-sta",
+                "nohiki-kube-state-metrics",
+            )
         )
     }
     assert workloads == {
@@ -139,11 +178,12 @@ def test_stack_renders_expected_workloads_and_exact_images(environment: str) -> 
 def test_current_monitoring_crds_are_packaged() -> None:
     archive = _STACK_ARCHIVE
     with tarfile.open(archive) as chart:
-        texts = [
-            chart.extractfile(member).read().decode()
-            for member in chart.getmembers()
-            if member.isfile() and "/crds/crd-" in member.name and member.name.endswith(".yaml")
-        ]
+        texts: list[str] = []
+        for member in chart.getmembers():
+            if member.isfile() and "/crds/crd-" in member.name and member.name.endswith(".yaml"):
+                extracted = chart.extractfile(member)
+                assert extracted is not None
+                texts.append(extracted.read().decode())
     by_name = {
         line.removeprefix("  name: "): text
         for text in texts
@@ -171,34 +211,72 @@ def test_current_monitoring_crds_are_packaged() -> None:
 
 
 def test_observability_contract_is_preserved_across_environments() -> None:
-    base = _load(_CHART / "values.yaml")["kube-prometheus-stack"]["prometheus"]["prometheusSpec"]
-    assert base["storageSpec"] == {
+    values = load_mapping(_CHART / "values.yaml")
+    stack = values["kube-prometheus-stack"]
+    assert isinstance(stack, dict)
+    prometheus_values = stack.get("prometheus")
+    assert isinstance(prometheus_values, dict)
+    base = prometheus_values.get("prometheusSpec")
+    assert isinstance(base, dict)
+    base_storage_spec = base.get("storageSpec")
+    assert base_storage_spec == {
         "volumeClaimTemplate": {
-            "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "20Gi"}}}
+            "spec": {
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {"requests": {"storage": "20Gi"}},
+            }
         }
     }
-    assert base["remoteWrite"][0]["headers"] == {"X-Scope-OrgID": "nohiki"}
-    assert base["remoteWrite"][0]["writeRelabelConfigs"] == [
+    remote_write = base.get("remoteWrite")
+    assert isinstance(remote_write, list)
+    assert all(isinstance(item, dict) for item in remote_write)
+    assert isinstance(remote_write[0], dict)
+    assert remote_write[0].get("headers") == {"X-Scope-OrgID": "nohiki"}
+    assert remote_write[0].get("writeRelabelConfigs") == [
         {"sourceLabels": ["__name__"], "regex": "go_.*", "action": "drop"}
     ]
     rendered = {environment: _render(environment) for environment in _ENVS}
     for environment, documents in rendered.items():
-        prometheus = next(doc for doc in documents if doc.get("kind") == "Prometheus")
-        overlay_spec = _load(_CHART / f"values.{environment}.yaml")["kube-prometheus-stack"]["prometheus"][
-            "prometheusSpec"
-        ]
-        expected_storage = overlay_spec.get("storageSpec", base["storageSpec"])["volumeClaimTemplate"]["spec"][
-            "resources"
-        ]["requests"]["storage"]
-        assert (
-            prometheus["spec"]["storage"]["volumeClaimTemplate"]["spec"]["resources"]["requests"]["storage"]
-            == expected_storage
-        )
-        assert prometheus["spec"]["storage"]["volumeClaimTemplate"]["spec"]["accessModes"] == ["ReadWriteOnce"]
+        prometheus = next(document for document in documents if document["kind"] == "Prometheus")
+        overlay_values = load_mapping(_CHART / f"values.{environment}.yaml")
+        overlay_stack = overlay_values["kube-prometheus-stack"]
+        assert isinstance(overlay_stack, dict)
+        overlay_prometheus = overlay_stack.get("prometheus")
+        assert isinstance(overlay_prometheus, dict)
+        overlay_spec = overlay_prometheus.get("prometheusSpec")
+        assert isinstance(overlay_spec, dict)
+        storage_spec = overlay_spec.get("storageSpec", base_storage_spec)
+        assert isinstance(storage_spec, dict)
+        volume_claim = storage_spec.get("volumeClaimTemplate")
+        assert isinstance(volume_claim, dict)
+        claim_spec = volume_claim.get("spec")
+        assert isinstance(claim_spec, dict)
+        resources = claim_spec.get("resources")
+        assert isinstance(resources, dict)
+        requests = resources.get("requests")
+        assert isinstance(requests, dict)
+        expected_storage = requests.get("storage")
+
+        prometheus_spec = prometheus["spec"]
+        assert isinstance(prometheus_spec, dict)
+        rendered_storage = prometheus_spec.get("storage")
+        assert isinstance(rendered_storage, dict)
+        rendered_claim = rendered_storage.get("volumeClaimTemplate")
+        assert isinstance(rendered_claim, dict)
+        rendered_claim_spec = rendered_claim.get("spec")
+        assert isinstance(rendered_claim_spec, dict)
+        rendered_resources = rendered_claim_spec.get("resources")
+        assert isinstance(rendered_resources, dict)
+        rendered_requests = rendered_resources.get("requests")
+        assert isinstance(rendered_requests, dict)
+        assert rendered_requests.get("storage") == expected_storage
+        assert rendered_claim_spec.get("accessModes") == ["ReadWriteOnce"]
         namespace = "nohiki" if environment == "local" else f"nohiki-{environment}"
-        assert prometheus["spec"]["remoteWrite"][0]["url"] == (
-            f"http://nohiki-mimir-nginx.{namespace}.svc:80/api/v1/push"
-        )
+        rendered_remote_write = prometheus_spec.get("remoteWrite")
+        assert isinstance(rendered_remote_write, list)
+        assert all(isinstance(item, dict) for item in rendered_remote_write)
+        assert isinstance(rendered_remote_write[0], dict)
+        assert rendered_remote_write[0].get("url") == f"http://nohiki-mimir-nginx.{namespace}.svc:80/api/v1/push"
     assert (
         _inventory(rendered["local"], "PrometheusRule")
         == _inventory(rendered["staging"], "PrometheusRule")

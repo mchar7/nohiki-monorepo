@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
+from _documents import Manifest, load_manifests
 from test_image_digest_gitops import _digest_values
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -78,20 +78,12 @@ def _template(values_file: str, tmp_path: Path | None = None, *extra_args: str) 
     return result.stdout
 
 
-def _documents(stdout: str) -> list[dict[str, object]]:
-    return [document for document in yaml.safe_load_all(stdout) if isinstance(document, dict)]
-
-
-def _jobs_by_suffix(documents: list[dict[str, object]], suffix: str) -> list[dict[str, object]]:
+def _jobs_by_suffix(documents: list[Manifest], suffix: str) -> list[Manifest]:
     return [
         document
         for document in documents
-        if document.get("kind") == "Job" and document["metadata"]["name"].endswith(suffix)
+        if document["kind"] == "Job" and document["metadata"]["name"].endswith(suffix)
     ]
-
-
-def _annotations(document: dict[str, object]) -> dict[str, str]:
-    return document.get("metadata", {}).get("annotations", {})
 
 
 def _annotation_tokens(value: str) -> frozenset[str]:
@@ -99,11 +91,11 @@ def _annotation_tokens(value: str) -> frozenset[str]:
 
 
 def test_migration_jobs_order_through_helm_hooks_without_argo() -> None:
-    documents = _documents(_template("values.local.yaml"))
+    documents = load_manifests(_template("values.local.yaml"))
     jobs = _jobs_by_suffix(documents, "-db-migrate")
     assert jobs, "no per-service migration Jobs rendered from the local values"
     for job in jobs:
-        annotations = _annotations(job)
+        annotations = job["metadata"].get("annotations", {})
         for key, expected_tokens in _MIGRATION_HOOK_TOKENS.items():
             actual_tokens = _annotation_tokens(annotations.get(key, ""))
             assert actual_tokens == expected_tokens, (
@@ -126,7 +118,7 @@ def test_production_render_carries_no_argo_annotations(tmp_path: Path) -> None:
 
 
 def test_qdrant_and_skill_bootstrap_jobs_keep_helm_hooks() -> None:
-    documents = _documents(
+    documents = load_manifests(
         _template(
             "values.local.yaml",
             None,
@@ -138,15 +130,15 @@ def test_qdrant_and_skill_bootstrap_jobs_keep_helm_hooks() -> None:
     )
     qdrant = _jobs_by_suffix(documents, "-qdrant-init")
     assert len(qdrant) == 1, "expected exactly one qdrant-init hook Job"
-    assert _annotations(qdrant[0]) == _QDRANT_HOOK
+    assert qdrant[0]["metadata"].get("annotations", {}) == _QDRANT_HOOK
 
     bootstrap = _jobs_by_suffix(documents, "-bootstrap")
     assert len(bootstrap) == 1, "expected the skill-graph bootstrap hook Job when enabled"
-    assert _annotations(bootstrap[0]) == _BOOTSTRAP_HOOK
+    assert bootstrap[0]["metadata"].get("annotations", {}) == _BOOTSTRAP_HOOK
 
 
 def test_managed_secret_hooks_survive_neutrality() -> None:
-    documents = _documents(
+    documents = load_manifests(
         _template(
             "values.local.yaml",
             None,
@@ -157,15 +149,15 @@ def test_managed_secret_hooks_survive_neutrality() -> None:
     hooked = [
         document
         for document in documents
-        if document.get("kind") == "Secret" and "helm.sh/hook" in _annotations(document)
+        if document["kind"] == "Secret" and "helm.sh/hook" in document["metadata"].get("annotations", {})
     ]
     assert hooked, "inline Secret template rendered no pre-hook Secrets"
     for secret in hooked:
-        assert _annotations(secret) == _SECRET_HOOK, secret["metadata"]["name"]
+        assert secret["metadata"].get("annotations", {}) == _SECRET_HOOK, secret["metadata"]["name"]
 
 
 @pytest.mark.parametrize("values_file", ["values.local.yaml", "values.dev.yaml", "values.staging.yaml"])
 def test_nonproduction_value_sets_render(values_file: str) -> None:
-    documents = _documents(_template(values_file))
-    kinds = {document.get("kind") for document in documents}
+    documents = load_manifests(_template(values_file))
+    kinds = {document["kind"] for document in documents}
     assert {"Deployment", "Job"} <= kinds, sorted(kinds)
