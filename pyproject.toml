@@ -210,6 +210,11 @@ members = [
     "scripts/util/health_check",
     "scripts/benchmark",
     "scripts/util/scaffold",
+    "scripts/util/ast_explorer",
+    # ML analysis and training tools
+    "scripts/ml/calibrate_skill_thresholds",
+    "scripts/ml/job_embedding_finetuning",
+    "scripts/ml/skill_semantic_analysis",
 ]
 
 [tool.uv.sources]
@@ -445,12 +450,12 @@ root = [
     "scripts/ci/src",
     "scripts/util/health_check/src",
     "scripts/util/scaffold/src",
+    "scripts/util/ast_explorer/src",
     "scripts/benchmark/src",
-    # Flat-layout source roots (non-workspace scripts: ast_explorer,
-    # calibrate_skill_thresholds, job_embedding_finetuning, skill_semantic_analysis,
-    # standalone .py files in scripts/ and scripts/util/).
-    "scripts/util/ast_explorer",
-    "scripts/ml",
+    "scripts/ml/calibrate_skill_thresholds/src",
+    "scripts/ml/job_embedding_finetuning/src",
+    "scripts/ml/skill_semantic_analysis/src",
+    # Standalone .py files in scripts/ and scripts/util/.
     "scripts",
 ]
 extra-paths = [
@@ -504,7 +509,7 @@ unresolved-attribute = "ignore"
 # guards against non-CUDA execution with an explicit RuntimeError check.
 [[tool.ty.overrides]]
 include = [
-    "scripts/ml/job_embedding_finetuning/job_embedding_finetuning/training/trainer.py",
+    "scripts/ml/job_embedding_finetuning/src/job_embedding_finetuning/training/trainer.py",
 ]
 [tool.ty.overrides.rules]
 unresolved-import = "ignore"

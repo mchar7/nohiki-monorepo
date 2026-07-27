@@ -77,6 +77,8 @@ _TEST_AND_RUNTIME: tuple[str, ...] = (
     "triton",
     "pylate",
     "fastembed",
+    # Hugging Face Trainer loads accelerate through its own entry points.
+    "accelerate",
     "opentelemetry-instrumentation-grpc",
     "opentelemetry-instrumentation-redis",
     "opentelemetry-instrumentation-requests",

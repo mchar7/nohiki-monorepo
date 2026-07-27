@@ -18,13 +18,16 @@ conflicts = [[
 
 [manifest]
 members = [
+    "ast-explorer",
     "bff-service",
+    "calibrate-skill-thresholds",
     "ci-checks",
     "doc-content-service",
     "doc-process-service",
     "doc-template-service",
     "health-check",
     "job-correlation-evaluation-service",
+    "job-embedding-finetuning",
     "job-ingest-discovery-service",
     "job-ingest-enrichment-service",
     "job-ingest-schedule-service",
@@ -56,6 +59,7 @@ members = [
     "notification-service",
     "qdrant-init",
     "skill-graph-service",
+    "skill-semantic-analysis",
     "snapshot-refresh-job",
     "sys-tick-job",
     "tailor",
@@ -383,6 +387,27 @@ wheels = [
 ]
 
 [[package]]
+name = "ast-explorer"
+version = "0.1.0"
+source = { editable = "scripts/util/ast_explorer" }
+dependencies = [
+    { name = "pyyaml" },
+    { name = "rich" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-python" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "rich", specifier = ">=14.0.0" },
+    { name = "tree-sitter", specifier = ">=0.25.0" },
+    { name = "tree-sitter-python", specifier = ">=0.25.0" },
+    { name = "typer", specifier = ">=0.21.0" },
+]
+
+[[package]]
 name = "async-timeout"
 version = "5.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -634,6 +659,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/27/f0/7b6ad8a00bf229c026f0b7afc3c83203fc7c9e4a83c4bc1415e2aa5840ab/ca9-0.5.0.tar.gz", hash = "sha256:0d9fbb37edc8460242c3bad5e3257050216b981648db6d066de0ba8d8e24248f", size = 1926482, upload-time = "2026-06-27T09:07:07.387Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/17/1a/8b2fc124d485bcd710b9aadb1e4e7a4fb504e87199717becfe8c13f6af26/ca9-0.5.0-py3-none-any.whl", hash = "sha256:55c4eec3caaa853d49a34fedce29eba46cd8d2b34bd3b4bc06f0a4c1e0f81f57", size = 205585, upload-time = "2026-06-27T09:07:05.455Z" },
+]
+
+[[package]]
+name = "calibrate-skill-thresholds"
+version = "0.1.0"
+source = { editable = "scripts/ml/calibrate_skill_thresholds" }
+dependencies = [
+    { name = "numpy" },
+    { name = "rich" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.5.1" },
+    { name = "rich", specifier = ">=14.0" },
+    { name = "typer", specifier = ">=0.26.8" },
 ]
 
 [[package]]
@@ -2081,6 +2123,48 @@ requires-dist = [
     { name = "uuid-utils", specifier = ">=0.14.0" },
 ]
 provides-extras = ["test"]
+
+[[package]]
+name = "job-embedding-finetuning"
+version = "0.1.0"
+source = { editable = "scripts/ml/job_embedding_finetuning" }
+dependencies = [
+    { name = "accelerate" },
+    { name = "datasets" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "rich" },
+    { name = "sentence-transformers" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-18-ml-compute-service-cpu') or (sys_platform == 'linux' and extra == 'extra-18-ml-compute-service-cpu' and extra == 'extra-18-ml-compute-service-cuda') or (sys_platform == 'win32' and extra == 'extra-18-ml-compute-service-cpu' and extra == 'extra-18-ml-compute-service-cuda')" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra != 'extra-18-ml-compute-service-cpu') or (extra == 'extra-18-ml-compute-service-cpu' and extra == 'extra-18-ml-compute-service-cuda')" },
+    { name = "torch", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'linux' and extra == 'extra-18-ml-compute-service-cpu') or (sys_platform == 'linux' and extra != 'extra-18-ml-compute-service-cuda') or (sys_platform == 'win32' and extra == 'extra-18-ml-compute-service-cpu') or (sys_platform == 'win32' and extra != 'extra-18-ml-compute-service-cuda') or (extra == 'extra-18-ml-compute-service-cpu' and extra == 'extra-18-ml-compute-service-cuda')" },
+    { name = "torch", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "(sys_platform == 'linux' and extra == 'extra-18-ml-compute-service-cuda') or (sys_platform == 'win32' and extra == 'extra-18-ml-compute-service-cuda') or (extra == 'extra-18-ml-compute-service-cpu' and extra == 'extra-18-ml-compute-service-cuda')" },
+    { name = "typer" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = ">=0.30.0" },
+    { name = "datasets", specifier = ">=3.0.0" },
+    { name = "numpy", specifier = ">=2.5.1" },
+    { name = "pandas", specifier = ">=2.3.3,<3" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "rich", specifier = ">=13.0.0" },
+    { name = "sentence-transformers", specifier = ">=5.3.0,<5.4" },
+    { name = "torch", specifier = ">=2.0.0" },
+    { name = "typer", specifier = ">=0.26.8" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "job-ingest-discovery-service"
@@ -5860,6 +5944,25 @@ requires-dist = [
     { name = "uuid-utils", specifier = ">=0.14.0" },
 ]
 provides-extras = ["test"]
+
+[[package]]
+name = "skill-semantic-analysis"
+version = "0.1.0"
+source = { editable = "scripts/ml/skill_semantic_analysis" }
+dependencies = [
+    { name = "numpy" },
+    { name = "rich" },
+    { name = "sentence-transformers" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.5.1" },
+    { name = "rich", specifier = ">=13.0" },
+    { name = "sentence-transformers", specifier = ">=5.3.0,<5.4" },
+    { name = "typer", specifier = ">=0.26.8" },
+]
 
 [[package]]
 name = "skylos"

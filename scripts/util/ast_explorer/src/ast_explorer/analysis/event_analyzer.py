@@ -83,10 +83,10 @@ def _parse_group_id(decorator_text: str) -> str | None:
 class EventAnalyzer:
     """Analyzes Kafka event flows across a codebase."""
 
-    def __init__(self, root: Path, topic_registry: TopicRegistry | None = None) -> None:
-        """Initialize analyzer with root path and optional topic registry."""
+    def __init__(self, root: Path, topics: dict[str, str] | None = None) -> None:
+        """Initialize analyzer with root path and optional topic constant mapping."""
         self.root = root.resolve()
-        self.topic_registry = topic_registry or TopicRegistry()
+        self.topic_registry = TopicRegistry(topics=topics or {})
         self._handlers: list[EventHandler] = []
         self._publishers: list[EventPublisher] = []
 
@@ -237,25 +237,23 @@ class EventAnalyzer:
         return services.setdefault(name, ServiceEventMap(service_name=name, service_path=path))
 
 
-def load_topic_registry(topics_file: Path) -> TopicRegistry:
-    """Load topic registry from nohiki-kafka-client topics.py."""
-    registry = TopicRegistry()
+def load_topic_values(topics_file: Path) -> dict[str, str]:
+    """Load topic constant-to-value mappings from nohiki-kafka-client topics.py."""
+    topics: dict[str, str] = {}
 
     try:
         content = topics_file.read_text(encoding="utf-8")
     except OSError, UnicodeDecodeError:
-        return registry
+        return topics
 
     pattern = re.compile(r'(\w+):\s*Final\[str\]\s*=\s*"([^"]+)"')
     for match in pattern.finditer(content):
-        constant_name = match.group(1)
-        topic_value = match.group(2)
-        registry.topics[constant_name] = topic_value
+        topics[match.group(1)] = match.group(2)
 
-    return registry
+    return topics
 
 
 def analyze_event_flows(codebase: CodebaseAST, topics_file: Path | None = None) -> EventFlowGraph:
     """Analyze event flows in a codebase."""
-    registry = load_topic_registry(topics_file) if topics_file and topics_file.exists() else None
-    return EventAnalyzer(codebase.root, registry).analyze(codebase)
+    topics = load_topic_values(topics_file) if topics_file and topics_file.exists() else {}
+    return EventAnalyzer(codebase.root, topics).analyze(codebase)

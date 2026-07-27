@@ -83,22 +83,6 @@ def query_symbols(
     return [symbol for symbol in codebase.get_all_symbols(include_tests=include_tests) if filter_.matches(symbol)]
 
 
-def find_symbol_by_qualified_name(
-    codebase: CodebaseAST,
-    qualified_name: str,
-) -> SymbolNode | None:
-    """Find a symbol by its fully qualified name."""
-    return codebase.find_symbol(qualified_name)
-
-
-def search_symbols_by_name(
-    codebase: CodebaseAST,
-    pattern: str,
-) -> list[SymbolNode]:
-    """Search symbols by name pattern (case-insensitive contains)."""
-    return codebase.search_symbols(pattern)
-
-
 def get_public_api(codebase: CodebaseAST, *, include_tests: bool = False) -> list[SymbolNode]:
     """Get all public API symbols (classes, functions, constants)."""
     filter_ = QueryFilter(

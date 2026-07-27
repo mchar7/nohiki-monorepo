@@ -83,36 +83,6 @@ def get_all_adapters(data_dir: Path) -> list[DatasetAdapter]:
     return [adapter_class(data_dir) for _, adapter_class in _REGISTRY.values()]
 
 
-def get_dataset_info(name: str) -> DatasetInfo:
-    """Get dataset metadata by name.
-
-    Args:
-        name: The dataset name.
-
-    Returns:
-        The dataset metadata.
-
-    Raises:
-        KeyError: If the dataset name is not registered.
-
-    """
-    if name not in _REGISTRY:
-        msg = f"Unknown dataset: {name}"
-        raise KeyError(msg)
-    info, _ = _REGISTRY[name]
-    return info
-
-
-def list_datasets() -> Sequence[DatasetInfo]:
-    """List all registered datasets.
-
-    Returns:
-        Sequence of all registered dataset metadata.
-
-    """
-    return [info for info, _ in _REGISTRY.values()]
-
-
 def list_datasets_by_tier(tier: DatasetTier) -> Sequence[DatasetInfo]:
     """List datasets for a specific tier.
 

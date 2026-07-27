@@ -206,14 +206,3 @@ class EventFlowGraph:
 
         _trace(start_topic, [], 0)
         return chains
-
-    def _get_downstream_topics(self, flow: EventFlow, current_topic: str) -> list[str]:
-        """Get topics produced by services that consume the given flow."""
-        topics: list[str] = []
-        for consumer_service in flow.consumer_services:
-            service = self.services.get(consumer_service)
-            if service:
-                topics.extend(
-                    pub.topic.topic_constant for pub in service.produces if pub.topic.topic_constant != current_topic
-                )
-        return topics

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
@@ -21,7 +20,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_DESCRIPTION_LENGTH = 512
 MIN_TEXT_LENGTH = 3
 ERR_NOT_LOADED = "Dataset not loaded. Call load() first."
 
@@ -251,35 +249,3 @@ def find_data_file(directory: Path, patterns: list[str]) -> Path | None:
         if matches:
             return matches[0]
     return None
-
-
-def get_column_value(
-    row: pd.Series[object],
-    columns: list[str],
-    default: str = "",
-) -> str:
-    """Get first available column value from a row."""
-    for col in columns:
-        if col in row.index and pd.notna(row[col]):
-            return str(row[col]).strip()
-    return default
-
-
-def extract_skills(skills_data: object) -> list[str]:
-    """Extract skill strings from various array-like formats."""
-    if skills_data is None or (isinstance(skills_data, float) and pd.isna(skills_data)):
-        return []
-    if isinstance(skills_data, str):
-        if "," in skills_data:
-            return [s.strip() for s in skills_data.split(",") if s.strip()]
-        return [skills_data.strip()] if skills_data.strip() else []
-    if isinstance(skills_data, Iterable):
-        return [str(s).strip() for s in skills_data if s and str(s).strip()]
-    return []
-
-
-def truncate_text(text: str, max_length: int = MAX_DESCRIPTION_LENGTH) -> str:
-    """Truncate text to maximum length."""
-    if len(text) <= max_length:
-        return text
-    return text[:max_length].rsplit(" ", 1)[0] + "..."
