@@ -21,6 +21,10 @@ def metrics() -> JobEnrichmentMetrics:
 class TestJobEnrichmentMetrics:
     """Tests for JobEnrichmentMetrics class."""
 
+    def teardown_method(self) -> None:
+        """Clear the cached metrics instance after each test."""
+        get_job_enrichment_metrics.cache_clear()
+
     def test_record_pipeline_stage(self, metrics: JobEnrichmentMetrics) -> None:
         """Test recording pipeline stage transitions."""
         mock_counter = MagicMock(spec=Counter)

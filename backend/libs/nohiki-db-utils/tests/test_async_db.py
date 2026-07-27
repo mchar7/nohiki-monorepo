@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,12 +14,20 @@ from nohiki_db_utils.async_db import (
     _engine_registry,
     _from_hashable,
     _get_async_engine_cached,
+    _get_async_sessionmaker_cached,
     close_all_engines,
     db_session,
     get_async_engine,
     get_async_sessionmaker,
 )
 from nohiki_db_utils.testing import create_mock_session
+
+
+@pytest.fixture(autouse=True)
+def _clear_sessionmaker_cache() -> Generator[None]:
+    _get_async_sessionmaker_cached.cache_clear()
+    yield
+    _get_async_sessionmaker_cached.cache_clear()
 
 
 class MockDatabaseConfig:

@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from uuid import uuid4
 
 import pytest
 from job_correlation_evaluation_service.services.scoring.listing_quality import (
     ListingFeedbackAggregate,
     ListingQualityPredictor,
+    _get_listing_quality_config,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_listing_quality_cache() -> Generator[None]:
+    _get_listing_quality_config.cache_clear()
+    yield
+    _get_listing_quality_config.cache_clear()
 
 
 def _aggregate(good: int = 0, too_high: int = 0, too_low: int = 0) -> ListingFeedbackAggregate:

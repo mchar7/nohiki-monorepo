@@ -26,12 +26,16 @@ os.environ.setdefault("JOB_QUERY_COMPOSITION_KAFKA__DSN", "kafka://localhost:290
 os.environ.setdefault("JOB_QUERY_COMPOSITION_KAFKA__CONSUMER_GROUP", "test-consumer-group")
 os.environ.setdefault("ENVIRONMENT", "development")
 
+from collections.abc import Generator
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Generator[None]:
     """Reset settings cache between tests."""
     from job_query_composition_service.core.config import get_settings
 
+    get_settings.cache_clear()
+    yield
     get_settings.cache_clear()

@@ -80,14 +80,13 @@ class TestImportErrorPath:
         with pytest.raises(DoclingNotAvailableError):
             require_docling()
 
-    def test_import_error_path_coverage(self) -> None:
+    def test_import_error_path_coverage(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test ImportError path by mocking the import to fail."""
         import sys
 
-        # Remove the module if already imported
+        # Remove the module if already imported and restore it after the test.
         module_name = "doc_process_service.providers.docling.types"
-        if module_name in sys.modules:
-            del sys.modules[module_name]
+        monkeypatch.delitem(sys.modules, module_name, raising=False)
 
         # Mock the docling_core import to fail
         with patch.dict("sys.modules", {"docling_core.types.doc": None}):

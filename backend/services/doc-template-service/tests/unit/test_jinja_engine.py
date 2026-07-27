@@ -3,6 +3,7 @@
 import itertools
 import multiprocessing
 import time
+from collections.abc import Generator
 
 import pytest
 from doc_template_service.core.templates.jinja_engine import (
@@ -23,6 +24,13 @@ from doc_template_service.core.templates.jinja_engine import (
     validate_template,
 )
 from doc_template_service.schemas.models import ValidationReport
+
+
+@pytest.fixture(autouse=True)
+def _clear_environment_cache() -> Generator[None]:
+    get_cached_environment.cache_clear()
+    yield
+    get_cached_environment.cache_clear()
 
 
 class TestTemplateSizeError:

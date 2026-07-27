@@ -1,10 +1,19 @@
 """Tests for core/db module."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nohiki_db_utils.testing import create_mock_session
+
+
+@pytest.fixture(autouse=True)
+def _clear_db_dependencies_cache() -> Generator[None]:
+    from bff_service.core.db import _get_db_deps
+
+    _get_db_deps.cache_clear()
+    yield
+    _get_db_deps.cache_clear()
 
 
 @pytest.mark.asyncio

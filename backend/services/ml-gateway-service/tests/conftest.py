@@ -26,7 +26,11 @@ os.environ.setdefault("ENVIRONMENT", "development")
 from typing import TYPE_CHECKING
 
 import pytest
-from ml_gateway_service.providers.base import BaseMLProvider, MLOperationType, ProviderCapabilities
+from ml_gateway_service.providers.base import (
+    BaseMLProvider,
+    MLOperationType,
+    ProviderCapabilities,
+)
 from ml_gateway_service.providers.kubernetes import KubernetesMLProvider
 from ml_gateway_service.providers.modal import ModalMLProvider
 from ml_gateway_service.providers.registry import MLProviderRegistry, _RegistryHolder
@@ -36,10 +40,12 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Iterator[None]:
     """Reset settings cache between tests."""
     from ml_gateway_service.core.config import get_settings
 
+    get_settings.cache_clear()
+    yield
     get_settings.cache_clear()
 
 

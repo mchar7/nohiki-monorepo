@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,8 +28,10 @@ assert not any(name == "geopy" or name.startswith("geopy.") for name in sys.modu
 
 
 @pytest.fixture(autouse=True)
-def _reset_geocoder_cache() -> None:
-    """Reset @cache on _get_cached_geocoder before each test."""
+def _reset_geocoder_cache() -> Generator[None]:
+    """Reset @cache on _get_cached_geocoder around each test."""
+    _get_cached_geocoder.cache_clear()
+    yield
     _get_cached_geocoder.cache_clear()
 
 

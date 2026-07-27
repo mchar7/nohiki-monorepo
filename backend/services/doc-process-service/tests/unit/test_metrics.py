@@ -10,9 +10,9 @@ from doc_process_service.metrics import DocProcessMetrics
 
 
 @pytest.fixture(autouse=True)
-def _reset_metrics_singleton() -> None:
-    """Reset the singleton instance before each test."""
-    DocProcessMetrics._instance = None
+def _reset_metrics_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reset and restore the singleton instance for each test."""
+    monkeypatch.setattr(DocProcessMetrics, "_instance", None)
 
 
 @pytest.fixture
