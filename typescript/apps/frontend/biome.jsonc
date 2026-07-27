@@ -33,6 +33,11 @@
     "rules": {
       "nursery": {
         "noReactNativeRawText": "off",
+        // Every one of the 15 sites is a runtime-computed value (chart series colour, canvas
+        // slot transform, animation delay, CSS custom-property injection) or a feature Tailwind
+        // cannot express (env(safe-area-inset-*), radial-gradient over var(--background)).
+        // The rule has no path to zero here; it can only ever be suppressed.
+        "noInlineStyles": "off",
         // These unstable style rules conflict with established function-component, callback,
         // inferred-library-boundary, and instance-utility conventions. Keep correctness rules on.
         "noMisleadingReturnType": "off",
@@ -46,7 +51,12 @@
             "function": "test",
             "withinDescribe": "test"
           }
-        }
+        },
+        // Catches a test that cannot fail, which is worse than no test. Error, not warning:
+        // a rule that annotates every run without gating it trains everyone to ignore
+        // annotations. useExpect does not follow assertions into helper functions, so a
+        // helper-delegated test must carry a biome-ignore naming the helper that asserts.
+        "useExpect": "error"
       },
       "performance": {
         // Rule targets Next.js's <Image /> component. This project uses Vite with native <img>
@@ -82,7 +92,12 @@
       "linter": {
         "rules": {
           "nursery": {
-            "noUnusedClasses": "off"
+            "noUnusedClasses": "off",
+            // `text-wrap: balance|pretty` are progressive enhancements: a browser without
+            // them simply does not balance. The project declares no browserslist, so the
+            // rule compares against its own default target rather than a stated one.
+            // Re-enable once a browserslist exists to compare against.
+            "useBaseline": "off"
           }
         }
       }
