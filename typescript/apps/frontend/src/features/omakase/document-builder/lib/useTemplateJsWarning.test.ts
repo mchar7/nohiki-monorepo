@@ -1,101 +1,177 @@
-import { beforeEach, describe, expect } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
+import { beforeEach, describe, expect, vi } from 'vitest';
+import { useTemplateJsWarning } from './useTemplateJsWarning.ts';
 
-let sessionTemplatePrefs: Map<string, 'html' | 'image'>;
-let getSessionPref: (templateId: string, version: string) => 'html' | 'image' | null;
-let setSessionPref: (templateId: string, version: string, method: 'html' | 'image') => void;
+type RenderMethod = 'html' | 'image';
+
+const JS_TEMPLATE = '<div><script>alert(1)</script></div>';
+const PLAIN_TEMPLATE = '<div>Hello</div>';
+
+interface CurrentTemplate {
+  id: string;
+  display_name: string;
+  version: string;
+}
+
+// Mirrors templateRenderPrefsSlice: one entry per template, read only hits on a version match.
+const prefs = new Map<string, { version: string; method: RenderMethod }>();
+
+const mockState = {
+  currentTemplate: undefined as CurrentTemplate | undefined,
+  getTemplateRenderPref: (templateId: string, version: string): RenderMethod | null => {
+    const pref = prefs.get(templateId);
+    return pref && pref.version === version ? pref.method : null;
+  },
+  setTemplateRenderPref: (templateId: string, version: string, method: RenderMethod): void => {
+    prefs.set(templateId, { version, method });
+  },
+};
+
+vi.mock('../model/index.ts', () => ({
+  useDocumentBuilderStore: (selector: (state: typeof mockState) => unknown) => selector(mockState),
+}));
+
+/** Renders the hook for a template and returns its handle plus the render-choice spy. */
+function setup(template: CurrentTemplate) {
+  mockState.currentTemplate = template;
+  const onRenderChoice = vi.fn();
+  const { result } = renderHook(() => useTemplateJsWarning(template.id, onRenderChoice));
+  return { result, onRenderChoice };
+}
 
 beforeEach(() => {
-  // Create a fresh Map for each test to simulate session storage
-  sessionTemplatePrefs = new Map();
-
-  getSessionPref = (templateId: string, version: string): 'html' | 'image' | null => {
-    const key = `${templateId}@${version}`;
-    return sessionTemplatePrefs.get(key) || null;
-  };
-
-  setSessionPref = (templateId: string, version: string, method: 'html' | 'image'): void => {
-    const key = `${templateId}@${version}`;
-    sessionTemplatePrefs.set(key, method);
-  };
+  prefs.clear();
+  mockState.currentTemplate = undefined;
 });
 
-describe('useTemplateJsWarning - store and retrieve', () => {
-  test('stores and retrieves session preferences correctly', () => {
-    const templateId = 'test-template';
-    const version = '1.0.0';
+describe('useTemplateJsWarning', () => {
+  test('warns once for a JavaScript template, then honours the remembered choice', () => {
+    const { result, onRenderChoice } = setup({
+      id: 'tpl-remember',
+      display_name: 'Chart',
+      version: '2.1',
+    });
 
-    // Initially no preference
-    expect(getSessionPref(templateId, version)).toBe(null);
+    let warned = false;
+    act(() => {
+      warned = result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    expect(warned).toBe(true);
+    expect(result.current.showWarning).toBe(true);
+    expect(result.current.templateName).toBe('Chart');
+    expect(result.current.templateVersion).toBe('2.1');
 
-    // Store a preference
-    setSessionPref(templateId, version, 'html');
+    act(() => {
+      result.current.handleJsChoice('image', true);
+    });
+    expect(result.current.showWarning).toBe(false);
 
-    // Should retrieve the stored preference
-    expect(getSessionPref(templateId, version)).toBe('html');
+    act(() => {
+      warned = result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    expect(warned).toBe(false);
+    expect(onRenderChoice).toHaveBeenLastCalledWith('image');
   });
 
-  test('handles different template versions separately', () => {
-    const templateId = 'test-template';
-    const version1 = '1.0.0';
-    const version2 = '2.0.0';
+  // The stored version is a key component. Writing it under a normalised default while
+  // reading it under the raw value silently loses every remembered choice.
+  test('honours a remembered choice for a template with an empty version string', () => {
+    const { result, onRenderChoice } = setup({
+      id: 'tpl-empty-version',
+      display_name: 'Legacy',
+      version: '',
+    });
 
-    setSessionPref(templateId, version1, 'html');
-    setSessionPref(templateId, version2, 'image');
+    act(() => {
+      result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    act(() => {
+      result.current.handleJsChoice('html', true);
+    });
 
-    expect(getSessionPref(templateId, version1)).toBe('html');
-    expect(getSessionPref(templateId, version2)).toBe('image');
+    let warned = true;
+    act(() => {
+      warned = result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    expect(warned).toBe(false);
+    expect(onRenderChoice).toHaveBeenLastCalledWith('html');
   });
 
-  test('handles different templates separately', () => {
-    const template1 = 'template-1';
-    const template2 = 'template-2';
-    const version = '1.0.0';
+  test('re-prompts when the remembered choice belongs to a different version', () => {
+    const { result } = setup({ id: 'tpl-versioned', display_name: 'Chart', version: '1.0' });
 
-    setSessionPref(template1, version, 'html');
-    setSessionPref(template2, version, 'image');
+    act(() => {
+      result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    act(() => {
+      result.current.handleJsChoice('image', true);
+    });
 
-    expect(getSessionPref(template1, version)).toBe('html');
-    expect(getSessionPref(template2, version)).toBe('image');
-  });
-});
-
-describe('useTemplateJsWarning - key generation', () => {
-  test('generates unique keys for template@version combinations', () => {
-    setSessionPref('template-1', '1.0.0', 'html');
-    setSessionPref('template-1', '2.0.0', 'image');
-    setSessionPref('template-2', '1.0.0', 'image');
-
-    expect(getSessionPref('template-1', '1.0.0')).toBe('html');
-    expect(getSessionPref('template-1', '2.0.0')).toBe('image');
-    expect(getSessionPref('template-2', '1.0.0')).toBe('image');
-    expect(getSessionPref('template-2', '2.0.0')).toBe(null);
+    const bumped = setup({ id: 'tpl-versioned', display_name: 'Chart', version: '2.0' });
+    let warned = false;
+    act(() => {
+      warned = bumped.result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    expect(warned).toBe(true);
+    expect(bumped.onRenderChoice).not.toHaveBeenCalled();
   });
 
-  test('returns null for non-existent preferences', () => {
-    expect(getSessionPref('non-existent', '1.0.0')).toBe(null);
-    expect(getSessionPref('template-1', 'non-existent-version')).toBe(null);
+  test('suppresses the warning for a session-only choice without persisting it', () => {
+    const { result } = setup({ id: 'tpl-session', display_name: 'Chart', version: '1.0' });
+
+    act(() => {
+      result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    act(() => {
+      result.current.handleJsChoice('html', false);
+    });
+
+    expect(prefs.has('tpl-session')).toBe(false);
+
+    let warned = true;
+    act(() => {
+      warned = result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    expect(warned).toBe(false);
   });
-});
 
-describe('useTemplateJsWarning - behavior flow', () => {
-  test('demonstrates the expected behavior flow', () => {
-    // Documents the expected behavior without testing the actual hook
-    const expectedFlow = {
-      showWarning: true,
-      userChoice: { method: 'html' as const, remember: false },
-      sessionStored: true,
-      permanentStored: false,
-      nextCallShowsWarning: false,
-      usesSessionPreference: true,
-      afterRefreshShowsWarning: true,
-    };
+  test('keeps remembered choices separate per template', () => {
+    const first = setup({ id: 'tpl-a', display_name: 'A', version: '1.0' });
+    act(() => {
+      first.result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    act(() => {
+      first.result.current.handleJsChoice('image', true);
+    });
 
-    expect(expectedFlow.showWarning).toBe(true);
-    expect(expectedFlow.userChoice.remember).toBe(false);
-    expect(expectedFlow.sessionStored).toBe(true);
-    expect(expectedFlow.permanentStored).toBe(false);
-    expect(expectedFlow.nextCallShowsWarning).toBe(false);
-    expect(expectedFlow.usesSessionPreference).toBe(true);
-    expect(expectedFlow.afterRefreshShowsWarning).toBe(true);
+    const second = setup({ id: 'tpl-b', display_name: 'B', version: '1.0' });
+    let warned = false;
+    act(() => {
+      warned = second.result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    expect(warned).toBe(true);
+    expect(second.onRenderChoice).not.toHaveBeenCalled();
+  });
+
+  test('does not warn for a template without JavaScript', () => {
+    const { result } = setup({ id: 'tpl-plain', display_name: 'Plain', version: '1.0' });
+
+    let warned = true;
+    act(() => {
+      warned = result.current.checkJsRequirement(undefined, PLAIN_TEMPLATE);
+    });
+    expect(warned).toBe(false);
+    expect(result.current.showWarning).toBe(false);
+  });
+
+  test('reports no requirement when no template is loaded', () => {
+    mockState.currentTemplate = undefined;
+    const { result } = renderHook(() => useTemplateJsWarning('tpl-missing'));
+
+    let warned = true;
+    act(() => {
+      warned = result.current.checkJsRequirement(undefined, JS_TEMPLATE);
+    });
+    expect(warned).toBe(false);
   });
 });
