@@ -2,7 +2,7 @@ import { REGEX_PATTERNS, TIMEOUTS } from '../constants.ts';
 import { expect, test } from '../fixtures/auth.ts';
 import { expectNoA11yViolations } from '../helpers/axe-helper.ts';
 import { AccountSettingsPage } from '../pages/index.ts';
-import { assertAccountFieldsVisible, gotoAccountPage } from '../utils/account-helpers.ts';
+import { gotoAccountPage } from '../utils/account-helpers.ts';
 
 const SECURITY_HEADING_RE = /security/iu;
 const CURRENT_NEW_PASSWORD_RE = /current password|new password/iu;
@@ -14,12 +14,17 @@ test.describe.serial('Account Settings Journey', () => {
     const accountPage = new AccountSettingsPage(page);
     await accountPage.goto();
     await expect(page).toHaveURL('/account');
-
   });
 
   test('2. User sees account information fields', async ({ page }) => {
     const accountPage = await gotoAccountPage(page);
-    await assertAccountFieldsVisible(accountPage);
+
+    // ProfileSection renders all four unconditionally; assert each so a single
+    // field regressing still fails the test.
+    await expect(accountPage.displayNameInput).toBeVisible();
+    await expect(accountPage.firstNameInput).toBeVisible();
+    await expect(accountPage.lastNameInput).toBeVisible();
+    await expect(accountPage.emailInput).toBeVisible();
   });
 
   test('3. User can edit display name', async ({ page }) => {
