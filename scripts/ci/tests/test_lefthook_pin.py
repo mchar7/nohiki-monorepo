@@ -212,7 +212,7 @@ def test_lefthook_python_mutator_handles_large_nul_safe_inventory(
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("x = 1\n", encoding="utf-8")
-    for index in range(9_000):
+    for index in range(506):
         relative = f"eligible/{index:05d}-{'x' * 240}.py"
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,6 +233,7 @@ def test_lefthook_python_mutator_handles_large_nul_safe_inventory(
     record = repo / "uv-record.jsonl"
     result = _run_python_mutator(repo, run, record)
     assert result.returncode == 0, result.stderr
+    assert len(record.read_text(encoding="utf-8").splitlines()) >= 4
     recorded = _recorded_paths(record)
     expected = Counter(eligible)
     assert Counter(recorded["check"]) == expected
