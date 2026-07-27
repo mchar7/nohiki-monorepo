@@ -65,6 +65,12 @@ _FRONTEND_APP_FLAGS: tuple[str, ...] = (
     "frontend_tests",
 )
 
+# The setup-ci composite provisions the toolchain for every job that calls it: the three worker
+# legs, container-contracts and title-policy. It can therefore move any lane those jobs run.
+# frontend_e2e is the sole exception, because its only consumer is playwright-image, which builds
+# its image with docker/build-push-action and never calls the composite.
+_COMPOSITE_SETUP_FLAGS: tuple[str, ...] = tuple(flag for flag in FLAG_NAMES if flag != "frontend_e2e")
+
 
 @dataclass(frozen=True, slots=True)
 class SurfaceRule:
@@ -119,8 +125,15 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
     ),
     SurfaceRule(
         (".github/workflows/checks.yml",),
-        # Path-only routing cannot identify which YAML lane definition changed.
+        # Self-reference: the router job, the fan-in job, the on/concurrency/permissions
+        # header and the worker env block each decide which lanes run at all, so no scoped
+        # run this file produces can be evidence for a change to this file.
         flags=FLAG_NAMES,
+        packages=("ci-checks",),
+    ),
+    SurfaceRule(
+        (".github/actions/setup-ci/action.yml",),
+        flags=_COMPOSITE_SETUP_FLAGS,
         packages=("ci-checks",),
     ),
     SurfaceRule(
@@ -307,6 +320,14 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     ),
     SurfaceRule(
         (".github/workflows/*", ".github/workflows/**/*"),
+        flags=("lint_workflows",),
+        packages=("ci-checks",),
+    ),
+    SurfaceRule(
+        # actionlint resolves every local `uses: ./.github/actions/...` and checks the caller's
+        # `with:` keys against that action's own `inputs:`, so composite metadata moves the
+        # workflow-lint verdict. test_dependency_pins globs `.github/actions/*/action.yml`.
+        (".github/actions/*", ".github/actions/**/*"),
         flags=("lint_workflows",),
         packages=("ci-checks",),
     ),

@@ -181,6 +181,32 @@ def test_checks_workflow_self_change_selects_every_lane() -> None:
     assert decision.flags == set(FLAG_NAMES)
 
 
+def test_setup_ci_composite_change_is_broad_with_an_enumerated_blast_radius() -> None:
+    """The composite provisions the toolchain every calling job runs in, so it is broad by rule."""
+    decision = evaluate(
+        {".github/actions/setup-ci/action.yml"},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.commit_class is CommitClass.BROAD
+    assert not decision.unmatched
+    assert not decision.broad_unbounded
+    assert render_outputs(decision, (), "pull_request")["broad_unbounded"] == "false"
+    # playwright-image is the sole frontend_e2e consumer and never calls the composite.
+    assert decision.flags == set(FLAG_NAMES) - {"frontend_e2e"}
+
+
+def test_composite_action_paths_select_actionlint_and_their_contract_suite() -> None:
+    """Local action metadata moves the actionlint verdict, and test_dependency_pins reads it."""
+    decision = evaluate({".github/actions/release/action.yml"}, load_packages_with_deps(Scope.ALL))
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert not decision.unmatched
+    assert "lint_workflows" in decision.flags
+    assert "ci-checks" in decision.affected
+
+
 def test_uv_lock_selects_api_schema_freshness() -> None:
     decision = evaluate(
         {"uv.lock"},
