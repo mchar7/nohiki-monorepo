@@ -2141,6 +2141,7 @@ dependencies = [
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra != 'extra-18-ml-compute-service-cpu') or (extra == 'extra-18-ml-compute-service-cpu' and extra == 'extra-18-ml-compute-service-cuda')" },
     { name = "torch", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'linux' and extra == 'extra-18-ml-compute-service-cpu') or (sys_platform == 'linux' and extra != 'extra-18-ml-compute-service-cuda') or (sys_platform == 'win32' and extra == 'extra-18-ml-compute-service-cpu') or (sys_platform == 'win32' and extra != 'extra-18-ml-compute-service-cuda') or (extra == 'extra-18-ml-compute-service-cpu' and extra == 'extra-18-ml-compute-service-cuda')" },
     { name = "torch", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "(sys_platform == 'linux' and extra == 'extra-18-ml-compute-service-cuda') or (sys_platform == 'win32' and extra == 'extra-18-ml-compute-service-cuda') or (extra == 'extra-18-ml-compute-service-cpu' and extra == 'extra-18-ml-compute-service-cuda')" },
+    { name = "transformers" },
     { name = "typer" },
 ]
 
@@ -2160,6 +2161,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0.0" },
     { name = "sentence-transformers", specifier = ">=5.3.0,<5.4" },
     { name = "torch", specifier = ">=2.0.0" },
+    { name = "transformers", specifier = ">=5.14.0,<6" },
     { name = "typer", specifier = ">=0.26.8" },
 ]
 
