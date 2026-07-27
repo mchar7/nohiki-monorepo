@@ -45,7 +45,7 @@ class HealthCheck(ABC):
         ...
 
     @abstractmethod
-    async def execute(self, platform: Platform) -> CheckResult:
+    async def execute(self, platform: Platform, /) -> CheckResult:
         """Execute the health check and return the result.
 
         Args:

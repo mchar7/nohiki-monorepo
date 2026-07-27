@@ -149,21 +149,21 @@ class KubernetesPlatformContractsCheck(HealthCheck):
         """Return static metadata for the Kubernetes platform contract check."""
         return _METADATA
 
-    async def execute(self, _platform: Platform) -> CheckResult:
+    async def execute(self, _platform: Platform, /) -> CheckResult:
         """Verify the Kubernetes platform contracts.
 
         Args:
-            _platform: Platform adapter required by the health-check contract.
+            _platform: Platform adapter required by the health-check contract; unused here.
 
         Returns:
             The aggregate platform contract result.
         """
         failures: list[str] = []
         evidence: list[str] = []
-        database_failure, valkey_failure = await asyncio.gather(
-            asyncio.to_thread(_database_contract),
-            asyncio.to_thread(_valkey_contract),
-        )
+        async with asyncio.TaskGroup() as tg:
+            database_task = tg.create_task(asyncio.to_thread(_database_contract))
+            valkey_task = tg.create_task(asyncio.to_thread(_valkey_contract))
+        database_failure, valkey_failure = database_task.result(), valkey_task.result()
         kafka_failure = await _kafka_contract()
         failures.extend(failure for failure in (database_failure, valkey_failure, kafka_failure) if failure)
         evidence.extend(
