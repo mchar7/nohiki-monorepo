@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
@@ -47,31 +49,14 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     jobs = workflow["jobs"]
     assert set(jobs) == {
         "changes",
-        "commitlint",
         "worker",
-        "broad-environment",
-        "broad-python",
-        "broad-frontend",
-        "broad-hygiene",
-        "broad-policy",
         "container-contracts",
         "playwright-image",
         "checks",
     }
 
-    standard = "\n".join(
+    work = "\n".join(
         step["run"] for step in jobs["worker"]["steps"] if "run" in step and step.get("name") != "Report worker timing"
-    )
-    broad = "\n".join(
-        step["run"]
-        for job_id in (
-            "broad-python",
-            "broad-frontend",
-            "broad-hygiene",
-            "broad-policy",
-        )
-        for step in jobs[job_id]["steps"]
-        if "run" in step and step.get("name") != "Report worker timing"
     )
     container_contracts = "\n".join(_commands(jobs["container-contracts"]))
     playwright_image = "\n".join(_commands(jobs["playwright-image"]))
@@ -94,49 +79,53 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
         "ci-checks build-backend",
         "just api-schema-check",
         "just image-matrix-check",
-        "ruff check --output-format=github",
-        "ruff format --check",
         "ci-checks deadcode",
     )
+    # Both classes are served by one definition of each command, so one occurrence, not two.
     for command in commands:
-        assert standard.count(command) == 1
-        assert broad.count(command) == 1
+        assert work.count(command) == 1
+    # Ruff is the one step carrying both scopes: whole tree on broad, changed files on standard.
+    assert work.count("ruff check --output-format=github") == 2
+    assert work.count("ruff format --check") == 2
 
-    for owner in ("worker", "broad-policy"):
-        owner_commands = "\n".join(_commands(jobs[owner]))
-        proto_step = next(
-            step for step in jobs[owner].get("steps", []) if step.get("name") == "Check proto compatibility"
-        )
-        assert proto_step["env"]["BASE_SHA"] == ("${{ github.event.pull_request.base.sha || github.event.before }}")
-        assert "buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'" in owner_commands
+    owner_commands = "\n".join(_commands(jobs["worker"]))
+    proto_step = next(
+        step for step in jobs["worker"].get("steps", []) if step.get("name") == "Check proto compatibility"
+    )
+    assert proto_step["env"]["BASE_SHA"] == ("${{ github.event.pull_request.base.sha || github.event.before }}")
+    assert "buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'" in owner_commands
 
     all_commands = "\n".join(command for job in jobs.values() for command in _commands(job))
-    assert all_commands.count("semgrep scan") == 2
+    assert all_commands.count("semgrep scan") == 1
     assert "lefthook run pre-push" not in all_commands
 
 
 def test_python_tests_use_one_runner_per_commit_class() -> None:
     workflow = load_workflow(_CHECKS)
-    for owner in ("worker", "broad-python"):
-        job = workflow["jobs"][owner]
-        assert job["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
-        assert "strategy" not in job
-        steps = {step["name"]: step for step in job["steps"] if "name" in step}
-        run_tests = steps["Run selected Python tests"]
-        command = str(run_tests["run"])
-        assert command.count("ci-checks tests all --scope all") == 1
-        assert '--packages "$TEST_PACKAGES"' in command
-        assert "--ci --workers 2" in command
-        assert '--summary "$GITHUB_STEP_SUMMARY"' in command
-        assert '--summary-title "$SUMMARY_TITLE"' in command
-        assert run_tests["env"] == {
-            "TEST_PACKAGES": "${{ needs.changes.outputs.test_packages }}",
-            "CI_CHECKS_SKIP_WORKSPACE_SYNC": "1",
-            "SUMMARY_TITLE": "${{ needs.changes.outputs.commit_class }}",
-            "OTEL_SDK_DISABLED": "true",
-            "UV_NO_SYNC": "1",
-            "COVERAGE_CORE": "sysmon",
-        }
+    job = workflow["jobs"]["worker"]
+    assert job["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+    # Standard takes one unit, broad three, and the Python tests are alone in their unit.
+    broad_units, standard_units = (
+        json.loads(group) for group in re.findall(r"'(\[[^']*\])'", str(job["strategy"]["matrix"]["unit"]))
+    )
+    assert broad_units == ["python", "frontend", "hygiene"]
+    assert standard_units == ["all"]
+    steps = {step["name"]: step for step in job["steps"] if "name" in step}
+    run_tests = steps["Run selected Python tests"]
+    command = str(run_tests["run"])
+    assert command.count("ci-checks tests all --scope all") == 1
+    assert '--packages "$TEST_PACKAGES"' in command
+    assert "--ci --workers 2" in command
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in command
+    assert '--summary-title "$SUMMARY_TITLE"' in command
+    assert run_tests["env"] == {
+        "TEST_PACKAGES": "${{ needs.changes.outputs.test_packages }}",
+        "CI_CHECKS_SKIP_WORKSPACE_SYNC": "1",
+        "SUMMARY_TITLE": "${{ needs.changes.outputs.commit_class }}",
+        "OTEL_SDK_DISABLED": "true",
+        "UV_NO_SYNC": "1",
+        "COVERAGE_CORE": "sysmon",
+    }
 
 
 def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -> None:

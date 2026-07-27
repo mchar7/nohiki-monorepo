@@ -644,39 +644,30 @@ async def test_integration_run_ignores_unit_fixture_report(monkeypatch: pytest.M
 
 
 def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
-    """Each selected worker obtains one environment and runs one bounded Python command."""
+    """The one work job obtains one environment and runs one bounded Python command."""
     workflow = load_workflow(_CHECKS_WORKFLOW)
     setup_action = load_mapping(_SETUP_CI_ACTION)
-    selected_units = (
-        "worker",
-        "broad-python",
-        "broad-frontend",
-        "broad-hygiene",
-        "broad-policy",
-    )
+    worker = workflow["jobs"]["worker"]
 
+    # One job definition serves both classes; the matrix, not a second job, picks the units.
     assert [
         job_id
         for job_id, job in workflow["jobs"].items()
         if "needs.changes.outputs.standard == 'true'" in str(job.get("if", ""))
     ] == ["worker"]
-    assert workflow["jobs"]["worker"]["if"] == "needs.changes.outputs.standard == 'true'"
-    for job_id in selected_units[1:]:
-        assert "needs.changes.outputs.broad == 'true'" in workflow["jobs"][job_id]["if"]
+    assert "needs.changes.outputs.broad == 'true'" in worker["if"]
 
-    for job_id in selected_units:
-        unit_steps = workflow["jobs"][job_id]["steps"]
-        setup_steps = [step for step in unit_steps if step.get("uses") == "./.github/actions/setup-ci"]
-        assert len(setup_steps) == 1
-        setup_inputs = setup_steps[0].get("with", {})
-        assert isinstance(setup_inputs, dict)
-        expected_ready_cache = "${{ env.NIX_SETUP_SELECTED }}" if job_id == "worker" else "true"
-        assert setup_inputs.get("ready-cache") == expected_ready_cache
-        assert setup_inputs.get("lookup-only") != "true"
-        direct_environment_commands = "\n".join(str(step.get("run", "")) for step in unit_steps)
-        assert "sync-ci-environment.sh" not in direct_environment_commands
-        assert "uv sync" not in direct_environment_commands
-    worker_nix_selector = str(workflow["jobs"]["worker"]["env"]["NIX_SETUP_SELECTED"])
+    unit_steps = worker["steps"]
+    setup_steps = [step for step in unit_steps if step.get("uses") == "./.github/actions/setup-ci"]
+    assert len(setup_steps) == 1
+    setup_inputs = setup_steps[0].get("with", {})
+    assert isinstance(setup_inputs, dict)
+    assert setup_inputs.get("ready-cache") == "${{ env.NIX_SETUP_SELECTED }}"
+    assert setup_inputs.get("lookup-only") != "true"
+    direct_environment_commands = "\n".join(str(step.get("run", "")) for step in unit_steps)
+    assert "sync-ci-environment.sh" not in direct_environment_commands
+    assert "uv sync" not in direct_environment_commands
+    worker_nix_selector = str(worker["env"]["NIX_SETUP_SELECTED"])
     assert "needs.changes.outputs.python_any == 'true'" in worker_nix_selector
 
     action_steps = mapping_sequence_at(setup_action, "runs", "steps")
@@ -693,29 +684,25 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
     assert len(environment_syncs) == 1
     assert "steps.ready-cache.outputs.hit-primary-key != 'true'" in str(environment_syncs[0]["if"])
 
-    for job_id in ("worker", "broad-python"):
-        worker = workflow["jobs"][job_id]
-        test_steps = [step for step in worker["steps"] if "ci-checks tests all --scope all" in str(step.get("run", ""))]
-        assert len(test_steps) == 1
-        test = test_steps[0]
-        test_command = str(test["run"])
-        assert worker["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
-        assert "strategy" not in worker
-        assert '--packages "$TEST_PACKAGES"' in test_command
-        assert test_command.count("--ci --workers 2") == 1
-        assert "--lf" not in test_command
-        assert "--ff" not in test_command
-        assert '--summary "$GITHUB_STEP_SUMMARY"' in test_command
-        assert '--summary-title "$SUMMARY_TITLE"' in test_command
-        assert test["env"]["SUMMARY_TITLE"] == "${{ needs.changes.outputs.commit_class }}"
-        assert test["env"]["CI_CHECKS_SKIP_WORKSPACE_SYNC"] == "1"
+    test_steps = [step for step in unit_steps if "ci-checks tests all --scope all" in str(step.get("run", ""))]
+    assert len(test_steps) == 1
+    test = test_steps[0]
+    test_command = str(test["run"])
+    assert worker["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+    assert '--packages "$TEST_PACKAGES"' in test_command
+    assert test_command.count("--ci --workers 2") == 1
+    assert "--lf" not in test_command
+    assert "--ff" not in test_command
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in test_command
+    assert '--summary-title "$SUMMARY_TITLE"' in test_command
+    assert test["env"]["SUMMARY_TITLE"] == "${{ needs.changes.outputs.commit_class }}"
+    assert test["env"]["CI_CHECKS_SKIP_WORKSPACE_SYNC"] == "1"
 
-    standard_test = next(
-        step
-        for step in workflow["jobs"]["worker"]["steps"]
-        if "ci-checks tests all --scope all" in str(step.get("run", ""))
-    )
-    assert standard_test["if"].endswith("needs.changes.outputs.python_any == 'true'")
+    # The bounded Python command is alone in its broad unit, and runs in the single
+    # standard unit alongside everything else.
+    condition = str(test["if"])
+    assert "matrix.unit == 'all' || matrix.unit == 'python'" in condition
+    assert condition.endswith("needs.changes.outputs.python_any == 'true')")
 
     docker_smoke = next(
         step

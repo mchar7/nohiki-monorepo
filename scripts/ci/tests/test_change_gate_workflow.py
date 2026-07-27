@@ -35,33 +35,15 @@ _CONTAINER_EXECUTORS = {
     "frontend_e2e": "playwright-image",
     "otel_collector": "container-contracts",
 }
+# One job definition owns every lane in both classes. The class chooses how many runners
+# the same step bodies are spread across, not which job defines them.
 _STANDARD_EXECUTORS = dict.fromkeys(FLAG_NAMES, "worker") | _CONTAINER_EXECUTORS
-_BROAD_EXECUTORS = {
-    "lint_python": "broad-policy",
-    "typecheck_backend": "broad-hygiene",
-    "hygiene": "broad-hygiene",
-    "python_any": "broad-python",
-    "nix": "broad-policy",
-    "lint_proto": "broad-policy",
-    "lint_markdown": "broad-frontend",
-    "lint_workflows": "broad-policy",
-    "lint_docker": "broad-policy",
-    "api_schema_freshness": "broad-hygiene",
-    "image_matrix_parity": "broad-policy",
-    "proto_breaking": "broad-policy",
-    "build_backend": "broad-hygiene",
-    "lint_frontend": "broad-frontend",
-    "typecheck_frontend": "broad-frontend",
-    "frontend_tests": "broad-frontend",
-    "edge_worker": "broad-frontend",
-} | _CONTAINER_EXECUTORS
-_BROAD_JOB_IDS = {"broad-python", "broad-frontend", "broad-hygiene", "broad-policy"}
+_BROAD_EXECUTORS = _STANDARD_EXECUTORS
+_BROAD_UNITS = ["python", "frontend", "hygiene"]
+_STANDARD_UNITS = ["all"]
 _NON_EXECUTOR_JOB_IDS = {
     "changes",
-    "commitlint",
     "checks",
-    "gate-advisory",
-    "broad-environment",
 }
 
 
@@ -99,17 +81,6 @@ def _job_is_selected_for_flag(
     return not has_lane_gate or _positive_reference(job_condition, reference)
 
 
-def _has_unconditional_executor(
-    job_id: str,
-    job: WorkflowJob,
-    commit_class: CommitClass,
-    flag: str,
-) -> bool:
-    if commit_class is not CommitClass.BROAD or _BROAD_EXECUTORS[flag] != job_id:
-        return False
-    return bool(_steps(job))
-
-
 def _selected_executors(
     jobs: dict[str, WorkflowJob],
     commit_class: CommitClass,
@@ -135,11 +106,7 @@ def _selected_executors(
             )
             for step in _steps(job)
         )
-        if (
-            _positive_reference(job_condition, reference)
-            or step_owns_flag
-            or _has_unconditional_executor(job_id, job, commit_class, flag)
-        ):
+        if _positive_reference(job_condition, reference) or step_owns_flag:
             selected.add(job_id)
     return selected
 
@@ -148,7 +115,9 @@ def _decision_executors(
     jobs: dict[str, WorkflowJob],
     decision: GateDecision,
 ) -> set[str]:
-    selected = {
+    # Every lane carries its own flag gate in both classes now, so a broad decision has no
+    # ungated shard to add by hand: the flags alone name the executor.
+    return {
         executor
         for flag in decision.flags
         for executor in _selected_executors(
@@ -157,9 +126,6 @@ def _decision_executors(
             flag,
         )
     }
-    if decision.commit_class is CommitClass.BROAD:
-        selected |= _BROAD_JOB_IDS
-    return selected
 
 
 _REACHABILITY_CASES = [
@@ -209,7 +175,7 @@ def test_real_multisurface_decisions_keep_the_consolidated_executor_topology() -
     assert flake.commit_class is CommitClass.BROAD
     assert selected_tests
     assert {"lint_markdown", "api_schema_freshness"} <= flake.flags
-    assert _decision_executors(jobs, flake) == _BROAD_JOB_IDS | {"playwright-image"}
+    assert _decision_executors(jobs, flake) == {"worker", "playwright-image"}
 
     container_union = evaluate(
         {
@@ -228,73 +194,166 @@ def test_real_multisurface_decisions_keep_the_consolidated_executor_topology() -
     }
 
 
-def test_standard_worker_and_broad_shards_own_each_lane_once() -> None:
+def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
     jobs = _jobs()
     worker = jobs["worker"]
     assert "needs.changes.outputs.standard == 'true'" in worker["if"]
-    assert "needs.changes.outputs.broad == 'true'" not in worker["if"]
+    assert "needs.changes.outputs.broad == 'true'" in worker["if"]
+    assert worker["needs"] == ["changes"]
 
-    for job_id in _BROAD_JOB_IDS:
-        condition = jobs[job_id]["if"]
-        assert condition.startswith("always() &&")
-        assert "needs.changes.outputs.broad == 'true'" in condition
-        assert "needs.broad-environment.result == 'success'" in condition
-        assert "needs.broad-environment.result == 'skipped'" in condition
-        assert jobs[job_id]["needs"] == ["changes", "broad-environment"]
-    prewarm = jobs["broad-environment"]
-    assert "github.event_name" not in prewarm["if"]
-    assert "needs.changes.outputs.broad == 'true'" in prewarm["if"]
-    prewarm_setup = next(step for step in _steps(prewarm) if step.get("uses") == "./.github/actions/setup-ci")
-    assert prewarm_setup["with"]["lookup-only"] == "true"
-    assert prewarm_setup["with"]["save-ready-cache"] == "true"
-    for job_id in _BROAD_JOB_IDS:
-        setup = next(step for step in _steps(jobs[job_id]) if step.get("uses") == "./.github/actions/setup-ci")
-        assert setup["with"]["ready-cache"] == "true"
-        assert "save-ready-cache" not in setup["with"]
+    # The class picks the runner count, not the step bodies: standard takes one unit and
+    # broad takes three. A failing unit must not cancel the verdicts of its siblings.
+    matrix = str(worker["strategy"]["matrix"]["unit"])
+    assert worker["strategy"]["fail-fast"] is False
+    broad_units, standard_units = (json.loads(group) for group in re.findall(r"'(\[[^']*\])'", matrix))
+    assert broad_units == _BROAD_UNITS
+    assert standard_units == _STANDARD_UNITS
 
-    lane_names = {
-        "Check flake",
-        "Check Lefthook version",
-        "Lint Python",
-        "Check Python formatting",
-        "Lint Markdown",
-        "Lint protos",
-        "Lint workflows (actionlint)",
-        "Lint frontend",
-        "Check i18n keys",
-        "Lint Dockerfiles (hadolint)",
-        "Scan repository for secrets",
-        "Typecheck backend",
-        "Check selected dead code",
-        "Save Skylos static analysis cache",
-        "Typecheck frontend",
-        "Run selected Python tests",
-        "Test frontend",
-        "Lint edge worker",
-        "Typecheck edge worker",
-        "Test edge worker",
-        "Validate PR commit messages",
-        "Validate PR title (merge commit subject)",
-        "Check dependencies",
-        "Scan architecture",
-        "Check build backends",
-        "Check API schema freshness",
-        "Check image matrix parity",
-        "Check proto compatibility",
+    bins = {
+        "hygiene": {
+            "Check flake",
+            "Check Lefthook version",
+            "Lint Python",
+            "Check Python formatting",
+            "Lint protos",
+            "Lint workflows (actionlint)",
+            "Lint Dockerfiles (hadolint)",
+            "Scan repository for secrets",
+            "Typecheck backend",
+            "Check selected dead code",
+            "Check dependencies",
+            "Scan architecture",
+            "Check build backends",
+            "Check API schema freshness",
+            "Check image matrix parity",
+            "Check proto compatibility",
+        },
+        "frontend": {
+            "Lint Markdown",
+            "Lint frontend",
+            "Check i18n keys",
+            "Typecheck frontend",
+            "Test frontend",
+            "Lint edge worker",
+            "Typecheck edge worker",
+            "Test edge worker",
+            "Validate PR commit messages",
+            "Validate PR title (merge commit subject)",
+        },
+        "python": {"Run selected Python tests"},
     }
-    standard_names = [step.get("name") for step in _steps(worker)]
-    broad_names = [step.get("name") for job_id in _BROAD_JOB_IDS for step in _steps(jobs[job_id])]
+    assert set(bins) == set(_BROAD_UNITS)
+
+    # No lane may be defined twice anywhere in the file: the standard and broad paths were
+    # two copies of the same checks, and that is the duplication this topology retires.
+    every_name = [step.get("name") for job in jobs.values() for step in _steps(job)]
+    lane_names = set().union(*bins.values()) | {"Save Skylos static analysis cache"}
     for name in lane_names:
-        assert standard_names.count(name) == 1
-        assert broad_names.count(name) == 1
+        assert every_name.count(name) == 1, name
 
-    full_scan = next(step for step in _steps(worker) if step.get("name") == "Scan repository for secrets")
-    assert full_scan["if"] == "env.DOCS_ONLY != 'true'"
+    steps = {step.get("name"): step for step in _steps(worker)}
+    for unit_name, members in bins.items():
+        for name in members:
+            condition = str(steps[name]["if"])
+            assert f"matrix.unit == '{unit_name}'" in condition, name
+            assert "matrix.unit == 'all'" in condition, name
+            for other in set(bins) - {unit_name}:
+                assert f"matrix.unit == '{other}'" not in condition, (name, other)
+
+    full_scan = steps["Scan repository for secrets"]
+    assert full_scan["if"].endswith("env.DOCS_ONLY != 'true'")
     assert "detect --source . --config .gitleaks.toml --no-banner --redact" in full_scan["run"]
+    # Matrix units share one outputs map. The runner skips an output whose expression is the
+    # empty string and never sends it (actions/runner src/Runner.Worker/JobExtension.cs:789-805),
+    # so spelling the negative case as '' makes the unit that ran the step the only writer.
+    # `false` is NOT empty by that check, so a boolean-valued expression would race instead.
     assert worker["outputs"] == {
-        "node_group_executed": "${{ steps.setup-ci.outputs.node-group-executed }}",
-        "commitlint_executed": "${{ steps.commitlint-range.outcome == 'success' }}",
+        "node_group_executed": ("${{ steps.setup-ci.outputs.node-group-executed == 'true' && 'true' || '' }}"),
+        "commitlint_executed": ("${{ steps.commitlint-range.outcome == 'success' && 'true' || '' }}"),
     }
+
+
+def test_execution_attestations_are_not_scoped_to_one_commit_class() -> None:
+    """Every `*_executed` claim must cover the class its step actually runs on.
+
+    Commit policy and the Node command group execute on the standard `all` unit and on a broad
+    unit alike. Scoping either the published value or the fan-in expectation to one class makes
+    the pair agree with itself while both halves are false on the other class, so the fan-in
+    records "not selected, did not run" for work that was selected and did run. That is silent
+    accounting drift, and the attestation is the only thing standing against it.
+    """
+    worker_outputs = _jobs()["worker"]["outputs"]
+    fan_in = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Require every selected check")
+    env = fan_in["env"]
+
+    for name, value in worker_outputs.items():
+        assert name.endswith("_executed"), name
+        # A per-unit claim may read steps and matrix state; a commit class is not per-unit.
+        assert "needs.changes.outputs.standard" not in value, name
+        assert "needs.changes.outputs.broad" not in value, name
+        # The negative case must be empty so a unit that skipped the step contributes nothing.
+        assert value.endswith("&& 'true' || '' }}"), name
+
+    for name in ("WORKER_COMMITLINT_EXPECTED", "NODE_GROUP_EXPECTED"):
+        assert "needs.changes.outputs.standard" not in str(env[name]), name
+        assert "needs.changes.outputs.broad" not in str(env[name]), name
+
+    # The Node expectation must track the same router flags the worker uses to request the
+    # group. Compared as sets: disjunct order carries no meaning and is not a contract.
+    def referenced_flags(expression: str) -> set[str]:
+        return set(re.findall(r"needs\.changes\.outputs\.(\w+)", expression))
+
+    assert referenced_flags(str(env["NODE_GROUP_EXPECTED"])) == referenced_flags(
+        str(_jobs()["worker"]["env"]["NODE_SETUP_SELECTED"])
+    )
+
+
+def _unreachable_class_expressions(job: WorkflowJob) -> list[str]:
+    """Return expressions naming the commit class a class-gated job can never run under."""
+    gated = {
+        name
+        for name, reference in (
+            ("standard", "needs.changes.outputs.standard == 'true'"),
+            ("broad", "needs.changes.outputs.broad == 'true'"),
+        )
+        if _positive_reference(str(job.get("if", "")), reference)
+    }
+    if len(gated) != 1:
+        return []
+    opposite = "broad" if gated == {"standard"} else "standard"
+    unreachable = f"needs.changes.outputs.{opposite} == 'true'"
+
+    def walk(node: object) -> list[str]:
+        match node:
+            case str():
+                return [node] if unreachable in node else []
+            case dict():
+                return [hit for value in node.values() for hit in walk(value)]
+            case list():
+                return [hit for value in node for hit in walk(value)]
+            case _:
+                return []
+
+    return walk(job)
+
+
+def test_no_job_carries_an_expression_for_a_class_it_cannot_run_under() -> None:
+    """A class-gated job may not reference the class its gate excludes.
+
+    This is the defect that grew the duplicate broad-* family. `worker` was gated on
+    ``standard == 'true'`` while holding ten live-looking ``broad == 'true'`` expressions,
+    including three ``PACKAGE_SCOPE`` selectors that already resolved to the value the
+    broad copies hard-coded. Nothing failed, so the copies were written beside them
+    instead of the gate being opened.
+    """
+    regressed: WorkflowJob = {
+        "if": "needs.changes.outputs.standard == 'true'",
+        "env": {"PACKAGE_SCOPE": "${{ needs.changes.outputs.broad == 'true' && 'ALL' || '' }}"},
+    }
+    assert _unreachable_class_expressions(regressed), "the detector no longer detects"
+
+    for job_id, job in _jobs().items():
+        assert not _unreachable_class_expressions(job), job_id
 
 
 def test_ready_cache_save_runs_on_every_event_behind_a_key_guard() -> None:
@@ -306,38 +365,37 @@ def test_ready_cache_save_runs_on_every_event_behind_a_key_guard() -> None:
 
 
 def test_python_test_lane_uses_gate_scope_once_per_class() -> None:
-    jobs = _jobs()
-    worker = jobs["worker"]
-    broad_python = jobs["broad-python"]
+    worker = _jobs()["worker"]
 
     assert worker["needs"] == ["changes"]
-    assert broad_python["needs"] == ["changes", "broad-environment"]
-    for job in (worker, broad_python):
-        assert job["timeout-minutes"] == ("${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}")
-        assert "strategy" not in job
-        run_tests = next(step for step in _steps(job) if step.get("name") == "Run selected Python tests")
-        command = run_tests["run"]
-        assert command.count("ci-checks tests all --scope all") == 1
-        assert '--packages "$TEST_PACKAGES"' in command
-        assert '--summary-title "$SUMMARY_TITLE"' in command
-        assert run_tests["env"]["SUMMARY_TITLE"] == ("${{ needs.changes.outputs.commit_class }}")
+    assert worker["timeout-minutes"] == ("${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}")
+    run_tests = next(step for step in _steps(worker) if step.get("name") == "Run selected Python tests")
+    command = run_tests["run"]
+    assert command.count("ci-checks tests all --scope all") == 1
+    assert '--packages "$TEST_PACKAGES"' in command
+    assert '--summary-title "$SUMMARY_TITLE"' in command
+    assert run_tests["env"]["SUMMARY_TITLE"] == ("${{ needs.changes.outputs.commit_class }}")
+    # The 354s test step is the long pole and the only member of its bin, so the broad
+    # critical path is that step plus one bootstrap. Sharing a bin would lengthen it.
+    condition = str(run_tests["if"])
+    assert "matrix.unit == 'python'" in condition
+    assert "matrix.unit == 'frontend'" not in condition
+    assert "matrix.unit == 'hygiene'" not in condition
 
 
-def test_worker_guards_are_two_minutes_above_each_class_wall_budget() -> None:
+def test_worker_guards_are_two_minutes_above_the_owner_wall_target() -> None:
     changes = _jobs()["changes"]
     assert changes["outputs"]["worker_timeout_minutes"] == ("${{ steps.guards.outputs.worker_timeout_minutes }}")
     guards = next(step for step in _steps(changes) if step.get("name") == "Derive worker guard")
     command = str(guards["run"])
-    assert "standard) wall_budget_seconds=600 ;;" in command
-    assert "broad) wall_budget_seconds=720 ;;" in command
+    # One wall budget governs the whole file, so the guard derives one timeout for both classes.
+    assert "standard|broad) wall_budget_seconds=600 ;;" in command
+    assert re.findall(r"wall_budget_seconds=(\d+)", command) == ["600"]
     assert "hang_grace_minutes=2" in command
     assert "wall_budget_seconds / 60 + hang_grace_minutes" in command
     assert 600 // 60 + 2 == 12
-    assert 720 // 60 + 2 == 14
 
-    guarded_jobs = {"worker", "broad-environment"} | _BROAD_JOB_IDS
-    for job_id in guarded_jobs:
-        assert _jobs()[job_id]["timeout-minutes"] == ("${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}")
+    assert _jobs()["worker"]["timeout-minutes"] == ("${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}")
 
 
 def test_router_emits_scoping_and_tree_attestation_contracts() -> None:
@@ -384,12 +442,18 @@ def test_title_edits_have_independent_concurrency_and_check_identities() -> None
     }
 
     jobs = workflow["jobs"]
-    title_policy = jobs["commitlint"]
     substantive = jobs["checks"]
-    assert title_policy["name"] == "PR title (conventional)"
-    assert title_policy["if"] == (
-        "needs.changes.outputs.commitlint_expected == 'true' && github.event.action == 'edited'"
-    )
+    # The title check had three copies: a dedicated `edited`-only job and one inside each of
+    # the two class paths. The work job already runs on every pull-request event, edits
+    # included, so the one copy it owns covers the trigger the dedicated job existed for.
+    title_policy = [
+        step
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if step.get("name") == "Validate PR title (merge commit subject)"
+    ]
+    assert len(title_policy) == 1
+    assert "needs.changes.outputs.commitlint_expected == 'true'" in str(title_policy[0]["if"])
     assert substantive["name"] == "Checks"
     # Checks is a required context on protected main, so suppressing it on an edited event would
     # leave the head without its required conclusion and let a title-only pass stand for validation.
@@ -484,23 +548,22 @@ def test_runtime_accounting_reads_run_level_metadata() -> None:
     assert 'gh api "repos/$REPO/actions/runs/$RUN_ID"' in command
 
 
-def test_runtime_accounting_enforces_only_the_frozen_class_budgets() -> None:
+def test_runtime_accounting_enforces_only_the_owner_wall_target() -> None:
     report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
     command = report["run"]
     env = report["env"]
 
-    assert "if ((wall_seconds >= class_wall_budget_seconds)); then" in command
-    assert "if ((billable_minutes > class_billable_budget_minutes)); then" in command
-    assert 'exit "$budget_failure"' in command
+    assert "if ((wall_seconds >= wall_budget_seconds)); then" in command
+    assert "exit 1" in command
 
-    budget_cases = {
-        (int(wall), int(billable))
-        for wall, billable in re.findall(
-            r"class_wall_budget_seconds=(\d+)\s+class_billable_budget_minutes=(\d+)",
-            command,
-        )
-    }
-    assert budget_cases == {(600, 10), (720, 30)}
+    # The owner set one wall target, 10 minutes, and no billable-minute figure. Billable is
+    # reported and never enforced; the dollar ceiling binds at the account spending limit,
+    # because it is a monthly cumulative quantity no single run can measure.
+    assert re.findall(r"wall_budget_seconds=(\d+)", command) == ["600"]
+    assert "billable_budget_minutes" not in command
+    assert "reconstructed_billable_minutes=$billable_minutes" in command
+    assert "estimated_cost_usd=$estimated_cost_usd" in command
+    assert "budget_failure" not in command
     # R was retired: R <= 3 rearranges to W >= 20B, a lower bound on wall time, so it could only fire
     # on runs that already passed both real ceilings. It punished intra-job speedups.
     assert "ratio" not in command
@@ -596,37 +659,32 @@ def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
     assert "standard)" in command
     assert "broad)" in command
 
+    # One matrix job covers every unit of both classes, so the fan-in has one work result to
+    # require rather than one per shard; a failing unit fails the job it belongs to.
     required = {
-        "commitlint": "$COMMITLINT_EXPECTED",
         "worker": "$WORK_EXPECTED",
-        "broad-environment": "$BROAD_ENV_EXPECTED",
-        "broad-python": "$BROAD_EXPECTED",
-        "broad-frontend": "$BROAD_EXPECTED",
-        "broad-hygiene": "$BROAD_EXPECTED",
-        "broad-policy": "$BROAD_EXPECTED",
         "container-contracts": "$CONTAINER_EXPECTED",
         "playwright-image": "$PLAYWRIGHT_EXPECTED",
     }
     assert set(checks["needs"]) == {"changes"} | set(required)
     for job_id, expectation in required.items():
         assert f"require '${{{{ needs.{job_id}.result }}}}' \"{expectation}\" {job_id}" in command
+    assert "$BROAD_EXPECTED" not in command
+    assert "broad-environment" not in command
 
 
 def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> None:
-    jobs = _jobs()
-    for owner in ("worker", "broad-frontend"):
-        steps = {step.get("name"): step for step in _steps(jobs[owner])}
-        assert steps["Lint frontend"]["run"] == ("pnpm --filter nohiki-frontend exec biome ci --reporter=github .")
-        assert "biome ci --reporter=github src/" in steps["Lint edge worker"]["run"]
-        assert "exec tsc --noEmit" in steps["Typecheck edge worker"]["run"]
-        assert "exec vitest run" in steps["Test edge worker"]["run"]
-        assert steps["Test frontend"]["run"].endswith("test --run --maxWorkers=100%")
+    steps = {step.get("name"): step for step in _steps(_jobs()["worker"])}
+    assert steps["Lint frontend"]["run"] == ("pnpm --filter nohiki-frontend exec biome ci --reporter=github .")
+    assert "biome ci --reporter=github src/" in steps["Lint edge worker"]["run"]
+    assert "exec tsc --noEmit" in steps["Typecheck edge worker"]["run"]
+    assert "exec vitest run" in steps["Test edge worker"]["run"]
+    assert steps["Test frontend"]["run"].endswith("test --run --maxWorkers=100%")
 
 
-def test_standard_setup_and_secret_scan_remain_single_job() -> None:
+def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> None:
     standard = _jobs()["worker"]
     job_env = standard["env"]
-    assert "needs.changes.outputs.broad" not in standard["if"]
     assert "lint_markdown" not in str(job_env["NIX_SETUP_SELECTED"])
     assert "commitlint_expected" not in str(job_env["NIX_SETUP_SELECTED"])
     assert "lint_markdown" in str(job_env["NODE_SETUP_SELECTED"])
@@ -641,17 +699,25 @@ def test_standard_setup_and_secret_scan_remain_single_job() -> None:
     setup = steps["Set up selected environments"]
     assert setup["uses"] == "./.github/actions/setup-ci"
     assert setup["with"]["ready-cache"] == "${{ env.NIX_SETUP_SELECTED }}"
-    assert setup["with"]["save-ready-cache"] == "${{ github.event_name == 'push' }}"
     assert setup["with"]["node"] == "${{ env.NODE_SETUP_SELECTED }}"
+    # Exactly one cache writer per run, now that the dedicated prewarm job is gone. Standard
+    # writes from main pushes only, because a pull-request entry is scoped to its own ref.
+    assert setup["with"]["save-ready-cache"] == (
+        "${{ matrix.unit == 'hygiene' || (github.event_name == 'push' && matrix.unit == 'all') }}"
+    )
 
     for name in ("Lint Python", "Check Python formatting"):
         lint_step = steps[name]
         assert lint_step["env"]["RUFF_CACHE_DIR"] == "${{ runner.temp }}/ruff-cache"
         assert "export UV_PROJECT_ENVIRONMENT=.venv" in lint_step["run"]
         assert ".venv-lint" not in lint_step["run"]
+        # Broad lints the whole tree from the same definition that lints the diff on standard.
+        assert lint_step["env"]["RUFF_SCOPE"] == ("${{ needs.changes.outputs.broad == 'true' && 'ALL' || 'CHANGED' }}")
+        assert "--exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' ." in lint_step["run"]
+        assert '"$BASE_SHA..$HEAD_SHA"' in lint_step["run"]
 
-    fan_in = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Require every selected check")
-    assert "needs.changes.outputs.standard == 'true'" in str(fan_in["env"]["NODE_GROUP_EXPECTED"])
+    # NODE_GROUP_EXPECTED is asserted against NODE_SETUP_SELECTED in
+    # test_execution_attestations_are_not_scoped_to_one_commit_class.
 
     changed = steps["Scan changed content for secrets"]
     assert changed["if"] == "env.DOCS_ONLY == 'true'"
@@ -659,39 +725,36 @@ def test_standard_setup_and_secret_scan_remain_single_job() -> None:
     assert "stdin --config /repo/.gitleaks.toml --no-banner --redact" in changed["run"]
 
     full = steps["Scan repository for secrets"]
-    assert full["if"] == "env.DOCS_ONLY != 'true'"
+    assert full["if"].endswith("env.DOCS_ONLY != 'true'")
     assert "detect --source . --config .gitleaks.toml --no-banner --redact" in full["run"]
 
 
-def test_deadcode_runs_once_per_class_with_split_static_cache_save() -> None:
-    jobs = _jobs()
-    for owner in ("worker", "broad-hygiene"):
-        job = jobs[owner]
-        steps = _steps(job)
-        deadcode = next(step for step in steps if step.get("name") == "Check selected dead code")
-        assert job["env"]["SKYLOS_CACHE_DIR"] == "${{ github.workspace }}/.skylos"
-        assert job["env"]["SKYLOS_CACHE_STATIC_TIER"] == "content"
-        assert deadcode["env"]["SKYLOS_JOBS"] == "2"
-        assert "--with" not in deadcode["run"]
-        assert "ci-checks deadcode" in deadcode["run"]
-        assert "--ci --fail --no-provenance" in deadcode["run"]
+def test_deadcode_runs_once_with_split_static_cache_save() -> None:
+    job = _jobs()["worker"]
+    steps = _steps(job)
+    deadcode = next(step for step in steps if step.get("name") == "Check selected dead code")
+    assert job["env"]["SKYLOS_CACHE_DIR"] == "${{ github.workspace }}/.skylos"
+    assert job["env"]["SKYLOS_CACHE_STATIC_TIER"] == "content"
+    assert deadcode["env"]["SKYLOS_JOBS"] == "2"
+    assert "--with" not in deadcode["run"]
+    assert "ci-checks deadcode" in deadcode["run"]
+    assert "--ci --fail --no-provenance" in deadcode["run"]
 
-        save = next(step for step in steps if step.get("name") == "Save Skylos static analysis cache")
-        assert str(save["if"]).startswith("always() &&")
-        assert save["with"]["path"] == "${{ github.workspace }}/.skylos"
-        assert save["with"]["key"] == ("${{ steps.setup-ci.outputs.skylos-cache-primary-key }}")
+    # Ruff and Skylos share a runner again, so the ordering the 196s rationale describes is
+    # load-bearing here: ruff must not leave a .ruff_cache in the fingerprinted workspace.
+    names = [step.get("name") for step in steps]
+    assert names.index("Lint Python") < names.index("Check selected dead code")
+
+    save = next(step for step in steps if step.get("name") == "Save Skylos static analysis cache")
+    assert str(save["if"]).startswith("always() &&")
+    assert save["with"]["path"] == "${{ github.workspace }}/.skylos"
+    assert save["with"]["key"] == ("${{ steps.setup-ci.outputs.skylos-cache-primary-key }}")
 
 
 def test_cache_summaries_use_observed_action_outputs() -> None:
     jobs = _jobs()
     setup_owners = (
-        "commitlint",
         "worker",
-        "broad-environment",
-        "broad-python",
-        "broad-frontend",
-        "broad-hygiene",
-        "broad-policy",
         "container-contracts",
     )
     for owner in setup_owners:
@@ -720,10 +783,7 @@ def test_python_test_packages_come_from_change_gate_in_both_classes() -> None:
     changes = _jobs()["changes"]
     assert changes["outputs"]["test_packages"] == "${{ steps.gate.outputs.test_packages }}"
 
-    for owner in ("worker", "broad-python"):
-        selected_tests = next(
-            step for step in _steps(_jobs()[owner]) if step.get("name") == "Run selected Python tests"
-        )
-        assert selected_tests["env"]["TEST_PACKAGES"] == ("${{ needs.changes.outputs.test_packages }}")
-        assert 'test -n "$TEST_PACKAGES"' in selected_tests["run"]
-        assert '--packages "$TEST_PACKAGES"' in selected_tests["run"]
+    selected_tests = next(step for step in _steps(_jobs()["worker"]) if step.get("name") == "Run selected Python tests")
+    assert selected_tests["env"]["TEST_PACKAGES"] == ("${{ needs.changes.outputs.test_packages }}")
+    assert 'test -n "$TEST_PACKAGES"' in selected_tests["run"]
+    assert '--packages "$TEST_PACKAGES"' in selected_tests["run"]

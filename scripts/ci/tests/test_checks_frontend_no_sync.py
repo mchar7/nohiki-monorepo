@@ -53,24 +53,19 @@ def test_smoke_production_frontend_container_uses_complete_ci_environment() -> N
 
 def test_frontend_and_python_tests_split_only_for_broad() -> None:
     jobs = _WORKFLOW["jobs"]
-    standard_steps = jobs["worker"]["steps"]
-    standard_frontend = next(step for step in standard_steps if step.get("name") == "Test frontend")
-    standard_python = next(step for step in standard_steps if step.get("name") == "Run selected Python tests")
-    broad_frontend = next(step for step in jobs["broad-frontend"]["steps"] if step.get("name") == "Test frontend")
-    broad_python = next(
-        step for step in jobs["broad-python"]["steps"] if step.get("name") == "Run selected Python tests"
-    )
+    steps = {step.get("name"): step for step in jobs["worker"]["steps"]}
+    frontend = steps["Test frontend"]
+    python = steps["Run selected Python tests"]
 
-    assert jobs["worker"]["if"].endswith("needs.changes.outputs.standard == 'true'")
-    assert "needs.changes.outputs.broad == 'true'" in jobs["broad-frontend"]["if"]
-    assert "needs.broad-environment.result" in jobs["broad-frontend"]["if"]
-    assert "needs.changes.outputs.broad == 'true'" in jobs["broad-python"]["if"]
-    assert "needs.broad-environment.result" in jobs["broad-python"]["if"]
-    for frontend in (standard_frontend, broad_frontend):
-        assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=100%" in frontend["run"]
-    for python in (standard_python, broad_python):
-        assert "ci-checks tests all" in python["run"]
-        assert python["env"]["SUMMARY_TITLE"] == ("${{ needs.changes.outputs.commit_class }}")
+    # One definition each. The class decides how many runners the same bodies spread over,
+    # so the split lives in the matrix and the per-step unit selector, not in a second job.
+    assert "needs.changes.outputs.standard == 'true'" in jobs["worker"]["if"]
+    assert "needs.changes.outputs.broad == 'true'" in jobs["worker"]["if"]
+    assert "matrix.unit == 'frontend'" in str(frontend["if"])
+    assert "matrix.unit == 'python'" in str(python["if"])
+    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=100%" in frontend["run"]
+    assert "ci-checks tests all" in python["run"]
+    assert python["env"]["SUMMARY_TITLE"] == ("${{ needs.changes.outputs.commit_class }}")
 
 
 def test_container_builds_use_stable_per_image_buildkit_cache_scopes() -> None:

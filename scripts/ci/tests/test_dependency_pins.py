@@ -222,22 +222,38 @@ def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
 
     assert restore["uses"] == ("nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569")
     assert save["uses"] == ("nix-community/cache-nix-action/save@7df957e333c1e5da7721f60227dbba6d06080569")
+    # Two entries, one identity surface. The Python entry turns over on flake/uv inputs and the
+    # Node entry on pnpm inputs, so a lane restores only what its own lockfiles can invalidate.
+    # Every input must still key exactly one entry: an input in neither goes stale unnoticed,
+    # and one in both reinstates the coupling the split exists to remove.
+    node_restore = by_name["Restore Node modules"]
     key = str(restore["with"]["primary-key"])
-    for identity_input in (
-        ".github/actions/setup-ci/action.yml",
+    node_key = str(node_restore["with"]["key"])
+    python_identity = (
         "flake.nix",
         "flake.lock",
         "uv.lock",
         "**/pyproject.toml",
         ".python-version",
         "scripts/dev/sync-ci-environment.sh",
+    )
+    node_identity = (
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
         "package.json",
         "typescript/**/package.json",
-    ):
-        assert identity_input in key
+    )
+    for identity_input in python_identity:
+        assert identity_input in key, identity_input
+        assert identity_input not in node_key, identity_input
+    for identity_input in node_identity:
+        assert identity_input in node_key, identity_input
+        assert identity_input not in key, identity_input
+    # The composite's own text keys both: a change to either restore invalidates what it restores.
+    assert ".github/actions/setup-ci/action.yml" in key
+    assert ".github/actions/setup-ci/action.yml" in node_key
     assert "github.sha" not in key
+    assert "github.sha" not in node_key
     lookup = by_name["Look up complete CI environment"]
     assert lookup["uses"] == restore["uses"]
     assert lookup["with"]["primary-key"] == restore["with"]["primary-key"]
@@ -245,13 +261,29 @@ def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
     assert lookup["with"]["lookup-only"] is True
     assert restore["with"]["restore-prefixes-first-match"] == ("ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-")
 
-    exact_miss = "steps.ready-cache.outputs.hit-primary-key != 'true'"
-    assert exact_miss in str(sync["if"])
-    assert exact_miss in str(node_install["if"])
-    assert exact_miss in str(save["if"])
-    root_shell = by_name["Root complete CI shell"]
-    assert exact_miss in str(root_shell["if"])
-    assert root_shell["run"] == ('nix build .#devShells.x86_64-linux.ci --out-link "$RUNNER_TEMP/ci-shell"')
+    # Each provisioning step is gated on the miss of the entry that would have supplied it, so
+    # a hit on one entry never suppresses work the other entry failed to deliver.
+    python_miss = "steps.ready-cache.outputs.hit-primary-key != 'true'"
+    node_miss = "steps.node-modules-cache.outputs.cache-hit != 'true'"
+    assert python_miss in str(sync["if"])
+    assert python_miss in str(save["if"])
+    assert node_miss in str(node_install["if"])
+    assert node_miss in str(by_name["Save Node modules"]["if"])
+
+    # A restored store still needs its bin directories on PATH: the consumers call the shell's
+    # tools bare, and no cache entry carries a PATH. So the export runs on a hit as well.
+    path_export = [step for step in steps if "PATH=%s" in str(step.get("run", ""))]
+    assert len(path_export) == 1
+    assert python_miss not in str(path_export[0]["if"])
+    assert '"$(nix develop .#ci --command printenv PATH)" >> "$GITHUB_ENV"' in str(path_export[0]["run"])
+
+    # The devShell out-link is what store collection is allowed to keep, so only the writer
+    # needs it, and only when it is about to build and save a store.
+    rooting = [step for step in steps if "--out-link" in str(step.get("run", ""))]
+    assert len(rooting) == 1
+    assert 'nix build .#devShells.x86_64-linux.ci --out-link "$RUNNER_TEMP/ci-shell"' in str(rooting[0]["run"])
+    assert "inputs.save-ready-cache == 'true'" in str(rooting[0]["if"])
+    assert python_miss in str(rooting[0]["if"])
     sync_command = str(sync["run"])
     assert "nix develop .#ci --command scripts/dev/sync-ci-environment.sh" in sync_command
     assert "trap 'rm -f" in sync_command
@@ -261,10 +293,17 @@ def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
     assert secret_steps == [sync]
     assert sync["env"] == {"SKYLOS_DEPLOY_KEY": "${{ inputs.skylos-deploy-key }}"}
     assert all("$RUNNER_TEMP/skylos_key" not in str(step.get("run", "")) for step in steps if step is not sync)
+    # Each entry is saved on its own producer succeeding. Coupling them would let a failed pnpm
+    # install withhold a perfectly good store, which is what the split exists to stop.
+    node_save = by_name["Save Node modules"]
     assert "steps.workspace-sync.outcome == 'success'" in str(save["if"])
-    assert "steps.node-install.outcome == 'success'" in str(save["if"])
+    assert "steps.node-install.outcome == 'success'" not in str(save["if"])
+    assert "steps.node-install.outcome == 'success'" in str(node_save["if"])
+    assert "steps.workspace-sync.outcome == 'success'" not in str(node_save["if"])
     assert save["with"]["primary-key"] == "${{ steps.ready-cache.outputs.primary-key }}"
     assert save["with"]["paths"] == restore["with"]["paths"]
+    assert node_save["with"]["key"] == "${{ steps.node-modules-cache.outputs.cache-primary-key }}"
+    assert node_save["with"]["path"] == node_restore["with"]["path"]
 
     names = {step.get("name") for step in steps}
     assert "Cache uv downloads" not in names
@@ -299,16 +338,14 @@ def test_setup_cache_telemetry_uses_restore_outputs_and_matched_keys() -> None:
 
 
 def test_python_lint_steps_use_the_complete_workspace_environment() -> None:
-    jobs = _workflow_jobs(_CHECKS)
-    for owner in ("worker", "broad-policy"):
-        steps = _steps(jobs[owner])
-        for step_name in ("Lint Python", "Check Python formatting"):
-            lint_step = next(step for step in steps if step.get("name") == step_name)
-            command = str(lint_step["run"])
-            assert "export UV_PROJECT_ENVIRONMENT=.venv" in command
-            assert ".venv-lint" not in command
-            assert "uv run --no-sync" in command
-            assert "ruff" in command
+    steps = _steps(_workflow_jobs(_CHECKS)["worker"])
+    for step_name in ("Lint Python", "Check Python formatting"):
+        lint_step = next(step for step in steps if step.get("name") == step_name)
+        command = str(lint_step["run"])
+        assert "export UV_PROJECT_ENVIRONMENT=.venv" in command
+        assert ".venv-lint" not in command
+        assert "uv run --no-sync" in command
+        assert "ruff" in command
 
 
 def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
@@ -340,14 +377,11 @@ def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
     }
     assert str(restore["uses"]).startswith("actions/cache/restore@")
 
-    jobs = _workflow_jobs(_CHECKS)
-    for owner in ("worker", "broad-hygiene"):
-        setup = next(
-            step for step in _steps(jobs[owner]) if str(step.get("uses", "")).startswith("./.github/actions/setup-ci")
-        )
-        assert setup["with"]["commit-class"] == ("${{ needs.changes.outputs.commit_class }}")
-        save = next(step for step in _steps(jobs[owner]) if step.get("name") == "Save Skylos static analysis cache")
-        assert str(save["uses"]).startswith("actions/cache/save@")
+    worker = _workflow_jobs(_CHECKS)["worker"]
+    setup = next(step for step in _steps(worker) if str(step.get("uses", "")).startswith("./.github/actions/setup-ci"))
+    assert setup["with"]["commit-class"] == ("${{ needs.changes.outputs.commit_class }}")
+    save = next(step for step in _steps(worker) if step.get("name") == "Save Skylos static analysis cache")
+    assert str(save["uses"]).startswith("actions/cache/save@")
 
 
 def test_hosted_python_syncs_enforce_the_lock_without_frozen_aliases() -> None:
@@ -371,14 +405,7 @@ def test_periodic_hygiene_workflows_are_absent() -> None:
 def test_checks_jobs_have_bounded_guards() -> None:
     timeouts = {job_name: job.get("timeout-minutes") for job_name, job in _workflow_jobs(_CHECKS).items()}
     derived = "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
-    for job_name in (
-        "worker",
-        "broad-environment",
-        "broad-python",
-        "broad-frontend",
-        "broad-hygiene",
-        "broad-policy",
-    ):
+    for job_name in ("worker",):
         assert timeouts[job_name] == derived
 
     invalid = {
@@ -463,13 +490,9 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
 def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     jobs = _workflow_jobs(_CHECKS)
     changes_steps = _steps(jobs["changes"])
-    commitlint_steps = _steps(jobs["commitlint"])
-    assert not any(step.get("name") == "Install Nix" for step in (*changes_steps, *commitlint_steps))
+    assert not any(step.get("name") == "Install Nix" for step in changes_steps)
 
     setup_uv = next(step for step in changes_steps if step.get("name") == "Set up uv and Python")
-    title_setup = next(step for step in commitlint_steps if step.get("name") == "Set up title policy")
-    assert title_setup["uses"] == "./.github/actions/setup-ci"
-    assert title_setup["with"]["node"] == "true"
     setup_pnpm = next(step for step in _setup_steps() if step.get("name") == "Install pnpm")
     setup_node = next(step for step in _setup_steps() if step.get("name") == "Set up Node")
     assert str(setup_uv["uses"]).startswith("astral-sh/setup-uv@")
