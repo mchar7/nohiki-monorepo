@@ -17,7 +17,7 @@ from nohiki_core_settings.observability import ObservabilitySettings
 
 type SecretsDirMissing = Literal["ok", "warn", "error"]
 
-SECRETS_DIR = os.environ.get("SECRETS_DIR", "/run/secrets")
+DEFAULT_SECRETS_DIR = "/run/secrets"
 
 
 def _check_azure_identity_available() -> bool:
@@ -54,7 +54,6 @@ class NohikiBaseSettings(BaseSettings):
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         extra="ignore",
-        secrets_dir=SECRETS_DIR,
     )
 
     service_name: str = Field()
@@ -93,6 +92,11 @@ class NohikiBaseSettings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         """Customize settings sources priority."""
         secrets_dir_missing: SecretsDirMissing = "ok" if is_development() else "error"
+        # SECRETS_DIR is read here rather than frozen into ``model_config`` at import time,
+        # which would tie the secrets source to whichever module imported this one first and
+        # silently discard any later change. A directory pinned in a class config, or passed
+        # as ``_secrets_dir``, still takes precedence inside the source.
+        secrets_dir = os.environ.get("SECRETS_DIR", DEFAULT_SECRETS_DIR)
 
         sources: list[PydanticBaseSettingsSource] = [
             init_settings,
@@ -100,6 +104,7 @@ class NohikiBaseSettings(BaseSettings):
             dotenv_settings,
             NestedSecretsSettingsSource(
                 file_secret_settings,
+                secrets_dir=secrets_dir,
                 secrets_nested_subdir=True,
                 secrets_prefix="",
                 secrets_dir_missing=secrets_dir_missing,
