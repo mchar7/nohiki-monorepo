@@ -419,6 +419,16 @@ jobs:
             --packages "$TEST_PACKAGES" --ci --workers 2 --summary "$GITHUB_STEP_SUMMARY" \
             --summary-title "$SUMMARY_TITLE"
 
+      # These assert the Playwright config by executing it, so they need the installed pnpm
+      # workspace and not just a `node` binary. The `python` payload restores no node_modules,
+      # so selection follows the payload: they run in the unit that carries one. The gate
+      # mirrors the Python suite's, so the same commits exercise them as before.
+      - name: Run Node workspace contract tests
+        if: (matrix.unit == 'all' || matrix.unit == 'hygiene') && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.python_any == 'true')
+        run: >
+          nix develop .#ci --command uv run --no-sync pytest
+          scripts/ci/tests -m requires_node_modules
+
       - name: Test frontend
         if: (matrix.unit == 'all' || matrix.unit == 'frontend') && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.frontend_tests == 'true')
         # 50% resolves to ONE worker on the 2-vCPU runner, idling half the machine. Measured
@@ -531,6 +541,7 @@ jobs:
             record "${{ needs.changes.outputs.typecheck_backend }}" hygiene 'ty check affected package closure'
             record "${{ needs.changes.outputs.typecheck_frontend }}" frontend 'frontend type-check'
             record "${{ needs.changes.outputs.python_any }}" python 'ci-checks tests affected package closure'
+            record "${{ needs.changes.outputs.python_any }}" hygiene 'pytest -m requires_node_modules'
             record "${{ needs.changes.outputs.frontend_tests }}" frontend 'frontend Vitest'
             record "${{ needs.changes.outputs.edge_worker }}" frontend 'Biome; tsc; Vitest edge worker'
             record "${{ needs.changes.outputs.hygiene }}" hygiene 'ci-checks deptry --packages affected closure; Semgrep architecture scan'

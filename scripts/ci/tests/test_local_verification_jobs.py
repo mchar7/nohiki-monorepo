@@ -214,6 +214,9 @@ def test_playwright_config_is_cluster_only_same_origin_and_unmasked() -> None:
         assert forbidden.lower() not in text.lower()
 
 
+# `playwright.k8s.config.ts` imports `@playwright/test`, a bare specifier ESM resolves at link
+# time, so evaluating it needs the installed workspace and not just a `node` binary.
+@pytest.mark.requires_node_modules
 def test_playwright_artifacts_have_one_canonical_e2e_root() -> None:
     default, overridden = _import_playwright_configs(None, "/artifacts/playwright")
     assert default == {
@@ -238,6 +241,7 @@ def test_playwright_artifacts_have_one_canonical_e2e_root() -> None:
     }
 
 
+@pytest.mark.requires_node_modules
 def test_playwright_rejects_noncanonical_relative_artifact_override() -> None:
     script = f"await import({_BROWSER_CONFIG.as_uri()!r});"
     result = subprocess.run(
@@ -279,6 +283,7 @@ def test_browser_runner_accounts_for_every_outcome_and_retains_artifacts() -> No
     assert "&& cleanupSucceeded" in text
 
 
+@pytest.mark.requires_node_modules
 def test_playwright_collects_every_authoritative_journey_file() -> None:
     result = subprocess.run(
         [

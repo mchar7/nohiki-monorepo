@@ -563,6 +563,7 @@ addopts = "--strict-markers -p no:cacheprovider --tb=short --import-mode=importl
 markers = [
     "integration: mark integration tests",
     "requires_docker: mark tests that require Docker/testcontainers",
+    "requires_node_modules: mark tests that execute the installed pnpm workspace",
     "unit: mark unit tests (default)",
     "e2e: mark end-to-end tests",
     "slow: mark tests as slow running",

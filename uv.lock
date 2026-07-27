@@ -6366,6 +6366,9 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+ci = [
+    { name = "reportlab" },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -6388,6 +6391,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+ci = [{ name = "reportlab", specifier = ">=4.2.0" }]
 dev = [
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },

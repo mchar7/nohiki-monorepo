@@ -17,14 +17,20 @@ dependencies = [
 ]
 
 [dependency-groups]
+# The hosted sync takes no default group and selects by name
+# (scripts/dev/sync-ci-environment.sh), so a test-only dependency reaches the runner
+# only from a group CI asks for.
+ci = [
+    # reportlab is used only by tests/test_pdfplumber_extractor_real_pdfs.py to
+    # build real PDFs in-memory. It has no runtime use.
+    "reportlab>=4.2.0",
+]
 dev = [
+    { include-group = "ci" },
     "pytest>=9.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=5.0.0",
     "pytest-mock>=3.12.0",
-    # reportlab is used only by tests/test_pdfplumber_extractor.py to
-    # build real PDFs in-memory. It has no runtime use.
-    "reportlab>=4.2.0",
 ]
 
 [tool.pytest.ini_options]

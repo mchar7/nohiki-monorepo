@@ -20,6 +20,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _FRESHNESS = _ROOT / ".github" / "workflows" / "digest-freshness.yml"
 _SETUP_CI = _ROOT / ".github" / "actions" / "setup-ci" / "action.yml"
+_NODE_WORKSPACE_MARKER = "requires_node_modules"
+_NODE_WORKSPACE_TESTS = "scripts/ci/tests"
 
 
 def _jobs() -> dict[str, WorkflowJob]:
@@ -227,6 +229,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Check API schema freshness",
             "Check image matrix parity",
             "Check proto compatibility",
+            "Run Node workspace contract tests",
         },
         "frontend": {
             "Lint Markdown",
@@ -381,6 +384,34 @@ def test_python_test_lane_uses_gate_scope_once_per_class() -> None:
     assert "matrix.unit == 'python'" in condition
     assert "matrix.unit == 'frontend'" not in condition
     assert "matrix.unit == 'hygiene'" not in condition
+
+
+def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> None:
+    worker = _jobs()["worker"]
+    steps = {step.get("name"): step for step in _steps(worker)}
+    node_lane = steps["Run Node workspace contract tests"]
+    assert f"{_NODE_WORKSPACE_TESTS} -m {_NODE_WORKSPACE_MARKER}" in str(node_lane["run"])
+
+    # The `python` payload restores no node_modules, so a marked test cannot pass in that unit.
+    setup = next(step for step in _steps(worker) if step.get("uses") == "./.github/actions/setup-ci")
+    assert "matrix.unit == 'python' && 'python'" in str(setup["with"]["payload"])
+    condition = str(node_lane["if"])
+    assert "matrix.unit == 'all' || matrix.unit == 'hygiene'" in condition
+    assert "matrix.unit == 'python'" not in condition
+
+    # Nothing loses coverage in the move: the marked tests run on exactly the commits whose
+    # Python suite used to carry them.
+    assert condition.endswith("needs.changes.outputs.python_any == 'true')")
+    assert str(steps["Run selected Python tests"]["if"]).endswith("needs.changes.outputs.python_any == 'true')")
+
+    # A marked test outside the one selected path would be deselected everywhere and run nowhere.
+    marked = {
+        path.relative_to(_ROOT).as_posix()
+        for path in _ROOT.glob("**/tests/**/test_*.py")
+        if f"pytest.mark.{_NODE_WORKSPACE_MARKER}" in path.read_text(encoding="utf-8")
+    }
+    assert marked
+    assert all(name.startswith(f"{_NODE_WORKSPACE_TESTS}/") for name in marked), marked
 
 
 def test_worker_guards_are_two_minutes_above_the_owner_wall_target() -> None:

@@ -72,7 +72,9 @@ def _write_coverage_json(command: tuple[str, ...], content: str) -> None:
 def test_marker_expressions_keep_slow_tests_out_of_unit_lane(
     pytester: pytest.Pytester,
 ) -> None:
-    assert test_checks._UNIT_TEST_MARKERS == "not integration and not e2e and not requires_docker and not slow"
+    assert test_checks._UNIT_TEST_MARKERS == (
+        "not integration and not e2e and not requires_docker and not requires_node_modules and not slow"
+    )
     assert test_checks._build_markers(integration=False) == test_checks._UNIT_TEST_MARKERS
     assert test_checks._build_markers(integration=True) == "integration"
 
