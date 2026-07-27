@@ -19,7 +19,7 @@ from rich.progress import (
 from rich.table import Table
 
 from job_embedding_finetuning.config.settings import get_settings
-from job_embedding_finetuning.dataset_adapters.base import DatasetTier
+from job_embedding_finetuning.dataset_adapters.base import DatasetInfo, DatasetTier
 from job_embedding_finetuning.dataset_adapters.download import (
     DownloadError,
     check_git_lfs,
@@ -118,7 +118,7 @@ def download_all(
 
 
 def _print_download_summary(
-    all_datasets: list[tuple[DatasetTier, object]],
+    all_datasets: list[tuple[DatasetTier, DatasetInfo]],
     target_dir: Path,
     success: int,
     skipped: int,
