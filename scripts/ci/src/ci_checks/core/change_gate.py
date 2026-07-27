@@ -35,12 +35,6 @@ class CommitClass(StrEnum):
     BROAD = "broad"
 
 
-# Worker runaway guards; the aggregator enforces class wall budgets.
-WORKER_TIMEOUT_MINUTES: dict[CommitClass, int] = {
-    commit_class: 18 if commit_class is CommitClass.BROAD else 9 for commit_class in CommitClass
-}
-
-
 @dataclass(frozen=True, slots=True)
 class ProtectedMainEvidence:
     """Repository and pull-request evidence for a protected-main smoke."""
@@ -249,7 +243,6 @@ def render_outputs(
         "commit_class": decision.commit_class.value,
         "standard": str(decision.commit_class is CommitClass.STANDARD).lower(),
         "broad": str(decision.commit_class is CommitClass.BROAD).lower(),
-        "worker_timeout_minutes": str(WORKER_TIMEOUT_MINUTES[decision.commit_class]),
         "protected_main_smoke": str(decision.protected_main_smoke).lower(),
         # Gate labels consume the full spelling as the broad-class signal.
         "full": str(decision.full).lower(),

@@ -660,7 +660,6 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
     assert scoped["protected_main_smoke"] == "false"
     assert scoped["lint_python"] == "true"
     assert scoped["nix"] == "false"
-    assert scoped["worker_timeout_minutes"] == "9"
     assert (
         set(scoped.values())
         - {
@@ -669,7 +668,6 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
             "standard",
             "lib-a,svc-b",
             "lib-a",
-            "9",
         }
         == set()
     )
@@ -682,7 +680,6 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
     assert broad["commit_class"] == "broad"
     assert broad["standard"] == "false"
     assert broad["broad"] == broad["full"] == "true"
-    assert broad["worker_timeout_minutes"] == "18"
     assert all(broad[name] == "false" for name in FLAG_NAMES)
 
 
