@@ -44,6 +44,7 @@ app.add_typer(tests_app, name="tests")
 # Change gate: maps a git diff to the minimal sound set of CI lanes.
 app.command("gate")(_gate.gate_cmd)
 app.command("gate-evidence")(_gate.gate_evidence_cmd)
+app.command("gate-reuse")(_gate.gate_reuse_cmd)
 
 
 def _filter_packages(

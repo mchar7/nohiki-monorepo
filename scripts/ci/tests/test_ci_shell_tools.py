@@ -52,11 +52,17 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
         "worker",
         "container-contracts",
         "playwright-image",
+        "title-policy",
         "checks",
     }
 
+    # The summary frame steps, `Open ...` and `Report ...`, name commands in their inventory
+    # without running them. Matching on the prefix rather than one exact name keeps this scan
+    # measuring real work after a frame step is renamed.
     work = "\n".join(
-        step["run"] for step in jobs["worker"]["steps"] if "run" in step and step.get("name") != "Report worker timing"
+        step["run"]
+        for step in jobs["worker"]["steps"]
+        if "run" in step and not str(step.get("name", "")).startswith(("Open ", "Report "))
     )
     container_contracts = "\n".join(_commands(jobs["container-contracts"]))
     playwright_image = "\n".join(_commands(jobs["playwright-image"]))

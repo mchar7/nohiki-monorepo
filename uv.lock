@@ -786,6 +786,7 @@ name = "ci-checks"
 version = "0.1.0"
 source = { editable = "scripts/ci" }
 dependencies = [
+    { name = "coverage" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "typer" },
@@ -803,6 +804,7 @@ deadcode = [
 
 [package.metadata]
 requires-dist = [
+    { name = "coverage", specifier = ">=7.13.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=14.3.0" },
     { name = "typer", specifier = ">=0.21.0" },

@@ -8,6 +8,9 @@ dependencies = [
     "typer>=0.21.0",
     "rich>=14.3.0",
     "pyyaml>=6.0.3",
+    # ci_checks.checks.tests compiles root coverage omit patterns with coverage.py's
+    # own GlobMatcher so the consolidated config agrees with the collector.
+    "coverage>=7.13.0",
 ]
 
 [dependency-groups]

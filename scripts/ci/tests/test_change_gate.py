@@ -1,6 +1,8 @@
 import fnmatch
+import json
 import os
 import subprocess
+import tomllib
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -13,6 +15,8 @@ from ci_checks.checks import tests as checks_tests
 from ci_checks.checks.gate import gate_cmd
 from ci_checks.core import packages as packages_module
 from ci_checks.core.change_gate import (
+    BroadCause,
+    BroadReason,
     CommitClass,
     EventContext,
     GateDecision,
@@ -88,7 +92,9 @@ def test_evaluate_fails_closed_for_unmatched_and_broad_policy_files(
     assert decision.reasons
     if changed == {"mystery.bin"}:
         assert decision.unmatched == ["mystery.bin"]
-        assert decision.reasons == ["unmatched file: mystery.bin"]
+        assert decision.reasons == [
+            BroadReason(BroadCause.UNMATCHED_PATH, "unmatched file: mystery.bin", "mystery.bin")
+        ]
 
 
 @pytest.mark.parametrize(
@@ -129,9 +135,32 @@ def test_unmapped_path_fails_closed_without_unrelated_frontend_smoke() -> None:
     assert decision.affected == set(_synthetic_packages())
 
 
-def test_renovate_config_has_no_ci_effect() -> None:
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/renovate.json5",
+        ".github/dependabot.yml",
+        ".gitignore",
+        ".gitleaks.toml",
+        "docs/api/nohiki.openapi.json",
+    ],
+)
+def test_cheap_classified_paths_still_seed_their_contract_test_package(path: str) -> None:
+    """A path a ci-checks contract test reads must run that suite, however cheap the path looks."""
     decision = evaluate(
-        {".github/renovate.json5"},
+        {path},
+        load_packages_with_deps(Scope.ALL),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert not decision.unmatched
+    assert "ci-checks" in decision.affected
+
+
+def test_inert_paths_select_no_lane_and_no_package() -> None:
+    decision = evaluate(
+        {"commitlint.config.mjs"},
         _synthetic_packages(),
         EventContext(event="pull_request", base_sha="base", head_sha="head"),
     )
@@ -169,11 +198,9 @@ def test_justfile_selects_owned_checks() -> None:
         EventContext(event="pull_request", base_sha="base", head_sha="head"),
     )
 
-    assert {
-        "api_schema_freshness",
-        "image_matrix_parity",
-        "proto_breaking",
-    } <= decision.flags
+    assert {"api_schema_freshness", "image_matrix_parity"} <= decision.flags
+    # The workflow runs buf breaking inline; the Justfile recipe is local-only.
+    assert "proto_breaking" not in decision.flags
 
 
 def _valid_protected_evidence(head_sha: str = "head") -> ProtectedMainEvidence:
@@ -250,7 +277,7 @@ def test_initial_push_null_before_sha_fails_closed_even_with_valid_evidence() ->
     )
 
     assert decision.commit_class is CommitClass.BROAD
-    assert decision.reasons == ["missing or null base ref"]
+    assert decision.reasons == [BroadReason(BroadCause.MISSING_SHA, "missing or null base ref")]
 
 
 def test_missing_tested_sha_fails_closed() -> None:
@@ -261,7 +288,7 @@ def test_missing_tested_sha_fails_closed() -> None:
     )
 
     assert decision.commit_class is CommitClass.BROAD
-    assert decision.reasons == ["missing or null tested SHA"]
+    assert decision.reasons == [BroadReason(BroadCause.MISSING_SHA, "missing or null tested SHA")]
 
 
 @pytest.mark.parametrize(
@@ -316,21 +343,11 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
     [
         (
             "typescript/apps/frontend/src/App.tsx",
-            {"lint_frontend", "typecheck_frontend", "frontend_tests", "frontend_e2e"},
-        ),
-        (
-            "typescript/apps/frontend/src/api/schema.d.ts",
-            {
-                "lint_frontend",
-                "typecheck_frontend",
-                "frontend_tests",
-                "api_schema_freshness",
-                "frontend_e2e",
-            },
+            {"lint_frontend", "typecheck_frontend", "frontend_tests", "frontend_smoke"},
         ),
         (
             "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
-            {"lint_frontend", "typecheck_frontend", "frontend_tests", "frontend_e2e"},
+            {"lint_frontend", "typecheck_frontend", "frontend_smoke", "node_workspace_contracts"},
         ),
         (
             "typescript/edge/auth-listings-worker/src/index.ts",
@@ -343,7 +360,7 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
                 "typecheck_frontend",
                 "frontend_tests",
                 "edge_worker",
-                "frontend_e2e",
+                "frontend_smoke",
             },
         ),
     ],
@@ -359,31 +376,55 @@ def test_evaluate_typescript_surfaces_without_python(path: str, expected: set[st
 @pytest.mark.parametrize(
     "path",
     [
+        ".dockerignore",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "typescript/apps/frontend/Dockerfile",
         "typescript/apps/frontend/index.html",
         "typescript/apps/frontend/package.json",
+        "typescript/apps/frontend/tsconfig.app.json",
         "typescript/apps/frontend/vite.config.ts",
+        "typescript/apps/frontend/vitest.config.ts",
         "typescript/apps/frontend/Caddyfile",
+        "typescript/apps/frontend/src/App.tsx",
+        "typescript/apps/frontend/public/locales/en/common.json",
+        "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
+        "typescript/edge/auth-listings-worker/package.json",
+        "typescript/libs/tsconfig/base.json",
+        "scripts/ci/tests/test_frontend_delivery.py",
     ],
 )
-def test_frontend_smoke_selects_only_build_contract_inputs(path: str) -> None:
-    decision = evaluate({path}, _synthetic_packages())
-
-    assert "frontend_smoke" in decision.flags
+def test_frontend_smoke_selects_every_image_build_context_input(path: str) -> None:
+    assert "frontend_smoke" in evaluate({path}, _synthetic_packages()).flags
 
 
 @pytest.mark.parametrize(
     "path",
     [
-        "pnpm-lock.yaml",
-        "package.json",
-        "pnpm-workspace.yaml",
-        "typescript/apps/frontend/e2e/playwright.config.ts",
-        "typescript/apps/frontend/e2e/playwright.k8s.config.ts",
-        "typescript/apps/frontend/Dockerfile.playwright-runner",
-        "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
-        "typescript/apps/frontend/package.json",
+        "typescript/apps/frontend/knip.ts",
+        "typescript/apps/frontend/steiger.config.ts",
+        "typescript/apps/frontend/components.json",
+        "typescript/apps/frontend/biome.jsonc",
+        "typescript/apps/frontend/scripts/i18n-check.mjs",
         "typescript/libs/biome-config/biome.json",
-        "typescript/libs/tsconfig/base.json",
+    ],
+)
+def test_frontend_smoke_ignores_context_files_the_image_build_never_reads(path: str) -> None:
+    assert "frontend_smoke" not in evaluate({path}, _synthetic_packages()).flags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".dockerignore",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "typescript/apps/frontend/Dockerfile.playwright-runner",
+        "typescript/apps/frontend/package.json",
+        "typescript/libs/biome-config/package.json",
+        "typescript/libs/tsconfig/package.json",
     ],
 )
 def test_frontend_e2e_selects_every_runner_image_input(path: str) -> None:
@@ -395,13 +436,61 @@ def test_frontend_e2e_selects_every_runner_image_input(path: str) -> None:
     [
         "biome.json",
         "typescript/edge/auth-listings-worker/package.json",
+        # Copied into the image after its last RUN, so no source content can
+        # change what `playwright --version` reports.
+        "typescript/apps/frontend/src/App.tsx",
+        "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
+        "typescript/apps/frontend/e2e/playwright.config.ts",
+        "typescript/apps/frontend/public/locales/en/common.json",
+        "typescript/apps/frontend/vite.config.ts",
+        "typescript/apps/frontend/Dockerfile",
+        "typescript/libs/biome-config/biome.json",
+        "typescript/libs/tsconfig/base.json",
     ],
 )
 def test_frontend_e2e_ignores_inputs_outside_the_runner_image(path: str) -> None:
     assert "frontend_e2e" not in evaluate({path}, _synthetic_packages()).flags
 
 
-def test_flake_broad_change_selects_every_nix_runtime_owner() -> None:
+@pytest.mark.parametrize(
+    "path",
+    [
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "typescript/apps/frontend/package.json",
+        # Executed, not read: two tests import this config under node and a third lists it.
+        "typescript/apps/frontend/e2e/playwright.k8s.config.ts",
+        # The k8s config spreads it, so it reaches every assertion the marked tests make.
+        "typescript/apps/frontend/e2e/playwright.config.ts",
+        # `playwright test --list` collects these and the third test compares the set.
+        "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
+        "scripts/ci/tests/test_local_verification_jobs.py",
+    ],
+)
+def test_node_workspace_contracts_selects_every_input_the_marked_tests_execute(path: str) -> None:
+    assert "node_workspace_contracts" in evaluate({path}, _synthetic_packages()).flags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Playwright's testDir is the config's own directory, so no app source is collected.
+        "typescript/apps/frontend/src/App.tsx",
+        "typescript/apps/frontend/public/locales/en/common.json",
+        "typescript/apps/frontend/vite.config.ts",
+        "typescript/apps/frontend/Dockerfile",
+        "typescript/apps/frontend/Dockerfile.playwright-runner",
+        "typescript/libs/tsconfig/base.json",
+        # A different ci-checks module: it carries no requires_node_modules test.
+        "scripts/ci/tests/test_frontend_delivery.py",
+    ],
+)
+def test_node_workspace_contracts_ignores_paths_the_marked_tests_never_execute(path: str) -> None:
+    assert "node_workspace_contracts" not in evaluate({path}, _synthetic_packages()).flags
+
+
+def test_flake_broad_change_selects_every_devshell_sourced_lane() -> None:
     packages = load_packages_with_deps(Scope.ALL)
     decision = evaluate({"flake.nix"}, packages)
 
@@ -412,12 +501,21 @@ def test_flake_broad_change_selects_every_nix_runtime_owner() -> None:
         "typecheck_backend",
         "python_any",
         "hygiene",
-        "lint_frontend",
-        "typecheck_frontend",
-        "frontend_tests",
-        "edge_worker",
+        "build_backend",
+        "lint_proto",
+        "lint_workflows",
+        "lint_docker",
+        "proto_breaking",
+        "image_matrix_parity",
+        "api_schema_freshness",
+        # container-contracts has no broad disjunct, so only these two can select it.
+        "frontend_smoke",
+        "otel_collector",
     } <= decision.flags
-    assert not {"frontend_smoke", "frontend_e2e", "otel_collector"} & decision.flags
+    # The frontend unit takes pnpm and Node from actions/setup-node, not the devshell.
+    assert not {"lint_frontend", "typecheck_frontend", "frontend_tests", "edge_worker"} & decision.flags
+    # playwright-image builds and runs bare docker, never entering the devshell.
+    assert "frontend_e2e" not in decision.flags
     expected_test_packages = tuple(sorted(name for name, package in packages.items() if package.has_tests))
     selected_tests = selected_test_packages(decision, packages)
     assert selected_tests == expected_test_packages
@@ -429,6 +527,7 @@ def test_broad_change_can_co_select_frontend_smoke_and_otel_collector() -> None:
         {
             "scripts/ci/src/ci_checks/core/change_rules.py",
             "typescript/apps/frontend/Dockerfile",
+            "typescript/apps/frontend/Dockerfile.playwright-runner",
             "infra/k8s/observability/base/otel/collector.yaml",
         },
         load_packages_with_deps(Scope.ALL),
@@ -438,8 +537,8 @@ def test_broad_change_can_co_select_frontend_smoke_and_otel_collector() -> None:
     assert {"frontend_smoke", "frontend_e2e", "otel_collector"} <= decision.flags
 
 
-def test_frontend_e2e_rule_patterns_each_match_a_tracked_path() -> None:
-    tracked = set(
+def _tracked_paths() -> set[str]:
+    return set(
         subprocess.run(
             ["git", "ls-files"],
             cwd=REPO_ROOT,
@@ -448,10 +547,17 @@ def test_frontend_e2e_rule_patterns_each_match_a_tracked_path() -> None:
             text=True,
         ).stdout.splitlines()
     )
-    runner_rule = next(rule for rule in SURFACE_RULES if rule.flags == ("frontend_e2e",))
 
-    for pattern in runner_rule.patterns:
-        assert any(fnmatch.fnmatch(path, pattern) for path in tracked), pattern
+
+@pytest.mark.parametrize("flag", ["frontend_e2e", "frontend_smoke"])
+def test_container_image_rule_patterns_each_match_a_tracked_path(flag: str) -> None:
+    tracked = _tracked_paths()
+
+    for rule in SURFACE_RULES:
+        if rule.flags != (flag,):
+            continue
+        for pattern in rule.patterns:
+            assert any(fnmatch.fnmatch(path, pattern) for path in tracked), pattern
 
 
 def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
@@ -468,17 +574,17 @@ def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
         (
             "typescript/apps/frontend/Dockerfile",
             "false",
-            {"frontend_smoke", "frontend_e2e", "lint_docker", "python_any", "hygiene"},
+            {"frontend_smoke", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "typescript/apps/frontend/Dockerfile.playwright-runner",
             "false",
-            {"frontend_e2e", "lint_docker", "python_any", "hygiene"},
+            {"frontend_e2e", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "infra/k8s/observability/base/otel/collector.yaml",
             "false",
-            {"otel_collector", "python_any", "hygiene"},
+            {"otel_collector", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "scripts/util/export-openapi.py",
@@ -488,7 +594,7 @@ def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
         (
             "infra/k8s/local/images.json",
             "false",
-            {"image_matrix_parity", "python_any", "hygiene"},
+            {"image_matrix_parity", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "unknown.bin",
@@ -531,7 +637,7 @@ def test_evaluate_alembic_change_seeds_ci_checks() -> None:
             "scripts/ci/src/ci_checks/checks/freshness.py",
             "false",
             {"ci-checks"},
-            {"python_any"},
+            {"python_any", "typecheck_backend"},
             set(),
         ),
         (
@@ -545,8 +651,8 @@ def test_evaluate_alembic_change_seeds_ci_checks() -> None:
             "infra/k8s/helm/values.prod.digests.yaml",
             "false",
             {"ci-checks"},
-            {"python_any", "hygiene"},
-            {"typecheck_backend"},
+            {"python_any", "hygiene", "typecheck_backend"},
+            set(),
         ),
         (
             "backend/libs/nohiki-test-utils/src/nohiki_test_utils/utils/docker.py",
@@ -683,26 +789,52 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
     assert all(broad[name] == "false" for name in FLAG_NAMES)
 
 
-def test_render_summary_uses_friendly_lanes_and_checkmarks() -> None:
+def _policy_reason(path: str) -> BroadReason:
+    return BroadReason(BroadCause.POLICY_SOURCE, f"broad policy source: {path}", path)
+
+
+def _unmatched_reason(path: str) -> BroadReason:
+    return BroadReason(BroadCause.UNMATCHED_PATH, f"unmatched file: {path}", path)
+
+
+def test_render_summary_uses_friendly_lanes_and_names_the_owning_bin() -> None:
     decision = GateDecision(flags={"lint_markdown"})
     outputs = render_outputs(decision, (), "pull_request")
 
     summary = render_summary(decision, outputs, "pull_request", "base123", "head456")
 
     assert "`base123..head456`" in summary
-    assert "Verdict: **standard**" in summary
-    assert "| Markdown lint | ✓ |" in summary
-    assert "| Python lint | — |" in summary
+    assert "| Commit class | **standard** |" in summary
+    assert "| Markdown lint | ✓ | frontend |" in summary
+    assert "| Python lint | — | hygiene |" in summary
     assert all(f"| {name} |" in summary for name in LANE_DISPLAY_NAMES.values())
     assert "| lint_markdown |" not in summary
     assert "true" not in summary
     assert "false" not in summary
 
 
-def test_render_summary_links_broad_class_file_reasons() -> None:
+def test_render_summary_marks_every_lane_selected_on_a_broad_verdict() -> None:
+    """Broad runs every lane while carrying no lane flags, so flags alone would render 20 dashes."""
+    decision = GateDecision(full=True, reasons=[_policy_reason("uv.lock")])
+    outputs = render_outputs(decision, (), "push")
+
+    summary = render_summary(decision, outputs, "push", "base123", "head456")
+
+    assert all(outputs[flag] == "false" for flag in FLAG_NAMES)
+    assert "Broad class selects every lane." in summary
+    assert "—" not in summary
+    assert summary.count("| ✓ |") == len(FLAG_NAMES)
+
+
+def test_render_summary_groups_reasons_and_leads_with_unclassified_paths() -> None:
     decision = GateDecision(
         full=True,
-        reasons=["broad policy source: uv.lock", "unmatched file: odd files/data.bin"],
+        # Policy first in source order, to prove the grouping reorders rather than echoing input.
+        reasons=[
+            _policy_reason("uv.lock"),
+            _unmatched_reason("odd files/data.bin"),
+            BroadReason(BroadCause.MISSING_SHA, "base sha is unusable"),
+        ],
         unmatched=["odd files/data.bin"],
     )
     outputs = render_outputs(decision, (), "pull_request")
@@ -717,27 +849,44 @@ def test_render_summary_links_broad_class_file_reasons() -> None:
         head_sha="head456",
     )
 
-    assert "**Broad-class reasons:**" in summary
+    unclassified = summary.index("**Unclassified paths (1).**")
+    policy = summary.index("**Broad policy sources (1).**")
+    # An unclassified path means the gate never decided, which outranks policy doing its job.
+    assert unclassified < policy
+    assert "fails closed to broad instead of deciding" in summary
     assert (
-        "- broad policy source: [`uv.lock`](https://github.com/mchar7/nohiki-monorepo/blob/head456/uv.lock)"
+        "- [`odd files/data.bin`](https://github.com/mchar7/nohiki-monorepo/blob/head456/odd%20files/data.bin)"
     ) in summary
-    assert (
-        "- unmatched file: [`odd files/data.bin`]"
-        "(https://github.com/mchar7/nohiki-monorepo/blob/head456/odd%20files/data.bin)"
-    ) in summary
-    assert all(
-        line.startswith("- ") for line in summary.splitlines() if "trigger:" in line or "unmatched file:" in line
-    )
+    assert "- [`uv.lock`](https://github.com/mchar7/nohiki-monorepo/blob/head456/uv.lock)" in summary
+    # The group heading carries the category, so repeating it on every bullet is noise.
+    assert "- unmatched file:" not in summary
+    assert "- broad policy source:" not in summary
+    # A cause carrying no path must still be reported, not silently dropped between the groups.
+    assert "**Other broad-class reasons (1):**" in summary
+    assert "- base sha is unusable" in summary
 
 
 def test_render_summary_keeps_paths_plain_without_github_context() -> None:
-    decision = GateDecision(full=True, reasons=["unmatched file: mystery.bin"], unmatched=["mystery.bin"])
+    decision = GateDecision(full=True, reasons=[_unmatched_reason("mystery.bin")], unmatched=["mystery.bin"])
     outputs = render_outputs(decision, (), "push")
 
     summary = render_summary(decision, outputs, "push", "base", "HEAD")
 
-    assert "- unmatched file: `mystery.bin`" in summary
+    assert "**Unclassified paths (1).**" in summary
+    assert "- `mystery.bin`" in summary
     assert "https://github.com/" not in summary
+
+
+def test_render_summary_collapses_the_affected_package_list() -> None:
+    """48 comma-joined names is a wall; the count is the signal and the list is on demand."""
+    decision = GateDecision(flags={"lint_python"}, affected={f"pkg-{index:02d}" for index in range(48)})
+    outputs = render_outputs(decision, (), "push")
+
+    summary = render_summary(decision, outputs, "push", "base", "HEAD")
+
+    assert "<details><summary>Affected packages (48)</summary>" in summary
+    assert "`pkg-00`, `pkg-01`" in summary
+    assert "</details>" in summary
 
 
 def test_gate_diff_uses_exact_base_and_tested_shas(
@@ -1052,6 +1201,9 @@ if args and args[0] == "api":
             raise SystemExit(9)
         payload = fixture["pulls"]
     elif "/actions/workflows/checks.yml/runs" in endpoint:
+        if fixture.get("fail_api") == "runs":
+            print("recorded API failure", file=sys.stderr)
+            raise SystemExit(9)
         payload = fixture["runs"]
     elif "/commits/" in endpoint:
         payload = fixture["commit"]
@@ -1209,6 +1361,150 @@ def test_gate_evidence_failures_emit_empty_evidence(
     assert "Protected-main evidence unavailable:" in output
 
 
+def _checked_out_tree() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _reuse_fixture(tmp_path: Path, tree_sha: str) -> Path:
+    """Write fake-gh scenarios whose attested tree is the tree the command will resolve."""
+
+    def runs(*ids: int) -> dict[str, object]:
+        return {
+            "workflow_runs": [
+                {
+                    "id": run_id,
+                    "name": "Checks",
+                    "event": "pull_request",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "head_sha": "pr-head",
+                }
+                for run_id in ids
+            ]
+        }
+
+    def attested(run_id: int, **overrides: object) -> dict[str, object]:
+        record: dict[str, object] = {
+            "tested_tree_sha": tree_sha,
+            "event_action": "synchronize",
+            "commit_class": "standard",
+            "run_id": run_id,
+            "base_sha": "base-sha",
+        }
+        return record | overrides
+
+    legacy = {key: value for key, value in attested(204).items() if key != "base_sha"}
+    scenarios: dict[str, object] = {
+        "proven": {"runs": runs(201), "attestations": {"201": attested(201)}},
+        "tree_mismatch": {
+            "runs": runs(202),
+            "attestations": {"202": attested(202, tested_tree_sha="a-different-tree")},
+        },
+        # The retarget hole: an ancestor base leaves the tree identical, so only base binding
+        # separates this from a genuine title edit.
+        "base_retargeted": {
+            "runs": runs(203),
+            "attestations": {"203": attested(203, base_sha="a-different-base")},
+        },
+        "legacy_without_base": {"runs": runs(204), "attestations": {"204": legacy}},
+        "only_edited": {
+            "runs": runs(205),
+            "attestations": {"205": attested(205, event_action="edited")},
+        },
+        "artifact_expired": {"runs": runs(206), "attestations": {}},
+        "no_successful_run": {"runs": {"workflow_runs": []}, "attestations": {}},
+        "api_failure": {"fail_api": "runs", "runs": {}, "attestations": {}},
+    }
+    path = tmp_path / "reuse_scenarios.json"
+    path.write_text(json.dumps(scenarios), encoding="utf-8")
+    return path
+
+
+def _run_gate_reuse(
+    tmp_path: Path,
+    harness: tuple[dict[str, str], Path],
+    scenario: str,
+    fixtures: Path,
+    action: str = "edited",
+) -> dict[str, str]:
+    environment, _log = harness
+    github_output = tmp_path / f"{scenario}.out"
+    result = CliRunner().invoke(
+        ci_app_module.app,
+        [
+            "gate-reuse",
+            "--event",
+            "pull_request",
+            "--action",
+            action,
+            "--repository",
+            "mchar7/nohiki-monorepo",
+            "--pr-head-sha",
+            "pr-head",
+            "--base-sha",
+            "base-sha",
+            "--github-output",
+            str(github_output),
+        ],
+        env=environment | {"FAKE_GH_SCENARIO": scenario, "FAKE_GH_FIXTURES": str(fixtures)},
+    )
+    assert result.exit_code == 0, result.output
+    return dict(line.split("=", maxsplit=1) for line in github_output.read_text(encoding="utf-8").splitlines())
+
+
+def test_gate_reuse_proves_a_title_edit_and_names_the_run_it_relied_on(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    fixtures = _reuse_fixture(tmp_path, _checked_out_tree())
+    values = _run_gate_reuse(tmp_path, gate_evidence_harness, "proven", fixtures)
+
+    assert values == {"title_only": "true", "reused_run_id": "201"}
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "tree_mismatch",
+        "base_retargeted",
+        "legacy_without_base",
+        "only_edited",
+        "artifact_expired",
+        "no_successful_run",
+        "api_failure",
+    ],
+)
+def test_gate_reuse_fails_closed_on_every_unproven_path(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+    scenario: str,
+) -> None:
+    fixtures = _reuse_fixture(tmp_path, _checked_out_tree())
+    values = _run_gate_reuse(tmp_path, gate_evidence_harness, scenario, fixtures)
+
+    assert values == {"title_only": "false", "reused_run_id": ""}
+
+
+def test_gate_reuse_defines_both_outputs_without_calling_github_off_an_edit(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    _environment, log = gate_evidence_harness
+    fixtures = _reuse_fixture(tmp_path, _checked_out_tree())
+    values = _run_gate_reuse(tmp_path, gate_evidence_harness, "proven", fixtures, action="synchronize")
+
+    # The renderer reads these on every event, so a skipped lookup must still define them.
+    assert values == {"title_only": "false", "reused_run_id": ""}
+    assert not log.exists()
+
+
 def _consumer_packages(tmp_path: Path) -> list[Package]:
     return [Package(name, tmp_path / name, PackageType.LIB) for name in ("first", "second")]
 
@@ -1333,3 +1629,276 @@ def test_consumer_packages_unknown_name_fails_closed(
 
     assert result.exit_code == 2
     assert "Unknown packages" in result.output
+
+
+def test_schema_types_and_committed_spec_seed_their_contract_test() -> None:
+    """The api-schema-check recipe diffs only the generated types; test_upload_api_schema reads both."""
+    packages = load_packages_with_deps(Scope.ALL)
+
+    types = evaluate({"typescript/apps/frontend/src/api/schema.d.ts"}, packages)
+    spec = evaluate({"docs/api/nohiki.openapi.json"}, packages)
+
+    assert "api_schema_freshness" in types.flags
+    assert "ci-checks" in types.affected
+    assert "api_schema_freshness" not in spec.flags
+    assert "ci-checks" in spec.affected
+
+
+@pytest.mark.parametrize("path", [".markdownlint-cli2.jsonc", ".markdownlint.json", ".markdownlintignore"])
+def test_markdownlint_configs_select_the_markdown_lane(path: str) -> None:
+    decision = evaluate({path}, _synthetic_packages())
+
+    assert decision.flags == {"lint_markdown"}
+    assert not decision.full
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "typescript/edge/auth-listings-worker/wrangler.toml",
+        "semgrep-overrides.txt",
+        "backend/services/ml-compute-service/pyproject.toml",
+        "package.json",
+        "pnpm-lock.yaml",
+    ],
+)
+def test_single_file_contract_inputs_seed_ci_checks(path: str) -> None:
+    assert "ci-checks" in evaluate({path}, load_packages_with_deps(Scope.ALL)).affected
+
+
+def test_container_only_assertion_files_select_the_job_that_runs_them() -> None:
+    """Both assertions are requires_docker, which the Python lane deselects."""
+    packages = load_packages_with_deps(Scope.ALL)
+
+    assert "otel_collector" in evaluate({"scripts/ci/tests/test_otel_collector_manifest.py"}, packages).flags
+    assert "frontend_smoke" in evaluate({"scripts/ci/tests/test_frontend_delivery.py"}, packages).flags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
+        "typescript/apps/frontend/e2e/playwright.config.ts",
+        "typescript/apps/frontend/e2e/pages/login.page.ts",
+    ],
+)
+def test_e2e_specs_lint_and_typecheck_without_running_vitest(path: str) -> None:
+    """vitest.config.ts excludes **/e2e/**, so a Playwright spec cannot move that verdict."""
+    flags = evaluate({path}, _synthetic_packages()).flags
+
+    assert {"lint_frontend", "typecheck_frontend"} <= flags
+    assert "frontend_tests" not in flags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "typescript/apps/frontend/.ast-grep/sgconfig.yml",
+        "typescript/apps/frontend/.ast-grep/rules/no-memo-ts.yaml",
+        "typescript/apps/frontend/components.json",
+        "typescript/apps/frontend/knip.ts",
+        "typescript/apps/frontend/steiger.config.ts",
+    ],
+)
+def test_frontend_tooling_configs_select_no_lane_without_falling_broad(path: str) -> None:
+    """No checks.yml step runs ast-grep, knip or steiger, and biome, tsc and vitest all exclude them."""
+    decision = evaluate({path}, _synthetic_packages())
+
+    assert not decision.full
+    assert decision.flags == set()
+
+
+def test_lefthook_config_selects_its_contract_test_not_the_nix_lane() -> None:
+    """`nix flake check` builds the binary from flake.nix and the version step compares a literal."""
+    decision = evaluate({"lefthook.yml"}, load_packages_with_deps(Scope.ALL))
+
+    assert "nix" not in decision.flags
+    assert "ci-checks" in decision.affected
+
+
+# One source file per package family the Typecheck backend step reads but the retired
+# package-type test withheld the flag from: every scripts/** family, plus the one OTHER
+# package that ships a src/ tree.
+_TYPECHECKED_SOURCES: tuple[tuple[str, str, PackageType], ...] = (
+    (
+        "skill-semantic-analysis",
+        "scripts/ml/skill_semantic_analysis/src/skill_semantic_analysis/cli.py",
+        PackageType.SCRIPTS,
+    ),
+    ("ci-checks", "scripts/ci/src/ci_checks/checks/freshness.py", PackageType.SCRIPTS),
+    ("tailor", "scripts/util/tailor/src/tailor/main.py", PackageType.SCRIPTS),
+    ("llm-benchmark", "scripts/benchmark/src/llm_benchmark/main.py", PackageType.SCRIPTS),
+    ("qdrant-init", "infra/shared/qdrant-init/src/qdrant_init/main.py", PackageType.OTHER),
+)
+
+
+@pytest.mark.parametrize(("package", "source", "pkg_type"), _TYPECHECKED_SOURCES)
+def test_source_change_selects_typecheck_for_every_package_the_step_reads(
+    package: str,
+    source: str,
+    pkg_type: PackageType,
+) -> None:
+    """A source change must select the lane that reads that source, on the standard class.
+
+    The step resolves PACKAGE_SCOPE against the uv.lock editables, so it typechecks these
+    packages whatever their path-derived type. Withholding the flag left them checked only
+    when some unrelated broad trigger happened to run the step anyway.
+    """
+    packages = load_packages_with_deps(Scope.ALL)
+    assert packages[package].pkg_type is pkg_type
+
+    decision = evaluate(
+        {source},
+        packages,
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert package in decision.affected
+    assert decision.flag_value("typecheck_backend")
+
+
+def test_virtual_workspace_member_withholds_typecheck_because_it_resolves_to_no_path() -> None:
+    """The integration-tests member is virtual, so PACKAGE_SCOPE yields nothing to check.
+
+    Selecting the lane for it would send the step an empty path list, which its non-empty
+    guard rejects. This is why the flag follows src/ rather than the package type: the
+    member is classified OTHER, exactly like the qdrant-init package that must be checked.
+    """
+    packages = load_packages_with_deps(Scope.ALL)
+    assert packages["nohiki-integration-tests"].pkg_type is PackageType.OTHER
+
+    decision = evaluate({"tests/integration/test_smoke.py"}, packages)
+
+    assert decision.affected == {"nohiki-integration-tests"}
+    assert not decision.flag_value("typecheck_backend")
+
+
+def test_src_bearing_packages_are_exactly_the_editables_the_typecheck_step_resolves() -> None:
+    """has_src is a faithful stand-in for uv.lock editability, which the engine cannot read.
+
+    A new virtual member, or an editable without a src/ tree, breaks that equivalence and
+    would silently mis-gate the lane, so pin it against the lock the step actually parses.
+    """
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    editables = {entry["name"] for entry in lock["package"] if "editable" in entry.get("source", {})}
+    packages = load_packages_with_deps(Scope.ALL)
+
+    assert {name for name, package in packages.items() if package.has_src} == editables
+
+
+_UNBOUNDED_CASES: tuple[tuple[str, set[str], EventContext], ...] = (
+    ("unmatched path", {"mystery.bin"}, EventContext(event="pull_request", base_sha="base", head_sha="head")),
+    ("null base sha", {"docs/guide.md"}, EventContext(event="pull_request", base_sha="0" * 40, head_sha="head")),
+    ("missing head sha", {"docs/guide.md"}, EventContext(event="pull_request", base_sha="base", head_sha="")),
+    ("unsupported event", {"docs/guide.md"}, EventContext(event="schedule", base_sha="base", head_sha="head")),
+    (
+        "protected-main mismatch",
+        {"docs/guide.md"},
+        EventContext(event="push", base_sha="base", head_sha="head", ref_name="main"),
+    ),
+)
+
+
+@pytest.mark.parametrize(("label", "changed", "context"), _UNBOUNDED_CASES, ids=[case[0] for case in _UNBOUNDED_CASES])
+def test_broad_unbounded_reports_causes_that_enumerate_no_blast_radius(
+    label: str,
+    changed: set[str],
+    context: EventContext,
+) -> None:
+    """Each fail-closed cause leaves the affected surface unknown, so every lane must run."""
+    decision = evaluate(changed, _synthetic_packages(), context)
+
+    assert decision.commit_class is CommitClass.BROAD, label
+    assert decision.broad_unbounded, label
+    assert render_outputs(decision, (), context.event)["broad_unbounded"] == "true", label
+
+
+@pytest.mark.parametrize("path", ["uv.lock", "flake.nix", "flake.lock", ".python-version"])
+def test_broad_unbounded_is_false_for_triggers_whose_rule_names_what_they_select(path: str) -> None:
+    """A policy source is broad by rule, and that rule already enumerates its own lanes."""
+    decision = evaluate(
+        {path},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.commit_class is CommitClass.BROAD
+    assert not decision.broad_unbounded
+    assert render_outputs(decision, (), "pull_request")["broad_unbounded"] == "false"
+
+
+def test_broad_unbounded_takes_the_unbounded_cause_when_both_kinds_are_present() -> None:
+    decision = evaluate(
+        {"uv.lock", "mystery.bin"},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert [reason.cause for reason in decision.reasons] == [
+        BroadCause.UNMATCHED_PATH,
+        BroadCause.POLICY_SOURCE,
+    ]
+    assert decision.broad_unbounded
+
+
+@pytest.mark.parametrize(
+    ("changed", "context"),
+    [
+        ({"docs/guide.md"}, EventContext(event="pull_request", base_sha="base", head_sha="head")),
+        (
+            {"mystery.bin"},
+            EventContext(
+                event="push",
+                base_sha="base",
+                head_sha="head",
+                ref_name="main",
+                protected_main=_valid_protected_evidence(),
+            ),
+        ),
+    ],
+)
+def test_broad_unbounded_is_false_whenever_the_verdict_is_not_broad(
+    changed: set[str],
+    context: EventContext,
+) -> None:
+    """A proven protected-main smoke withdraws the broad verdict, and the split follows it."""
+    decision = evaluate(changed, _synthetic_packages(), context)
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert not decision.broad_unbounded
+
+
+def test_broad_unbounded_is_the_only_output_the_cause_can_move() -> None:
+    """Two broad decisions differing only in cause must differ only in the new output."""
+    bounded = GateDecision(
+        full=True,
+        reasons=[BroadReason(BroadCause.POLICY_SOURCE, "broad policy source: uv.lock", "uv.lock")],
+    )
+    unbounded = GateDecision(
+        full=True,
+        reasons=[BroadReason(BroadCause.UNMATCHED_PATH, "unmatched file: mystery.bin", "mystery.bin")],
+    )
+
+    bounded_outputs = render_outputs(bounded, (), "push")
+    unbounded_outputs = render_outputs(unbounded, (), "push")
+
+    assert bounded_outputs["broad_unbounded"] == "false"
+    assert unbounded_outputs["broad_unbounded"] == "true"
+    assert {key: value for key, value in bounded_outputs.items() if key != "broad_unbounded"} == {
+        key: value for key, value in unbounded_outputs.items() if key != "broad_unbounded"
+    }
+    # Not a lane: keeping it out of FLAG_NAMES keeps it out of the lane table, the summary
+    # and the workflow's flag-driven outputs contract until a consumer is wired deliberately.
+    assert "broad_unbounded" not in FLAG_NAMES
+    assert set(bounded_outputs) == set(FLAG_NAMES) | {
+        "commit_class",
+        "standard",
+        "broad",
+        "broad_unbounded",
+        "protected_main_smoke",
+        "full",
+        "affected_packages",
+        "test_packages",
+        "commitlint_expected",
+    }

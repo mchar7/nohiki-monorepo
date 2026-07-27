@@ -268,7 +268,10 @@ async def test_deadcode_summary_uses_sha_pinned_finding_links(
     )
 
     rendered = summary.read_text(encoding="utf-8")
-    assert "## Code hygiene\n\n### Dead code (Skylos)" in rendered
+    # A level-four heading so the block nests under the job's Results section instead of opening
+    # a second top-level section beside the job heading.
+    assert rendered.startswith("#### Dead code (Skylos)")
+    assert "## Code hygiene" not in rendered
     assert f"- Version: `{expected_version}`" in rendered
     assert "Verdict: **findings**" in rendered
     assert (

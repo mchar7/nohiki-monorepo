@@ -23,6 +23,7 @@ _JUSTFILE = _ROOT / "Justfile"
 _ROOT_PROJECT = _ROOT / "pyproject.toml"
 _CI_PROJECT = _ROOT / "scripts" / "ci" / "pyproject.toml"
 _SYNC_CI_ENVIRONMENT = _ROOT / "scripts" / "dev" / "sync-ci-environment.sh"
+_SYNC_CI_DEADCODE = _ROOT / "scripts" / "dev" / "sync-ci-deadcode.sh"
 _PACKAGE = _ROOT / "package.json"
 _SCAFFOLD_DOCKERFILE = (
     _ROOT / "scripts" / "util" / "scaffold" / "src" / "nohiki_scaffold" / "templates" / "service" / "Dockerfile.j2"
@@ -286,13 +287,30 @@ def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
     assert python_miss in str(rooting[0]["if"])
     sync_command = str(sync["run"])
     assert "nix develop .#ci --command scripts/dev/sync-ci-environment.sh" in sync_command
-    assert "trap 'rm -f" in sync_command
-    assert "GIT_SSH_COMMAND=" in sync_command
-    assert "GITHUB_ENV" not in sync_command
+    # The shared entry is restorable by any pull request from its base branch and no credential
+    # is needed for that, so the closure it stores must hold no private source and the step that
+    # builds it must hold no credential. Only `skylos` is private; its 32 public dependencies stay
+    # in the shared closure so the private step has nothing left to fetch but the fork itself.
+    assert "GIT_SSH_COMMAND" not in sync_command
+    assert "SKYLOS" not in str(sync.get("env", {}))
+    assert "--no-install-package skylos" in _read_text(_SYNC_CI_ENVIRONMENT)
+    assert "--no-install-package" not in _read_text(_SYNC_CI_DEADCODE)
+    skylos_install = by_name["Install Skylos from the pinned private fork"]
+    assert steps.index(skylos_install) > steps.index(save)
+    assert skylos_install["if"] == "inputs.skylos-cache == 'true'"
+    skylos_command = str(skylos_install["run"])
+    assert "nix develop .#ci --command scripts/dev/sync-ci-deadcode.sh" in skylos_command
+    assert "trap 'rm -f" in skylos_command
+    assert "GIT_SSH_COMMAND=" in skylos_command
+    assert "GITHUB_ENV" not in skylos_command
+    # A lane selected for the scan with no key configured must fail here, not at scanner spawn.
+    assert 'test -n "$SKYLOS_DEPLOY_KEY"' in skylos_command
     secret_steps = [step for step in steps if "SKYLOS_DEPLOY_KEY" in str(step.get("env", {}))]
-    assert secret_steps == [sync]
-    assert sync["env"] == {"SKYLOS_DEPLOY_KEY": "${{ inputs.skylos-deploy-key }}"}
-    assert all("$RUNNER_TEMP/skylos_key" not in str(step.get("run", "")) for step in steps if step is not sync)
+    assert secret_steps == [skylos_install]
+    assert skylos_install["env"] == {"SKYLOS_DEPLOY_KEY": "${{ inputs.skylos-deploy-key }}"}
+    assert all(
+        "$RUNNER_TEMP/skylos_key" not in str(step.get("run", "")) for step in steps if step is not skylos_install
+    )
     # Each entry is saved on its own producer succeeding. Coupling them would let a failed pnpm
     # install withhold a perfectly good store, which is what the split exists to stop.
     node_save = by_name["Save Node modules"]

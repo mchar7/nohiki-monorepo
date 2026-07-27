@@ -15,7 +15,9 @@ from _documents import load_mapping, load_workflow, mapping_sequence_at
 from ci_checks.checks import tests as test_checks
 from ci_checks.checks.tests import (
     CoverageResult,
+    FileCoverage,
     _check_exit_conditions,
+    _coverage_meets_policy,
     display_summary,
     render_github_summary,
 )
@@ -194,27 +196,88 @@ def test_zero_measured_statements_are_coverage_exempt() -> None:
     assert not _check_exit_conditions([result], strict=True, with_coverage=True)
 
 
+def _measured(cover: float) -> CoverageResult:
+    return CoverageResult(
+        total_coverage=cover,
+        files=[FileCoverage(path="mod.py", stmts=100, miss=round(100 - cover), cover=cover)],
+    )
+
+
 def test_github_summary_renders_named_results_as_markdown() -> None:
     results = [
         RunnerTestResult(
             name="package-b",
             passed=False,
             duration_ms=2345,
-            coverage=CoverageResult(total_coverage=78.0),
+            coverage=_measured(78.0),
+            pkg_type=PackageType.LIB,
         ),
         RunnerTestResult(
             name="package-a",
             passed=True,
             duration_ms=1234,
-            coverage=CoverageResult(total_coverage=96.0),
+            coverage=_measured(96.0),
+            pkg_type=PackageType.LIB,
         ),
     ]
 
     summary = render_github_summary(results, "focused")
 
-    assert summary.startswith("## Python tests (focused)\n\n**1/2 packages passed.**")
-    assert "| `package-a` | 1.2s | 96% | Pass |" in summary
-    assert "| `package-b` | 2.3s | 78% | Fail |" in summary
+    assert summary.startswith("#### Python tests (focused)\n\n**1/2 packages passed.**")
+    assert "Coverage is reported, not enforced" in summary
+    assert "| `package-a` | 1.2s | Pass | 96% | meets strict policy: module >= 90%, file >= 80% |" in summary
+    assert (
+        "| `package-b` | 2.3s | Fail | 78% | below strict policy: module >= 90%, file >= 80%, 1 file under 80% |"
+    ) in summary
+
+
+def test_github_summary_states_the_policy_behind_every_coverage_number() -> None:
+    """A passing row must say which policy it passed, or that no policy applied."""
+    results = [
+        # scripts packages map to the no-requirements gate, so 21% is a deliberate pass.
+        RunnerTestResult(
+            name="tooling",
+            passed=True,
+            duration_ms=1000,
+            coverage=_measured(21.0),
+            pkg_type=PackageType.SCRIPTS,
+        ),
+        # No measurable code at all: neutral, and a percentage would assert a measurement.
+        RunnerTestResult(
+            name="namespace-only",
+            passed=True,
+            duration_ms=500,
+            coverage=CoverageResult(),
+            pkg_type=PackageType.LIB,
+        ),
+        # Source carries statements that coverage never saw. This is a policy failure, and it must
+        # not render as a neutral gap beside the code-free package above.
+        RunnerTestResult(
+            name="blanked",
+            passed=True,
+            duration_ms=750,
+            coverage=CoverageResult(),
+            pkg_type=PackageType.LIB,
+            source_has_statements=True,
+        ),
+    ]
+
+    summary = render_github_summary(results, "broad", strict=True)
+
+    assert "Coverage is enforced" in summary
+    assert (
+        "| `tooling` | 1.0s | Pass | 21% | no policy: scripts packages carry the "
+        "no-requirements gate (module >= 0%, file >= 0%) |"
+    ) in summary
+    assert (
+        "| `namespace-only` | 0.5s | Pass | n/a | no policy: the package carries no measurable statements |"
+    ) in summary
+    assert (
+        "| `blanked` | 0.8s | Pass | none | unmeasured: source carries statements but coverage measured none |"
+    ) in summary
+    # The two zero-statement rows share a predicate but not a verdict; conflating them is the defect.
+    assert not _coverage_meets_policy(results[2])
+    assert _coverage_meets_policy(results[1])
 
 
 @pytest.mark.asyncio

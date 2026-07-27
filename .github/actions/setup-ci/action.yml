@@ -116,23 +116,14 @@ runs:
               --add-root "$RUNNER_TEMP/flake-inputs/${store_path##*/}" "$store_path" > /dev/null
           done
 
+    # No credential reaches this step, and it installs everything the dead-code lane needs except
+    # the private `skylos` distribution itself. What it installs is what the shared entry stores,
+    # and a pull request can restore that entry from its base branch holding nothing at all.
     - name: Install workspace (CI closure)
       id: workspace-sync
       if: inputs.ready-cache == 'true' && inputs.payload != 'node' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true') && steps.ready-cache.outputs.hit-primary-key != 'true'
       shell: bash
-      env:
-        SKYLOS_DEPLOY_KEY: ${{ inputs.skylos-deploy-key }}
-      run: |
-        test -n "$SKYLOS_DEPLOY_KEY"
-        install -m 700 -d "$RUNNER_TEMP"
-        printf '%s\n' "$SKYLOS_DEPLOY_KEY" > "$RUNNER_TEMP/skylos_key"
-        chmod 600 "$RUNNER_TEMP/skylos_key"
-        printf '%s\n' \
-          'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
-          > "$RUNNER_TEMP/skylos_known_hosts"
-        trap 'rm -f "$RUNNER_TEMP/skylos_key" "$RUNNER_TEMP/skylos_known_hosts"' EXIT
-        export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/skylos_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/skylos_known_hosts"
-        nix develop .#ci --command scripts/dev/sync-ci-environment.sh
+      run: nix develop .#ci --command scripts/dev/sync-ci-environment.sh
 
     # pnpm links its per-package directories relatively into the root node_modules/.pnpm store, so
     # the trees are only valid together and only as a set.
@@ -236,6 +227,29 @@ runs:
         purge-prefixes: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-
         purge-created: 0
         purge-primary-key: never
+
+    # After the save, deliberately: the private fork's installed source must never enter the
+    # shared entry, because GitHub lets a pull-request run restore its base branch's caches and
+    # that path holds no credential. Reaching the fork needs the deploy key instead, and callers
+    # pass one only for the lane that runs the scan, so `skylos-cache` gates both. An empty key
+    # on a selected lane is a misconfiguration and fails here rather than at scanner import.
+    - name: Install Skylos from the pinned private fork
+      if: inputs.skylos-cache == 'true'
+      id: skylos-install
+      shell: bash
+      env:
+        SKYLOS_DEPLOY_KEY: ${{ inputs.skylos-deploy-key }}
+      run: |
+        test -n "$SKYLOS_DEPLOY_KEY"
+        install -m 700 -d "$RUNNER_TEMP"
+        printf '%s\n' "$SKYLOS_DEPLOY_KEY" > "$RUNNER_TEMP/skylos_key"
+        chmod 600 "$RUNNER_TEMP/skylos_key"
+        printf '%s\n' \
+          'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+          > "$RUNNER_TEMP/skylos_known_hosts"
+        trap 'rm -f "$RUNNER_TEMP/skylos_key" "$RUNNER_TEMP/skylos_known_hosts"' EXIT
+        export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/skylos_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/skylos_known_hosts"
+        nix develop .#ci --command scripts/dev/sync-ci-deadcode.sh
 
     # Saving stays after the producer step in each caller so failed scans can still warm the cache.
     - name: Restore Skylos static analysis cache

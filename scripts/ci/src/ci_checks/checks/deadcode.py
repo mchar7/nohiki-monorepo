@@ -21,7 +21,6 @@ from typing import cast
 from urllib.parse import quote
 
 from ci_checks.core.display import (
-    LANE_DISPLAY_NAMES,
     console,
     render_error_panel,
     render_summary_table,
@@ -369,9 +368,7 @@ def _write_markdown_summary(
     verdict = "scanner failure" if errors else ("findings" if findings else "clean")
     duration_seconds = max((result.duration_ms for result in results), default=0) / 1000
     lines = [
-        f"## {LANE_DISPLAY_NAMES['hygiene']}",
-        "",
-        "### Dead code (Skylos)",
+        "#### Dead code (Skylos)",
         "",
         f"- Version: `{_skylos_version()}`",
         f"- Scope: {len(packages)} packages",
@@ -387,12 +384,12 @@ def _write_markdown_summary(
         ),
     ]
     if errors:
-        lines += ["", "### Scanner failures", ""]
+        lines += ["", "##### Scanner failures", ""]
         lines.extend(f"- **{result.name}**: {result.error.replace(chr(10), ' ')}" for result in errors)
     if findings:
         lines += [
             "",
-            f"### Findings ({len(findings)})",
+            f"##### Findings ({len(findings)})",
             "",
             "| Package | Kind | Name | Location |",
             "|---|---|---|---|",

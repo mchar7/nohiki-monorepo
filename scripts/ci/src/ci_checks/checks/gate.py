@@ -90,6 +90,9 @@ class _Attestation:
     event_action: str
     commit_class: str
     run_id: int
+    # Absent from every attestation written before the reuse short-circuit existed. Empty
+    # never equals a real base SHA, so an old proof fails the reuse check closed.
+    base_sha: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +275,7 @@ def _download_attestation(repository: str, run_id: int) -> _Attestation:
     event_action = item.get("event_action")
     commit_class = item.get("commit_class")
     attested_run_id = item.get("run_id")
+    base_sha = item.get("base_sha", "")
     if (
         not isinstance(tested_tree_sha, str)
         or not tested_tree_sha
@@ -280,13 +284,14 @@ def _download_attestation(repository: str, run_id: int) -> _Attestation:
         or not isinstance(commit_class, str)
         or commit_class not in {"standard", "broad"}
         or type(attested_run_id) is not int
+        or not isinstance(base_sha, str)
     ):
         msg = f"run {run_id} attestation schema is invalid"
         raise _EvidenceError(msg)
     if attested_run_id != run_id:
         msg = f"run {run_id} attestation names run {attested_run_id}"
         raise _EvidenceError(msg)
-    return _Attestation(tested_tree_sha, event_action, commit_class, run_id)
+    return _Attestation(tested_tree_sha, event_action, commit_class, run_id, base_sha)
 
 
 def _extract_gate_evidence(repository: str, head_sha: str) -> _GateEvidence:
@@ -356,6 +361,134 @@ def gate_evidence_cmd(
     _append(
         github_env,
         "".join(f"{name}={value}\n" for name, value in evidence.workflow_values().items()),
+    )
+
+
+def _head_tree_sha() -> str:
+    """Return the tree SHA of the checked-out commit.
+
+    Returns:
+        The tree object name of ``HEAD``.
+
+    Raises:
+        _EvidenceError: If git cannot resolve the tree, which fails the proof closed.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        check=False,
+    )
+    tree_sha = result.stdout.strip()
+    if result.returncode != 0 or not tree_sha:
+        msg = f"cannot resolve the checked-out tree: {result.stderr.strip() or 'no stderr'}"
+        raise _EvidenceError(msg)
+    return tree_sha
+
+
+@dataclass(frozen=True, slots=True)
+class _ReuseProof:
+    """A prior run's proof that this exact tree and base were already checked."""
+
+    proven: bool = False
+    run_id: int = 0
+
+    def workflow_values(self) -> dict[str, str]:
+        """Return the outputs the job gates and the fan-in renderer consume.
+
+        Returns:
+            Mapping of output name to value; the run id is empty unless a proof was found.
+        """
+        return {
+            "title_only": str(self.proven).lower(),
+            "reused_run_id": str(self.run_id) if self.proven else "",
+        }
+
+
+def _prove_tree_already_checked(
+    repository: str,
+    pr_head_sha: str,
+    tested_tree_sha: str,
+    base_sha: str,
+) -> _ReuseProof:
+    """Find a successful non-edited run whose attestation covers this tree and this base.
+
+    Args:
+        repository: GitHub repository in ``owner/repo`` form.
+        pr_head_sha: Head SHA of the pull request being edited.
+        tested_tree_sha: Tree SHA of the merge commit under test.
+        base_sha: Base SHA this run resolves its diff against.
+
+    Returns:
+        A proof naming the run that already covered this tree.
+
+    Raises:
+        _EvidenceError: If no candidate matches, so the caller runs the full suite.
+    """
+    runs = _gh_json(
+        [
+            "api",
+            f"repos/{repository}/actions/workflows/checks.yml/runs",
+            "--method",
+            "GET",
+            "-f",
+            "event=pull_request",
+            "-f",
+            f"head_sha={pr_head_sha}",
+            "-f",
+            "per_page=100",
+        ]
+    )
+    for candidate in _successful_runs(runs, pr_head_sha):
+        try:
+            attestation = _download_attestation(repository, candidate.run_id)
+        except _AttestationUnavailableError:
+            continue
+        # An edited run's verdict is never proof: it may itself have been short-circuited.
+        if attestation.event_action == "edited":
+            continue
+        # The tree fixes the content. The base fixes the diff, and with it the selected lane
+        # set, the commit range and the proto baseline. Retargeting onto an ancestor of head
+        # leaves the tree byte-identical, so the base is the only thing that catches it.
+        if attestation.tested_tree_sha != tested_tree_sha or attestation.base_sha != base_sha:
+            continue
+        return _ReuseProof(proven=True, run_id=candidate.run_id)
+    msg = "no successful non-edited attestation covers this tree and base"
+    raise _EvidenceError(msg)
+
+
+def gate_reuse_cmd(
+    event: Annotated[str, typer.Option("--event", help="GitHub event name")],
+    action: Annotated[str, typer.Option("--action", help="GitHub event action")],
+    repository: Annotated[str, typer.Option("--repository", help="GitHub owner/repo")],
+    pr_head_sha: Annotated[str, typer.Option("--pr-head-sha", help="Pull request head SHA")],
+    base_sha: Annotated[str, typer.Option("--base-sha", help="Pull request base SHA")],
+    github_output: Annotated[Path, typer.Option("--github-output", help="$GITHUB_OUTPUT file")],
+) -> None:
+    """Emit whether a prior run already proved the tree that an edit cannot have changed.
+
+    Only a title or body edit reaches the positive case: the tree and the base must both match
+    an earlier successful non-edited run. Every other path, an unreachable API and a retargeted
+    base included, emits the negative pair so the full selected suite runs.
+
+    Args:
+        event: GitHub event name.
+        action: GitHub event action.
+        repository: GitHub repository in ``owner/repo`` form.
+        pr_head_sha: Head SHA of the pull request.
+        base_sha: Base SHA of the pull request.
+        github_output: Output file receiving both values on every path.
+    """
+    proof = _ReuseProof()
+    if event == "pull_request" and action == "edited" and repository and pr_head_sha and base_sha:
+        try:
+            proof = _prove_tree_already_checked(repository, pr_head_sha, _head_tree_sha(), base_sha)
+        except _EvidenceError as exc:
+            Console().print(f"[yellow]No reusable Checks proof: {exc}[/yellow]")
+    _append(
+        github_output,
+        "".join(f"{name}={value}\n" for name, value in proof.workflow_values().items()),
     )
 
 

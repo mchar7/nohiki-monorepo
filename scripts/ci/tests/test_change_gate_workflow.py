@@ -46,6 +46,8 @@ _STANDARD_UNITS = ["all"]
 _NON_EXECUTOR_JOB_IDS = {
     "changes",
     "checks",
+    # Runs the title lint alone on a proven edit, so it owns no lane flag.
+    "title-policy",
 }
 
 
@@ -177,7 +179,8 @@ def test_real_multisurface_decisions_keep_the_consolidated_executor_topology() -
     assert flake.commit_class is CommitClass.BROAD
     assert selected_tests
     assert {"lint_markdown", "api_schema_freshness"} <= flake.flags
-    assert _decision_executors(jobs, flake) == {"worker", "playwright-image"}
+    # schema.d.ts is a build-context input of the frontend image, not of the Playwright runner.
+    assert _decision_executors(jobs, flake) == {"worker", "container-contracts"}
 
     container_union = evaluate(
         {
@@ -249,7 +252,15 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
 
     # No lane may be defined twice anywhere in the file: the standard and broad paths were
     # two copies of the same checks, and that is the duplication this topology retires.
-    every_name = [step.get("name") for job in jobs.values() for step in _steps(job)]
+    every_name = [
+        step.get("name")
+        for job_id, job in jobs.items()
+        # `title-policy` holds the short-circuit's copy of the title lint. It is not a second
+        # definition of the lane: its job gate and the worker's are mutually exclusive, which
+        # test_title_edits_have_independent_concurrency_and_check_identities pins directly.
+        if job_id != "title-policy"
+        for step in _steps(job)
+    ]
     lane_names = set().union(*bins.values()) | {"Save Skylos static analysis cache"}
     for name in lane_names:
         assert every_name.count(name) == 1, name
@@ -258,6 +269,11 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
     for unit_name, members in bins.items():
         for name in members:
             condition = str(steps[name]["if"])
+            # A lane may route its gate through a job-level flag when several inputs must share
+            # one selector. Ownership is a claim about the expression that actually decides, so
+            # resolve that one level of indirection before matching.
+            for flag, expression in worker["env"].items():
+                condition = condition.replace(f"env.{flag}", str(expression))
             assert f"matrix.unit == '{unit_name}'" in condition, name
             assert "matrix.unit == 'all'" in condition, name
             for other in set(bins) - {unit_name}:
@@ -399,9 +415,10 @@ def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> No
     assert "matrix.unit == 'all' || matrix.unit == 'hygiene'" in condition
     assert "matrix.unit == 'python'" not in condition
 
-    # Nothing loses coverage in the move: the marked tests run on exactly the commits whose
-    # Python suite used to carry them.
-    assert condition.endswith("needs.changes.outputs.python_any == 'true')")
+    # The gate names this step's own inputs: the k8s Playwright config, the journeys it collects,
+    # and the manifests that resolve the Playwright version. Borrowing the Python suite's flag both
+    # skipped it on a Playwright config change and ran it on unrelated backend work.
+    assert condition.endswith("needs.changes.outputs.node_workspace_contracts == 'true')")
     assert str(steps["Run selected Python tests"]["if"]).endswith("needs.changes.outputs.python_any == 'true')")
 
     # A marked test outside the one selected path would be deselected everywhere and run nowhere.
@@ -474,17 +491,19 @@ def test_title_edits_have_independent_concurrency_and_check_identities() -> None
 
     jobs = workflow["jobs"]
     substantive = jobs["checks"]
-    # The title check had three copies: a dedicated `edited`-only job and one inside each of
-    # the two class paths. The work job already runs on every pull-request event, edits
-    # included, so the one copy it owns covers the trigger the dedicated job existed for.
-    title_policy = [
-        step
-        for job in jobs.values()
+    # Two copies, one per path, and the job gates make them mutually exclusive: the worker owns
+    # every event the short-circuit does not claim, and `title-policy` owns the proven edit, where
+    # the worker is skipped. The defect this guards is copies that can run together.
+    title_policy = {
+        job_id: step
+        for job_id, job in jobs.items()
         for step in job.get("steps", [])
         if step.get("name") == "Validate PR title (merge commit subject)"
-    ]
-    assert len(title_policy) == 1
-    assert "needs.changes.outputs.commitlint_expected == 'true'" in str(title_policy[0]["if"])
+    }
+    assert set(title_policy) == {"worker", "title-policy"}
+    assert "needs.changes.outputs.commitlint_expected == 'true'" in str(title_policy["worker"]["if"])
+    assert "needs.changes.outputs.title_only != 'true'" in str(jobs["worker"]["if"])
+    assert jobs["title-policy"]["if"] == "needs.changes.outputs.title_only == 'true'"
     assert substantive["name"] == "Checks"
     # Checks is a required context on protected main, so suppressing it on an edited event would
     # leave the head without its required conclusion and let a title-only pass stand for validation.
@@ -530,10 +549,16 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
         "commit_class",
         "standard",
         "broad",
+        # Splits the class signal: the step disjuncts consume this, the scope selectors do not.
+        "broad_unbounded",
         "worker_timeout_minutes",
         "protected_main_smoke",
         "commitlint_expected",
         "full",
+        # Informational only: they let the fan-in tell "skipped, not selected" apart from
+        # "skipped, a prior run already proved this tree".
+        "title_only",
+        "reused_run_id",
     }
 
     change_steps = _steps(changes)
@@ -592,8 +617,8 @@ def test_runtime_accounting_enforces_only_the_owner_wall_target() -> None:
     # because it is a monthly cumulative quantity no single run can measure.
     assert re.findall(r"wall_budget_seconds=(\d+)", command) == ["600"]
     assert "billable_budget_minutes" not in command
-    assert "reconstructed_billable_minutes=$billable_minutes" in command
-    assert "estimated_cost_usd=$estimated_cost_usd" in command
+    assert "| Reconstructed billable minutes | $billable_minutes |" in command
+    assert "| Estimated cost USD | $estimated_cost_usd |" in command
     assert "budget_failure" not in command
     # R was retired: R <= 3 rearranges to W >= 20B, a lower bound on wall time, so it could only fire
     # on runs that already passed both real ceilings. It punished intra-job speedups.
@@ -609,33 +634,66 @@ def test_runtime_accounting_enforces_only_the_owner_wall_target() -> None:
     assert jobs["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
 
 
-def test_runtime_accounting_jq_renders_running_and_completed_jobs() -> None:
+def test_runtime_accounting_jq_distinguishes_running_completed_and_both_skips() -> None:
     jq = shutil.which("jq")
     if jq is None:
         pytest.skip("jq is not available")
 
     report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
     command = report["run"]
-    marker = 'jq -r --arg now "$now_iso" \''
+    marker = 'jq -r --arg now "$now_iso" --arg reused "${REUSED_RUN_ID:-}" --argjson expected "$expected" \''
     start = command.index(marker) + len(marker)
     program = command[start : command.index('\' <<< "$jobs"', start)]
     jobs = [
         {
-            "name": "running",
+            "name": "Checks",
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": None,
             "conclusion": None,
         },
         {
-            "name": "complete",
+            "name": "Router",
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": "2026-07-23T00:01:01Z",
             "conclusion": "success",
         },
+        {
+            "name": "Scoped worker (python)",
+            "started_at": "2026-07-23T00:00:00Z",
+            "completed_at": "2026-07-23T00:00:00Z",
+            "conclusion": "skipped",
+        },
+        {
+            "name": "Playwright runner image",
+            "started_at": "2026-07-23T00:00:00Z",
+            "completed_at": "2026-07-23T00:00:00Z",
+            "conclusion": "skipped",
+        },
     ]
+    expected = {
+        "worker": True,
+        "Container contracts": False,
+        "Playwright runner image": False,
+        "Title policy": True,
+        "Router": True,
+        "Checks": True,
+    }
 
     result = subprocess.run(
-        [jq, "-r", "--arg", "now", "2026-07-23T00:01:00Z", program],
+        [
+            jq,
+            "-r",
+            "--arg",
+            "now",
+            "2026-07-23T00:01:00Z",
+            "--arg",
+            "reused",
+            "18234567890",
+            "--argjson",
+            "expected",
+            json.dumps(expected),
+            program,
+        ],
         input=json.dumps(jobs),
         capture_output=True,
         text=True,
@@ -644,8 +702,13 @@ def test_runtime_accounting_jq_renders_running_and_completed_jobs() -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "| running | 60 | 1 | in_progress |",
-        "| complete | 61 | 2 | success |",
+        # The fan-in cannot see its own conclusion, so it must not report itself as in_progress.
+        "| Checks | 60 | 1 | running (this job) |",
+        "| Router | 61 | 2 | success |",
+        # Selected yet skipped: the gate is asserting a prior run already proved this tree.
+        "| Scoped worker (python) | 0 | 0 | skipped: already proven by run 18234567890 |",
+        # Not selected: the gate declined the work. Same runner word, opposite meaning.
+        "| Playwright runner image | 0 | 0 | skipped: not selected |",
     ]
 
 
@@ -696,6 +759,7 @@ def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
         "worker": "$WORK_EXPECTED",
         "container-contracts": "$CONTAINER_EXPECTED",
         "playwright-image": "$PLAYWRIGHT_EXPECTED",
+        "title-policy": "$TITLE_POLICY_EXPECTED",
     }
     assert set(checks["needs"]) == {"changes"} | set(required)
     for job_id, expectation in required.items():
@@ -710,7 +774,9 @@ def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> Non
     assert "biome ci --reporter=github src/" in steps["Lint edge worker"]["run"]
     assert "exec tsc --noEmit" in steps["Typecheck edge worker"]["run"]
     assert "exec vitest run" in steps["Test edge worker"]["run"]
-    assert steps["Test frontend"]["run"].endswith("test --run --maxWorkers=100%")
+    # A summary label is prepended to the step; the work command must stay the final line, verbatim.
+    frontend_run = str(steps["Test frontend"]["run"]).strip().splitlines()
+    assert frontend_run[-1] == "pnpm -C typescript/apps/frontend test --run --maxWorkers=100%"
 
 
 def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> None:
@@ -787,6 +853,7 @@ def test_cache_summaries_use_observed_action_outputs() -> None:
     setup_owners = (
         "worker",
         "container-contracts",
+        "title-policy",
     )
     for owner in setup_owners:
         steps = {step.get("name"): step for step in _steps(jobs[owner])}
@@ -794,20 +861,28 @@ def test_cache_summaries_use_observed_action_outputs() -> None:
         assert setup["id"] == "setup-ci"
         report = next(step for name, step in steps.items() if name and name.startswith("Report "))
         assert report["env"]["CACHE_OUTCOMES"] == "${{ steps.setup-ci.outputs.cache-telemetry }}"
-        assert "cache_outcomes=%s" in str(report["run"])
+        # One table row per cache, not one machine-readable log line.
+        assert "| Cache | Outcome | Key |" in str(report["run"])
+        # Keys are truncated to a readable prefix; the full value stays in the job log.
+        assert "s/([0-9a-f]{8})[0-9a-f]{24,}/\\1…/g" in str(report["run"])
 
     router_steps = {step.get("name"): step for step in _steps(jobs["changes"])}
     router_setup = router_steps["Set up uv and Python"]
     assert router_setup["id"] == "setup-uv"
-    router_report = router_steps["Report router timing"]
+    router_report = router_steps["Report router cost"]
     assert router_report["env"]["UV_CACHE_HIT"] == "${{ steps.setup-uv.outputs.cache-hit }}"
     assert router_report["env"]["UV_CACHE_KEY"] == "${{ steps.setup-uv.outputs.cache-key }}"
+    assert "| Cache | Outcome | Key |" in str(router_report["run"])
 
     workflow_text = _CHECKS.read_text(encoding="utf-8")
     assert "cache_hit=" not in workflow_text
     assert "setup-node-managed" not in workflow_text
     assert "buildx-managed" not in workflow_text
-    assert "cache_outcomes=buildkit=unknown:none" in workflow_text
+    # No job may name a cache outcome it never observed. `playwright-image` queries no
+    # actions/cache entry at all and previously claimed `buildkit=unknown:none`; `title-policy`
+    # claimed a bare `unknown:none` while its composite was in fact restoring caches.
+    assert "cache_outcomes=" not in workflow_text
+    assert "unknown:none" not in workflow_text
 
 
 def test_python_test_packages_come_from_change_gate_in_both_classes() -> None:

@@ -24,9 +24,11 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from coverage.files import GlobMatcher
 from rich.console import Console
 from rich.panel import Panel
 
+from ci_checks.core.display import markdown_table
 from ci_checks.core.packages import (
     REPO_ROOT,
     Package,
@@ -195,6 +197,7 @@ class TestResult:
     tests_failed: int = 0
     coverage: CoverageResult = field(default_factory=CoverageResult)
     pkg_type: PackageType = PackageType.OTHER
+    source_has_statements: bool = False
 
 
 # Coverage parsing
@@ -498,6 +501,7 @@ async def run_package_tests(
         output=output,
         coverage=coverage,
         pkg_type=pkg.pkg_type,
+        source_has_statements=_source_has_statements(pkg),
     )
 
 
@@ -528,6 +532,62 @@ def _coverage_target(pkg: Package) -> str:
     return _repo_relative(pkg.path / _coverage_src_dir(pkg))
 
 
+def _module_measures_statements(path: Path) -> bool:
+    """Return whether coverage.py would count at least one statement in a module.
+
+    Args:
+        path: Python source file inside a package's coverage target.
+
+    Returns:
+        False only for the cases coverage.py also reports as zero statements: an
+        empty module and a module holding nothing but its docstring. Unreadable
+        or unparseable source counts as code, so it cannot mask a blanked package.
+    """
+    try:
+        body = ast.parse(path.read_bytes(), filename=str(path)).body
+    except OSError, SyntaxError:
+        return True
+    if len(body) != 1:
+        return bool(body)
+    docstring = body[0]
+    return not (
+        isinstance(docstring, ast.Expr)
+        and isinstance(docstring.value, ast.Constant)
+        and isinstance(docstring.value.value, str)
+    )
+
+
+def _source_has_statements(pkg: Package) -> bool:
+    """Return whether a package's coverage target holds any measurable code.
+
+    Args:
+        pkg: Package whose coverage target is inspected.
+
+    Returns:
+        True when at least one module under the target contributes statements.
+        A code-free namespace package returns False and is legitimately unmeasured.
+    """
+    target = pkg.path / _coverage_src_dir(pkg)
+    return any(_module_measures_statements(path) for path in target.rglob("*.py"))
+
+
+def _omit_blanks_source(pattern: str, targets: list[str]) -> bool:
+    """Return whether a root omit pattern would blank a selected package's own source.
+
+    Args:
+        pattern: A ``tool.coverage.run.omit`` entry from the root pyproject.
+        targets: Repo-relative coverage target directories of the selected packages.
+
+    Returns:
+        True when coverage.py's own matcher would apply the pattern to a target.
+        GlobMatcher is what coverage.py builds its omit matcher from, and its
+        trailing ``/*`` token spans path separators (coverage/files.py
+        G2RX_TOKENS), so pattern and target component counts need not line up.
+    """
+    matcher = GlobMatcher([pattern], name="omit-cancel")
+    return any(matcher.match(target) for target in targets)
+
+
 def _root_coverage_values(section: str, option: str) -> list[str]:
     current: object = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     keys = ("tool", "coverage", section, option)
@@ -544,11 +604,9 @@ def _root_coverage_values(section: str, option: str) -> list[str]:
 
 def _write_consolidated_coverage_config(path: Path, packages: list[Package]) -> None:
     source = [str((pkg.path / _coverage_src_dir(pkg)).resolve()) for pkg in packages]
-    source_targets = [Path(_coverage_target(pkg)) for pkg in packages]
+    source_targets = [_coverage_target(pkg) for pkg in packages]
     omit = [
-        pattern
-        for pattern in _root_coverage_values("run", "omit")
-        if not any(target.full_match(pattern) for target in source_targets)
+        pattern for pattern in _root_coverage_values("run", "omit") if not _omit_blanks_source(pattern, source_targets)
     ]
     exclude_also = _root_coverage_values("report", "exclude_lines")
     path.write_text(
@@ -864,6 +922,7 @@ async def run_consolidated_tests(
                     tests_failed=package_stats.tests_failed,
                     coverage=coverage[pkg.name],
                     pkg_type=pkg.pkg_type,
+                    source_has_statements=_source_has_statements(pkg),
                 )
             )
         if exit_code != PYTEST_SUCCESS:
@@ -952,8 +1011,15 @@ class _CoverageRowData:
     status: str
 
 
+def _coverage_is_blanked(result: TestResult) -> bool:
+    """Return whether coverage measured nothing for a package whose source holds code."""
+    return result.source_has_statements and not any(file.stmts for file in result.coverage.files)
+
+
 def _coverage_meets_policy(result: TestResult) -> bool:
     """Return whether a result satisfies its package-type coverage policy."""
+    if _coverage_is_blanked(result):
+        return False
     if not any(file.stmts for file in result.coverage.files):
         return True
     gate = get_coverage_gate(result.pkg_type)
@@ -1004,6 +1070,12 @@ def display_coverage_summary(results: list[TestResult], console: Console) -> Non
     console.print(table)
 
     for result in results:
+        if _coverage_is_blanked(result):
+            console.print(
+                f"\n[red]{result.name}: source files carry statements but coverage measured none. "
+                f"The package is unmeasured, not passing.[/red]"
+            )
+            continue
         gate = get_coverage_gate(result.pkg_type)
         failing_files = gate.get_failing_files(result.coverage)
         if failing_files:
@@ -1054,30 +1126,72 @@ def display_summary(
         display_coverage_summary(results, console)
 
 
-def render_github_summary(results: list[TestResult], title: str) -> str:
+def _coverage_cells(result: TestResult) -> tuple[str, str]:
+    """Render one package's coverage percentage and its policy verdict.
+
+    Args:
+        result: One package's test and coverage result.
+
+    Returns:
+        The coverage cell and the policy cell, in that order.
+    """
+    gate = get_coverage_gate(result.pkg_type)
+    thresholds = f"module >= {gate.module_threshold:.0f}%, file >= {gate.file_threshold:.0f}%"
+    # Three states share "no percentage", and they are not interchangeable. Blanked coverage is a
+    # policy FAILURE: the source carries code that coverage never saw. A code-free package is
+    # neutral. Rendering either as 0% would instead claim measured code that is entirely uncovered.
+    if _coverage_is_blanked(result):
+        return "none", "unmeasured: source carries statements but coverage measured none"
+    if not any(file.stmts for file in result.coverage.files):
+        return "n/a", "no policy: the package carries no measurable statements"
+    percentage = f"{result.coverage.total_coverage:.0f}%"
+    if gate.name == "no-requirements":
+        return percentage, f"no policy: {result.pkg_type} packages carry the no-requirements gate ({thresholds})"
+    below = gate.get_failing_files(result.coverage)
+    if below or not gate.check_module(result.coverage):
+        plural = "" if len(below) == 1 else "s"
+        detail = f", {len(below)} file{plural} under {gate.file_threshold:.0f}%" if below else ""
+        return percentage, f"below {gate.name} policy: {thresholds}{detail}"
+    return percentage, f"meets {gate.name} policy: {thresholds}"
+
+
+def render_github_summary(results: list[TestResult], title: str, *, strict: bool = False) -> str:
     """Render one test batch as a GitHub-flavored Markdown summary.
 
     Args:
         results: Package test results in the batch.
         title: Batch name displayed in the heading.
+        strict: Whether coverage gates the run, which decides what the header claims.
 
     Returns:
-        Markdown containing the batch totals and per-package results.
+        Markdown for the batch block of a job step summary, as a level-four
+        section so it nests under the job's Results heading.
     """
     passed = sum(result.passed for result in results)
+    enforcement = (
+        "Coverage is enforced: a package below its policy fails this lane."
+        if strict
+        else "Coverage is reported, not enforced: this lane runs without `--strict`."
+    )
     lines = [
-        f"## Python tests ({title})",
+        f"#### Python tests ({title})",
         "",
-        f"**{passed}/{len(results)} packages passed.**",
+        f"**{passed}/{len(results)} packages passed.** {enforcement}",
         "",
-        "| Package | Duration | Coverage | Status |",
-        "| --- | ---: | ---: | :---: |",
     ]
-    for result in sorted(results, key=lambda item: item.name):
-        status = "Pass" if result.passed else "Fail"
-        lines.append(
-            f"| `{result.name}` | {result.duration_ms / 1000:.1f}s | {result.coverage.total_coverage:.0f}% | {status} |"
-        )
+    lines += markdown_table(
+        ["Package", "Duration", "Tests", "Coverage", "Coverage policy"],
+        [
+            (
+                f"`{result.name}`",
+                f"{result.duration_ms / 1000:.1f}s",
+                "Pass" if result.passed else "Fail",
+                *_coverage_cells(result),
+            )
+            for result in sorted(results, key=lambda item: item.name)
+        ],
+        align=("left", "right", "center", "right", "left"),
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -1254,7 +1368,7 @@ def all_packages_cmd(
     display_failures(results, console, ci_mode=ci)
     if summary is not None:
         with summary.open("a", encoding="utf-8") as summary_file:
-            summary_file.write(render_github_summary(results, summary_title))
+            summary_file.write(render_github_summary(results, summary_title, strict=strict))
 
     if _check_exit_conditions(results, strict=strict, with_coverage=coverage):
         raise typer.Exit(1)

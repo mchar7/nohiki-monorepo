@@ -34,6 +34,7 @@ FLAG_NAMES: tuple[str, ...] = (
     "frontend_tests",
     "frontend_smoke",
     "frontend_e2e",
+    "node_workspace_contracts",
     "edge_worker",
     "otel_collector",
     "hygiene",
@@ -83,11 +84,26 @@ class SurfaceRule:
 BROAD_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(
         ("flake.nix", "flake.lock"),
+        # Every lane listed here runs its binary from the .#ci devshell, so a
+        # flake bump can move its verdict: buf, actionlint, hadolint, just and
+        # the CI Python come from flake.nix ciPolicyTools. container-contracts
+        # runs its two pytest assertions the same way and, unlike the worker
+        # steps, carries no broad disjunct, so its flags are the only thing that
+        # can select it. The pnpm-driven frontend and edge lanes do not belong:
+        # broad routes them to the payload 'node' matrix unit, which sources
+        # Node from actions/setup-node, and playwright-image runs bare docker.
         flags=(
             "nix",
             *BROAD_PYTHON_FLAGS,
-            *_FRONTEND_APP_FLAGS,
-            "edge_worker",
+            "build_backend",
+            "lint_proto",
+            "lint_workflows",
+            "lint_docker",
+            "proto_breaking",
+            "image_matrix_parity",
+            "api_schema_freshness",
+            "frontend_smoke",
+            "otel_collector",
         ),
         packages=("ci-checks",),
     ),
@@ -124,7 +140,7 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
 
 SURFACE_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(
-        ("*.md", "**/*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore"),
+        ("*.md", "**/*.md", ".markdownlint-cli2.jsonc", ".markdownlint.json", ".markdownlintignore"),
         flags=("lint_markdown",),
     ),
     SurfaceRule(
@@ -134,6 +150,9 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         packages=("nohiki-domain-models",),
     ),
     SurfaceRule(
+        # Biome's own file list (biome.jsonc `files.includes`), vitest's project
+        # includes and the three tsconfig `include` sets are each narrower than
+        # the app directory. These are the paths at least one of them reads.
         (
             "typescript/apps/frontend/src/*",
             "typescript/apps/frontend/src/**/*",
@@ -143,37 +162,65 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
             "typescript/apps/frontend/scripts/**/*",
             "typescript/apps/frontend/__mocks__/*",
             "typescript/apps/frontend/__mocks__/**/*",
-            "typescript/apps/frontend/.ast-grep/*",
-            "typescript/apps/frontend/.ast-grep/**/*",
-            "typescript/apps/frontend/index.html",
-            "typescript/apps/frontend/knip.ts",
             "typescript/apps/frontend/package.json",
             "typescript/apps/frontend/biome.jsonc",
-            "typescript/apps/frontend/components.json",
-            "typescript/apps/frontend/steiger.config.ts",
             "typescript/apps/frontend/tsconfig.json",
             "typescript/apps/frontend/tsconfig.app.json",
             "typescript/apps/frontend/tsconfig.node.json",
             "typescript/apps/frontend/tsconfig.test.json",
             "typescript/apps/frontend/vite.config.ts",
             "typescript/apps/frontend/vitest.config.ts",
-            "typescript/apps/frontend/playwright.config.ts",
-            "typescript/apps/frontend/Caddyfile",
         ),
         flags=_FRONTEND_APP_FLAGS,
     ),
+    # Frontend app files no hosted lane opens: ast-grep, knip and steiger have no
+    # step in checks.yml, and components.json is shadcn CLI input that biome, tsc
+    # and vitest all exclude. Classified so they stay off the broad path.
     SurfaceRule(
         (
+            "typescript/apps/frontend/.ast-grep/*",
+            "typescript/apps/frontend/.ast-grep/**/*",
+            "typescript/apps/frontend/components.json",
+            "typescript/apps/frontend/knip.ts",
+            "typescript/apps/frontend/steiger.config.ts",
+        ),
+    ),
+    SurfaceRule(
+        # The production image COPYs the root manifests and the whole typescript
+        # tree, then runs pnpm install --frozen-lockfile and
+        # `pnpm --filter nohiki-frontend build`. That build is
+        # `tsc -p tsconfig.app.json` (src, public/locales), then
+        # `tsc -p tsconfig.node.json` (vite.config.ts, vitest.config.ts, e2e),
+        # then `vite build` (index.html, public). Every workspace manifest is an
+        # input of the frozen-lockfile check, and .dockerignore shapes the
+        # context the build sees.
+        (
+            ".dockerignore",
+            "package.json",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
+            "typescript/*/*/package.json",
             "typescript/apps/frontend/index.html",
-            "typescript/apps/frontend/package.json",
+            "typescript/apps/frontend/tsconfig*.json",
             "typescript/apps/frontend/vite.config.ts",
+            "typescript/apps/frontend/vitest.config.ts",
             "typescript/apps/frontend/Caddyfile",
+            "typescript/apps/frontend/src/*",
+            "typescript/apps/frontend/src/**/*",
+            "typescript/apps/frontend/public/*",
+            "typescript/apps/frontend/public/**/*",
+            "typescript/apps/frontend/e2e/*",
+            "typescript/apps/frontend/e2e/**/*",
+            "typescript/libs/tsconfig/*",
         ),
         flags=("frontend_smoke",),
     ),
     SurfaceRule(
+        # vitest.config.ts:48 excludes **/e2e/**, so a Playwright spec cannot
+        # move the vitest verdict. Biome lints e2e/** and tsconfig.node.json
+        # type-checks e2e/**/*.ts, so those two lanes stay.
         ("typescript/apps/frontend/e2e/*", "typescript/apps/frontend/e2e/**/*"),
-        flags=_FRONTEND_APP_FLAGS,
+        flags=("lint_frontend", "typecheck_frontend"),
     ),
     SurfaceRule(
         (
@@ -189,6 +236,8 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(
         ("typescript/apps/frontend/src/api/schema.d.ts",),
         flags=("api_schema_freshness",),
+        # The committed types are asserted by test_upload_api_schema.
+        packages=("ci-checks",),
     ),
     SurfaceRule(
         # Root toolchain changes can affect every TypeScript consumer.
@@ -208,17 +257,53 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         packages=("ci-checks",),
     ),
     SurfaceRule(("typescript/apps/frontend/Dockerfile",), flags=("frontend_smoke",)),
+    # requires_docker assertions that the Python lane deselects: the
+    # container-contracts job is their only executor, so each file must select
+    # the job that runs it.
     SurfaceRule(
+        ("scripts/ci/tests/test_frontend_delivery.py",),
+        flags=("frontend_smoke",),
+    ),
+    SurfaceRule(
+        ("scripts/ci/tests/test_otel_collector_manifest.py",),
+        flags=("otel_collector",),
+    ),
+    SurfaceRule(
+        # The Playwright runner image's last RUN is `pnpm install
+        # --frozen-lockfile` at Dockerfile.playwright-runner:11-12, ahead of the
+        # source COPYs at :13-15, and the job overrides the entrypoint with
+        # `playwright --version`. Only the manifests that install resolves, the
+        # Dockerfile itself (which carries both pinned base digests) and the
+        # context filter can move the verdict.
+        (
+            ".dockerignore",
+            "package.json",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
+            "typescript/apps/frontend/Dockerfile.playwright-runner",
+            "typescript/apps/frontend/package.json",
+            "typescript/libs/biome-config/package.json",
+            "typescript/libs/tsconfig/package.json",
+        ),
+        flags=("frontend_e2e",),
+    ),
+    SurfaceRule(
+        # `pytest scripts/ci/tests -m requires_node_modules` executes the k8s Playwright
+        # config rather than reading it: two tests import it under node and a third runs
+        # `playwright test --list` and compares the collection against e2e/journeys. So the
+        # inputs are that config and everything it imports, every journey the listing
+        # collects, the manifests that resolve the Playwright version, and the test module
+        # itself. The Python suite deselects the marker, so this step is their only executor.
         (
             "package.json",
             "pnpm-lock.yaml",
             "pnpm-workspace.yaml",
-            "typescript/apps/frontend/*",
-            "typescript/apps/frontend/**/*",
-            "typescript/libs/biome-config/**",
-            "typescript/libs/tsconfig/**",
+            "typescript/apps/frontend/package.json",
+            "typescript/apps/frontend/e2e/*",
+            "typescript/apps/frontend/e2e/**/*",
+            "scripts/ci/tests/test_local_verification_jobs.py",
         ),
-        flags=("frontend_e2e",),
+        flags=("node_workspace_contracts",),
     ),
     SurfaceRule(
         (".github/workflows/*", ".github/workflows/**/*"),
@@ -240,10 +325,14 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     ),
     # Migration-truth contract tests pin every service's Alembic head.
     SurfaceRule(("backend/services/*/alembic/**/*",), packages=("ci-checks",)),
-    SurfaceRule(("lefthook.yml",), flags=("nix",), packages=("ci-checks",)),
+    # `nix flake check` evaluates flake.nix:268-274 against the built binary and
+    # the version step compares a workflow literal; neither reads lefthook.yml.
+    SurfaceRule(("lefthook.yml",), packages=("ci-checks",)),
     SurfaceRule(
+        # Both steps shell out to `just`. Proto compatibility does not: the
+        # workflow runs `buf breaking` inline and Justfile:335-342 is local-only.
         ("Justfile",),
-        flags=("image_matrix_parity", "api_schema_freshness", "proto_breaking"),
+        flags=("image_matrix_parity", "api_schema_freshness"),
         packages=("ci-checks",),
     ),
     SurfaceRule(
@@ -251,25 +340,39 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         flags=("image_matrix_parity",),
         packages=("ci-checks",),
     ),
-    SurfaceRule(("docs/api/*", "docs/api/**/*"), flags=("api_schema_freshness",)),
+    # just api-schema-check diffs only schema.d.ts and never reads the committed
+    # spec; test_upload_api_schema is what asserts it.
+    SurfaceRule(("docs/api/*", "docs/api/**/*"), packages=("ci-checks",)),
     SurfaceRule(("scripts/util/export-openapi.py",), flags=("api_schema_freshness",)),
     SurfaceRule(("semgrep.yml", "semgrep-overrides.txt"), flags=("hygiene",)),
     SurfaceRule(("scripts/ci/src/ci_checks/checks/*",), packages=("ci-checks",)),
     SurfaceRule(("scripts/ci/tests/*", "scripts/ci/tests/**/*"), packages=("ci-checks",)),
-    # Understood, no CI effect. gitleaks runs unconditionally; commitlint
-    # always runs on pull requests.
+    # Read inputs of ci-checks contract tests that no lane flag covers.
     SurfaceRule(
         (
+            ".dockerignore",
+            ".github/dependabot.yml",
+            ".github/renovate.json5",
             ".gitignore",
+            ".gitleaks.toml",
+            "backend/services/ml-compute-service/pyproject.toml",
+            "package.json",
+            "pnpm-lock.yaml",
+            "semgrep-overrides.txt",
+            "typescript/edge/auth-listings-worker/wrangler.toml",
+        ),
+        packages=("ci-checks",),
+    ),
+    # Understood, no CI effect: commitlint always runs on pull requests and no
+    # lane or contract test reads the rest.
+    SurfaceRule(
+        (
             ".gitattributes",
             ".editorconfig",
             ".envrc",
             "LICENSE",
             "LICENSE.*",
             ".github/CODEOWNERS",
-            ".github/dependabot.yml",
-            ".github/renovate.json5",
-            ".gitleaks.toml",
             ".commitlintrc*",
             "commitlint.config.*",
             ".vscode/**",

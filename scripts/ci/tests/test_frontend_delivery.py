@@ -479,6 +479,7 @@ def test_checks_workflow_container_contracts_split_by_artifact_budget() -> None:
     assert frontend_smoke == {
         "if": "needs.changes.outputs.frontend_smoke == 'true'",
         "name": "Smoke production frontend container",
+        "id": "frontend-smoke",
         "run": (
             "nix develop .#ci --command uv run --no-sync pytest "
             "scripts/ci/tests/test_frontend_delivery.py"
