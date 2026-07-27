@@ -21,7 +21,8 @@ _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _FRESHNESS = _ROOT / ".github" / "workflows" / "digest-freshness.yml"
 _SETUP_CI = _ROOT / ".github" / "actions" / "setup-ci" / "action.yml"
 _NODE_WORKSPACE_MARKER = "requires_node_modules"
-_NODE_WORKSPACE_TESTS = "scripts/ci/tests"
+_SKYLOS_MARKER = "requires_skylos"
+_CI_TESTS = "scripts/ci/tests"
 
 
 def _jobs() -> dict[str, WorkflowJob]:
@@ -233,6 +234,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Check image matrix parity",
             "Check proto compatibility",
             "Run Node workspace contract tests",
+            "Run Skylos cache contract tests",
         },
         "frontend": {
             "Lint Markdown",
@@ -406,7 +408,7 @@ def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> No
     worker = _jobs()["worker"]
     steps = {step.get("name"): step for step in _steps(worker)}
     node_lane = steps["Run Node workspace contract tests"]
-    assert f"{_NODE_WORKSPACE_TESTS} -m {_NODE_WORKSPACE_MARKER}" in str(node_lane["run"])
+    assert f"{_CI_TESTS} -m {_NODE_WORKSPACE_MARKER}" in str(node_lane["run"])
 
     # The `python` payload restores no node_modules, so a marked test cannot pass in that unit.
     setup = next(step for step in _steps(worker) if step.get("uses") == "./.github/actions/setup-ci")
@@ -428,7 +430,37 @@ def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> No
         if f"pytest.mark.{_NODE_WORKSPACE_MARKER}" in path.read_text(encoding="utf-8")
     }
     assert marked
-    assert all(name.startswith(f"{_NODE_WORKSPACE_TESTS}/") for name in marked), marked
+    assert all(name.startswith(f"{_CI_TESTS}/") for name in marked), marked
+
+
+def test_skylos_cache_tests_run_only_where_the_private_analyzer_is_installed() -> None:
+    worker = _jobs()["worker"]
+    steps = {step.get("name"): step for step in _steps(worker)}
+    lane = steps["Run Skylos cache contract tests"]
+    assert f"{_CI_TESTS} -m {_SKYLOS_MARKER}" in str(lane["run"])
+
+    # One value decides both the lane and the install. Restating either condition in terms of the
+    # units or the router flags it expands to is what would let the two drift, and the lane would
+    # then fail on the missing distribution it exists to keep off the other units.
+    assert lane["if"] == "env.DEADCODE_SELECTED == 'true'"
+    assert str(steps["Check selected dead code"]["if"]) == lane["if"]
+    setup = next(step for step in _steps(worker) if step.get("uses") == "./.github/actions/setup-ci")
+    assert setup["with"]["skylos-cache"] == "${{ env.DEADCODE_SELECTED }}"
+    install = next(
+        step
+        for step in mapping_sequence_at(load_mapping(_SETUP_CI), "runs", "steps")
+        if step.get("name") == "Install Skylos from the pinned private fork"
+    )
+    assert install["if"] == "inputs.skylos-cache == 'true'"
+
+    # A marked test outside the one selected path would be deselected everywhere and run nowhere.
+    marked = {
+        path.relative_to(_ROOT).as_posix()
+        for path in _ROOT.glob("**/tests/**/test_*.py")
+        if f"pytest.mark.{_SKYLOS_MARKER}" in path.read_text(encoding="utf-8")
+    }
+    assert marked
+    assert all(name.startswith(f"{_CI_TESTS}/") for name in marked), marked
 
 
 def test_worker_guards_are_two_minutes_above_the_owner_wall_target() -> None:

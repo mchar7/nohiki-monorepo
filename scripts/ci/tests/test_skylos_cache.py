@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 from ci_checks.checks.skylos_cache import _configure_grep_cache, _hash_file
-from skylos.core import grep_cache, grep_verify
 
 
 class _Cache:
@@ -20,8 +19,13 @@ class _Cache:
         self.entries[key] = results
 
 
+@pytest.mark.requires_skylos
 def test_grep_cache_key_changes_when_search_corpus_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Adding a usage outside the defining file must invalidate cached search results."""
+    # The analyzer is a private distribution absent from the shared environment closure, so the
+    # module must stay importable without it; only this test needs the real cache internals.
+    from skylos.core import grep_cache, grep_verify
+
     defining_file = tmp_path / "definition.py"
     usage_file = tmp_path / "usage.py"
     defining_file.write_text("def target():\n    return 1\n", encoding="utf-8")

@@ -544,6 +544,16 @@ jobs:
           nix develop .#ci --command uv run --no-sync pytest
           scripts/ci/tests -m requires_node_modules
 
+      # The analyzer is a private distribution held out of the shared environment closure, so it
+      # exists only on the lanes where `setup-ci` installed it. This gate reads the same value
+      # that decides that install, so the two cannot drift into the ModuleNotFoundError the
+      # placement exists to prevent.
+      - name: Run Skylos cache contract tests
+        if: env.DEADCODE_SELECTED == 'true'
+        run: >
+          nix develop .#ci --command uv run --no-sync pytest
+          scripts/ci/tests -m requires_skylos
+
       - name: Test frontend
         if: (matrix.unit == 'all' || matrix.unit == 'frontend') && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_tests == 'true')
         # 50% resolves to ONE worker on the 2-vCPU runner, idling half the machine. Measured

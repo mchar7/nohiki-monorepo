@@ -41,9 +41,14 @@ from ci_checks.core.process_env import sanitized_python_env
 
 PYTEST_SUCCESS = 0
 _WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS: int = 18 * 60
-_UNIT_TEST_MARKERS = "not integration and not e2e and not requires_docker and not requires_node_modules and not slow"
+_UNIT_TEST_MARKERS = (
+    "not integration and not e2e and not requires_docker "
+    "and not requires_node_modules and not requires_skylos and not slow"
+)
 _PYTEST_CONTROLLER_RESULT_NAME = "pytest controller"
-_UNIT_EXCLUDED_MARKERS = frozenset({"integration", "e2e", "requires_docker", "requires_node_modules", "slow"})
+_UNIT_EXCLUDED_MARKERS = frozenset(
+    {"integration", "e2e", "requires_docker", "requires_node_modules", "requires_skylos", "slow"}
+)
 
 
 # Git change detection
