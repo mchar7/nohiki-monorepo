@@ -301,18 +301,20 @@ def test_lefthook_nix_attribute_evaluates_to_verified_source() -> None:
     assert json.loads(package) == _LEFTHOOK_NIX_SOURCE
 
 
-def test_nix_ci_job_checks_flake_and_ci_shell_lefthook_version() -> None:
-    nix_job = _load_yaml(_CHECKS)["jobs"]["nix"]
-    commands = "\n".join(str(step.get("run", "")) for step in nix_job["steps"])
+def test_standard_ci_worker_checks_flake_and_ci_shell_lefthook_version() -> None:
+    standard_job = _load_yaml(_CHECKS)["jobs"]["worker"]
+    steps = {step.get("name"): step for step in standard_job["steps"]}
+    commands = "\n".join(str(step.get("run", "")) for step in standard_job["steps"])
+    lefthook_step = steps["Check Lefthook version"]
 
-    assert nix_job["env"]["LEFTHOOK_VERSION"] == _LEFTHOOK_VERSION
+    assert lefthook_step["env"]["LEFTHOOK_VERSION"] == _LEFTHOOK_VERSION
     assert re.search(r"\bnix\s+flake\s+check\b", commands)
     assert re.search(
         r"\bnix\s+develop\s+\.\#ci\s+--command\s+lefthook\s+version\b",
         commands,
     )
     assert re.search(
-        r'\[\s*"\$actual"\s*!=\s*"\$LEFTHOOK_VERSION"\s*\]',
+        r'test\s+"\$actual"\s*=\s*"\$LEFTHOOK_VERSION"',
         commands,
     )
 

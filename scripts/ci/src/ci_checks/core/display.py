@@ -6,6 +6,9 @@ CI systems as regular output, matching conventional CI tool behaviour.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
+from typing import Literal
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -19,11 +22,13 @@ LANE_DISPLAY_NAMES: dict[str, str] = {
     "lint_workflows": "Workflow lint",
     "lint_docker": "Dockerfile lint",
     "typecheck_backend": "Backend typecheck",
+    "build_backend": "Build backend",
     "typecheck_frontend": "Frontend typecheck",
     "python_any": "Python tests",
     "frontend_tests": "Frontend tests",
     "frontend_smoke": "Frontend container smoke",
     "frontend_e2e": "Playwright runner smoke",
+    "node_workspace_contracts": "Node workspace contracts",
     "edge_worker": "Edge worker quality",
     "otel_collector": "OpenTelemetry collector validation",
     "hygiene": "Code hygiene",
@@ -32,15 +37,37 @@ LANE_DISPLAY_NAMES: dict[str, str] = {
     "proto_breaking": "Protobuf compatibility",
 }
 
-GATE_LABELS: dict[str, tuple[str, str]] = {
-    "python_any": ("area:backend", "1D76DB"),
-    "frontend_tests": ("area:frontend", "D4C5F9"),
-    "lint_proto": ("area:proto", "FBCA04"),
-    "lint_docker": ("area:docker", "0E8A16"),
-    "lint_workflows": ("area:workflows", "5319E7"),
-    "lint_markdown": ("area:docs", "0075CA"),
-    "full": ("ci:full-run", "B60205"),
+# Where each lane executes on a broad run. A standard run collapses every selected lane onto the
+# single `all` unit, so this names the broad-class bin only. It lives beside the display names
+# because the step summary is its only consumer; `test_change_gate_workflow` asserts it against the
+# workflow's own binning, so a rebin cannot silently make the summary lie.
+LANE_RUNNERS: dict[str, str] = {
+    "nix": "hygiene",
+    "lint_python": "hygiene",
+    "lint_frontend": "frontend",
+    "lint_proto": "hygiene",
+    "lint_markdown": "frontend",
+    "lint_workflows": "hygiene",
+    "lint_docker": "hygiene",
+    "typecheck_backend": "hygiene",
+    "build_backend": "hygiene",
+    "typecheck_frontend": "frontend",
+    "python_any": "python",
+    "frontend_tests": "frontend",
+    "frontend_smoke": "Container contracts",
+    "frontend_e2e": "Playwright runner image",
+    "node_workspace_contracts": "hygiene",
+    "edge_worker": "frontend",
+    "otel_collector": "Container contracts",
+    "hygiene": "hygiene",
+    "api_schema_freshness": "hygiene",
+    "image_matrix_parity": "hygiene",
+    "proto_breaking": "hygiene",
 }
+
+type ColumnAlign = Literal["left", "center", "right"]
+
+_ALIGN_RULES: dict[ColumnAlign, str] = {"left": "---", "center": ":---:", "right": "---:"}
 
 # Module-level console singleton for all CI check output.
 # stdout (not stderr) is intentional -- CI log capture expects stdout.
@@ -87,3 +114,41 @@ def render_error_panel(name: str, content: str, *, border_style: str = "red") ->
             border_style=border_style,
         )
     )
+
+
+def markdown_table(
+    headers: Sequence[str],
+    rows: Iterable[Sequence[str]],
+    *,
+    align: Sequence[ColumnAlign] | None = None,
+) -> list[str]:
+    """Render a GitHub-flavoured Markdown table as step-summary lines.
+
+    Args:
+        headers: Column headings.
+        rows: One sequence of cell values per row, each as wide as ``headers``.
+        align: Per-column alignment; defaults to left for every column.
+
+    Returns:
+        Header, rule and body lines, ready to join with newlines.
+    """
+    alignment: list[ColumnAlign] = list(align) if align else ["left"] * len(headers)
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "|" + "|".join(_ALIGN_RULES[value] for value in alignment) + "|",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in rows)
+    return lines
+
+
+def markdown_details(summary: str, body: str) -> list[str]:
+    """Render a collapsed disclosure block as step-summary lines.
+
+    Args:
+        summary: Text shown on the closed disclosure control.
+        body: Markdown revealed when the block is expanded.
+
+    Returns:
+        Lines for the disclosure block, ready to join with newlines.
+    """
+    return [f"<details><summary>{summary}</summary>", "", body, "", "</details>"]

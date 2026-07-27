@@ -248,7 +248,7 @@ the unrelated issue as part of the same branch before merging.
 GitHub Actions uses `.github/workflows/checks.yml` for lint, commitlint, and
 pre-push parity; its `changes` job change-gates every lane through
 `ci-checks gate` (dependency-graph package scoping, fail-closed on unmapped
-files) and posts the verdict as a sticky PR comment plus `area:*` labels.
+files) and records the verdict in the run's step summary.
 Container builds and pushes live in `.github/workflows/build-push.yml`;
 `.github/workflows/digest-freshness.yml` probes pinned base-image digests
 weekly; there is no `test.yml` workflow.

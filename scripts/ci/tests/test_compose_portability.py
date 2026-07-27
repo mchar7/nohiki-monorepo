@@ -15,7 +15,9 @@ Set NOHIKI_PORTABILITY_TEST_ROOT to an alternate checkout (e.g. a
 
 from __future__ import annotations
 
+import copy
 import fcntl
+import importlib.util
 import os
 import re
 import select
@@ -28,14 +30,21 @@ import tarfile
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from functools import cache
+from io import StringIO
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
+from _documents import (
+    ComposeFile,
+    load_compose,
+    mapping_at,
+    string_at,
+    string_sequence_at,
+)
 from ci_checks.core.repository import tracked_text_files
 
 _ENV_ROOT = os.environ.get("NOHIKI_PORTABILITY_TEST_ROOT")
@@ -44,6 +53,7 @@ _REPO = Path(_ENV_ROOT).resolve() if _ENV_ROOT else Path(__file__).resolve().par
 _COMPOSE = _REPO / "infra" / "compose" / "docker-compose.yml"
 _ENV_EXAMPLE = _REPO / "infra" / "compose" / ".env.example"
 _PREFLIGHT = _REPO / "infra" / "compose" / "scripts" / "preflight.sh"
+_VALIDATOR = _PREFLIGHT.with_name("validate-llm-endpoints.py")
 _JUSTFILE = _REPO / "Justfile"
 _FLAKE = _REPO / "flake.nix"
 _ROOT_README = _REPO / "README.md"
@@ -52,6 +62,28 @@ _RUSTFS_INIT = _REPO / "infra" / "compose" / "scripts" / "rustfs-init.sh"
 _KAFKA_INIT = _REPO / "infra" / "compose" / "scripts" / "kafka-init.sh"
 _REGISTER = _REPO / "infra" / "k8s" / "kafka-connect" / "scripts" / "register-connectors.sh"
 _ENTRYPOINT = _REPO / "infra" / "k8s" / "kafka-connect" / "scripts" / "entrypoint.sh"
+
+
+def _preflight_compose_file() -> Path:
+    return Path(os.environ.get("COMPOSE_FILE", _COMPOSE))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _isolated_compose_source(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    compose_dir = tmp_path_factory.mktemp("compose-preflight")
+    compose_file = compose_dir / _COMPOSE.name
+    compose_file.write_text(_preflight_compose_text(), encoding="utf-8")
+    previous = os.environ.get("COMPOSE_FILE")
+    os.environ["COMPOSE_FILE"] = str(compose_file)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("COMPOSE_FILE", None)
+        else:
+            os.environ["COMPOSE_FILE"] = previous
 
 
 _compose_preflight_lock_state = threading.local()
@@ -68,8 +100,7 @@ def _compose_preflight_lock() -> Iterator[None]:
             _compose_preflight_lock_state.depth = depth
         return
 
-    lock_path = _REPO / ".pytest_cache" / "compose-preflight.lock"
-    lock_path.parent.mkdir(exist_ok=True)
+    lock_path = _preflight_compose_file().parent / ".compose-preflight.lock"
     with lock_path.open("w") as lock_file:
         fcntl.flock(lock_file, fcntl.LOCK_EX)
         _compose_preflight_lock_state.depth = 1
@@ -133,8 +164,35 @@ def _expand(text: str, env: dict[str, str]) -> str:
     return text
 
 
-def _compose() -> dict[str, Any]:
-    return yaml.safe_load(_COMPOSE.read_text(encoding="utf-8"))
+@cache
+def _compose() -> ComposeFile:
+    return load_compose(_COMPOSE)
+
+
+@cache
+def _preflight_compose_text() -> str:
+    compose = _compose()
+    services: dict[str, dict[str, object]] = {}
+    for name, service in compose["services"].items():
+        compact: dict[str, object] = {"image": "example.invalid/nohiki-test"}
+        service_document: dict[str, object] = dict(service)
+        for key in ("depends_on", "profiles"):
+            if key in service_document:
+                compact[key] = copy.deepcopy(service_document[key])
+        environment = service.get("environment")
+        if isinstance(environment, dict):
+            protected = {key: value for key, value in environment.items() if "_LLM__" in key}
+            if protected:
+                compact["environment"] = protected
+        services[name] = compact
+    return yaml.safe_dump(
+        {
+            "x-llm-provider-endpoints": dict(compose["x-llm-provider-endpoints"]),
+            "services": services,
+        },
+        sort_keys=False,
+        width=10_000,
+    )
 
 
 def _published_ports() -> list[tuple[str, str]]:
@@ -147,11 +205,11 @@ def _published_ports() -> list[tuple[str, str]]:
 
 
 def _find_env(key: str) -> str:
-    matches = [
-        service["environment"][key]
-        for service in _compose()["services"].values()
-        if isinstance(service.get("environment"), dict) and key in service["environment"]
-    ]
+    matches: list[object] = []
+    for service in _compose()["services"].values():
+        environment = service.get("environment")
+        if isinstance(environment, dict) and key in environment:
+            matches.append(environment[key])
     assert matches, f"no service declares environment key {key!r}"
     return str(matches[0])
 
@@ -171,7 +229,51 @@ def _path_with(bin_dir: Path) -> str:
     return os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
 
 
+@cache
+def _validator_main() -> Callable[[], int]:
+    spec = importlib.util.spec_from_file_location("_compose_endpoint_validator", _VALIDATOR)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    main: object = getattr(module, "main", None)
+    if not callable(main):
+        message = "compose endpoint validator must expose a callable main"
+        raise TypeError(message)
+    main_callable: Callable[..., object] = main
+
+    def invoke() -> int:
+        returncode = main_callable()
+        if not isinstance(returncode, int):
+            message = "compose endpoint validator main must return an integer"
+            raise TypeError(message)
+        return returncode
+
+    return invoke
+
+
+def _run_validator(args: list[str]) -> subprocess.CompletedProcess[str]:
+    stdout = StringIO()
+    stderr = StringIO()
+    previous_argv = sys.argv
+    sys.argv = [str(_VALIDATOR), *args]
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            returncode = _validator_main()()
+    finally:
+        sys.argv = previous_argv
+    command = [sys.executable, str(_VALIDATOR), *args]
+    return subprocess.CompletedProcess(
+        command,
+        returncode,
+        stdout.getvalue(),
+        stderr.getvalue(),
+    )
+
+
 def _sh(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    if len(args) >= 2 and args[0] == sys.executable and Path(args[1]) == _VALIDATOR:
+        return _run_validator(args[2:])
     return subprocess.run(
         args,
         env=env,
@@ -187,9 +289,9 @@ def test_skill_graph_readiness_matches_seed_health_minimum() -> None:
 
 
 def test_common_readiness_probe_allows_real_llm_health_latency() -> None:
-    healthcheck = _compose()["x-common-microservice"]["healthcheck"]
-    assert "timeout=15" in healthcheck["test"][1]
-    assert healthcheck["timeout"] == "20s"
+    healthcheck = mapping_at(_compose(), "x-common-microservice", "healthcheck")
+    assert "timeout=15" in string_sequence_at(healthcheck, "test")[1]
+    assert string_at(healthcheck, "timeout") == "20s"
 
 
 # Host ports are environment-overrideable with preserved defaults.
@@ -602,7 +704,7 @@ def _hermetic_compose_project(tmp_path: Path, env_text: str) -> Path:
     compose_file = compose_dir / _COMPOSE.name
     shutil.copy2(_COMPOSE, compose_file)
     (compose_dir / ".env").write_text(env_text, encoding="utf-8")
-    for service in yaml.safe_load(compose_file.read_text(encoding="utf-8"))["services"].values():
+    for service in load_compose(compose_file)["services"].values():
         entries = service.get("env_file", ())
         if isinstance(entries, str):
             entries = (entries,)
@@ -641,7 +743,9 @@ def test_compose_probe_selects_pinned_podman_compose(tmp_path: Path, monkeypatch
 
 
 @pytest.mark.requires_docker
-def test_podman_status_reporter_template_matches_real_created_container(tmp_path: Path) -> None:
+def test_podman_status_reporter_template_matches_real_created_container(
+    tmp_path: Path,
+) -> None:
     runtime = shutil.which("podman")
     if runtime is None:
         pytest.skip("podman is not installed")
@@ -729,24 +833,40 @@ def _dotenv_values(text: str) -> dict[str, str]:
     return values
 
 
-def _rendered_compose(endpoint_values: dict[str, str], path: Path) -> Path:
-    compose = _compose()
-    provider_inputs = compose["x-llm-provider-endpoints"]
+@cache
+def _rendered_compose_text(
+    endpoint_items: tuple[tuple[str, str], ...],
+) -> str:
+    endpoint_values = dict(endpoint_items)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml") as compose_file:
+        compose_file.write(_preflight_compose_text())
+        compose_file.flush()
+        compose = load_compose(Path(compose_file.name))
+    provider_inputs = mapping_at(compose, "x-llm-provider-endpoints")
     for variable in provider_inputs:
         default = "0" if variable == "NOHIKI_ALLOW_HTTP_LLM_LOCAL" else ""
         provider_inputs[variable] = endpoint_values.get(variable, default)
-    for service in compose["services"].values():
-        environment = service.get("environment", {})
-        if not isinstance(environment, dict):
+    services = mapping_at(compose, "services")
+    for service_name in services:
+        service = mapping_at(services, service_name)
+        if "environment" not in service:
             continue
+        environment = mapping_at(service, "environment")
         for key, value in environment.items():
             if key.endswith("__BASE_URL") and isinstance(value, str):
                 if "NOHIKI_LLM_OPENAI_BASE_URL" in value:
                     environment[key] = endpoint_values.get("NOHIKI_LLM_OPENAI_BASE_URL", "")
                 elif "NOHIKI_LLM_ANTHROPIC_BASE_URL" in value:
                     environment[key] = endpoint_values.get("NOHIKI_LLM_ANTHROPIC_BASE_URL", "")
+    return yaml.safe_dump(compose, sort_keys=False, width=10_000)
+
+
+def _rendered_compose(endpoint_values: dict[str, str], path: Path) -> Path:
     rendered = path / "rendered-compose.yml"
-    rendered.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
+    rendered.write_text(
+        _rendered_compose_text(tuple(sorted(endpoint_values.items()))),
+        encoding="utf-8",
+    )
     return rendered
 
 
@@ -762,18 +882,18 @@ def _run_preflight(
     env_file.write_text(env_text, encoding="utf-8")
     endpoint_values = _dotenv_values(env_text) | (endpoint_env or {})
     rendered = _rendered_compose(endpoint_values, secrets.parent)
-    with _compose_preflight_lock():
-        return _sh(
-            ["sh", str(_PREFLIGHT), *compose_args],
-            {
-                "PATH": _path_with(bin_dir),
-                "SECRETS_DIR": str(secrets),
-                "CONTAINER_RUNTIME": runtime,
-                "PYTHON": sys.executable,
-                "FAKE_RENDERED_CONFIG": str(rendered),
-                **(endpoint_env or {}),
-            },
-        )
+    return _sh(
+        ["sh", str(_PREFLIGHT), *compose_args],
+        {
+            "PATH": _path_with(bin_dir),
+            "SECRETS_DIR": str(secrets),
+            "CONTAINER_RUNTIME": runtime,
+            "PYTHON": sys.executable,
+            "COMPOSE_FILE": str(_preflight_compose_file()),
+            "FAKE_RENDERED_CONFIG": str(rendered),
+            **(endpoint_env or {}),
+        },
+    )
 
 
 def _run_endpoint_validator(
@@ -816,8 +936,7 @@ def _run_endpoint_validator(
         + "".join(f'      {key}: "{value}"\n' for key, value in (rendered_environment or {}).items()),
         encoding="utf-8",
     )
-    validator = _PREFLIGHT.with_name("validate-llm-endpoints.py")
-    return _sh([sys.executable, str(validator), str(source), str(rendered)], {})
+    return _sh([sys.executable, str(_VALIDATOR), str(source), str(rendered)], {})
 
 
 def test_validator_rejects_provider_inputs_without_any_protected_model(
@@ -870,8 +989,14 @@ _EXPECTED_LLM_MODELS = {
         "nohiki-svc-job-ingest-enrichment",
         "JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__2__MODEL",
     ): "openrouter:deepseek/deepseek-v4-flash",
-    ("nohiki-svc-doc-content", "DOC_CONTENT_LLM__PROVIDER__MODELS__0__MODEL"): "openai:gpt-5.6-sol",
-    ("nohiki-svc-doc-content", "DOC_CONTENT_LLM__PROVIDER__MODELS__1__MODEL"): "openai:gpt-5.6-luna",
+    (
+        "nohiki-svc-doc-content",
+        "DOC_CONTENT_LLM__PROVIDER__MODELS__0__MODEL",
+    ): "openai:gpt-5.6-sol",
+    (
+        "nohiki-svc-doc-content",
+        "DOC_CONTENT_LLM__PROVIDER__MODELS__1__MODEL",
+    ): "openai:gpt-5.6-luna",
     (
         "nohiki-svc-doc-content",
         "DOC_CONTENT_LLM__PROVIDER__MODELS__2__MODEL",
@@ -922,35 +1047,46 @@ def test_compose_renders_private_primaries_and_public_fallbacks() -> None:
         assert rendered_base_url == endpoint
         assert f"{rendered_base_url.rstrip('/')}/models" == "https://openai.models.example.test/v1/models"
 
-    doc_content = _compose()["services"]["nohiki-svc-doc-content"]["environment"]
-    assert doc_content["DOC_CONTENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT"] == "high"
-    assert doc_content["DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__REASONING_EFFORT"] == "high"
+    doc_content = mapping_at(_compose(), "services", "nohiki-svc-doc-content", "environment")
+    assert string_at(doc_content, "DOC_CONTENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT") == "high"
+    assert (
+        string_at(
+            doc_content,
+            "DOC_CONTENT_LLM__CHAINS__DOC_TAILORING__MODELS__0__REASONING_EFFORT",
+        )
+        == "high"
+    )
 
 
 def test_luna_enrichment_has_no_unused_gcp_credentials_or_mount() -> None:
     service = _compose()["services"]["nohiki-svc-job-ingest-enrichment"]
-    environment = service["environment"]
-    assert environment["JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__MODEL"] == "openai:gpt-5.6-luna"
-    assert environment["JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT"] == "medium"
+    environment = mapping_at(service, "environment")
+    assert string_at(environment, "JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__MODEL") == "openai:gpt-5.6-luna"
+    assert (
+        string_at(
+            environment,
+            "JOB_INGEST_ENRICHMENT_LLM__PROVIDER__MODELS__0__REASONING_EFFORT",
+        )
+        == "medium"
+    )
     assert not any(key == "GOOGLE_APPLICATION_CREDENTIALS" or key.startswith("GOOGLE_") for key in environment)
-    assert not any("/run/secrets/gcp" in volume for volume in service["volumes"])
+    assert not any("/run/secrets/gcp" in volume for volume in string_sequence_at(service, "volumes"))
 
 
 def test_correlation_has_no_llm_provider_configuration_but_keeps_ml_ranking_assets() -> None:
     service = _compose()["services"]["nohiki-svc-job-correlation"]
-    environment = service["environment"]
+    environment = mapping_at(service, "environment")
+    volumes = string_sequence_at(service, "volumes")
     assert not any("_LLM__" in key for key in environment)
-    assert not any("/run/secrets/llm" in volume for volume in service["volumes"])
-    assert environment["JOB_CORRELATION_EVAL_ML__PIPELINE__MIN_SCORE_THRESHOLD"] == "30"
-    assert any(
-        volume.endswith(":/app/data/config/semantic_representation_manifest.json:ro") for volume in service["volumes"]
-    )
+    assert not any("/run/secrets/llm" in volume for volume in volumes)
+    assert string_at(environment, "JOB_CORRELATION_EVAL_ML__PIPELINE__MIN_SCORE_THRESHOLD") == "30"
+    assert any(volume.endswith(":/app/data/config/semantic_representation_manifest.json:ro") for volume in volumes)
 
 
 def test_clean_boot_orders_schema_migrations_before_seed_and_connect() -> None:
-    services = _compose()["services"]
-    seed_dependencies = services["nohiki-job-skill-graph-seed"]["depends_on"]
-    assert seed_dependencies["nohiki-svc-skill-graph"]["condition"] == "service_started"
+    compose = _compose()
+    seed_dependencies = mapping_at(compose, "services", "nohiki-job-skill-graph-seed", "depends_on")
+    assert string_at(seed_dependencies, "nohiki-svc-skill-graph", "condition") == "service_started"
     for service_name in (
         "nohiki-svc-user-pref",
         "nohiki-svc-job-storage",
@@ -958,8 +1094,8 @@ def test_clean_boot_orders_schema_migrations_before_seed_and_connect() -> None:
         "nohiki-job-skill-graph-seed",
         "nohiki-svc-job-correlation",
     ):
-        dependencies = services[service_name]["depends_on"]
-        assert dependencies["nohiki-infra-qdrant-init"]["condition"] == "service_completed_successfully"
+        dependencies = mapping_at(compose, "services", service_name, "depends_on")
+        assert string_at(dependencies, "nohiki-infra-qdrant-init", "condition") == "service_completed_successfully"
 
     connector_owners = {
         "nohiki-svc-user-auth",
@@ -974,11 +1110,13 @@ def test_clean_boot_orders_schema_migrations_before_seed_and_connect() -> None:
         "nohiki-svc-notification",
         "nohiki-svc-job-correlation",
     }
-    connect_dependencies = services["nohiki-cp-kafka-connect"]["depends_on"]
+    connect_dependencies = mapping_at(compose, "services", "nohiki-cp-kafka-connect", "depends_on")
     assert {
-        name for name, dependency in connect_dependencies.items() if dependency["condition"] == "service_healthy"
+        name for name in connect_dependencies if string_at(connect_dependencies, name, "condition") == "service_healthy"
     } >= connector_owners
-    assert connect_dependencies["nohiki-job-skill-graph-seed"]["condition"] == "service_completed_successfully"
+    assert (
+        string_at(connect_dependencies, "nohiki-job-skill-graph-seed", "condition") == "service_completed_successfully"
+    )
 
 
 def test_compose_omits_direct_provider_defaults_and_derived_transport_fields() -> None:
@@ -1414,14 +1552,22 @@ def test_preflight_parses_compose_dotenv_quotes_and_inline_comments(
     assert "anthropic.example.test" not in result.stdout + result.stderr
 
     runtime = _canonical_compose_runtime()
-    compose_file = _hermetic_compose_project(tmp_path, env_text)
-    compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-    compose["x-dotenv-parser-probe"] = {
-        "double": "${NOHIKI_LLM_OPENAI_BASE_URL}",
-        "single": "${NOHIKI_LLM_ANTHROPIC_BASE_URL}",
-        "unquoted": "${NOHIKI_DOTENV_UNQUOTED}",
-    }
-    compose_file.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
+    compose_file = tmp_path / "dotenv-compose.yml"
+    (tmp_path / ".env").write_text(env_text, encoding="utf-8")
+    compose_file.write_text(
+        yaml.safe_dump(
+            {
+                "x-dotenv-parser-probe": {
+                    "double": "${NOHIKI_LLM_OPENAI_BASE_URL}",
+                    "single": "${NOHIKI_LLM_ANTHROPIC_BASE_URL}",
+                    "unquoted": "${NOHIKI_DOTENV_UNQUOTED}",
+                },
+                "services": {},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
     compose_result = subprocess.run(
         [
             runtime,
@@ -1459,10 +1605,10 @@ def test_preflight_preserves_quoted_hash_for_fragment_rejection(tmp_path: Path) 
 
 def _compose_temporary_files() -> set[Path]:
     return (
-        set(_COMPOSE.parent.glob(".nohiki-compose-source.*"))
-        | set(_COMPOSE.parent.glob(".nohiki-compose-rendered.*"))
-        | set(_COMPOSE.parent.glob(".nohiki-compose-action.*"))
-        | set(_COMPOSE.parent.glob(".nohiki-compose-diagnostics.*"))
+        set(_preflight_compose_file().parent.glob(".nohiki-compose-source.*"))
+        | set(_preflight_compose_file().parent.glob(".nohiki-compose-rendered.*"))
+        | set(_preflight_compose_file().parent.glob(".nohiki-compose-action.*"))
+        | set(_preflight_compose_file().parent.glob(".nohiki-compose-diagnostics.*"))
     )
 
 
@@ -1496,7 +1642,7 @@ def test_preflight_passes_all_compose_sources_to_validator_in_merge_order(
     assert Path(invocation[0]) == _PREFLIGHT.with_name("validate-llm-endpoints.py")
     source_paths = [Path(path) for path in invocation[1:-1]]
     assert len(source_paths) == 2
-    assert all(path.parent.resolve() == _COMPOSE.parent.resolve() for path in source_paths)
+    assert all(path.parent.resolve() == _preflight_compose_file().parent.resolve() for path in source_paths)
     assert all(path.name.startswith(".nohiki-compose-source.") for path in source_paths)
     assert not any(path.exists() for path in source_paths)
     assert Path(invocation[-1]).name.startswith(".nohiki-compose-rendered.")
@@ -1914,15 +2060,7 @@ def test_preflight_action_round_trips_literal_dollars_through_real_compose(
     )
     rendered = tmp_path / "normal-first-render.yml"
     rendered.write_text(first_render, encoding="utf-8")
-    expected = yaml.safe_load(
-        _compose_config(
-            runtime,
-            rendered,
-            {},
-            project_directory=tmp_path,
-            escape_dollars=True,
-        )
-    )
+    expected = yaml.safe_load(first_render)
     environment = expected["services"]["endpoints"]["environment"]
     assert environment["TEST_LLM__PROVIDER__MODELS__0__BASE_URL"] == endpoint
     assert environment["LITERAL_ROLE"] == "$role"
@@ -2094,7 +2232,7 @@ _RECOVERED_CREATED_SET = _RECOVERED_BFF_STATE + _podman_state(
 )
 
 
-def _podman_created_dependency_snapshot(compose: dict[str, Any], created: set[str]) -> str:
+def _podman_created_dependency_snapshot(compose: ComposeFile, created: set[str]) -> str:
     services = compose["services"]
     scope: set[str] = set()
     conditions: dict[str, set[str]] = {}
@@ -2103,18 +2241,23 @@ def _podman_created_dependency_snapshot(compose: dict[str, Any], created: set[st
         if service in scope:
             return
         scope.add(service)
-        depends_on = services[service].get("depends_on", {})
-        items = (
-            ((dependency, "service_started") for dependency in depends_on)
-            if isinstance(depends_on, list)
-            else (
-                (
-                    dependency,
-                    details.get("condition", "service_started") if isinstance(details, dict) else "service_started",
-                )
-                for dependency, details in depends_on.items()
+        service_document = mapping_at(compose, "services", service)
+        if "depends_on" not in service_document:
+            return
+        depends_on = service_document["depends_on"]
+        if isinstance(depends_on, list):
+            items = (
+                (dependency, "service_started") for dependency in string_sequence_at(service_document, "depends_on")
             )
-        )
+        else:
+            dependency_map = mapping_at(service_document, "depends_on")
+            resolved: list[tuple[str, str]] = []
+            for dependency in dependency_map:
+                details = mapping_at(dependency_map, dependency)
+                condition = details.get("condition", "service_started")
+                assert isinstance(condition, str)
+                resolved.append((dependency, condition))
+            items = iter(resolved)
         for dependency, condition in items:
             conditions.setdefault(dependency, set()).add(condition)
             collect(dependency)
@@ -2324,8 +2467,14 @@ def test_podman_recovery_rejects_created_dependency_cycles(
         {"NOHIKI_LLM_OPENAI_BASE_URL": "https://models.example.test/v1"},
         rendered_dir,
     )
-    compose = yaml.safe_load(rendered.read_text(encoding="utf-8"))
-    compose["services"]["nohiki-svc-bff"]["depends_on"]["nohiki-cp-kafka-connect"] = {"condition": "service_healthy"}
+    compose = load_compose(rendered)
+    dependencies = mapping_at(
+        compose,
+        "services",
+        "nohiki-svc-bff",
+        "depends_on",
+    )
+    dependencies["nohiki-cp-kafka-connect"] = {"condition": "service_healthy"}
     rendered.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
     state = _podman_created_dependency_snapshot(compose, {"nohiki-svc-bff", "nohiki-cp-kafka-connect"})
     before = _compose_temporary_files()
@@ -2554,7 +2703,9 @@ def test_podman_recovery_waits_for_recreated_health_dependency_to_be_healthy(
 
 
 @pytest.mark.usefixtures("_serialized_compose_preflight")
-def test_preflight_does_not_apply_podman_recovery_to_docker_compose(tmp_path: Path) -> None:
+def test_preflight_does_not_apply_podman_recovery_to_docker_compose(
+    tmp_path: Path,
+) -> None:
     bin_dir = _bin_dir(tmp_path)
     _fake_runtime(bin_dir)
     runtime_log = tmp_path / "runtime.log"
@@ -2631,7 +2782,9 @@ def test_preflight_rejects_non_gnu_timeout_before_compose_up(tmp_path: Path) -> 
 
 
 @pytest.mark.usefixtures("_serialized_compose_preflight")
-def test_preflight_scopes_podman_recovery_to_the_requested_service_closure(tmp_path: Path) -> None:
+def test_preflight_scopes_podman_recovery_to_the_requested_service_closure(
+    tmp_path: Path,
+) -> None:
     bin_dir = _bin_dir(tmp_path)
     _fake_runtime(bin_dir)
     runtime_log = tmp_path / "runtime.log"
@@ -2665,7 +2818,9 @@ def test_preflight_scopes_podman_recovery_to_the_requested_service_closure(tmp_p
 
 
 @pytest.mark.usefixtures("_serialized_compose_preflight")
-def test_preflight_preserves_failure_when_requested_service_is_not_in_created_set(tmp_path: Path) -> None:
+def test_preflight_preserves_failure_when_requested_service_is_not_in_created_set(
+    tmp_path: Path,
+) -> None:
     bin_dir = _bin_dir(tmp_path)
     _fake_runtime(bin_dir)
     runtime_log = tmp_path / "runtime.log"
@@ -2786,7 +2941,9 @@ def test_preflight_preserves_podman_failure_when_any_transitive_dependency_is_no
 
 
 @pytest.mark.usefixtures("_serialized_compose_preflight")
-def test_preflight_recovers_every_selected_created_service_as_one_set(tmp_path: Path) -> None:
+def test_preflight_recovers_every_selected_created_service_as_one_set(
+    tmp_path: Path,
+) -> None:
     bin_dir = _bin_dir(tmp_path)
     _fake_runtime(bin_dir)
     runtime_log = tmp_path / "runtime.log"
@@ -2990,13 +3147,22 @@ def test_preflight_forwards_signals_to_podman_provider_descendants_during_recove
 
     assert process.returncode == expected_status, stdout + stderr
     assert signal_log.read_text(encoding="utf-8").strip() == sent_signal.name.removeprefix("SIG")
-    with pytest.raises(ProcessLookupError):
-        os.kill(child_pid, 0)
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        if time.monotonic() >= deadline:
+            pytest.fail(f"recovery provider descendant {child_pid} did not terminate")
+        time.sleep(0.01)
     assert _compose_temporary_files() == before
 
 
 @pytest.mark.usefixtures("_serialized_compose_preflight")
-def test_preflight_bounds_compose_up_wait_and_cleans_temporary_files(tmp_path: Path) -> None:
+def test_preflight_bounds_compose_up_wait_and_cleans_temporary_files(
+    tmp_path: Path,
+) -> None:
     bin_dir = _bin_dir(tmp_path)
     _fake_runtime(bin_dir)
     pid_file = tmp_path / "action.pid"
@@ -3445,7 +3611,33 @@ def test_all_supported_just_compose_commands_use_the_validation_gate() -> None:
 
 @cache
 def _tracked_repo_text_files() -> tuple[tuple[Path, str], ...]:
-    return tracked_text_files(_REPO)
+    candidates = subprocess.run(
+        [
+            "git",
+            "grep",
+            "-I",
+            "-l",
+            "-z",
+            "-E",
+            r"infra/compose/scripts/preflight\.sh|(docker|podman)[[:blank:]]+compose",
+            "--",
+        ],
+        cwd=_REPO,
+        check=False,
+        capture_output=True,
+    )
+    assert candidates.returncode in {0, 1}, candidates.stderr.decode(errors="replace")
+    files: list[tuple[Path, str]] = []
+    for encoded in candidates.stdout.split(b"\0"):
+        if not encoded:
+            continue
+        relative = Path(os.fsdecode(encoded))
+        try:
+            text = (_REPO / relative).read_text(encoding="utf-8")
+        except OSError, UnicodeDecodeError:
+            continue
+        files.append((relative, text))
+    return tuple(files)
 
 
 @cache
@@ -3530,7 +3722,9 @@ def test_repo_runtime_strings_and_docs_use_the_main_compose_validation_gate() ->
     assert "infra/compose/scripts/preflight.sh" in documentation
 
 
-def test_tracked_repo_string_scan_ignores_untracked_files_and_detects_tracked_bypasses(tmp_path: Path) -> None:
+def test_tracked_repo_string_scan_ignores_untracked_files_and_detects_tracked_bypasses(
+    tmp_path: Path,
+) -> None:
     docker = "docker"
     podman = "podman"
     tracked = tmp_path / "tracked.md"
@@ -3576,15 +3770,36 @@ def test_just_dry_run_routes_compose_recipes_through_preflight(recipe: str) -> N
     assert re.search(r"\b(?:docker|podman)\s+compose\b", output) is None
 
 
-def test_infra_and_k8s_nix_shells_include_the_pinned_validator_runtime() -> None:
+def test_nix_shells_declare_the_pinned_python_and_validator_runtime() -> None:
     flake = _FLAKE.read_text(encoding="utf-8")
 
     assert "python = pkgs.python314;" in flake
     for shell in ("infra", "k8s"):
         block = flake.split(f"devShells.{shell} = pkgs.mkShell", 1)[1].split("};", 1)[0]
         assert "++ [ python ]" in block
-    ci_block = flake.split("devShells.ci = pkgs.mkShell", 1)[1].split("};", 1)[0]
-    assert "pkgs.podman-compose" in ci_block
+    # The CI contract tests shell out to these validators, so the flake must declare them for
+    # the shell that runs the suite. A PATH probe reports the ambient shell instead, which says
+    # nothing about the declaration and fails wherever the suite runs outside that shell.
+    policy_tools = flake.split("ciPolicyTools = ciPythonTools ++ [", 1)[1].split("];", 1)[0]
+    test_tools = flake.split("ciTestTools = ciPolicyTools ++ [", 1)[1].split("];", 1)[0]
+    declared = set(re.findall(r"pkgs\.([\w-]+)", policy_tools + test_tools))
+    validators = (
+        "actionlint",
+        "age",
+        "buf",
+        "gitleaks",
+        "hadolint",
+        "kubectl",
+        "kubernetes-helm",
+        "kustomize",
+        "openssh",
+        "podman-compose",
+        "ripgrep",
+        "skopeo",
+        "sops",
+    )
+    missing = [validator for validator in validators if validator not in declared]
+    assert missing == [], f"pinned validators missing from the CI shell definition: {', '.join(missing)}"
 
 
 def test_preflight_passes_with_runtime_and_full_secret_contract(tmp_path: Path) -> None:

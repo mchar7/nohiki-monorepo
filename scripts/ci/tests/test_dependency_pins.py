@@ -7,17 +7,23 @@ import subprocess
 import tomllib
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import cast
 
-import yaml
+from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RENOVATE = _ROOT / ".github" / "renovate.json5"
 _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _WORKFLOWS = _ROOT / ".github" / "workflows"
+_SETUP_CI = _ROOT / ".github" / "actions" / "setup-ci" / "action.yml"
+_DEADCODE_SWEEP = _WORKFLOWS / "deadcode-sweep.yml"
+_WEEKLY_SWEEP = _WORKFLOWS / "weekly-sweep.yml"
 _FLAKE = _ROOT / "flake.nix"
 _JUSTFILE = _ROOT / "Justfile"
 _ROOT_PROJECT = _ROOT / "pyproject.toml"
+_CI_PROJECT = _ROOT / "scripts" / "ci" / "pyproject.toml"
+_SYNC_CI_ENVIRONMENT = _ROOT / "scripts" / "dev" / "sync-ci-environment.sh"
+_SYNC_CI_DEADCODE = _ROOT / "scripts" / "dev" / "sync-ci-deadcode.sh"
 _PACKAGE = _ROOT / "package.json"
 _SCAFFOLD_DOCKERFILE = (
     _ROOT / "scripts" / "util" / "scaffold" / "src" / "nohiki_scaffold" / "templates" / "service" / "Dockerfile.j2"
@@ -42,29 +48,47 @@ def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-@cache
-def _load_yaml(path: Path) -> dict[str, Any]:
-    value = yaml.safe_load(_read_text(path))
-    assert isinstance(value, dict), path
-    return value
+def _workflow_jobs(path: Path) -> dict[str, WorkflowJob]:
+    return load_workflow(path)["jobs"]
+
+
+def _steps(job: WorkflowJob) -> list[WorkflowStep]:
+    return job.get("steps", [])
+
+
+def _setup_steps() -> list[WorkflowStep]:
+    action = load_mapping(_SETUP_CI)
+    runs = cast(dict[str, object], action["runs"])
+    steps = runs["steps"]
+    assert isinstance(steps, list)
+    assert all(isinstance(step, dict) for step in steps)
+    return cast(list[WorkflowStep], steps)
 
 
 def test_all_workflow_actions_are_sha_pinned_with_version_comments() -> None:
     failures: list[str] = []
-    uses_count = 0
+    pins_by_action: dict[str, set[str]] = {}
     workflow_paths = sorted((*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")))
-    assert workflow_paths, "no workflow files discovered"
+    action_paths = sorted(_ROOT.glob(".github/actions/*/action.yml"))
+    checked_paths = (*workflow_paths, *action_paths)
+    assert checked_paths, "no workflow or composite-action files discovered"
 
-    for path in workflow_paths:
+    for path in checked_paths:
         for line_number, line in enumerate(_read_text(path).splitlines(), start=1):
             if not re.match(r"^\s*(?:-\s*)?uses:", line):
                 continue
-            uses_count += 1
-            if _ACTION_USE.fullmatch(line) is None:
+            if "uses: ./" in line:
+                continue
+            match = _ACTION_USE.fullmatch(line)
+            if match is None:
                 failures.append(f"{path.relative_to(_ROOT)}:{line_number}: {line.strip()}")
+                continue
+            pins_by_action.setdefault(match["action"], set()).add(line[line.index("uses:") :])
 
-    assert uses_count, "no workflow action references discovered"
+    assert pins_by_action, "no external action references discovered"
     assert not failures, "workflow actions must use full SHA pins with version comments:\n" + "\n".join(failures)
+    divergent = {action: sorted(pins) for action, pins in pins_by_action.items() if len(pins) != 1}
+    assert not divergent, f"workflow action pins diverge by identity: {divergent}"
 
 
 def test_workflow_checkouts_do_not_persist_credentials() -> None:
@@ -72,8 +96,8 @@ def test_workflow_checkouts_do_not_persist_credentials() -> None:
     missing = [
         f"{path.relative_to(_ROOT)}:{job_name}"
         for path in workflow_paths
-        for job_name, job in _load_yaml(path)["jobs"].items()
-        for step in job.get("steps", [])
+        for job_name, job in _workflow_jobs(path).items()
+        for step in _steps(job)
         if str(step.get("uses", "")).startswith("actions/checkout@")
         and step.get("with", {}).get("persist-credentials") is not False
     ]
@@ -98,10 +122,8 @@ def _images(path: Path, repository: str) -> list[re.Match[str]]:
     return [match for match in _IMAGE.finditer(_read_text(path)) if match["repository"] == repository]
 
 
-def _renovate_config() -> dict[str, Any]:
-    value = json.loads(_read_text(_RENOVATE))
-    assert isinstance(value, dict), _RENOVATE
-    return value
+def _renovate_config() -> dict[str, object]:
+    return load_mapping(_RENOVATE)
 
 
 def _assert_cpu_development_sync(command: str) -> None:
@@ -127,18 +149,20 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
     just_syncs = re.findall(sync_pattern, sync_dev["body"], re.MULTILINE)
     assert len(just_syncs) == 1, just_syncs
 
-    hosted_steps = (step for job in _load_yaml(_CHECKS)["jobs"].values() for step in job.get("steps", ()))
-    install_steps = [step for step in hosted_steps if step.get("name") == "Install workspace (all packages + extras)"]
-    assert install_steps
-
-    workflow_syncs: list[str] = []
-    for step in install_steps:
-        step_syncs = re.findall(r"^\s*(uv sync\b[^\n]*)", str(step["run"]), re.MULTILINE)
-        assert len(step_syncs) == 1, step["run"]
-        workflow_syncs.extend(step_syncs)
-
-    for command in (*flake_syncs, *just_syncs, *workflow_syncs):
+    install_step = next(step for step in _setup_steps() if step.get("name") == "Install workspace (CI closure)")
+    assert "nix develop .#ci --command scripts/dev/sync-ci-environment.sh" in str(install_step["run"])
+    ci_sync = _read_text(_SYNC_CI_ENVIRONMENT).replace("\\\n", " ")
+    sync_start = ci_sync.index("uv sync")
+    hosted_sync = ci_sync[sync_start:].strip()
+    for command in (*flake_syncs, *just_syncs):
         _assert_cpu_development_sync(command)
+    hosted_tokens = shlex.split(hosted_sync)
+    assert hosted_tokens[:2] == ["uv", "sync"]
+    assert "--locked" in hosted_tokens
+    assert "--all-packages" in hosted_tokens
+    assert "--no-default-groups" in hosted_tokens
+    assert hosted_tokens[hosted_tokens.index("--group") + 1] == "ci"
+    assert "cuda" not in hosted_tokens
 
     dockerfile = _read_text(_ML_COMPUTE_DOCKERFILE)
     gpu_stage = re.search(
@@ -160,6 +184,9 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
             "--all-extras",
             "--no-extra",
             "cuda",
+            "--no-default-groups",
+            "--group",
+            "dev",
             "--locked",
             "--dry-run",
         ],
@@ -168,62 +195,248 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
     )
 
 
-def test_python_workspace_installs_restore_the_exact_virtual_environment_cache() -> None:
-    workflow = _load_yaml(_CHECKS)
-    install_name = "Install workspace (all packages + extras)"
-    cache_name = "Cache workspace virtual environment"
-    # Consistency contract: one full-SHA actions/cache pin across every workflow.
-    # The concrete SHA is deliberately not asserted; freshness belongs to the updater.
-    cache_pins = {
-        str(step["uses"])
-        for path in sorted((_ROOT / ".github" / "workflows").glob("*.yml"))
-        for job in _load_yaml(path)["jobs"].values()
-        for step in job.get("steps", [])
-        if str(step.get("uses", "")).startswith("actions/cache@")
-    }
-    assert len(cache_pins) == 1, f"actions/cache pins diverge across workflows: {sorted(cache_pins)}"
-    cache_action = cache_pins.pop()
-    assert re.fullmatch(r"actions/cache@[0-9a-f]{40}", cache_action), cache_action
-    covered_jobs: set[str] = set()
+def test_ci_checks_container_test_group_covers_configured_pytest_runtime() -> None:
+    with _CI_PROJECT.open("rb") as project_file:
+        project = tomllib.load(project_file)
 
-    for job_name, job in workflow["jobs"].items():
-        steps = job.get("steps", [])
-        install_indexes = [index for index, step in enumerate(steps) if step.get("name") == install_name]
-        if not install_indexes:
-            continue
-        assert len(install_indexes) == 1
-        caches = [(index, step) for index, step in enumerate(steps) if step.get("name") == cache_name]
-        assert len(caches) == 1
-        cache_index, cache_step = caches[0]
-        assert cache_index < install_indexes[0]
-        assert cache_step["uses"] == cache_action
-        cache_prefix = "venv-deadcode" if job_name == "hygiene" else "venv"
-        cache_key = (
-            f"{cache_prefix}-${{{{ runner.os }}}}-${{{{ runner.arch }}}}"
-            "-${{ hashFiles('uv.lock', 'pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}"
-        )
-        assert cache_step["with"] == {"path": ".venv", "key": cache_key}
-        install_step = steps[install_indexes[0]]
-        assert cache_step.get("if") == install_step.get("if")
-        install_command = str(install_step["run"])
-        assert ("--group deadcode" in install_command) == (job_name == "hygiene")
-        if job_name == "hygiene":
-            assert not any(step.get("name") == "Cache Skylos analysis" for step in steps)
-        covered_jobs.add(job_name)
+    assert project["dependency-groups"]["container-tests"] == [
+        "pytest>=9.0.0",
+        "pytest-asyncio>=1.3.0",
+        "pytest-xdist>=3.8.0",
+    ]
 
-    assert covered_jobs == {
-        "api-schema-freshness",
-        "frontend-smoke",
-        "hygiene",
-        "otel-collector",
-        "python-tests",
-        "typecheck",
+
+def test_root_lint_group_is_the_minimal_ruff_environment() -> None:
+    with _ROOT_PROJECT.open("rb") as project_file:
+        project = tomllib.load(project_file)
+
+    assert project["dependency-groups"]["lint"] == ["ruff>=0.15.0"]
+
+
+def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
+    steps = _setup_steps()
+    by_name = {step.get("name"): step for step in steps}
+    restore = by_name["Restore complete CI environment"]
+    sync = by_name["Install workspace (CI closure)"]
+    node_install = by_name["Install Node dependencies"]
+    save = by_name["Save complete CI environment"]
+
+    assert restore["uses"] == ("nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569")
+    assert save["uses"] == ("nix-community/cache-nix-action/save@7df957e333c1e5da7721f60227dbba6d06080569")
+    # Two entries, one identity surface. The Python entry turns over on flake/uv inputs and the
+    # Node entry on pnpm inputs, so a lane restores only what its own lockfiles can invalidate.
+    # Every input must still key exactly one entry: an input in neither goes stale unnoticed,
+    # and one in both reinstates the coupling the split exists to remove.
+    node_restore = by_name["Restore Node modules"]
+    key = str(restore["with"]["primary-key"])
+    node_key = str(node_restore["with"]["key"])
+    python_identity = (
+        "flake.nix",
+        "flake.lock",
+        "uv.lock",
+        "**/pyproject.toml",
+        ".python-version",
+        "scripts/dev/sync-ci-environment.sh",
+    )
+    node_identity = (
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "package.json",
+        "typescript/**/package.json",
+    )
+    for identity_input in python_identity:
+        assert identity_input in key, identity_input
+        assert identity_input not in node_key, identity_input
+    for identity_input in node_identity:
+        assert identity_input in node_key, identity_input
+        assert identity_input not in key, identity_input
+    # The composite's own text keys both: a change to either restore invalidates what it restores.
+    assert ".github/actions/setup-ci/action.yml" in key
+    assert ".github/actions/setup-ci/action.yml" in node_key
+    assert "github.sha" not in key
+    assert "github.sha" not in node_key
+    lookup = by_name["Look up complete CI environment"]
+    assert lookup["uses"] == restore["uses"]
+    assert lookup["with"]["primary-key"] == restore["with"]["primary-key"]
+    assert lookup["with"]["paths"] == restore["with"]["paths"]
+    assert lookup["with"]["lookup-only"] is True
+    assert restore["with"]["restore-prefixes-first-match"] == ("ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-")
+
+    # Each provisioning step is gated on the miss of the entry that would have supplied it, so
+    # a hit on one entry never suppresses work the other entry failed to deliver.
+    python_miss = "steps.ready-cache.outputs.hit-primary-key != 'true'"
+    node_miss = "steps.node-modules-cache.outputs.cache-hit != 'true'"
+    assert python_miss in str(sync["if"])
+    assert python_miss in str(save["if"])
+    assert node_miss in str(node_install["if"])
+    assert node_miss in str(by_name["Save Node modules"]["if"])
+
+    # A restored store still needs its bin directories on PATH: the consumers call the shell's
+    # tools bare, and no cache entry carries a PATH. So the export runs on a hit as well.
+    path_export = [step for step in steps if "PATH=%s" in str(step.get("run", ""))]
+    assert len(path_export) == 1
+    assert python_miss not in str(path_export[0]["if"])
+    assert '"$(nix develop .#ci --command printenv PATH)" >> "$GITHUB_ENV"' in str(path_export[0]["run"])
+
+    # The devShell out-link is what store collection is allowed to keep, so only the writer
+    # needs it, and only when it is about to build and save a store.
+    rooting = [step for step in steps if "--out-link" in str(step.get("run", ""))]
+    assert len(rooting) == 1
+    assert 'nix build .#devShells.x86_64-linux.ci --out-link "$RUNNER_TEMP/ci-shell"' in str(rooting[0]["run"])
+    assert "inputs.save-ready-cache == 'true'" in str(rooting[0]["if"])
+    assert python_miss in str(rooting[0]["if"])
+    sync_command = str(sync["run"])
+    assert "nix develop .#ci --command scripts/dev/sync-ci-environment.sh" in sync_command
+    # The shared entry is restorable by any pull request from its base branch and no credential
+    # is needed for that, so the closure it stores must hold no private source and the step that
+    # builds it must hold no credential. Only `skylos` is private; its 32 public dependencies stay
+    # in the shared closure so the private step has nothing left to fetch but the fork itself.
+    assert "GIT_SSH_COMMAND" not in sync_command
+    assert "SKYLOS" not in str(sync.get("env", {}))
+    assert "--no-install-package skylos" in _read_text(_SYNC_CI_ENVIRONMENT)
+    assert "--no-install-package" not in _read_text(_SYNC_CI_DEADCODE)
+    skylos_install = by_name["Install Skylos from the pinned private fork"]
+    assert steps.index(skylos_install) > steps.index(save)
+    assert skylos_install["if"] == "inputs.skylos-cache == 'true'"
+    skylos_command = str(skylos_install["run"])
+    assert "nix develop .#ci --command scripts/dev/sync-ci-deadcode.sh" in skylos_command
+    assert "trap 'rm -f" in skylos_command
+    assert "GIT_SSH_COMMAND=" in skylos_command
+    assert "GITHUB_ENV" not in skylos_command
+    # A lane selected for the scan with no key configured must fail here, not at scanner spawn.
+    assert 'test -n "$SKYLOS_DEPLOY_KEY"' in skylos_command
+    secret_steps = [step for step in steps if "SKYLOS_DEPLOY_KEY" in str(step.get("env", {}))]
+    assert secret_steps == [skylos_install]
+    assert skylos_install["env"] == {"SKYLOS_DEPLOY_KEY": "${{ inputs.skylos-deploy-key }}"}
+    assert all(
+        "$RUNNER_TEMP/skylos_key" not in str(step.get("run", "")) for step in steps if step is not skylos_install
+    )
+    # Each entry is saved on its own producer succeeding. Coupling them would let a failed pnpm
+    # install withhold a perfectly good store, which is what the split exists to stop.
+    node_save = by_name["Save Node modules"]
+    assert "steps.workspace-sync.outcome == 'success'" in str(save["if"])
+    assert "steps.node-install.outcome == 'success'" not in str(save["if"])
+    assert "steps.node-install.outcome == 'success'" in str(node_save["if"])
+    assert "steps.workspace-sync.outcome == 'success'" not in str(node_save["if"])
+    assert save["with"]["primary-key"] == "${{ steps.ready-cache.outputs.primary-key }}"
+    assert save["with"]["paths"] == restore["with"]["paths"]
+    assert node_save["with"]["key"] == "${{ steps.node-modules-cache.outputs.cache-primary-key }}"
+    assert node_save["with"]["path"] == node_restore["with"]["path"]
+
+    names = {step.get("name") for step in steps}
+    assert "Cache uv downloads" not in names
+    assert "Restore workspace virtual environment" not in names
+    assert "Cache lint virtual environment" not in names
+
+
+def test_setup_cache_telemetry_uses_restore_outputs_and_matched_keys() -> None:
+    action = load_mapping(_SETUP_CI)
+    outputs = cast(dict[str, object], action["outputs"])
+    assert outputs["cache-telemetry"] == {
+        "description": "Observed cache outcomes and the keys that supplied restored content.",
+        "value": "${{ steps.cache-telemetry.outputs.summary }}",
     }
+
+    by_name = {step.get("name"): step for step in _setup_steps()}
+    pnpm_restore = by_name["Restore pnpm store"]
+    pnpm_save = by_name["Save pnpm store"]
+    telemetry = by_name["Record observed cache outcomes"]
+    assert str(pnpm_restore["uses"]).startswith("actions/cache/restore@")
+    assert str(pnpm_save["uses"]).startswith("actions/cache/save@")
+    assert pnpm_save["with"]["key"] == "${{ steps.pnpm-cache.outputs.cache-primary-key }}"
+
+    env = telemetry["env"]
+    assert env["READY_PARTIAL"] == "${{ steps.ready-cache.outputs.hit-first-match }}"
+    assert "outputs.restored-key" in str(env["READY_KEY"])
+    assert env["PNPM_KEY"] == "${{ steps.pnpm-cache.outputs.cache-matched-key }}"
+    assert env["SKYLOS_KEY"] == "${{ steps.skylos-cache.outputs.cache-matched-key }}"
+    command = str(telemetry["run"])
+    for outcome in ("hit:", "partial:", "miss:none", "not-used:none"):
+        assert outcome in command
+
+
+def test_python_lint_steps_use_the_complete_workspace_environment() -> None:
+    steps = _steps(_workflow_jobs(_CHECKS)["worker"])
+    for step_name in ("Lint Python", "Check Python formatting"):
+        lint_step = next(step for step in steps if step.get("name") == step_name)
+        command = str(lint_step["run"])
+        assert "export UV_PROJECT_ENVIRONMENT=.venv" in command
+        assert ".venv-lint" not in command
+        assert "uv run --no-sync" in command
+        assert "ruff" in command
+
+
+def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
+    with _CI_PROJECT.open("rb") as project_file:
+        project = tomllib.load(project_file)
+    assert project["dependency-groups"]["deadcode"] == ["skylos==4.30.0"]
+    assert project["tool"]["uv"]["sources"]["skylos"] == {
+        "git": "ssh://git@github.com/mchar7/skylos",
+        "rev": "6c9e3f1d84c1cc312f8e69c91b348a896d61b0b2",
+    }
+
+    with (_ROOT / "uv.lock").open("rb") as lock_file:
+        lock = tomllib.load(lock_file)
+    skylos = next(package for package in lock["package"] if package["name"] == "skylos")
+    assert skylos["source"]["git"] == (
+        "ssh://git@github.com/mchar7/skylos"
+        "?rev=6c9e3f1d84c1cc312f8e69c91b348a896d61b0b2"
+        "#6c9e3f1d84c1cc312f8e69c91b348a896d61b0b2"
+    )
+
+    restore = next(step for step in _setup_steps() if step.get("name") == "Restore Skylos static analysis cache")
+    assert restore["with"] == {
+        "path": "${{ github.workspace }}/.skylos",
+        "key": (
+            "skylos-static-v3-${{ runner.os }}-${{ hashFiles('uv.lock') }}-"
+            "${{ inputs.commit-class }}-${{ inputs.base-sha }}-${{ inputs.head-sha }}"
+        ),
+        "restore-keys": "skylos-static-v3-${{ runner.os }}-${{ hashFiles('uv.lock') }}-\n",
+    }
+    assert str(restore["uses"]).startswith("actions/cache/restore@")
+
+    worker = _workflow_jobs(_CHECKS)["worker"]
+    setup = next(step for step in _steps(worker) if str(step.get("uses", "")).startswith("./.github/actions/setup-ci"))
+    assert setup["with"]["commit-class"] == ("${{ needs.changes.outputs.commit_class }}")
+    save = next(step for step in _steps(worker) if step.get("name") == "Save Skylos static analysis cache")
+    assert str(save["uses"]).startswith("actions/cache/save@")
+
+
+def test_hosted_python_syncs_enforce_the_lock_without_frozen_aliases() -> None:
+    sync_lines = [
+        line.strip()
+        for workflow_path in sorted(_WORKFLOWS.glob("*.yml"))
+        for line in _read_text(workflow_path).splitlines()
+        if "uv sync" in line
+    ]
+
+    assert sync_lines
+    assert all("--locked" in line for line in sync_lines)
+    assert all("--frozen" not in line for line in sync_lines)
+
+
+def test_periodic_hygiene_workflows_are_absent() -> None:
+    assert not _WEEKLY_SWEEP.exists()
+    assert not _DEADCODE_SWEEP.exists()
+
+
+def test_checks_jobs_have_bounded_guards() -> None:
+    timeouts = {job_name: job.get("timeout-minutes") for job_name, job in _workflow_jobs(_CHECKS).items()}
+    derived = "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+    for job_name in ("worker",):
+        assert timeouts[job_name] == derived
+
+    invalid = {
+        job_name: timeout
+        for job_name, timeout in timeouts.items()
+        if timeout != derived and (not isinstance(timeout, int) or not 0 < timeout < 20)
+    }
+    assert not invalid, f"checks jobs must have bounded timeout-minutes: {invalid}"
 
 
 def test_codeql_private_phase_trigger_contract() -> None:
-    workflow = _load_yaml(_ROOT / ".github" / "workflows" / "codeql.yml")
-    triggers = workflow.get("on", workflow.get(True))
+    workflow = load_workflow(_ROOT / ".github" / "workflows" / "codeql.yml")
+    triggers = workflow.get("on")
     assert triggers == {
         "push": {"branches": ["main"]},
         "pull_request": {"branches": ["main"]},
@@ -235,14 +448,12 @@ def test_codeql_private_phase_trigger_contract() -> None:
 
 
 def test_codeql_analysis_requires_public_repository_payload() -> None:
-    workflow = _load_yaml(_ROOT / ".github" / "workflows" / "codeql.yml")
-    assert workflow["jobs"]["analyze"]["if"] == (
-        "${{ github.event.repository && github.event.repository.private == false }}"
-    )
+    analyze = _workflow_jobs(_ROOT / ".github" / "workflows" / "codeql.yml")["analyze"]
+    assert analyze["if"] == ("${{ github.event.repository && github.event.repository.private == false }}")
 
 
 def test_codeql_sarif_permissions_are_least_privilege() -> None:
-    workflow = _load_yaml(_ROOT / ".github" / "workflows" / "codeql.yml")
+    workflow = load_workflow(_ROOT / ".github" / "workflows" / "codeql.yml")
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["analyze"]["permissions"] == {
         "actions": "read",
@@ -277,7 +488,7 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
             mismatches.append(f"{dockerfile.relative_to(_ROOT)}: uv image does not match scaffold")
     assert not mismatches, "\n".join(mismatches)
 
-    assert "env" not in _load_yaml(_CHECKS), "checks.yml must not re-pin toolchain versions beside the flake"
+    assert "env" not in load_workflow(_CHECKS), "checks.yml must not re-pin toolchain versions beside the flake"
     python_version = expected_python[0].removesuffix("-slim")
 
     root_project = tomllib.loads(_read_text(_ROOT_PROJECT))
@@ -295,14 +506,13 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
 
 
 def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
-    workflow = _load_yaml(_CHECKS)
-    changes_steps = workflow["jobs"]["changes"]["steps"]
-    commitlint_steps = workflow["jobs"]["commitlint"]["steps"]
-    assert not any(step.get("name") == "Install Nix" for step in (*changes_steps, *commitlint_steps))
+    jobs = _workflow_jobs(_CHECKS)
+    changes_steps = _steps(jobs["changes"])
+    assert not any(step.get("name") == "Install Nix" for step in changes_steps)
 
     setup_uv = next(step for step in changes_steps if step.get("name") == "Set up uv and Python")
-    setup_pnpm = next(step for step in commitlint_steps if step.get("name") == "Install pnpm")
-    setup_node = next(step for step in commitlint_steps if step.get("name") == "Set up Node")
+    setup_pnpm = next(step for step in _setup_steps() if step.get("name") == "Install pnpm")
+    setup_node = next(step for step in _setup_steps() if step.get("name") == "Set up Node")
     assert str(setup_uv["uses"]).startswith("astral-sh/setup-uv@")
     assert str(setup_pnpm["uses"]).startswith("pnpm/action-setup@")
     assert str(setup_node["uses"]).startswith("actions/setup-node@")
@@ -328,10 +538,24 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     node_floor = package["engines"]["node"].removeprefix(">=")
     assert re.fullmatch(r"\d+\.\d+\.\d+", node_floor), package["engines"]["node"]
     assert f"nodejs = pkgs.nodejs_{node_floor.split('.', 1)[0]};" in _read_text(_FLAKE)
-    assert setup_node["with"] == {
-        "node-version": node_floor.split(".", 1)[0],
-        "cache": "pnpm",
-    }
+    assert setup_node["with"] == {"node-version": node_floor.split(".", 1)[0]}
+    setup_steps = _setup_steps()
+    names = [step.get("name") for step in setup_steps]
+    resolver_index = names.index("Resolve pnpm store path")
+    restore_index = names.index("Restore pnpm store")
+    install_index = names.index("Install Node dependencies")
+    save_index = names.index("Save pnpm store")
+    assert names.index("Set up Node") < resolver_index < restore_index < install_index < save_index
+    expected_pnpm_cache = setup_steps[restore_index]
+    assert str(expected_pnpm_cache["uses"]).startswith("actions/cache/restore@")
+    assert expected_pnpm_cache["with"]["key"] == (
+        "pnpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}"
+    )
+    assert setup_node["with"] == {"node-version": node_floor.split(".", 1)[0]}
+
+    worker_setup = next(step for step in _steps(jobs["worker"]) if step.get("name") == "Set up selected environments")
+    assert worker_setup["uses"] == "./.github/actions/setup-ci"
+    assert worker_setup["with"]["node"] == "${{ env.NODE_SETUP_SELECTED }}"
     uv_version = re.search(r'uvPackage.*?version = "([^"]+)";', _read_text(_FLAKE), re.DOTALL)
     assert uv_version
     python_version = _images(_SCAFFOLD_DOCKERFILE, "public.ecr.aws/docker/library/python")[0]["version"]
@@ -346,7 +570,11 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
 def test_kafka_connect_build_and_remote_connector_pins_are_consistent() -> None:
     dockerfile = _read_text(_KAFKA_DOCKERFILE)
     readme = _read_text(_KAFKA_README)
-    values = _load_yaml(_HELM_VALUES)["kafkaConnect"]["build"]
+    helm_values = load_mapping(_HELM_VALUES)
+    kafka_connect = helm_values["kafkaConnect"]
+    assert isinstance(kafka_connect, dict)
+    values = kafka_connect.get("build")
+    assert isinstance(values, dict)
 
     gradle = _images(_KAFKA_DOCKERFILE, "gradle")
     debezium = _images(_KAFKA_DOCKERFILE, "quay.io/debezium/connect")
@@ -354,13 +582,13 @@ def test_kafka_connect_build_and_remote_connector_pins_are_consistent() -> None:
     assert len(debezium) == 1
     gradle_ref = gradle[0]["ref"]
     assert readme.count(gradle_ref) == 3
-    assert values["debeziumVersion"] == debezium[0]["version"]
+    assert values.get("debeziumVersion") == debezium[0]["version"]
 
     qdrant_version = re.search(r"^ARG QDRANT_CONNECTOR_VERSION=(\S+)$", dockerfile, re.MULTILINE)
     qdrant_digest = re.search(r"^ARG QDRANT_CONNECTOR_SHA256=(\S+)$", dockerfile, re.MULTILINE)
     assert qdrant_version
     assert qdrant_digest
-    assert values["qdrantKafkaVersion"] == qdrant_version[1]
+    assert values.get("qdrantKafkaVersion") == qdrant_version[1]
     assert _SHA256.fullmatch(qdrant_digest[1])
     assert dockerfile.index("sha256sum --check --strict qdrant-kafka.sha256") > dockerfile.index(
         "qdrant-kafka-${QDRANT_CONNECTOR_VERSION}.zip"
@@ -368,20 +596,30 @@ def test_kafka_connect_build_and_remote_connector_pins_are_consistent() -> None:
 
 
 def test_strimzi_and_kafka_versions_are_aligned() -> None:
-    chart = _load_yaml(_ROOT / "infra/k8s/helm/Chart.yaml")
-    lock = _load_yaml(_ROOT / "infra/k8s/helm/Chart.lock")
+    chart = load_mapping(_ROOT / "infra/k8s/helm/Chart.yaml")
+    lock = load_mapping(_ROOT / "infra/k8s/helm/Chart.lock")
     for metadata in (chart, lock):
+        dependencies = metadata["dependencies"]
+        assert isinstance(dependencies, list)
+        assert all(isinstance(dependency, dict) for dependency in dependencies)
         strimzi = next(
-            dependency for dependency in metadata["dependencies"] if dependency["name"] == "strimzi-kafka-operator"
+            dependency
+            for dependency in dependencies
+            if isinstance(dependency, dict) and dependency.get("name") == "strimzi-kafka-operator"
         )
-        assert strimzi["version"] == "1.1.0"
+        assert strimzi.get("version") == "1.1.0"
 
-    values = _load_yaml(_HELM_VALUES)
-    local = _load_yaml(_ROOT / "infra/k8s/helm/values.local.yaml")
-    assert values["global"]["kafka"]["version"] == "4.3.0"
-    assert values["kafkaCluster"]["version"] == "4.3.0"
-    assert local["global"]["kafka"]["version"] == "4.3.0"
-    assert local["kafkaCluster"]["version"] == "4.3.0"
+    values = load_mapping(_HELM_VALUES)
+    local = load_mapping(_ROOT / "infra/k8s/helm/values.local.yaml")
+    for document in (values, local):
+        global_values = document["global"]
+        assert isinstance(global_values, dict)
+        kafka = global_values.get("kafka")
+        assert isinstance(kafka, dict)
+        kafka_cluster = document["kafkaCluster"]
+        assert isinstance(kafka_cluster, dict)
+        assert kafka.get("version") == "4.3.0"
+        assert kafka_cluster.get("version") == "4.3.0"
     template = _read_text(_ROOT / "infra/k8s/helm/templates/strimzi-kafka-connect.yaml")
     assert '$glob.kafka.version | default "4.3.0"' in template
 
@@ -403,12 +641,18 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         "kubernetes",
         "nix",
     }
-    assert required_managers <= set(config["enabledManagers"])
+    enabled_managers = config["enabledManagers"]
+    assert isinstance(enabled_managers, list)
+    assert all(isinstance(manager, str) for manager in enabled_managers)
+    assert required_managers <= set(enabled_managers)
     assert config["nix"] == {"enabled": True}
     assert config["automerge"] is False
     assert config["minimumReleaseAge"] == "3 days"
     assert config["prConcurrentLimit"] == 2
-    assert ":semanticCommitTypeAll(chore)" in config["extends"]
+    extends = config["extends"]
+    assert isinstance(extends, list)
+    assert all(isinstance(preset, str) for preset in extends)
+    assert ":semanticCommitTypeAll(chore)" in extends
     assert config["ignorePaths"] == [
         "**/node_modules/**",
         "**/bower_components/**",
@@ -419,16 +663,20 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         "**/tests/**/!(Dockerfile.api-runner)",
         "**/__fixtures__/**",
     ]
-    assert config["helm-values"]["managerFilePatterns"] == [
+    helm_values_manager = config["helm-values"]
+    assert isinstance(helm_values_manager, dict)
+    assert helm_values_manager.get("managerFilePatterns") == [
         r"/^infra\/k8s\/.+\/values\.ya?ml$/",
         r"/^infra\/k8s\/helm\/values\.local\.ya?ml$/",
     ]
-    assert "custom.regex" not in config["enabledManagers"]
+    assert "custom.regex" not in enabled_managers
     assert "customManagers" not in config
 
     rules = config["packageRules"]
-    major_rule = next(rule for rule in rules if rule.get("matchUpdateTypes") == ["major"])
-    assert major_rule["dependencyDashboardApproval"] is True
+    assert isinstance(rules, list)
+    assert all(isinstance(rule, dict) for rule in rules)
+    major_rule = next(rule for rule in rules if isinstance(rule, dict) and rule.get("matchUpdateTypes") == ["major"])
+    assert major_rule.get("dependencyDashboardApproval") is True
 
     grouped_ecosystems = (
         {"npm"},
@@ -439,9 +687,21 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         {"nix"},
     )
     for managers in grouped_ecosystems:
-        rule = next(rule for rule in rules if set(rule.get("matchManagers", [])) == managers)
-        assert {"minor", "patch"} <= set(rule["matchUpdateTypes"])
-        assert rule["groupName"]
+        rule = None
+        for candidate in rules:
+            assert isinstance(candidate, dict)
+            match_managers = candidate.get("matchManagers", [])
+            assert isinstance(match_managers, list)
+            assert all(isinstance(manager, str) for manager in match_managers)
+            if set(match_managers) == managers:
+                rule = candidate
+                break
+        assert rule is not None
+        match_update_types = rule.get("matchUpdateTypes")
+        assert isinstance(match_update_types, list)
+        assert all(isinstance(update_type, str) for update_type in match_update_types)
+        assert {"minor", "patch"} <= set(match_update_types)
+        assert rule.get("groupName")
 
 
 def test_remote_kubernetes_manifests_are_versioned_and_checksum_verified_before_apply() -> None:

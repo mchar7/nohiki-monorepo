@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -164,30 +165,39 @@ def test_api_runner_collects_the_authoritative_suite_and_fails_closed() -> None:
         assert forbidden not in text
 
 
-def test_api_collection_is_nonzero_and_reports_the_exact_current_count() -> None:
-    result = subprocess.run(
+def test_api_collection_is_nonzero_and_reports_the_exact_current_count(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class CollectionCounter:
+        count: int | None = None
+
+        def pytest_collection_modifyitems(self, items: list[pytest.Item]) -> None:
+            self.count = len(items)
+
+    counter = CollectionCounter()
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    exit_code = pytest.main(
         [
-            "uv",
-            "run",
-            "--package",
-            "nohiki-integration-tests",
-            "pytest",
-            "tests/api",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            str(_ROOT / "tests" / "api"),
             "--collect-only",
             "-q",
         ],
-        cwd=_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
+        plugins=[counter],
     )
-    matches = [
-        *(int(value) for value in re.findall(r"(?m)^collected ([0-9]+) items$", result.stdout)),
-        *(int(value) for value in re.findall(r"([0-9]+) tests? collected", result.stdout)),
-    ]
-    assert matches, result.stdout
-    assert len(set(matches)) == 1
-    assert matches[0] > 0
+    output = capsys.readouterr().out
+    matches = {
+        *(int(value) for value in re.findall(r"(?m)^collected ([0-9]+) items$", output)),
+        *(int(value) for value in re.findall(r"([0-9]+) tests? collected", output)),
+    }
+    assert exit_code == pytest.ExitCode.OK, output
+    assert counter.count is not None
+    assert matches == {counter.count}, output
+    assert counter.count > 0
 
 
 def test_playwright_config_is_cluster_only_same_origin_and_unmasked() -> None:
@@ -204,6 +214,9 @@ def test_playwright_config_is_cluster_only_same_origin_and_unmasked() -> None:
         assert forbidden.lower() not in text.lower()
 
 
+# `playwright.k8s.config.ts` imports `@playwright/test`, a bare specifier ESM resolves at link
+# time, so evaluating it needs the installed workspace and not just a `node` binary.
+@pytest.mark.requires_node_modules
 def test_playwright_artifacts_have_one_canonical_e2e_root() -> None:
     default, overridden = _import_playwright_configs(None, "/artifacts/playwright")
     assert default == {
@@ -228,6 +241,7 @@ def test_playwright_artifacts_have_one_canonical_e2e_root() -> None:
     }
 
 
+@pytest.mark.requires_node_modules
 def test_playwright_rejects_noncanonical_relative_artifact_override() -> None:
     script = f"await import({_BROWSER_CONFIG.as_uri()!r});"
     result = subprocess.run(
@@ -269,6 +283,7 @@ def test_browser_runner_accounts_for_every_outcome_and_retains_artifacts() -> No
     assert "&& cleanupSucceeded" in text
 
 
+@pytest.mark.requires_node_modules
 def test_playwright_collects_every_authoritative_journey_file() -> None:
     result = subprocess.run(
         [

@@ -3,31 +3,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
-from typing import cast
 
-import yaml
-
-
-def _mapping(value: object) -> dict[str, object]:
-    assert isinstance(value, dict)
-    return cast("dict[str, object]", value)
-
-
-def _mapping_list(value: object) -> list[dict[str, object]]:
-    assert isinstance(value, list)
-    return [_mapping(item) for item in value]
-
-
-def _mapping_at(mapping: Mapping[str, object], key: str) -> dict[str, object]:
-    return _mapping(mapping[key])
-
-
-def _mapping_list_at(mapping: Mapping[str, object], key: str) -> list[dict[str, object]]:
-    return _mapping_list(mapping[key])
-
+import pytest
+from _documents import Workflow, WorkflowInputValue, load_mapping, load_workflow
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _IMAGE_INVENTORY = _REPOSITORY_ROOT / "infra" / "k8s" / "local" / "images.json"
@@ -35,29 +15,40 @@ _IMAGE_INVENTORY = _REPOSITORY_ROOT / "infra" / "k8s" / "local" / "images.json"
 
 @cache
 def _image_inventory_specs() -> tuple[tuple[str, str, str, str | None, bool], ...]:
-    document = json.loads(_IMAGE_INVENTORY.read_text(encoding="utf-8"))
+    document = load_mapping(_IMAGE_INVENTORY)
     assert document["schemaVersion"] == 1
-    images = document["images"]
-    assert isinstance(images, list)
-    specs: list[tuple[str, str, str, str | None, bool]] = []
-    for image in images:
-        assert isinstance(image, dict)
-        context = str(image["context"])
-        build_args = image.get("buildArgs", {})
-        assert isinstance(build_args, dict)
-        assert len(build_args) <= 1
-        local = image["local"]
-        assert isinstance(local, bool)
-        build_arg = next((f"{key}={value}" for key, value in sorted(build_args.items())), None)
-        specs.append(
-            (
-                str(image["name"]),
-                context,
-                (Path(context) / str(image["dockerfile"])).as_posix(),
-                build_arg,
-                local,
-            )
-        )
+    match document.get("images"):
+        case list(images):
+            specs: list[tuple[str, str, str, str | None, bool]] = []
+            for image in images:
+                match image:
+                    case {
+                        "name": str(name),
+                        "context": str(context),
+                        "dockerfile": str(dockerfile),
+                        "local": bool(local),
+                        **other,
+                    }:
+                        build_args = other.get("buildArgs", {})
+                        assert isinstance(build_args, dict)
+                        assert len(build_args) <= 1
+                        build_arg = next(
+                            (f"{key}={value}" for key, value in sorted(build_args.items())),
+                            None,
+                        )
+                        specs.append(
+                            (
+                                name,
+                                context,
+                                (Path(context) / dockerfile).as_posix(),
+                                build_arg,
+                                local,
+                            )
+                        )
+                    case _:
+                        pytest.fail("inventory images must define typed build fields")
+        case _:
+            pytest.fail("image inventory must contain an images list")
     return tuple(specs)
 
 
@@ -82,21 +73,13 @@ def _first_party_image_specs() -> tuple[tuple[str, str, str, str | None], ...]:
 
 
 @cache
-def _build_workflow() -> dict[str, object]:
-    return cast(
-        "dict[str, object]",
-        yaml.safe_load((_REPOSITORY_ROOT / ".github" / "workflows" / "build-push.yml").read_text(encoding="utf-8")),
-    )
+def _build_workflow() -> Workflow:
+    return load_workflow(_REPOSITORY_ROOT / ".github" / "workflows" / "build-push.yml")
 
 
 @cache
-def _matrix_include() -> list[dict[str, object]]:
-    workflow = _build_workflow()
-    jobs = _mapping_at(workflow, "jobs")
-    build = _mapping_at(jobs, "build-push")
-    strategy = _mapping_at(build, "strategy")
-    matrix = _mapping_at(strategy, "matrix")
-    return _mapping_list_at(matrix, "include")
+def _matrix_include() -> list[dict[str, WorkflowInputValue]]:
+    return _build_workflow()["jobs"]["build-push"]["strategy"]["matrix"]["include"]
 
 
 def _fake_container_runtime(tmp_path: Path) -> tuple[Path, Path]:
@@ -115,7 +98,7 @@ def _fake_container_runtime(tmp_path: Path) -> tuple[Path, Path]:
 
 @cache
 def _just_recipes() -> dict[str, dict[str, object]]:
-    document = json.loads(
+    document: object = json.loads(
         subprocess.run(
             ["just", "--dump", "--dump-format", "json"],
             cwd=_REPOSITORY_ROOT,
@@ -124,9 +107,21 @@ def _just_recipes() -> dict[str, dict[str, object]]:
             text=True,
         ).stdout
     )
-    recipes = document["recipes"]
-    assert isinstance(recipes, dict)
-    return recipes
+    match document:
+        case {"recipes": dict(recipes)}:
+            typed_recipes: dict[str, dict[str, object]] = {}
+            for name, recipe in recipes.items():
+                if not isinstance(name, str) or not isinstance(recipe, dict):
+                    pytest.fail("just recipes must be string-keyed mappings")
+                typed_recipe: dict[str, object] = {}
+                for key, value in recipe.items():
+                    if not isinstance(key, str):
+                        pytest.fail("just recipe fields must have string keys")
+                    typed_recipe[key] = value
+                typed_recipes[name] = typed_recipe
+            return typed_recipes
+        case _:
+            pytest.fail("just dump must contain recipes")
 
 
 def _recipe_commands(recipe: dict[str, object]) -> list[str]:
@@ -228,14 +223,21 @@ def test_single_image_build_rejects_unknown_name_before_runtime(tmp_path: Path) 
 
 def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> None:
     workflow = _build_workflow()
-    jobs = _mapping_at(workflow, "jobs")
-    build = _mapping_at(jobs, "build-push")
-    build_steps = _mapping_list_at(build, "steps")
-    steps: dict[str, dict[str, object]] = {cast("str", step.get("id", step["name"])): step for step in build_steps}
+    jobs = workflow["jobs"]
+    validation = jobs["event-validation"]
+    assert validation["permissions"] == {"contents": "read"}
+    build = jobs["build-push"]
+    build_steps = build["steps"]
+    steps = {step.get("id", step["name"]): step for step in build_steps}
 
-    matrix = _mapping_at(_mapping_at(build, "strategy"), "matrix")
-    include = _mapping_list_at(matrix, "include")
-    names = [entry["name"] for entry in include]
+    include = build["strategy"]["matrix"]["include"]
+    names: list[str] = []
+    for entry in include:
+        match entry["name"]:
+            case str(name):
+                names.append(name)
+            case _:
+                pytest.fail("build matrix names must be strings")
     assert len(names) == len(set(names))
     assert set(names) == {image for image, *_ in _image_inventory_specs()}
     cpu = next(entry for entry in include if entry["name"] == "ml-compute-service")
@@ -243,23 +245,23 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
     assert "build_args" not in cpu
     assert gpu["build_args"] == "ML_COMPUTE_BUILDER=sync-gpu"
     assert gpu["dockerfile"] == cpu["dockerfile"] == "backend/services/ml-compute-service/Dockerfile"
-    build_with = _mapping_at(_mapping_at(steps, "build"), "with")
+    build_with = steps["build"]["with"]
     image_base_path = "steps.image-base-path.outputs.image_base_path"
     assert build_with["cache-from"] == (
         "${{ matrix.name == 'ml-compute-service-gpu' && "
-        f"format('type=registry,ref={{0}}/{{1}}:buildcache', {image_base_path}, matrix.name) "
-        "|| format('type=gha,scope={0}', matrix.name) }}"
+        f"format('type=registry,ref={{0}}/{{1}}:buildcache-{{2}}', {image_base_path}, matrix.name, "
+        "hashFiles(matrix.dockerfile, matrix.lockfile)) "
+        "|| format('type=gha,scope={0}-{1}', matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) }}"
     )
     assert build_with["cache-to"] == (
         "${{ matrix.name == 'ml-compute-service-gpu' && "
         "(steps.mode.outputs.push == 'true' && "
-        f"format('type=registry,ref={{0}}/{{1}}:buildcache,mode=max', {image_base_path}, matrix.name) || '') "
-        "|| format('type=gha,mode=max,scope={0}', matrix.name) }}"
+        f"format('type=registry,ref={{0}}/{{1}}:buildcache-{{2}},mode=max', {image_base_path}, matrix.name, "
+        "hashFiles(matrix.dockerfile, matrix.lockfile)) || '') "
+        "|| format('type=gha,mode=max,scope={0}-{1}', matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) }}"
     )
     login_name = "Log into GitHub Container Registry"
-    assert _mapping_at(steps, login_name)["if"] == (
-        "steps.mode.outputs.push == 'true' || matrix.name == 'ml-compute-service-gpu'"
-    )
+    assert steps[login_name]["if"] == ("steps.mode.outputs.push == 'true' || matrix.name == 'ml-compute-service-gpu'")
     assert next(index for index, step in enumerate(build_steps) if step["name"] == login_name) < next(
         index for index, step in enumerate(build_steps) if step.get("id") == "build"
     )
@@ -268,47 +270,53 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
         "name": "kafka-connect",
         "context": "infra/k8s/kafka-connect",
         "dockerfile": "infra/k8s/kafka-connect/Dockerfile",
+        "lockfile": "infra/k8s/kafka-connect/smt/build.gradle.kts",
     }
-    assert _mapping_at(steps, "capture-digest")["if"] == "steps.mode.outputs.push == 'true'"
-    assert _mapping_at(_mapping_at(steps, "capture-digest"), "env")["IMAGE_DIGEST"] == (
-        "${{ steps.build.outputs.digest }}"
-    )
-    assert _mapping_at(steps, "upload-digest")["if"] == "steps.mode.outputs.push == 'true'"
-    assert _mapping_at(_mapping_at(steps, "upload-digest"), "with")["name"] == "image-digest-${{ matrix.name }}"
+    assert steps["capture-digest"]["if"] == "steps.mode.outputs.push == 'true'"
+    assert steps["capture-digest"]["env"]["IMAGE_DIGEST"] == "${{ steps.build.outputs.digest }}"
+    assert steps["upload-digest"]["if"] == "steps.mode.outputs.push == 'true'"
+    assert steps["upload-digest"]["with"]["name"] == "image-digest-${{ matrix.name }}"
     assert build["permissions"] == {"contents": "read", "packages": "write"}
 
-    aggregate = _mapping_at(jobs, "aggregate-digests")
+    aggregate = jobs["aggregate-digests"]
     assert aggregate["needs"] == ["event-validation", "build-push"]
-    assert aggregate["permissions"] == {"contents": "read"}
-    download = next(
-        step for step in _mapping_list_at(aggregate, "steps") if step["name"] == "Download image digest records"
-    )
-    assert _mapping_at(download, "with")["pattern"] == "image-digest-*"
-    assert _mapping_at(download, "with")["merge-multiple"] is True
-    upload = next(
-        step for step in _mapping_list_at(aggregate, "steps") if step["name"] == "Upload aggregate production digests"
-    )
-    assert _mapping_at(upload, "with")["path"] == "infra/k8s/helm/values.prod.digests.yaml"
+    assert aggregate["permissions"] == {
+        "actions": "read",
+        "contents": "write",
+        "pull-requests": "write",
+    }
+    aggregate_steps = aggregate["steps"]
+    download = next(step for step in aggregate_steps if step["name"] == "Download image digest records")
+    assert download["with"]["pattern"] == "image-digest-*"
+    assert download["with"]["merge-multiple"] is True
+    upload = next(step for step in aggregate_steps if step["name"] == "Upload aggregate production digests")
+    assert upload["with"]["path"] == "infra/k8s/helm/values.prod.digests.yaml"
 
-    proposal = _mapping_at(jobs, "propose-digests")
-    assert proposal["needs"] == ["event-validation", "aggregate-digests"]
-    assert "github.event_name == 'workflow_run'" in str(proposal["if"])
-    assert "needs.event-validation.outputs.authorized == 'true'" in str(proposal["if"])
-    assert proposal["permissions"] == {"contents": "write", "pull-requests": "write"}
-    proposal_steps = _mapping_list_at(proposal, "steps")
-    pr = next(step for step in proposal_steps if step["name"] == "Create or update digest PR")
+    pr = next(step for step in aggregate_steps if step["name"] == "Create or update digest PR")
+    assert pr["if"] == "env.PROPOSAL_ENABLED == 'true'"
     assert "create-pull-request" in str(pr["uses"])
-    assert _mapping_at(pr, "with")["base"] == "main"
-    assert _mapping_at(pr, "with")["branch"] == "bot/update-production-image-digests"
-    assert _mapping_at(pr, "with")["add-paths"] == "infra/k8s/helm/values.prod.digests.yaml"
-    pr_body = _mapping_at(pr, "with")["body"]
+    assert pr["with"]["base"] == "main"
+    assert pr["with"]["branch"] == "bot/update-production-image-digests"
+    assert pr["with"]["add-paths"] == "infra/k8s/helm/values.prod.digests.yaml"
+    pr_body = pr["with"]["body"]
+    assert isinstance(pr_body, str)
     assert "Source revision: `${{ needs.event-validation.outputs.source_sha }}`" in pr_body
     assert (
         "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" in pr_body
     )
-    assert all("git push" not in str(step.get("run", "")) for step in proposal_steps)
+    assert all("git push" not in str(step.get("run", "")) for step in aggregate_steps)
+    write_jobs = {
+        job_name
+        for job_name, job in jobs.items()
+        if any(job.get("permissions", {}).get(name) == "write" for name in ("contents", "pull-requests"))
+    }
+    assert write_jobs == {"aggregate-digests"}
 
-    workflow_run = _mapping(workflow.get("on", workflow.get(True)))["workflow_run"]
+    match workflow.get("on"):
+        case {"workflow_run": workflow_run}:
+            pass
+        case _:
+            pytest.fail("build workflow must define workflow_run")
     assert workflow_run == {
         "workflows": ["Checks"],
         "types": ["completed"],
@@ -317,9 +325,8 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
 
 
 def test_build_workflow_reclaims_build_cache_before_trivy_scan() -> None:
-    workflow = _build_workflow()
-    build = _mapping_at(_mapping_at(workflow, "jobs"), "build-push")
-    steps = _mapping_list_at(build, "steps")
+    build = _build_workflow()["jobs"]["build-push"]
+    steps = build["steps"]
     names = [step["name"] for step in steps]
     build_index = names.index("Build container image for ${{ matrix.name }}")
     scan_index = names.index("Run Trivy vulnerability scanner")

@@ -29,7 +29,7 @@ from ci_checks.checks import internal_refs as _internal_refs
 from ci_checks.checks import migration_truth as _migration_truth
 from ci_checks.checks.tests import tests_app
 from ci_checks.core.display import console
-from ci_checks.core.packages import Scope, load_packages
+from ci_checks.core.packages import Package, Scope, load_packages
 from ci_checks.core.scanner import scan_parallel
 
 app = typer.Typer(
@@ -43,6 +43,25 @@ app.add_typer(tests_app, name="tests")
 
 # Change gate: maps a git diff to the minimal sound set of CI lanes.
 app.command("gate")(_gate.gate_cmd)
+app.command("gate-evidence")(_gate.gate_evidence_cmd)
+app.command("gate-reuse")(_gate.gate_reuse_cmd)
+
+
+def _filter_packages(
+    available: list[Package],
+    selection: str,
+    known: set[str],
+) -> list[Package]:
+    if selection == "ALL":
+        return available
+    requested = {name.strip() for name in selection.split(",") if name.strip()}
+    if not requested:
+        return []
+    if unknown := requested - known:
+        console.print(f"[red]Unknown packages: {', '.join(sorted(unknown))}[/red]")
+        raise typer.Exit(2)
+    return [package for package in available if package.name in requested]
+
 
 # Image freshness: probes pinned base-image digests against their registries.
 
@@ -54,6 +73,10 @@ app.command("image-freshness")(_freshness.freshness_cmd)
 @app.command("deadcode")
 def deadcode_cmd(
     scope: Annotated[Scope, typer.Option("--scope", "-s", help="Package scope")] = Scope.ALL,
+    packages: Annotated[
+        str,
+        typer.Option("--packages", help="CSV package names within scope; empty selects none"),
+    ] = "ALL",
     confidence: Annotated[
         int,
         typer.Option("--confidence", "-c", min=0, max=100, help="Min Skylos confidence (0-100)"),
@@ -128,16 +151,18 @@ def deadcode_cmd(
     ] = False,
 ) -> None:
     """Scan workspace packages for dead code using Skylos."""
-    packages = load_packages(scope, require_src=True)
-    if not packages:
-        console.print("[yellow]No packages with src/ found[/yellow]")
+    available = load_packages(scope, require_src=True)
+    known = {package.name for package in load_packages(Scope.ALL)}
+    selected = _filter_packages(available, packages, known)
+    if not selected:
+        console.print("[yellow]No packages with src/ selected[/yellow]")
         return
 
     mode = "hybrid (LLM-augmented)" if llm else "static"
     diff_mode = f", diff={diff}" if diff else ""
     diff_base_mode = f", diff-base={diff_base}" if diff_base else ""
     console.print(
-        f"[bold]Scanning {len(packages)} packages for dead code "
+        f"[bold]Scanning {len(selected)} packages for dead code "
         f"({mode}, confidence={confidence}%{diff_mode}{diff_base_mode})...[/bold]"
     )
 
@@ -166,7 +191,7 @@ def deadcode_cmd(
         include_parameters=include_parameters,
     )
 
-    results = asyncio.run(_deadcode.scan_scope(packages, options))
+    results = asyncio.run(_deadcode.scan_scope(selected, options))
 
     if ci:
         for result in results:
@@ -186,18 +211,24 @@ def deptry_cmd(
     scope: Annotated[Scope, typer.Option("--scope", "-s", help="Package scope")] = Scope.ALL,
     workers: Annotated[int, typer.Option("--workers", "-w", help="Max parallel workers")] = 4,
     ci: Annotated[bool, typer.Option("--ci", help="CI mode (plain-text output)")] = False,
+    packages: Annotated[
+        str,
+        typer.Option("--packages", help="CSV package names within scope; empty selects none"),
+    ] = "ALL",
 ) -> None:
-    """Check workspace packages for dependency issues using deptry."""
-    packages = load_packages(scope, require_src=True)
-    if not packages:
-        console.print("[yellow]No packages with src/ found[/yellow]")
+    """Check selected workspace packages for dependency issues using deptry."""
+    available = load_packages(scope, require_src=True)
+    known = {package.name for package in load_packages(Scope.ALL)}
+    selected = _filter_packages(available, packages, known)
+    if not selected:
+        console.print("[yellow]No packages with src/ selected[/yellow]")
         return
 
-    console.print(f"[bold]Checking {len(packages)} packages for dependency issues...[/bold]")
+    console.print(f"[bold]Checking {len(selected)} packages for dependency issues...[/bold]")
 
     results = asyncio.run(
         scan_parallel(
-            packages,
+            selected,
             _deptry.scan_package,
             workers,
             console,
@@ -257,16 +288,22 @@ def build_backend_cmd(
             help="Also fail on packages not yet migrated to uv_build (post-rollout gate)",
         ),
     ] = False,
+    packages: Annotated[
+        str,
+        typer.Option("--packages", help="CSV package names within scope; empty selects none"),
+    ] = "ALL",
 ) -> None:
-    """Validate every workspace package uses the canonical uv_build stanza."""
-    packages = load_packages(scope)
-    if not packages:
-        console.print("[yellow]No workspace packages discovered[/yellow]")
+    """Validate selected workspace packages use the canonical uv_build stanza."""
+    available = load_packages(scope)
+    known = {package.name for package in load_packages(Scope.ALL)}
+    selected = _filter_packages(available, packages, known)
+    if not selected:
+        console.print("[yellow]No workspace packages selected[/yellow]")
         return
 
-    console.print(f"[bold]Checking {len(packages)} packages for canonical build-system stanza...[/bold]")
+    console.print(f"[bold]Checking {len(selected)} packages for canonical build-system stanza...[/bold]")
 
-    results = [_build_backend.scan_package(p) for p in packages]
+    results = [_build_backend.scan_package(package) for package in selected]
 
     if ci:
         for result in results:
