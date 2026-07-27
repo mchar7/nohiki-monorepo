@@ -18,11 +18,32 @@ const domTypeScriptTests = [
   'src/shared/model/**/*.test.ts',
 ];
 
+const jsdomTypeScriptTests = ['src/shared/lib/utils/cache.test.ts'];
+
+const jsdomUiTests = [
+  // Happy DOM lacks these storage, accessible-name, and iframe-loading semantics.
+  'src/features/omakase/document-builder/ui/PreviewPane/PreviewRenderer.test.tsx',
+  'src/pages/dashboard/lib/useLastVisit.test.tsx',
+  'src/shared/ui/skill-input/SkillInput.test.tsx',
+  // axe-core supports jsdom only; Happy DOM also triggers network loads from axe's iframes.
+  'src/features/job-matching/ui/ScoreBreakdownCard.test.tsx',
+  'src/shared/ui/PageHeader.test.tsx',
+  'src/shared/ui/button.test.tsx',
+  'src/shared/ui/dialog.test.tsx',
+  'src/shared/ui/feature-error-boundary.test.tsx',
+  'src/shared/ui/input.test.tsx',
+  'src/shared/ui/list-pagination.test.tsx',
+  'src/shared/ui/select.test.tsx',
+  'src/shared/ui/sort-select.test.tsx',
+  'src/widgets/layout/ui/BottomNav.test.tsx',
+];
+
 export default defineConfig({
   plugins: [react()],
   test: {
     execArgv: ['--no-experimental-webstorage'],
     globals: true,
+    // Threads measured 7.6% faster than Vitest's default forks pool on two CPUs.
     pool: 'threads',
     exclude: ['**/node_modules/**', '**/e2e/**'],
     projects: [
@@ -40,8 +61,9 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'dom',
-          environment: 'jsdom',
+          environment: 'happy-dom',
           include: domTypeScriptTests,
+          exclude: jsdomTypeScriptTests,
           setupFiles: ['./src/test/setup.ts'],
         },
       },
@@ -49,8 +71,27 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'ui',
-          environment: 'jsdom',
+          environment: 'happy-dom',
           include: ['src/**/*.test.tsx'],
+          exclude: jsdomUiTests,
+          setupFiles: ['./src/test/setup.ts', './src/test/i18n-setup.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'dom-jsdom',
+          environment: 'jsdom',
+          include: jsdomTypeScriptTests,
+          setupFiles: ['./src/test/setup.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'ui-jsdom',
+          environment: 'jsdom',
+          include: jsdomUiTests,
           setupFiles: ['./src/test/setup.ts', './src/test/i18n-setup.ts'],
         },
       },
