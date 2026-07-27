@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -93,3 +95,29 @@ class TestPluginMarkers:
     @pytest.mark.requires_docker
     def test_requires_docker_marker_is_available(self) -> None:
         """Docker requirement marker is available and usable."""
+
+
+class TestSecretsIsolation:
+    """Tests for session-wide file-secret isolation."""
+
+    def test_session_secrets_dir_is_an_empty_existing_directory(self) -> None:
+        """Every session runs against a secrets tree that exists and holds no secrets."""
+        secrets_dir = Path(os.environ["SECRETS_DIR"])
+
+        assert secrets_dir.is_dir()
+        assert list(secrets_dir.iterdir()) == []
+
+    def test_teardown_removes_the_directory_the_hook_created(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The session secrets tree does not outlive the session that created it."""
+        monkeypatch.setenv("SECRETS_DIR", os.environ["SECRETS_DIR"])
+        config = MagicMock(spec=pytest.Config)
+        config.stash = pytest.Stash()
+
+        plugins.pytest_load_initial_conftests(config)
+        created = Path(config.stash[plugins._EMPTY_SECRETS_DIR_KEY])
+        assert created.is_dir()
+        assert os.environ["SECRETS_DIR"] == str(created)
+
+        plugins.pytest_unconfigure(config)
+
+        assert not created.exists()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -11,7 +12,7 @@ from nohiki_core_settings import (
     NohikiBaseSettings,
     ObservabilitySettings,
 )
-from nohiki_core_settings.base import SECRETS_DIR, AzureKeyVaultNotInstalledError
+from nohiki_core_settings.base import AzureKeyVaultNotInstalledError
 from nohiki_db_utils import DatabaseMixin, DatabaseSettings
 from nohiki_kafka_client import KafkaMixin, KafkaSettings
 from nohiki_kafka_client.config.settings import _default_kafka_dsn
@@ -53,7 +54,6 @@ class _TestSettingsWithRedis(RedisMixin, _BaseTestSettings):
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         extra="ignore",
-        secrets_dir=SECRETS_DIR,
         protected_namespaces=(),  # Disable pydantic field shadowing warnings
     )
 
@@ -364,3 +364,35 @@ class TestAzureKeyVaultError:
                 _BaseTestSettings()
         finally:
             monkeypatch.setattr(base_module, "_azure_keyvault_source_factory", original_factory)
+
+
+class TestFileSecretsSource:
+    """Tests for how the file-secrets source resolves its directory."""
+
+    def test_secrets_dir_is_resolved_at_construction(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A SECRETS_DIR set after import time still feeds the file-secrets source."""
+        (tmp_path / "service_version").write_text("9.9.9-from-secret", encoding="utf-8")
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+
+        assert _BaseTestSettings().service_version == "9.9.9-from-secret"
+
+    def test_class_config_secrets_dir_overrides_the_environment(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A class that pins its own ``secrets_dir`` keeps it when SECRETS_DIR names another tree."""
+        (tmp_path / "service_version").write_text("9.9.9-from-environment", encoding="utf-8")
+        pinned = tmp_path / "pinned"
+        pinned.mkdir()
+        (pinned / "service_version").write_text("1.2.3-from-class-config", encoding="utf-8")
+        monkeypatch.setenv("SECRETS_DIR", str(tmp_path))
+
+        class _PinnedSettings(_BaseTestSettings):
+            model_config = SettingsConfigDict(secrets_dir=str(pinned))
+
+        assert _PinnedSettings().service_version == "1.2.3-from-class-config"
