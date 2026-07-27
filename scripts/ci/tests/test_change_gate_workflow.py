@@ -491,21 +491,19 @@ def test_runtime_accounting_enforces_only_the_frozen_class_budgets() -> None:
 
     assert "if ((wall_seconds >= class_wall_budget_seconds)); then" in command
     assert "if ((billable_minutes > class_billable_budget_minutes)); then" in command
-    assert '--argjson observed "$ratio"' in command
-    assert '--argjson budget "$class_ratio_budget"' in command
-    assert "'$observed > $budget'" in command
     assert 'exit "$budget_failure"' in command
 
     budget_cases = {
-        (int(wall), int(billable), float(ratio))
-        for wall, billable, ratio in re.findall(
-            r"class_wall_budget_seconds=(\d+)\s+"
-            r"class_billable_budget_minutes=(\d+)\s+"
-            r"class_ratio_budget=([\d.]+)",
+        (int(wall), int(billable))
+        for wall, billable in re.findall(
+            r"class_wall_budget_seconds=(\d+)\s+class_billable_budget_minutes=(\d+)",
             command,
         )
     }
-    assert budget_cases == {(600, 10, 1.3), (720, 30, 3.0)}
+    assert budget_cases == {(600, 10), (720, 30)}
+    # R was retired: R <= 3 rearranges to W >= 20B, a lower bound on wall time, so it could only fire
+    # on runs that already passed both real ceilings. It punished intra-job speedups.
+    assert "ratio" not in command
     assert "CONTAINER_SELECTED" not in env
     assert "PLAYWRIGHT_SELECTED" not in env
     assert "allowance" not in command
