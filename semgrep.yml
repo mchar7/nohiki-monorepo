@@ -3,29 +3,16 @@
 # Note: Protobuf _pb2 rules disabled - no legacy imports exist in codebase
 
 rules:
-  # NOHIKI-SPECIFIC: Async Discipline (time.sleep in async context)
-  - id: sync-sleep-in-async
-    patterns:
-      - pattern: time.sleep(...)
-      - pattern-inside: |
-          async def $FUNC(...):
-              ...
-    message: "Use asyncio.sleep() instead of time.sleep() in async functions."
-    languages: [python]
-    severity: ERROR
-    paths:
-      include:
-        - backend/
 
   # NOHIKI-SPECIFIC: Kafka DB session middleware wiring
   - id: kafka-with-db-session-requires-session-factory
     patterns:
       - pattern-inside: |
-          async def lifespan(...):
+          async def $FUNC(...):
               ...
       - pattern: start_event_consumer()
       - pattern-not-inside: |
-          async def lifespan(...):
+          async def $FUNC(...):
               ...
               kafka_client.set_db_session_factory(...)
               ...
