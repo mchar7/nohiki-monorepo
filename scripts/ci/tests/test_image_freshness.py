@@ -1,3 +1,4 @@
+import contextlib
 import subprocess
 import urllib.error
 import urllib.request
@@ -106,7 +107,11 @@ def test_probe_pin_reports_alive_for_reachable_checksum_url(monkeypatch: pytest.
 def test_probe_pin_reports_dead_when_checksum_url_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_urlopen(request: urllib.request.Request, *, timeout: float) -> Never:
         assert timeout > 0
-        raise urllib.error.HTTPError(request.full_url, HTTPStatus.NOT_FOUND, "Not Found", Message(), None)
+        # HTTPError is an addinfourl, so it owns a response body that only close() releases;
+        # probe_pin reads the status and drops the exception, leaving nothing else to close it.
+        error = urllib.error.HTTPError(request.full_url, HTTPStatus.NOT_FOUND, "Not Found", Message(), None)
+        with contextlib.closing(error):
+            raise error
 
     monkeypatch.setattr(freshness, "_skopeo", _skopeo_must_not_run)
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)

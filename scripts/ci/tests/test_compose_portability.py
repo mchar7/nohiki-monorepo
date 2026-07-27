@@ -3770,30 +3770,36 @@ def test_just_dry_run_routes_compose_recipes_through_preflight(recipe: str) -> N
     assert re.search(r"\b(?:docker|podman)\s+compose\b", output) is None
 
 
-def test_infra_and_k8s_nix_shells_include_the_pinned_validator_runtime() -> None:
+def test_nix_shells_declare_the_pinned_python_and_validator_runtime() -> None:
     flake = _FLAKE.read_text(encoding="utf-8")
 
     assert "python = pkgs.python314;" in flake
     for shell in ("infra", "k8s"):
         block = flake.split(f"devShells.{shell} = pkgs.mkShell", 1)[1].split("};", 1)[0]
         assert "++ [ python ]" in block
+    # The CI contract tests shell out to these validators, so the flake must declare them for
+    # the shell that runs the suite. A PATH probe reports the ambient shell instead, which says
+    # nothing about the declaration and fails wherever the suite runs outside that shell.
+    policy_tools = flake.split("ciPolicyTools = ciPythonTools ++ [", 1)[1].split("];", 1)[0]
+    test_tools = flake.split("ciTestTools = ciPolicyTools ++ [", 1)[1].split("];", 1)[0]
+    declared = set(re.findall(r"pkgs\.([\w-]+)", policy_tools + test_tools))
     validators = (
         "actionlint",
         "age",
         "buf",
         "gitleaks",
         "hadolint",
-        "helm",
         "kubectl",
+        "kubernetes-helm",
         "kustomize",
+        "openssh",
         "podman-compose",
-        "rg",
+        "ripgrep",
         "skopeo",
         "sops",
-        "ssh",
     )
-    missing = [validator for validator in validators if shutil.which(validator) is None]
-    assert missing == [], f"pinned validators missing from the CI shell: {', '.join(missing)}"
+    missing = [validator for validator in validators if validator not in declared]
+    assert missing == [], f"pinned validators missing from the CI shell definition: {', '.join(missing)}"
 
 
 def test_preflight_passes_with_runtime_and_full_secret_contract(tmp_path: Path) -> None:
