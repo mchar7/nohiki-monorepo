@@ -192,8 +192,14 @@ pre-push:
         parallel: true
         jobs:
           - name: python-typecheck
-            glob: "backend/**/*.py"
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+            glob:
+              - "backend/**/*.py"
+              - "infra/shared/qdrant-init/**/*.py"
+              - "scripts/ci/**/*.py"
+              - "scripts/util/**/*.py"
+              - "scripts/benchmark/**/*.py"
+              - "scripts/ml/**/*.py"
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
 
           - name: frontend-typecheck
             glob:
@@ -210,11 +216,26 @@ pre-push:
         parallel: true
         jobs:
           - name: python-tests
-            glob: "backend/**/*.py"
+            glob:
+              - "backend/**/*.py"
+              - "infra/shared/qdrant-init/**/*.py"
+              - "scripts/ci/**/*.py"
+              - "scripts/util/**/*.py"
+              - "scripts/benchmark/**/*.py"
+              - "scripts/ml/**/*.py"
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks tests affected --mode push --ci
             env:
               OTEL_SDK_DISABLED: "true"
               UV_NO_SYNC: "1"
+
+          # The unit runner deselects `requires_skylos` so the hosted units that carry no private
+          # analyzer can still collect the module. The developer shell always installs it, so the
+          # marked tests run here instead of being suppressed on every lane.
+          - name: skylos-cache-tests
+            glob:
+              - "scripts/ci/src/ci_checks/checks/skylos_cache.py"
+              - "scripts/ci/tests/test_skylos_cache.py"
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync pytest scripts/ci/tests -m requires_skylos
 
           - name: frontend-tests
             glob:
@@ -229,11 +250,23 @@ pre-push:
         parallel: true
         jobs:
           - name: deadcode
-            glob: "backend/**/*.py"
+            glob:
+              - "backend/**/*.py"
+              - "infra/shared/qdrant-init/**/*.py"
+              - "scripts/ci/**/*.py"
+              - "scripts/util/**/*.py"
+              - "scripts/benchmark/**/*.py"
+              - "scripts/ml/**/*.py"
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
 
           - name: deptry
-            glob: "backend/**/*.py"
+            glob:
+              - "backend/**/*.py"
+              - "infra/shared/qdrant-init/**/*.py"
+              - "scripts/ci/**/*.py"
+              - "scripts/util/**/*.py"
+              - "scripts/benchmark/**/*.py"
+              - "scripts/ml/**/*.py"
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deptry --scope all --ci
 
           - name: semgrep
