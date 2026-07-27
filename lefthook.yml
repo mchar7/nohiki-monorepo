@@ -198,7 +198,8 @@ pre-push:
               - "scripts/ci/**/*.py"
               - "scripts/util/**/*.py"
               - "scripts/benchmark/**/*.py"
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init scripts/ci scripts/util scripts/benchmark --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+              - "scripts/ml/**/*.py"
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
 
           - name: frontend-typecheck
             glob:
@@ -221,6 +222,7 @@ pre-push:
               - "scripts/ci/**/*.py"
               - "scripts/util/**/*.py"
               - "scripts/benchmark/**/*.py"
+              - "scripts/ml/**/*.py"
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks tests affected --mode push --ci
             env:
               OTEL_SDK_DISABLED: "true"
@@ -245,6 +247,7 @@ pre-push:
               - "scripts/ci/**/*.py"
               - "scripts/util/**/*.py"
               - "scripts/benchmark/**/*.py"
+              - "scripts/ml/**/*.py"
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
 
           - name: deptry
@@ -254,6 +257,7 @@ pre-push:
               - "scripts/ci/**/*.py"
               - "scripts/util/**/*.py"
               - "scripts/benchmark/**/*.py"
+              - "scripts/ml/**/*.py"
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deptry --scope all --ci
 
           - name: semgrep

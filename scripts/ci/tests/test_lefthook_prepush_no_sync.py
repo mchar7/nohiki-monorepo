@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Iterator, Mapping
-from pathlib import Path
+from itertools import takewhile
+from pathlib import Path, PurePosixPath
 
 import pytest
 from _documents import load_mapping
+from ci_checks.core.packages import REPO_ROOT, Scope, load_packages
 
 _ROOT = Path(__file__).resolve().parents[3]
 _LEFTHOOK = _ROOT / "lefthook.yml"
@@ -111,12 +113,64 @@ def _glob_entries(node: object) -> set[str]:
     return {entry for entry in raw if isinstance(entry, str)}
 
 
-def test_python_push_lanes_cover_every_python_workspace_root(
+def _sole_job(config: Mapping[str, object], name: str) -> object:
+    """Return the single lefthook job declaring the given name."""
+    jobs = tuple(_named_mappings(config, name))
+    assert len(jobs) == 1, f"lefthook must declare exactly one {name} job"
+    return jobs[0]
+
+
+def _run_command(node: object) -> str:
+    """Return the shell command a lefthook job runs."""
+    assert isinstance(node, Mapping)
+    command = node.get("run")
+    assert isinstance(command, str)
+    return command
+
+
+def _workspace_python_roots() -> tuple[PurePosixPath, ...]:
+    """Repo-relative directory of every workspace package the hosted lanes scan.
+
+    The hosted Typecheck backend step resolves PACKAGE_SCOPE=ALL to the editable
+    source path of each workspace member, which is what require_src selects here.
+    """
+    return tuple(
+        PurePosixPath(pkg.path.relative_to(REPO_ROOT).as_posix()) for pkg in load_packages(Scope.ALL, require_src=True)
+    )
+
+
+def _globs_cover(root: PurePosixPath, patterns: set[str]) -> bool:
+    """Whether any pattern selects Python files anywhere under a package root."""
+    probes = (root / "module.py", root / "src" / "package" / "module.py")
+    return all(any(probe.full_match(pattern) for pattern in patterns) for probe in probes)
+
+
+def _ty_check_roots(command: str) -> tuple[PurePosixPath, ...]:
+    """Positional directories handed to ty check, stopping at the first option."""
+    tokens = shlex.split(command)
+    starts = [index + 2 for index in range(len(tokens) - 1) if tokens[index : index + 2] == ["ty", "check"]]
+    assert len(starts) == 1, "python-typecheck must invoke ty check exactly once"
+    return tuple(PurePosixPath(token) for token in takewhile(lambda t: not t.startswith("-"), tokens[starts[0] :]))
+
+
+def test_python_push_lanes_cover_every_workspace_package(
     lefthook_config: Mapping[str, object],
 ) -> None:
-    typecheck = _glob_entries(next(iter(_named_mappings(lefthook_config, "python-typecheck"))))
+    """Push lanes must trigger on, and scan, every Python package the workspace declares.
 
-    for lane in ("python-tests", "deadcode", "deptry"):
-        covered = _glob_entries(next(iter(_named_mappings(lefthook_config, lane))))
-        missing = typecheck - covered
-        assert not missing, f"{lane} skips Python roots that python-typecheck covers: {sorted(missing)}"
+    Comparing the lanes against each other cannot see a package that is missing from
+    all of them, so the workspace manifest is the reference: a new package directory
+    fails this test on the day it is added.
+    """
+    roots = _workspace_python_roots()
+    assert roots, "workspace manifest declares no Python packages"
+
+    for lane in ("python-typecheck", "python-tests", "deadcode", "deptry"):
+        patterns = _glob_entries(_sole_job(lefthook_config, lane))
+        missing = sorted(str(root) for root in roots if not _globs_cover(root, patterns))
+        assert not missing, f"{lane} globs skip workspace packages: {missing}"
+
+    scanned = _ty_check_roots(_run_command(_sole_job(lefthook_config, "python-typecheck")))
+    assert scanned, "python-typecheck must pass at least one path to ty check"
+    unscanned = sorted(str(root) for root in roots if not any(root.is_relative_to(arg) for arg in scanned))
+    assert not unscanned, f"ty check arguments skip workspace packages: {unscanned}"
