@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { I18nextProvider } from 'react-i18next';
 import { beforeEach, describe, expect, vi } from 'vitest';
 
+import type * as SharedApi from '@/shared/api/index.ts';
 import { wrapWithRouter } from '@/shared/test-utils/index.ts';
 import { i18n } from '@/test/i18n-setup.ts';
 import authEn from '../../../../public/locales/en/auth.json';
@@ -21,24 +22,24 @@ const CONFIRM_PASSWORD_RE = /confirm password/iu;
 
 const mockRegister = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 
-vi.mock('../api', () => ({
-  useLogin: () => ({
-    mutateAsync: vi.fn().mockResolvedValue({}),
-    isPending: false,
-  }),
-  useRegister: () => ({
-    mutateAsync: mockRegister,
-    isPending: false,
-  }),
-}));
-
-vi.mock('./oauth-button', () => ({
-  OAuthButton: ({ provider }: { provider: string }) => (
-    <button type="button" data-testid={`oauth-${provider}`}>
-      {`${provider} OAuth`}
-    </button>
-  ),
-}));
+vi.mock('@/shared/api/index.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof SharedApi>();
+  return {
+    ...actual,
+    oauthApi: {
+      ...actual.oauthApi,
+      getProviders: vi.fn().mockResolvedValue({ providers: [] }),
+    },
+    useLogin: () => ({
+      mutateAsync: vi.fn().mockResolvedValue({}),
+      isPending: false,
+    }),
+    useRegister: () => ({
+      mutateAsync: mockRegister,
+      isPending: false,
+    }),
+  };
+});
 
 function createTestQueryClient(): QueryClient {
   return new QueryClient({
