@@ -218,7 +218,7 @@ importers:
         specifier: ^2.5.3
         version: 2.5.3
       '@feature-sliced/steiger-plugin':
-        specifier: ^0.6.0
+        specifier: 0.6.0
         version: 0.6.0(@typescript/typescript6@6.0.2)
       '@nohiki/biome-config':
         specifier: workspace:*
@@ -287,7 +287,7 @@ importers:
         specifier: ^7.0.1
         version: 7.0.1(rolldown@1.1.5)
       steiger:
-        specifier: ^0.5.13
+        specifier: 0.5.13
         version: 0.5.13(@typescript/typescript6@6.0.2)
       tailwindcss:
         specifier: ^4.3.2

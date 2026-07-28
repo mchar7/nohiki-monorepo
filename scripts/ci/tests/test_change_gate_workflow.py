@@ -803,6 +803,7 @@ def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
 def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> None:
     steps = {step.get("name"): step for step in _steps(_jobs()["worker"])}
     assert steps["Lint frontend"]["run"] == ("pnpm --filter nohiki-frontend exec biome ci --reporter=github .")
+    assert steps["Lint frontend architecture (Steiger)"]["run"] == ("pnpm --filter nohiki-frontend run lint:fsd")
     assert "biome ci --reporter=github src/" in steps["Lint edge worker"]["run"]
     assert "exec tsc --noEmit" in steps["Typecheck edge worker"]["run"]
     assert "exec vitest run" in steps["Test edge worker"]["run"]
