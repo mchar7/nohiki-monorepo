@@ -13,7 +13,7 @@ from health_check.platform.kubernetes import KubernetesResourceSnapshot
 def object_field(value: JsonObject, key: str) -> JsonObject:
     """Return a JSON object field or an empty object when absent/malformed."""
     field = value.get(key)
-    return cast("JsonObject", field) if isinstance(field, dict) else {}
+    return field if isinstance(field, dict) else {}
 
 
 def object_list_field(value: JsonObject, key: str) -> list[JsonObject]:
@@ -21,7 +21,7 @@ def object_list_field(value: JsonObject, key: str) -> list[JsonObject]:
     field = value.get(key)
     if not isinstance(field, list):
         return []
-    return [cast("JsonObject", item) for item in field if isinstance(item, dict)]
+    return [item for item in field if isinstance(item, dict)]
 
 
 def string_field(value: JsonObject, key: str, default: str = "") -> str:

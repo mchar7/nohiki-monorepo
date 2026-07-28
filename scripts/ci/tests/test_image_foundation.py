@@ -12,15 +12,20 @@ from collections.abc import Mapping
 from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
-from typing import cast
+from typing import TypeIs
 
 import pytest
 import yaml
+from _documents import load_mapping, string_at
+
+
+def _is_mapping(value: object) -> TypeIs[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
 def _mapping(value: object) -> dict[str, object]:
-    assert isinstance(value, dict)
-    return cast("dict[str, object]", value)
+    assert _is_mapping(value)
+    return value
 
 
 def _mapping_at(mapping: Mapping[str, object], key: str) -> dict[str, object]:
@@ -32,9 +37,14 @@ def _mapping_list(value: object) -> list[dict[str, object]]:
     return [_mapping(item) for item in value]
 
 
+def _string(value: object) -> str:
+    assert isinstance(value, str)
+    return value
+
+
 def _strings(value: object) -> list[str]:
     assert isinstance(value, list)
-    return [cast("str", item) for item in value]
+    return [_string(item) for item in value]
 
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -99,7 +109,7 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
 
 @cache
 def _inventory() -> dict[str, object]:
-    return cast("dict[str, object]", json.loads(_INVENTORY.read_text(encoding="utf-8")))
+    return load_mapping(_INVENTORY)
 
 
 @cache
@@ -107,7 +117,7 @@ def _local_names() -> tuple[str, ...]:
     document = _inventory()
     images = document["images"]
     assert isinstance(images, list)
-    return tuple(cast("str", entry["name"]) for entry in _mapping_list(images) if entry["local"])
+    return tuple(string_at(entry, "name") for entry in _mapping_list(images) if entry["local"])
 
 
 def _write_digests(path: Path, *, tag: str | None = None) -> Path:
@@ -347,7 +357,7 @@ def test_inventory_is_complete_authoritative_and_includes_frontend() -> None:
     document = _inventory()
     assert document["schemaVersion"] == 1
     images = _mapping_list(document["images"])
-    names = [cast("str", entry["name"]) for entry in images]
+    names = [string_at(entry, "name") for entry in images]
     assert len(names) == len(set(names))
     assert set(names) == _EXPECTED_IMAGES
     frontend = next(entry for entry in images if entry["name"] == "frontend")

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -92,4 +94,51 @@ def test_nested_lock_invocation_is_reentrant() -> None:
         text=True,
     )
     assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_test_run_falls_through_when_oom_priority_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    choom = tmp_path / "choom"
+    choom.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    choom.chmod(0o755)
+    result = subprocess.run(
+        [_ROOT / "scripts/dev/test-run.sh", sys.executable, "-c", "print('passed')"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ | {"PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"},
+    )
+
+    assert result.stdout == "passed\n"
+    assert result.stderr == ""
+
+
+def test_test_run_requests_oom_priority_for_probe_and_test_process(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "choom.log"
+    choom = tmp_path / "choom"
+    choom.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CHOOM_LOG"\nshift 3\nexec "$@"\n',
+        encoding="utf-8",
+    )
+    choom.chmod(0o755)
+    result = subprocess.run(
+        [_ROOT / "scripts/dev/test-run.sh", sys.executable, "-c", "print('passed')"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {
+            "CHOOM_LOG": str(log),
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+        },
+    )
+
+    invocations = log.read_text(encoding="utf-8").splitlines()
+    assert invocations[0] == "-n 900 -- true"
+    assert invocations[1].startswith(f"-n 900 -- {sys.executable} -c ")
+    assert result.stdout == "passed\n"
     assert result.stderr == ""

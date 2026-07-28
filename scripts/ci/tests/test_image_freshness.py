@@ -1,5 +1,11 @@
+import contextlib
 import subprocess
+import urllib.error
+import urllib.request
+from email.message import Message
+from http import HTTPStatus
 from pathlib import Path
+from typing import Never, Self
 
 import pytest
 import typer
@@ -7,10 +13,28 @@ from ci_checks.checks import freshness
 
 _DIGEST = "a" * 64
 _OTHER = "b" * 64
+_CHECKSUM = "c" * 64
+_URL = "https://example.invalid/release/v1.34.3/bin/linux/amd64/kubectl"
 
 
 def _proc(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=["skopeo"], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+class _FakeResponse:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+def _skopeo_must_not_run(args: list[str]) -> Never:
+    msg = f"skopeo must not be invoked for a URL pin: {args}"
+    raise AssertionError(msg)
 
 
 def test_collect_pins_matches_platform_case_and_dedupes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -33,6 +57,68 @@ def test_collect_pins_matches_platform_case_and_dedupes(monkeypatch: pytest.Monk
         f"docker.io/library/python:3.14-slim@sha256:{_DIGEST}": ["Dockerfile"],
         f"quay.io/x/y:1.0@sha256:{_DIGEST}": ["Dockerfile", "other.Dockerfile"],
     }
+
+
+def test_collect_pins_covers_copy_from_and_checksum_but_not_build_stages(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(freshness, "REPO_ROOT", tmp_path)
+    (tmp_path / "Dockerfile").write_text(
+        f"FROM public.ecr.aws/docker/library/python:3.14-slim@sha256:{_DIGEST} AS builder\n"
+        f"COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:{_OTHER} /uv /usr/local/bin/uv\n"
+        f"COPY --chown=app:app --from=quay.io/x/y:1.0@sha256:{_OTHER} /y /usr/local/bin/y\n"
+        f"ADD --chmod=0555 --checksum=sha256:{_CHECKSUM} \\\n"
+        f"    {_URL} /usr/local/bin/kubectl\n"
+        "COPY --from=builder /opt/venv /opt/venv\n"
+        "COPY --from=builder --chown=app:app /workspace /workspace\n"
+        "COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl\n"
+        "ADD https://example.invalid/unpinned /tmp/unpinned\n",
+        encoding="utf-8",
+    )
+
+    pins = freshness.collect_pins(["Dockerfile"])
+
+    assert pins == {
+        f"public.ecr.aws/docker/library/python:3.14-slim@sha256:{_DIGEST}": ["Dockerfile"],
+        f"ghcr.io/astral-sh/uv:0.11.28@sha256:{_OTHER}": ["Dockerfile"],
+        f"quay.io/x/y:1.0@sha256:{_OTHER}": ["Dockerfile"],
+        _URL: ["Dockerfile"],
+    }
+
+
+def test_probe_pin_reports_alive_for_reachable_checksum_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, str, float]] = []
+
+    def fake_urlopen(request: urllib.request.Request, *, timeout: float) -> _FakeResponse:
+        seen.append((request.get_method(), request.full_url, timeout))
+        return _FakeResponse(200)
+
+    monkeypatch.setattr(freshness, "_skopeo", _skopeo_must_not_run)
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    probe = freshness.probe_pin(_URL)
+
+    assert probe.alive
+    assert probe.tag_digest == ""
+    assert probe.detail == ""
+    assert seen == [("HEAD", _URL, 30)]
+
+
+def test_probe_pin_reports_dead_when_checksum_url_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request: urllib.request.Request, *, timeout: float) -> Never:
+        assert timeout > 0
+        # HTTPError is an addinfourl, so it owns a response body that only close() releases;
+        # probe_pin reads the status and drops the exception, leaving nothing else to close it.
+        error = urllib.error.HTTPError(request.full_url, HTTPStatus.NOT_FOUND, "Not Found", Message(), None)
+        with contextlib.closing(error):
+            raise error
+
+    monkeypatch.setattr(freshness, "_skopeo", _skopeo_must_not_run)
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    probe = freshness.probe_pin(_URL)
+
+    assert not probe.alive
+    assert "404" in probe.detail
 
 
 def test_probe_pin_reports_alive_and_tag_drift(monkeypatch: pytest.MonkeyPatch) -> None:

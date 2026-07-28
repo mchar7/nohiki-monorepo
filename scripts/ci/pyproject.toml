@@ -8,10 +8,26 @@ dependencies = [
     "typer>=0.21.0",
     "rich>=14.3.0",
     "pyyaml>=6.0.3",
+    # ci_checks.checks.tests compiles root coverage omit patterns with coverage.py's
+    # own GlobMatcher so the consolidated config agrees with the collector.
+    "coverage>=7.13.0",
 ]
 
 [dependency-groups]
 deadcode = ["skylos==4.30.0"]
+container-tests = [
+    "pytest>=9.0.0",
+    "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.8.0",
+]
+
+[tool.uv.sources]
+skylos = { git = "ssh://git@github.com/mchar7/skylos", rev = "6c9e3f1d84c1cc312f8e69c91b348a896d61b0b2" }
+
+# The deadcode group carries an optional runtime dependency, not dev tooling:
+# ci_checks.checks.skylos_cache imports skylos when the deadcode scan spawns it.
+[tool.deptry]
+non_dev_dependency_groups = ["deadcode"]
 
 [project.scripts]
 ci-checks = "ci_checks.app:app"
@@ -30,4 +46,6 @@ testpaths = ["tests"]
 addopts = "-n auto --dist=worksteal"
 markers = [
     "requires_docker: tests that build and run real container images",
+    "requires_node_modules: tests that execute the installed pnpm workspace",
+    "requires_skylos: tests that import the private dead-code analyzer",
 ]

@@ -14,4 +14,9 @@
 **/.cache/
 **/.ruff_cache/
 **/.mypy_cache/
-*.egg-info/
+**/*.egg-info/
+**/.pytest_cache/
+**/.coverage
+**/coverage.xml
+# A uv workspace has exactly one lock, at the root; a nested one is stray local output.
+tests/uv.lock

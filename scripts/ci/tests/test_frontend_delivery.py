@@ -6,6 +6,7 @@ import http.client
 import json
 import os
 import re
+import socket
 import subprocess
 import tarfile
 import time
@@ -133,24 +134,39 @@ def _request(url: str) -> tuple[int, bytes, str]:
 
 
 def _wait_for_http(runtime: str, container: str, url: str) -> tuple[int, bytes, str]:
-    for _ in range(50):
+    parsed = urllib.parse.urlsplit(url)
+    assert parsed.hostname is not None
+    started_at = time.monotonic()
+    deadline = started_at + 300
+    last_error: OSError | http.client.HTTPException | None = None
+    state = "unknown"
+    while time.monotonic() < deadline:
         try:
-            return _request(url)
-        except ConnectionError, OSError, http.client.HTTPException:
-            status = subprocess.run(
-                [runtime, "inspect", "--format", "{{.State.Status}}", container],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-            assert status == "running", subprocess.run(
-                [runtime, "logs", container],
-                capture_output=True,
-                text=True,
-                check=False,
-            ).stderr
-            time.sleep(0.1)
-    message = f"container did not serve {url}"
+            with socket.create_connection((parsed.hostname, parsed.port or 80), timeout=2):
+                return _request(url)
+        except (OSError, http.client.HTTPException) as error:
+            last_error = error
+        state = subprocess.run(
+            [runtime, "inspect", "--format", "{{.State.Status}}", container],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if state != "running":
+            break
+        time.sleep(0.1)
+
+    elapsed = time.monotonic() - started_at
+    logs = subprocess.run(
+        [runtime, "logs", container],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    message = (
+        f"container did not serve {url} after {elapsed:.1f}s; state={state!r}; "
+        f"last connection error={last_error!r}; logs:\n{logs.stdout}{logs.stderr}"
+    )
     raise AssertionError(message)
 
 
@@ -432,12 +448,25 @@ def test_canonical_workflow_inventory_and_justfile_image_specs_are_equal() -> No
     assert workflow_specs == normalized_inventory_specs == _just_image_specs()
 
 
-def test_checks_workflow_container_lanes_keep_separate_cached_contracts() -> None:
+def test_checks_workflow_container_contracts_split_by_artifact_budget() -> None:
     workflow = yaml.safe_load(_CHECKS_WORKFLOW.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
 
-    frontend_steps = jobs["frontend-smoke"]["steps"]
+    assert jobs["container-contracts"]["timeout-minutes"] == 13
+    assert jobs["playwright-image"]["timeout-minutes"] == 9
+    assert jobs["playwright-image"]["permissions"] == {"contents": "read"}
+    # The container maxima are job-inclusive. The explicit transition
+    # and reserve keep the accepted union within each timeout. If hosted timings
+    # show imbalance, update these budgets through a normal commit.
+    container_budget = 6.9 + 2.6 + 1.5
+    playwright_budget = 7.6 + 1.4
+    assert container_budget == pytest.approx(11.0)
+    assert container_budget <= jobs["container-contracts"]["timeout-minutes"]
+    assert jobs["container-contracts"]["timeout-minutes"] - container_budget == pytest.approx(2.0)
+    assert playwright_budget == pytest.approx(jobs["playwright-image"]["timeout-minutes"])
+    frontend_steps = jobs["container-contracts"]["steps"]
     frontend_build = next(step for step in frontend_steps if step.get("name") == "Build production frontend image")
+    assert frontend_build["if"] == "needs.changes.outputs.frontend_smoke == 'true'"
     assert frontend_build["with"] == {
         "context": ".",
         "file": "typescript/apps/frontend/Dockerfile",
@@ -448,7 +477,9 @@ def test_checks_workflow_container_lanes_keep_separate_cached_contracts() -> Non
     }
     frontend_smoke = next(step for step in frontend_steps if step.get("name") == "Smoke production frontend container")
     assert frontend_smoke == {
+        "if": "needs.changes.outputs.frontend_smoke == 'true'",
         "name": "Smoke production frontend container",
+        "id": "frontend-smoke",
         "run": (
             "nix develop .#ci --command uv run --no-sync pytest "
             "scripts/ci/tests/test_frontend_delivery.py"
@@ -460,9 +491,11 @@ def test_checks_workflow_container_lanes_keep_separate_cached_contracts() -> Non
         },
     }
 
-    playwright_steps = jobs["frontend-e2e"]["steps"]
+    playwright_steps = jobs["playwright-image"]["steps"]
     playwright_build = next(step for step in playwright_steps if step.get("name") == "Build Playwright runner image")
+    assert "if" not in playwright_build
     assert playwright_build["with"]["file"] == "typescript/apps/frontend/Dockerfile.playwright-runner"
+    assert playwright_build["with"]["cache-from"] == "type=gha,scope=playwright-runner-smoke"
     assert playwright_build["with"]["cache-to"] == "type=gha,scope=playwright-runner-smoke,mode=max"
     assert "typescript/apps/frontend/node_modules/.bin/playwright" in next(
         step["run"] for step in playwright_steps if step.get("name") == "Verify Playwright runner"
@@ -470,8 +503,16 @@ def test_checks_workflow_container_lanes_keep_separate_cached_contracts() -> Non
 
     collector_run = next(
         step["run"]
-        for step in jobs["otel-collector"]["steps"]
+        for step in frontend_steps
         if step.get("name") == "Validate OpenTelemetry collector image and configs"
+    )
+    assert (
+        next(
+            step["if"]
+            for step in frontend_steps
+            if step.get("name") == "Validate OpenTelemetry collector image and configs"
+        )
+        == "needs.changes.outputs.otel_collector == 'true'"
     )
     assert collector_run.endswith(
         "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary\n"
@@ -497,6 +538,7 @@ def test_frontend_is_in_canonical_local_and_release_image_inventories() -> None:
             "name": "frontend",
             "context": ".",
             "dockerfile": "typescript/apps/frontend/Dockerfile",
+            "lockfile": "pnpm-lock.yaml",
         }
     ]
 

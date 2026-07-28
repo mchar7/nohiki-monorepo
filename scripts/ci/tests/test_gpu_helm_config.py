@@ -17,8 +17,11 @@ its digest flows through the aggregated production map (also overlaid explicitly
 
 from __future__ import annotations
 
+import fcntl
+import json
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +43,12 @@ _GPU_RESOURCE = "nvidia.com/gpu"
 _DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 
 
+@dataclass(frozen=True)
+class _RenderedEnvironment:
+    documents: list[dict[str, Any]]
+    manifest: str
+
+
 def _gpu_image_overlay(tmp_path: Path) -> Path:
     """Explicit digest for the first-party CUDA ml-compute image (build-matrix row)."""
     path = tmp_path / "values.prod.gpu-image.yaml"
@@ -52,7 +61,7 @@ def _gpu_image_overlay(tmp_path: Path) -> Path:
     return path
 
 
-def _render(values_file: str, tmp_path: Path) -> list[dict[str, Any]]:
+def _render(values_file: str, tmp_path: Path) -> _RenderedEnvironment:
     command = [
         "helm",
         "template",
@@ -78,23 +87,66 @@ def _render(values_file: str, tmp_path: Path) -> list[dict[str, Any]]:
         ]
     command.extend(runtime_eso_args(values_file.removeprefix("values.").removesuffix(".yaml")))
     result = subprocess.run(command, cwd=_CHART, capture_output=True, text=True, check=True)
-    return [
-        document for document in yaml.load_all(result.stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict)
-    ]
+    relevant_documents = (
+        document
+        for chunk in result.stdout.split("\n---")
+        if _ML_COMPUTE in chunk or _DEVICE_PLUGIN_REPO in chunk
+        if isinstance(document := yaml.load(chunk, Loader=yaml.CSafeLoader), dict)
+    )
+    return _RenderedEnvironment(list(relevant_documents), result.stdout)
+
+
+def _cached_render(
+    values_file: str,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> _RenderedEnvironment:
+    base = tmp_path_factory.getbasetemp()
+    session_directory = base.parent if base.name.startswith("popen-") else base
+    environment = values_file.removeprefix("values.").removesuffix(".yaml")
+    cache_path = session_directory / f"gpu-helm-config-{environment}.json"
+    lock_path = cache_path.with_suffix(".lock")
+
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if cache_path.exists():
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            return _RenderedEnvironment(
+                documents=cached["documents"],
+                manifest=cached["manifest"],
+            )
+
+        tmp_path = session_directory / f"gpu-helm-config-{environment}-inputs"
+        tmp_path.mkdir(exist_ok=True)
+        rendered = _render(values_file, tmp_path)
+        temporary = cache_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "documents": rendered.documents,
+                    "manifest": rendered.manifest,
+                }
+            ),
+            encoding="utf-8",
+        )
+        temporary.replace(cache_path)
+        return rendered
 
 
 @pytest.fixture(scope="module")
-def rendered_environments(tmp_path_factory: pytest.TempPathFactory) -> dict[str, list[dict[str, Any]]]:
-    """Render each immutable environment values variant once."""
-    tmp_path = tmp_path_factory.mktemp("gpu-helm-renders")
-    return {
-        values_file: _render(values_file, tmp_path)
-        for values_file in (
-            "values.prod.yaml",
-            "values.local.yaml",
-            "values.staging.yaml",
-        )
-    }
+def production_documents(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> _RenderedEnvironment:
+    """Render immutable production documents once across xdist workers."""
+    return _cached_render("values.prod.yaml", tmp_path_factory)
+
+
+@pytest.fixture
+def rendered_environment(
+    values_file: str,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> _RenderedEnvironment:
+    """Render one parametrized environment once across xdist workers."""
+    return _cached_render(values_file, tmp_path_factory)
 
 
 def _deployment(documents: list[dict[str, Any]], name: str) -> dict[str, Any]:
@@ -133,7 +185,11 @@ def _terraform_label_and_taint() -> tuple[dict[str, str], str, str]:
     assert label_value, "GPU node label value missing from Terraform"
     assert taint_key, "GPU node taint key missing from Terraform"
     assert taint_value, "GPU node taint value missing from Terraform"
-    return {label_key.group(1): label_value.group(1)}, taint_key.group(1), taint_value.group(1)
+    return (
+        {label_key.group(1): label_value.group(1)},
+        taint_key.group(1),
+        taint_value.group(1),
+    )
 
 
 def test_base_values_pin_device_plugin_and_default_to_no_gpu() -> None:
@@ -147,9 +203,9 @@ def test_base_values_pin_device_plugin_and_default_to_no_gpu() -> None:
 
 
 def test_production_advertises_gpu_via_pinned_device_plugin(
-    rendered_environments: dict[str, list[dict[str, Any]]],
+    production_documents: _RenderedEnvironment,
 ) -> None:
-    documents = rendered_environments["values.prod.yaml"]
+    documents = production_documents.documents
     label, taint_key, taint_value = _terraform_label_and_taint()
     daemonsets = _device_plugin_daemonsets(documents)
     assert len(daemonsets) == 1, "exactly one NVIDIA device plugin DaemonSet expected in prod"
@@ -173,9 +229,9 @@ def test_production_advertises_gpu_via_pinned_device_plugin(
 
 
 def test_production_ml_compute_requests_exactly_one_gpu(
-    rendered_environments: dict[str, list[dict[str, Any]]],
+    production_documents: _RenderedEnvironment,
 ) -> None:
-    documents = rendered_environments["values.prod.yaml"]
+    documents = production_documents.documents
     label, taint_key, taint_value = _terraform_label_and_taint()
 
     pod = _pod_spec(_deployment(documents, _ML_COMPUTE))
@@ -195,10 +251,10 @@ def test_production_ml_compute_requests_exactly_one_gpu(
 
 
 def test_scheduling_matches_terraform_gpu_pool_label_and_taint(
-    rendered_environments: dict[str, list[dict[str, Any]]],
+    production_documents: _RenderedEnvironment,
 ) -> None:
     """The workload's selector/toleration must match the Terraform pool label/taint."""
-    documents = rendered_environments["values.prod.yaml"]
+    documents = production_documents.documents
     label, taint_key, taint_value = _terraform_label_and_taint()
 
     ml_compute = _pod_spec(_deployment(documents, _ML_COMPUTE))
@@ -212,12 +268,13 @@ def test_scheduling_matches_terraform_gpu_pool_label_and_taint(
 @pytest.mark.parametrize("values_file", ["values.local.yaml", "values.staging.yaml"])
 def test_local_and_staging_schedule_no_gpu(
     values_file: str,
-    rendered_environments: dict[str, list[dict[str, Any]]],
+    rendered_environment: _RenderedEnvironment,
 ) -> None:
-    documents = rendered_environments[values_file]
+    assert values_file in {"values.local.yaml", "values.staging.yaml"}
+    documents = rendered_environment.documents
 
     assert _device_plugin_daemonsets(documents) == [], "no device plugin outside prod"
-    assert not any(_GPU_RESOURCE in yaml.safe_dump(document) for document in documents), "no GPU requested outside prod"
+    assert _GPU_RESOURCE not in rendered_environment.manifest, "no GPU requested outside prod"
 
     pod = _pod_spec(_deployment(documents, _ML_COMPUTE))
     container = pod["containers"][0]
@@ -293,7 +350,7 @@ def test_base_values_default_accelerator_mode_is_cpu() -> None:
 
 def test_single_accelerator_switch_flips_all_or_nothing(
     tmp_path: Path,
-    rendered_environments: dict[str, list[dict[str, Any]]],
+    production_documents: _RenderedEnvironment,
 ) -> None:
     """Flipping only accelerator.mode toggles every GPU contract, all or nothing.
 
@@ -306,7 +363,7 @@ def test_single_accelerator_switch_flips_all_or_nothing(
     label, taint_key, taint_value = _terraform_label_and_taint()
 
     # mode=cuda: the full GPU contract renders coherently.
-    cuda_docs = rendered_environments["values.prod.yaml"]
+    cuda_docs = production_documents.documents
     cuda_pod = _pod_spec(_deployment(cuda_docs, _ML_COMPUTE))
     cuda_container = cuda_pod["containers"][0]
     assert re.search(r"/ml-compute-service-gpu@sha256:[0-9a-f]{64}$", cuda_container["image"]), cuda_container["image"]

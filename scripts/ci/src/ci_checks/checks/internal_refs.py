@@ -90,6 +90,23 @@ def _required_string(table: Mapping[str, object], key: str, context: str) -> str
     return value
 
 
+def _required_scope(table: Mapping[str, object], context: str) -> Scope:
+    # Returning the literals rather than the matched binding: ty narrows a match arm's
+    # captured name only to `str`, so `return scope` would not satisfy `Scope`.
+    match _required_string(table, "scope", context):
+        case "message":
+            return "message"
+        case "diff":
+            return "diff"
+        case "both":
+            return "both"
+        case other:
+            _fail(
+                "config-error",
+                f"{context}.scope must be message, diff, or both, not {other!r}",
+            )
+
+
 def _regex_list(table: Mapping[str, object], key: str, context: str) -> tuple[Pattern[str], ...]:
     value = table.get(key)
     if (
@@ -131,14 +148,12 @@ def load_rules(repo_root: Path | None = None) -> tuple[Rule, ...]:
         if "allow" not in rule:
             _fail("config-error", f"{context}.allow must be a string list")
         allow = _regex_list(rule, "allow", context)
-        scope_value = _required_string(rule, "scope", context)
-        if scope_value not in {"message", "diff", "both"}:
-            _fail("config-error", f"{context}.scope must be message, diff, or both")
+        scope = _required_scope(rule, context)
         rules.append(
             Rule(
                 rule_id=rule_id,
                 description=description,
-                scope=cast(Scope, scope_value),
+                scope=scope,
                 patterns=_regex_list(rule, "regex", context),
                 allow=allow,
             )

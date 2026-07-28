@@ -216,14 +216,18 @@ def load_packages(scope: Scope, *, require_src: bool = False, require_tests: boo
     packages: list[Package] = []
     for glob in globs:
         pkg_path = (REPO_ROOT / glob).resolve()
-        if not (pkg_path / "pyproject.toml").exists():
+        pkg_toml = pkg_path / "pyproject.toml"
+        if not pkg_toml.exists():
             continue
 
         pkg_type = _classify_package(pkg_path)
         if not _scope_filter(pkg_type, scope):
             continue
 
-        pkg = Package(name=pkg_path.name, path=pkg_path, pkg_type=pkg_type)
+        pkg_config = tomllib.loads(pkg_toml.read_text())
+        # The project name is the canonical identity; directory basenames diverge for script packages.
+        name = pkg_config.get("project", {}).get("name") or pkg_path.name
+        pkg = Package(name=name, path=pkg_path, pkg_type=pkg_type)
         if require_src and not pkg.has_src:
             continue
         if require_tests and not pkg.has_tests:

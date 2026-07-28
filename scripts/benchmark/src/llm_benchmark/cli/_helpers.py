@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import typer
 from nohiki_llm_client import (
@@ -94,7 +95,7 @@ def load_credential_free_chain(
     if not isinstance(raw, dict):
         msg = "LLMSettings JSON must define a top-level object"
         raise TypeError(msg)
-    payload: dict[str, object] = raw
+    payload = cast("dict[str, object]", raw)
     if _contains_credentials(payload):
         msg = "LLMSettings JSON must not contain API keys; use the existing secret registry"
         raise typer.BadParameter(msg, param_hint="--llm-settings")
@@ -104,7 +105,7 @@ def load_credential_free_chain(
     if not isinstance(provider, dict):
         msg = "LLMSettings provider must be an object"
         raise TypeError(msg)
-    provider["api_keys"] = key_values
+    cast("dict[str, object]", provider)["api_keys"] = key_values
     validated = LLMSettings.model_validate(payload)
     resolved = resolve_chain(chain, validated)
 

@@ -11,6 +11,7 @@ dependencies = [
     "nohiki-kafka-client==0.1.0",
     "nohiki-domain-models==0.1.0",
     "nohiki-common-exceptions==0.1.0",
+    "nohiki-observability==0.1.0",
     "uuid-utils>=0.10.0",
 ]
 

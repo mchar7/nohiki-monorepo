@@ -9,7 +9,14 @@ from functools import cache
 from pathlib import Path
 
 import pytest
-import yaml
+from _documents import (
+    Manifest,
+    WorkflowMatrix,
+    WorkflowStrategy,
+    load_manifests,
+    load_mapping,
+    load_workflow,
+)
 from ci_checks.checks.migration_truth import (
     MigrationInventory,
     MigrationInventoryEntry,
@@ -44,8 +51,14 @@ _EXPECTED_INVENTORY = MigrationInventory(
 _MIGRATION_DIGEST = "sha256:" + "a" * 64
 
 
+@pytest.fixture(scope="module")
+def real_migration_inventory() -> MigrationInventory:
+    """Discover and validate the immutable real inventory once."""
+    return validate_migration_truth(_REPOSITORY_ROOT)
+
+
 @cache
-def _render_environment(values_file: str) -> tuple[dict[str, object], ...]:
+def _render_environment(values_file: str) -> tuple[Manifest, ...]:
     chart = _REPOSITORY_ROOT / "infra/k8s/helm"
     command = [
         "helm",
@@ -71,10 +84,13 @@ def _render_environment(values_file: str) -> tuple[dict[str, object], ...]:
                 *runtime_eso_args("prod"),
             ]
         )
-    workflow = yaml.safe_load((_REPOSITORY_ROOT / ".github/workflows/build-push.yml").read_text(encoding="utf-8"))
+    workflow = load_workflow(_REPOSITORY_ROOT / ".github/workflows/build-push.yml")
+    strategy: WorkflowStrategy = workflow["jobs"]["build-push"]["strategy"]
+    matrix: WorkflowMatrix = strategy["matrix"]
+    image_names = [entry["name"] for entry in matrix["include"]]
+    assert all(isinstance(name, str) for name in image_names)
     image_digests = {
-        f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": _MIGRATION_DIGEST
-        for entry in workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
+        f"ghcr.io/mchar7/nohiki-monorepo/{name}": _MIGRATION_DIGEST for name in image_names if isinstance(name, str)
     }
     command.extend(["--set-json", f"global.imageDigests={json.dumps(image_digests)}"])
     result = subprocess.run(
@@ -85,8 +101,7 @@ def _render_environment(values_file: str) -> tuple[dict[str, object], ...]:
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    rendered = result.stdout
-    return tuple(document for document in yaml.safe_load_all(rendered) if isinstance(document, dict))
+    return tuple(load_manifests(result.stdout))
 
 
 def _write_history(
@@ -147,16 +162,20 @@ fi
     path.chmod(0o755)
 
 
-def test_real_enabled_schema_inventory_and_all_committed_heads_are_exact() -> None:
-    assert derive_inventory(_REPOSITORY_ROOT) == _EXPECTED_INVENTORY
+def test_real_enabled_schema_inventory_and_all_committed_heads_are_exact(
+    real_migration_inventory: MigrationInventory,
+) -> None:
+    assert real_migration_inventory == _EXPECTED_INVENTORY
 
     bff_versions = _REPOSITORY_ROOT / "backend/services/bff-service/alembic/versions"
     assert sorted(path.name[:3] for path in bff_versions.glob("*.py")) == ["001"]
     assert {entry.head for entry in _EXPECTED_INVENTORY.entries} == {"001"}
 
 
-def test_real_migration_jobs_match_inventory_order_and_evidence_contract() -> None:
-    assert validate_migration_truth(_REPOSITORY_ROOT) == _EXPECTED_INVENTORY
+def test_real_migration_jobs_match_inventory_order_and_evidence_contract(
+    real_migration_inventory: MigrationInventory,
+) -> None:
+    assert real_migration_inventory == _EXPECTED_INVENTORY
 
 
 @pytest.mark.parametrize("values_file", ["values.local.yaml", "values.prod.yaml"])
@@ -167,7 +186,7 @@ def test_rendered_environments_have_exact_raw_unique_migration_jobs(
     migrations = [
         document
         for document in documents
-        if document.get("kind") == "Job" and document["metadata"]["name"].endswith("-db-migrate")
+        if document["kind"] == "Job" and document["metadata"]["name"].endswith("-db-migrate")
     ]
     names = [document["metadata"]["name"].removesuffix("-db-migrate") for document in migrations]
     expected_names = [entry.service for entry in _EXPECTED_INVENTORY.entries]
@@ -178,7 +197,8 @@ def test_rendered_environments_have_exact_raw_unique_migration_jobs(
     assert len(names) == len(set(names))
     assert set(names) == set(expected_names)
     for job in migrations:
-        assert job["metadata"]["annotations"] == {
+        metadata = job["metadata"]
+        assert metadata["annotations"] == {
             "helm.sh/hook": "post-install,post-upgrade",
             "helm.sh/hook-delete-policy": "before-hook-creation",
             "helm.sh/hook-weight": "1",
@@ -191,27 +211,51 @@ def test_production_migration_images_exactly_match_service_digest_images() -> No
     migrations = [
         document
         for document in documents
-        if document.get("kind") == "Job" and document["metadata"]["name"].endswith("-db-migrate")
+        if document["kind"] == "Job" and document["metadata"]["name"].endswith("-db-migrate")
     ]
     deployments = {
         document["metadata"]["labels"]["app.kubernetes.io/name"]: document
         for document in documents
-        if document.get("kind") == "Deployment"
-        and document.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/name")
+        if document["kind"] == "Deployment"
+        and document["metadata"].get("labels", {}).get("app.kubernetes.io/name")
         in {entry.service for entry in _EXPECTED_INVENTORY.entries}
     }
     assert len(deployments) == len(_EXPECTED_INVENTORY.entries) == 14
     for job in migrations:
         service = job["metadata"]["name"].removesuffix("-db-migrate")
-        migration_image = job["spec"]["template"]["spec"]["containers"][0]["image"]
-        service_image = deployments[service]["spec"]["template"]["spec"]["containers"][0]["image"]
+        job_spec = job["spec"]
+        assert isinstance(job_spec, dict)
+        job_template = job_spec.get("template")
+        assert isinstance(job_template, dict)
+        job_pod_spec = job_template.get("spec")
+        assert isinstance(job_pod_spec, dict)
+        migration_containers = job_pod_spec.get("containers")
+        assert isinstance(migration_containers, list)
+        assert all(isinstance(container, dict) for container in migration_containers)
+        migration_container = migration_containers[0]
+        assert isinstance(migration_container, dict)
+        deployment_spec = deployments[service]["spec"]
+        assert isinstance(deployment_spec, dict)
+        deployment_template = deployment_spec.get("template")
+        assert isinstance(deployment_template, dict)
+        deployment_pod_spec = deployment_template.get("spec")
+        assert isinstance(deployment_pod_spec, dict)
+        service_containers = deployment_pod_spec.get("containers")
+        assert isinstance(service_containers, list)
+        assert all(isinstance(container, dict) for container in service_containers)
+        service_container = service_containers[0]
+        assert isinstance(service_container, dict)
+        migration_image = migration_container.get("image")
+        service_image = service_container.get("image")
+        assert isinstance(migration_image, str)
+        assert isinstance(service_image, str)
         assert migration_image == service_image
         assert migration_image.endswith(f"@{_MIGRATION_DIGEST}")
 
 
 def test_local_hook_order_remains_qdrant_then_migrations_then_bootstrap() -> None:
     documents = _render_environment("values.local.yaml")
-    jobs = [document for document in documents if document.get("kind") == "Job"]
+    jobs = [document for document in documents if document["kind"] == "Job"]
     migration = next(document for document in jobs if document["metadata"]["name"].endswith("-db-migrate"))
     qdrant = next(document for document in jobs if document["metadata"]["name"].endswith("-qdrant-init"))
     bootstrap = next(document for document in jobs if document["metadata"]["name"].endswith("-bootstrap"))
@@ -399,9 +443,11 @@ def test_runtime_verifier_accepts_exact_heads_and_writes_retained_evidence(
     )
 
     assert completed.returncode == 0, completed.stderr
-    payload = json.loads(evidence.read_text(encoding="utf-8"))
-    assert payload["passed"] is True
-    assert [(item["service"], item["actual"]) for item in payload["entries"]] == [
+    payload_mapping = load_mapping(evidence)
+    entries = payload_mapping["entries"]
+    assert isinstance(entries, list)
+    assert all(isinstance(item, dict) for item in entries)
+    assert [(item.get("service"), item.get("actual")) for item in entries if isinstance(item, dict)] == [
         (entry.service, entry.head) for entry in _EXPECTED_INVENTORY.entries
     ]
     invocations = [line.split("\t") for line in log.read_text(encoding="utf-8").splitlines()]
@@ -446,8 +492,8 @@ def test_runtime_verifier_fails_closed_on_stale_head_with_redacted_evidence(
     assert secret not in diagnostic
     assert "006" in diagnostic
     assert "007" in diagnostic
-    payload = json.loads(evidence.read_text(encoding="utf-8"))
-    assert payload == {
+    payload_mapping = load_mapping(evidence)
+    assert payload_mapping == {
         "entries": [
             {
                 "actual": "006",

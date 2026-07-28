@@ -478,10 +478,20 @@ class ComposePlatform:
         base = self.service_url("kafka-connect", 8083)
         name = quote(connector_name, safe="")
         return _run_cmd(
-            ["curl", "-fsS", "-X", "POST", f"{base}/connectors/{name}/restart?includeTasks=true&onlyFailed=true"],
+            [
+                "curl",
+                "-fsS",
+                "-X",
+                "POST",
+                f"{base}/connectors/{name}/restart?includeTasks=true&onlyFailed=true",
+            ],
             cwd=self._compose_dir,
             timeout=timeout,
         )
+
+    def check_oom_killed(self) -> list[str]:
+        """Return no OOM-killed pods because Compose does not use Kubernetes."""
+        return []
 
     def check_pending_pods(self) -> list[tuple[str, str]]:
         """Return no pending pods because Compose does not use Kubernetes."""

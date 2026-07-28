@@ -37,9 +37,10 @@ local_image_names := "user-auth-service user-pref-service user-upload-service us
 
 # Common commands
 env_lock := monorepo_root + "/scripts/dev/env-lock.sh"
+test_run := monorepo_root + "/scripts/dev/test-run.sh"
 pnpm := "corepack pnpm"
 playwright := env_lock + " shared node_modules -- " + pnpm + " --filter nohiki-frontend exec playwright"
-playwright_test := playwright + " test --config=e2e/playwright.config.ts"
+playwright_test := test_run + " " + playwright + " test --config=e2e/playwright.config.ts"
 ast_cmd := "cd scripts/util/ast_explorer && " + env_lock + " shared venv -- uv run --no-sync ast-explorer"
 
 # Aliases and defaults
@@ -113,9 +114,9 @@ lint-md:
     {{ env_lock }} shared node_modules -- {{ pnpm }} exec markdownlint-cli2 --fix "**/*.md"
 # Type checking
 
-# Run ty on all backend code
+# Run ty across every workspace package dir (same surface as the CI typecheck lane)
 typecheck-all:
-    {{ env_lock }} shared venv -- uv run --no-sync ty check backend/ --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
+    {{ env_lock }} shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init scripts/ci scripts/util scripts/benchmark --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
 
 # Run ty on a specific backend service
 typecheck service:
@@ -201,28 +202,28 @@ preview-lib *ARGS:
 
 # Run the scaffolder's own test suite (unit + invariant + integration).
 test-scaffold:
-    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-scaffold pytest scripts/util/scaffold/tests -q
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-scaffold pytest scripts/util/scaffold/tests -q
 
 # Testing
 
 # Run package-aware unit tests across uv workspace members
 test-all-packages:
-    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope all --ci
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope all --ci
 
 # Run package-aware unit tests for backend services only
 test-backend-packages:
-    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope services --ci
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope services --ci
 
 # Run package-aware unit tests for shared libraries only
 test-libs-packages:
-    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope libs --ci
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope libs --ci
 
 # Run tests for a specific service
 test service:
     #!/usr/bin/env bash
     set -euo pipefail
     dir=$(find backend/services backend/libs backend/jobs -maxdepth 1 -type d -name "{{ service }}" | head -1)
-    {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} pytest "$dir/tests/" --tb=short
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} pytest "$dir/tests/" --tb=short
 
 # Run tests with coverage for a specific service
 test-cov service:
@@ -231,19 +232,19 @@ test-cov service:
     dir=$(find backend/services backend/libs backend/jobs -maxdepth 1 -type d -name "{{ service }}" | head -1)
     # Coverage instruments the service's src tree; --cov=src failed because
     # pytest runs from the monorepo root where no top-level src/ exists.
-    {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} pytest "$dir/tests/" --tb=short --cov="$dir/src" --cov-report=term-missing
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} pytest "$dir/tests/" --tb=short --cov="$dir/src" --cov-report=term-missing
 
 # Run monorepo integration tests
 test-integration:
-    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/integration --tb=short
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/integration --tb=short
 
 # Run API contract tests
 test-api:
-    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/api --tb=short
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/api --tb=short
 
 # Run API tests with coverage
 test-api-cov:
-    {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/api --tb=short --cov=backend/services/bff-service --cov-report=term-missing
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/api --tb=short --cov=backend/services/bff-service --cov-report=term-missing
 
 # --- E2E Playwright Tests ---
 
@@ -256,7 +257,7 @@ test-e2e:
 
 # Run auth-listings tests with the feature enabled and deterministic worker routing
 test-e2e-auth-listings:
-    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run test:e2e:auth-listings
+    {{ test_run }} {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run test:e2e:auth-listings
 
 # Run specific Playwright journey test
 test-e2e-journey journey:
@@ -294,7 +295,7 @@ fe-analyze:
 
 # Run all frontend checks (type-check, biome lint, vitest)
 fe-check:
-    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run check:all
+    {{ test_run }} {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run check:all
 
 # Service development
 

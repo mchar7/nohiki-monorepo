@@ -3,9 +3,16 @@ from __future__ import annotations
 import subprocess
 import tarfile
 from pathlib import Path
-from typing import Any, cast
 
 import yaml
+from _documents import (
+    Container,
+    containers_of,
+    load_manifests,
+    load_mapping,
+    metadata_of,
+    string_at,
+)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
@@ -14,24 +21,18 @@ _ROLLOUT_CHART_METADATA = "mimir-distributed/charts/rollout-operator/Chart.yaml"
 _DIGEST = "sha256:0050002aaf07a867a3a3c2aa029dc29ff2e12eb8608f1f47e4c1d307bbdfea39"
 
 
-def _load_yaml(path: Path) -> dict[str, Any]:
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(document, dict)
-    return cast(dict[str, Any], document)
-
-
 def _rollout_chart_app_version() -> str:
     with tarfile.open(_MIMIR_ARCHIVE, mode="r:gz") as archive:
         metadata_file = archive.extractfile(_ROLLOUT_CHART_METADATA)
         assert metadata_file is not None
-        metadata = yaml.safe_load(metadata_file)
+        metadata: object = yaml.safe_load(metadata_file)
     assert isinstance(metadata, dict)
     app_version = metadata.get("appVersion")
     assert isinstance(app_version, str)
     return app_version
 
 
-def _render_rollout_container() -> dict[str, Any]:
+def _render_rollout_container() -> Container:
     result = subprocess.run(
         [
             "helm",
@@ -51,22 +52,27 @@ def _render_rollout_container() -> dict[str, Any]:
         check=True,
     )
     deployments = [
-        document
-        for document in yaml.safe_load_all(result.stdout)
-        if isinstance(document, dict)
-        and document.get("kind") == "Deployment"
-        and document.get("metadata", {}).get("name") == "nohiki-rollout-operator"
+        manifest
+        for manifest in load_manifests(result.stdout)
+        if manifest["kind"] == "Deployment" and metadata_of(manifest)["name"] == "nohiki-rollout-operator"
     ]
     assert len(deployments) == 1
-    containers = deployments[0]["spec"]["template"]["spec"]["containers"]
-    rollout_containers = [container for container in containers if container.get("name") == "rollout-operator"]
+    rollout_containers = [
+        container for container in containers_of(deployments[0]) if container["name"] == "rollout-operator"
+    ]
     assert len(rollout_containers) == 1
-    return cast(dict[str, Any], rollout_containers[0])
+    return rollout_containers[0]
 
 
 def test_rollout_operator_image_and_args_match_nested_chart_contract() -> None:
     app_version = _rollout_chart_app_version()
-    image_tag = _load_yaml(_CHART / "values.yaml")["mimir-distributed"]["rollout_operator"]["image"]["tag"]
+    image_tag = string_at(
+        load_mapping(_CHART / "values.yaml"),
+        "mimir-distributed",
+        "rollout_operator",
+        "image",
+        "tag",
+    )
 
     assert app_version == "v0.38.0"
     assert image_tag == f"{app_version}@{_DIGEST}"

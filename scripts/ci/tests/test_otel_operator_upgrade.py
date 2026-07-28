@@ -4,6 +4,11 @@ from pathlib import Path
 
 import pytest
 import yaml
+from _documents import (
+    Manifest,
+    load_manifests,
+    load_mapping,
+)
 from helm_test_utils import runtime_eso_args
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -23,18 +28,6 @@ _OPERATOR_CRDS = {
     "targetallocators.opentelemetry.io",
 }
 
-type Manifest = dict[str, object]
-
-
-def _load(path: Path) -> Manifest:
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(document, dict), path
-    return document
-
-
-def _documents(stdout: str) -> tuple[Manifest, ...]:
-    return tuple(document for document in yaml.load_all(stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict))
-
 
 def _render_platform() -> tuple[Manifest, ...]:
     command = [
@@ -51,7 +44,7 @@ def _render_platform() -> tuple[Manifest, ...]:
     ]
     command.extend(runtime_eso_args("staging"))
     result = subprocess.run(command, cwd=_PLATFORM_CHART, capture_output=True, text=True, check=True)
-    return _documents(result.stdout)
+    return tuple(load_manifests(result.stdout))
 
 
 def _render_foundation() -> tuple[Manifest, ...]:
@@ -62,7 +55,7 @@ def _render_foundation() -> tuple[Manifest, ...]:
         text=True,
         check=True,
     )
-    return _documents(result.stdout)
+    return tuple(load_manifests(result.stdout))
 
 
 def _render_observability() -> tuple[Manifest, ...]:
@@ -73,7 +66,7 @@ def _render_observability() -> tuple[Manifest, ...]:
         text=True,
         check=True,
     )
-    return _documents(result.stdout)
+    return tuple(load_manifests(result.stdout))
 
 
 @pytest.fixture(scope="module")
@@ -90,42 +83,69 @@ def _operator_resources(documents: tuple[Manifest, ...], kind: str) -> tuple[Man
     return tuple(
         document
         for document in documents
-        if document.get("kind") == kind
-        and document.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/name") == "opentelemetry-operator"
+        if document["kind"] == kind
+        and document["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "opentelemetry-operator"
     )
 
 
 def test_foundation_owns_locked_operator_dependency_and_platform_disables_its_copy() -> None:
-    foundation_chart = _load(_FOUNDATION_CHART / "Chart.yaml")
-    foundation_lock = _load(_FOUNDATION_CHART / "Chart.lock")
-    platform_values = _load(_PLATFORM_CHART / "values.yaml")
-    foundation_values = _load(_FOUNDATION_CHART / "values.yaml")
+    foundation_chart = load_mapping(_FOUNDATION_CHART / "Chart.yaml")
+    foundation_lock = load_mapping(_FOUNDATION_CHART / "Chart.lock")
+    platform_values = load_mapping(_PLATFORM_CHART / "values.yaml")
+    foundation_values = load_mapping(_FOUNDATION_CHART / "values.yaml")
 
-    chart_dependencies = [item for item in foundation_chart["dependencies"] if item["name"] == "opentelemetry-operator"]
-    lock_dependencies = [item for item in foundation_lock["dependencies"] if item["name"] == "opentelemetry-operator"]
+    chart_dependencies_value = foundation_chart["dependencies"]
+    lock_dependencies_value = foundation_lock["dependencies"]
+    assert isinstance(chart_dependencies_value, list)
+    assert isinstance(lock_dependencies_value, list)
+    assert all(isinstance(item, dict) for item in chart_dependencies_value)
+    assert all(isinstance(item, dict) for item in lock_dependencies_value)
+    chart_dependencies = [
+        item
+        for item in chart_dependencies_value
+        if isinstance(item, dict) and item.get("name") == "opentelemetry-operator"
+    ]
+    lock_dependencies = [
+        item
+        for item in lock_dependencies_value
+        if isinstance(item, dict) and item.get("name") == "opentelemetry-operator"
+    ]
     assert len(chart_dependencies) == len(lock_dependencies) == 1
-    assert chart_dependencies[0]["version"] == lock_dependencies[0]["version"] == "0.119.0"
-    assert foundation_values["opentelemetry-operator"]["enabled"] is True
-    assert platform_values["opentelemetry-operator"]["enabled"] is False
+    assert chart_dependencies[0].get("version") == lock_dependencies[0].get("version") == "0.119.0"
+    foundation_operator = foundation_values["opentelemetry-operator"]
+    platform_operator = platform_values["opentelemetry-operator"]
+    assert isinstance(foundation_operator, dict)
+    assert isinstance(platform_operator, dict)
+    assert foundation_operator.get("enabled") is True
+    assert platform_operator.get("enabled") is False
 
     assert _ARCHIVE.is_file()
     with tarfile.open(_ARCHIVE) as archive:
         metadata_file = archive.extractfile("opentelemetry-operator/Chart.yaml")
         assert metadata_file is not None
-        metadata = yaml.safe_load(metadata_file)
-    assert metadata["version"] == "0.119.0"
-    assert metadata["appVersion"] == "0.154.0"
+        metadata: object = yaml.safe_load(metadata_file)
+    assert isinstance(metadata, dict)
+    assert metadata.get("version") == "0.119.0"
+    assert metadata.get("appVersion") == "0.154.0"
 
 
 def test_foundation_values_pin_manager_and_preserve_metric_shape() -> None:
-    values = _load(_FOUNDATION_CHART / "values.yaml")["opentelemetry-operator"]
-    assert values["manager"]["image"]["tag"] == (
-        "0.154.0@sha256:263699ffea0c418530b43d95dcd49a125533325a222ffac675cbbf0d63ef035b"
-    )
-    assert values["manager"]["featureGatesMap"]["operator.collector.usedefaulttelemetryshape"] is False
-    assert "featureGates" not in values["manager"]
+    root_values = load_mapping(_FOUNDATION_CHART / "values.yaml")
+    values = root_values["opentelemetry-operator"]
+    assert isinstance(values, dict)
+    manager = values.get("manager")
+    assert isinstance(manager, dict)
+    image = manager.get("image")
+    feature_gates = manager.get("featureGatesMap")
+    service_monitor = manager.get("serviceMonitor")
+    assert isinstance(image, dict)
+    assert isinstance(feature_gates, dict)
+    assert isinstance(service_monitor, dict)
+    assert image.get("tag") == ("0.154.0@sha256:263699ffea0c418530b43d95dcd49a125533325a222ffac675cbbf0d63ef035b")
+    assert feature_gates.get("operator.collector.usedefaulttelemetryshape") is False
+    assert "featureGates" not in manager
     assert "kubeRBACProxy" not in values
-    assert values["manager"]["serviceMonitor"]["enabled"] is False
+    assert service_monitor.get("enabled") is False
 
 
 def test_operator_renders_single_manager_with_secure_metrics(
@@ -138,11 +158,13 @@ def test_operator_renders_single_manager_with_secure_metrics(
     assert len(deployments) == 1
     assert _operator_resources(platform, "Deployment") == ()
     deployment = deployments[0]
+    metadata = deployment["metadata"]
+    labels = metadata["labels"]
     assert (
-        deployment["metadata"]["name"],
-        deployment["metadata"]["namespace"],
-        deployment["metadata"]["labels"]["app.kubernetes.io/instance"],
-        deployment["metadata"]["labels"]["app.kubernetes.io/managed-by"],
+        metadata["name"],
+        metadata["namespace"],
+        labels["app.kubernetes.io/instance"],
+        labels["app.kubernetes.io/managed-by"],
     ) == (
         "foundation-opentelemetry-operator",
         "nohiki-foundation",
@@ -150,25 +172,55 @@ def test_operator_renders_single_manager_with_secure_metrics(
         "Helm",
     )
 
-    containers = deployment["spec"]["template"]["spec"]["containers"]
+    deployment_spec = deployment["spec"]
+    assert isinstance(deployment_spec, dict)
+    template = deployment_spec.get("template")
+    assert isinstance(template, dict)
+    pod_spec = template.get("spec")
+    assert isinstance(pod_spec, dict)
+    containers = pod_spec.get("containers")
+    assert isinstance(containers, list)
     assert len(containers) == 1
     manager = containers[0]
-    assert manager["image"] == _MANAGER
-    assert "--metrics-addr=0.0.0.0:8443" in manager["args"]
-    assert "--metrics-secure=true" in manager["args"]
-    assert "--feature-gates=-operator.collector.usedefaulttelemetryshape" in manager["args"]
-    assert manager["readinessProbe"]["httpGet"] == {"path": "/readyz", "port": 8081}
-    assert not any("kube-rbac-proxy" in container.get("image", "") for container in containers)
+    assert isinstance(manager, dict)
+    assert manager.get("image") == _MANAGER
+    manager_args = manager.get("args")
+    assert isinstance(manager_args, list)
+    assert "--metrics-addr=0.0.0.0:8443" in manager_args
+    assert "--metrics-secure=true" in manager_args
+    assert "--feature-gates=-operator.collector.usedefaulttelemetryshape" in manager_args
+    readiness_probe = manager.get("readinessProbe")
+    assert isinstance(readiness_probe, dict)
+    assert readiness_probe.get("httpGet") == {
+        "path": "/readyz",
+        "port": 8081,
+    }
+    container_images: list[str] = []
+    for container in containers:
+        assert isinstance(container, dict)
+        image = container.get("image", "")
+        assert isinstance(image, str)
+        container_images.append(image)
+    assert not any("kube-rbac-proxy" in image for image in container_images)
 
     services = _operator_resources(foundation, "Service")
     assert len(services) == 2
-    metrics_services = [
-        service
-        for service in services
-        if any(port.get("name") == "metrics" for port in service["spec"].get("ports", []))
-    ]
+    metrics_services: list[Manifest] = []
+    for service in services:
+        service_spec = service["spec"]
+        assert isinstance(service_spec, dict)
+        ports = service_spec.get("ports", [])
+        assert isinstance(ports, list)
+        assert all(isinstance(port, dict) for port in ports)
+        if any(isinstance(port, dict) and port.get("name") == "metrics" for port in ports):
+            metrics_services.append(service)
     assert len(metrics_services) == 1
-    metrics_port = next(port for port in metrics_services[0]["spec"]["ports"] if port["name"] == "metrics")
+    metrics_spec = metrics_services[0]["spec"]
+    assert isinstance(metrics_spec, dict)
+    metrics_ports = metrics_spec.get("ports")
+    assert isinstance(metrics_ports, list)
+    assert all(isinstance(port, dict) for port in metrics_ports)
+    metrics_port = next(port for port in metrics_ports if isinstance(port, dict) and port.get("name") == "metrics")
     assert metrics_port == {
         "name": "metrics",
         "port": 8443,
@@ -186,14 +238,12 @@ def test_operator_renders_current_collector_crd_api(
     foundation_crds = {
         document["metadata"]["name"]
         for document in rendered_manifests["foundation"]
-        if document.get("kind") == "CustomResourceDefinition"
-        and document.get("metadata", {}).get("name", "").endswith(".opentelemetry.io")
+        if document["kind"] == "CustomResourceDefinition" and document["metadata"]["name"].endswith(".opentelemetry.io")
     }
     platform_crds = {
         document["metadata"]["name"]
         for document in rendered_manifests["platform"]
-        if document.get("kind") == "CustomResourceDefinition"
-        and document.get("metadata", {}).get("name", "").endswith(".opentelemetry.io")
+        if document["kind"] == "CustomResourceDefinition" and document["metadata"]["name"].endswith(".opentelemetry.io")
     }
     assert foundation_crds == _OPERATOR_CRDS
     assert platform_crds == set()
@@ -201,21 +251,29 @@ def test_operator_renders_current_collector_crd_api(
     collector_crds = [
         document
         for document in rendered_manifests["foundation"]
-        if document.get("kind") == "CustomResourceDefinition"
-        and document.get("metadata", {}).get("name") == "opentelemetrycollectors.opentelemetry.io"
+        if document["kind"] == "CustomResourceDefinition"
+        and document["metadata"]["name"] == "opentelemetrycollectors.opentelemetry.io"
     ]
     assert len(collector_crds) == 1
     collector_crd = collector_crds[0]
     assert collector_crd["apiVersion"] == "apiextensions.k8s.io/v1"
-    versions = {version["name"]: version for version in collector_crd["spec"]["versions"]}
-    assert versions["v1beta1"]["served"] is True
-    assert versions["v1beta1"]["storage"] is True
+    collector_spec = collector_crd["spec"]
+    assert isinstance(collector_spec, dict)
+    versions_value = collector_spec.get("versions")
+    assert isinstance(versions_value, list)
+    versions: dict[str, tuple[object, object]] = {}
+    for version in versions_value:
+        assert isinstance(version, dict)
+        name = version.get("name")
+        assert isinstance(name, str)
+        versions[name] = (version.get("served"), version.get("storage"))
+    assert versions["v1beta1"][0] is True
+    assert versions["v1beta1"][1] is True
 
     collectors = [
         document
         for document in rendered_manifests["observability"]
-        if document.get("kind") == "OpenTelemetryCollector"
-        and document.get("metadata", {}).get("name") == "nohiki-collector"
+        if document["kind"] == "OpenTelemetryCollector" and document["metadata"]["name"] == "nohiki-collector"
     ]
     assert len(collectors) == 1
     collector = collectors[0]
@@ -225,10 +283,16 @@ def test_operator_renders_current_collector_crd_api(
         "app.kubernetes.io/part-of": "nohiki-observability",
     }
 
-    infrastructure = _load(_STAGING_GITOPS / "infrastructure.yaml")
-    platform = _load(_STAGING_GITOPS / "platform.yaml")
-    observability = _load(_STAGING_GITOPS / "observability.yaml")
-    assert infrastructure["spec"]["healthChecks"] == [
+    infrastructure = load_mapping(_STAGING_GITOPS / "infrastructure.yaml")
+    platform = load_mapping(_STAGING_GITOPS / "platform.yaml")
+    observability = load_mapping(_STAGING_GITOPS / "observability.yaml")
+    infrastructure_spec = infrastructure["spec"]
+    platform_spec = platform["spec"]
+    observability_spec = observability["spec"]
+    assert isinstance(infrastructure_spec, dict)
+    assert isinstance(platform_spec, dict)
+    assert isinstance(observability_spec, dict)
+    assert infrastructure_spec.get("healthChecks") == [
         {
             "apiVersion": "helm.toolkit.fluxcd.io/v2",
             "kind": "HelmRelease",
@@ -236,14 +300,18 @@ def test_operator_renders_current_collector_crd_api(
             "namespace": "flux-system",
         }
     ]
-    assert platform["spec"]["dependsOn"] == [{"name": "infrastructure"}]
-    assert observability["spec"]["dependsOn"] == [{"name": "platform"}]
-    assert observability["spec"]["wait"] is False
-    otel_health_checks = {
-        (check["apiVersion"], check["kind"], check["name"], check["namespace"])
-        for check in observability["spec"]["healthChecks"]
-        if check["kind"] in {"OpenTelemetryCollector", "Deployment"} and "collector" in check["name"]
-    }
+    assert platform_spec.get("dependsOn") == [{"name": "infrastructure"}]
+    assert observability_spec.get("dependsOn") == [{"name": "platform"}]
+    assert observability_spec.get("wait") is False
+    health_checks = observability_spec.get("healthChecks")
+    assert isinstance(health_checks, list)
+    otel_health_checks: set[tuple[object, object, str, object]] = set()
+    for check in health_checks:
+        assert isinstance(check, dict)
+        kind = check.get("kind")
+        name = check.get("name")
+        if kind in {"OpenTelemetryCollector", "Deployment"} and isinstance(name, str) and "collector" in name:
+            otel_health_checks.add((check.get("apiVersion"), kind, name, check.get("namespace")))
     assert otel_health_checks == {
         ("apps/v1", "Deployment", "nohiki-collector-collector", "nohiki-staging"),
         (
