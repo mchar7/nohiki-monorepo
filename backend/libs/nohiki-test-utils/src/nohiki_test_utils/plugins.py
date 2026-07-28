@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import shutil
+import socket
 import tempfile
+from collections.abc import Buffer, Callable
 from importlib import import_module
 from typing import Protocol, cast
 
 import pytest
+
+type _SocketAddress = tuple[object, ...] | str | Buffer | int
+
 
 _CONTAINER_BACKED_FIXTURES: frozenset[str] = frozenset(
     {
@@ -29,6 +35,17 @@ _FIXTURE_PLUGIN_MODULES = (
 )
 
 _EMPTY_SECRETS_DIR_KEY: pytest.StashKey[str] = pytest.StashKey()
+_NETWORK_ALLOWED_MARKERS: frozenset[str] = frozenset(
+    {
+        "e2e",
+        "integration",
+        "requires_docker",
+    }
+)
+
+
+class _OutboundNetworkProhibited(BaseException):
+    """Keep blocked calls visible through dependency exception wrappers."""
 
 
 class _DockerAvailabilityModule(Protocol):
@@ -80,6 +97,63 @@ def pytest_configure(config: pytest.Config) -> None:
         if not config.pluginmanager.hasplugin(plugin_name):
             fixture_plugin = import_module(plugin_name)
             config.pluginmanager.register(fixture_plugin, plugin_name)
+
+
+def _network_error(request: pytest.FixtureRequest, call: str, target: object) -> _OutboundNetworkProhibited:
+    message = (
+        f"Unmocked outbound network in {request.node.nodeid}: socket.{call}({target!r}). "
+        "Stub the network-facing function the test depends on at its module boundary. "
+        "If the traffic is intentional, mark the test with an integration marker excluded from the unit lane."
+    )
+    return _OutboundNetworkProhibited(message)
+
+
+def _is_numeric_host(host: str | bytes | None) -> bool:
+    if host is None:
+        return True
+    try:
+        candidate = host.decode("ascii") if isinstance(host, bytes) else host
+        ipaddress.ip_address(candidate)
+    except UnicodeDecodeError, ValueError:
+        return False
+    return True
+
+
+@pytest.fixture(autouse=True)
+def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent unmarked tests from resolving or contacting network peers."""
+    if any(request.node.get_closest_marker(marker) is not None for marker in _NETWORK_ALLOWED_MARKERS):
+        return
+
+    original_connect = socket.socket.connect
+    original_connect_ex = socket.socket.connect_ex
+    original_sendto = socket.socket.sendto
+    original_getaddrinfo = cast("Callable[..., object]", socket.getaddrinfo)
+
+    def guarded_connect(sock: socket.socket, address: _SocketAddress) -> None:
+        if sock.family in {socket.AF_INET, socket.AF_INET6}:
+            raise _network_error(request, "socket.connect", address)
+        original_connect(sock, address)
+
+    def guarded_connect_ex(sock: socket.socket, address: _SocketAddress) -> int:
+        if sock.family in {socket.AF_INET, socket.AF_INET6}:
+            raise _network_error(request, "socket.connect_ex", address)
+        return original_connect_ex(sock, address)
+
+    def guarded_sendto(sock: socket.socket, data: Buffer, address: _SocketAddress) -> int:
+        if sock.family in {socket.AF_INET, socket.AF_INET6}:
+            raise _network_error(request, "socket.sendto", address)
+        return original_sendto(sock, data, address)
+
+    def guarded_getaddrinfo(host: str | bytes | None, *args: object, **kwargs: object) -> object:
+        if not _is_numeric_host(host):
+            raise _network_error(request, "getaddrinfo", host)
+        return original_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+    monkeypatch.setattr(socket.socket, "sendto", guarded_sendto)
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
 
 
 @pytest.hookimpl(tryfirst=True)

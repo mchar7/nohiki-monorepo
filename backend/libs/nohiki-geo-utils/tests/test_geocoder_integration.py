@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Mapping
 from urllib.parse import parse_qs, urlsplit
 
@@ -16,6 +17,7 @@ type NominatimPayload = list[dict[str, str]]
 
 COORDINATE_TOLERANCE = 0.05
 RATE_LIMIT_DELAY = 1.5
+NOMINATIM_SMOKE_ENV = "NOHIKI_RUN_NOMINATIM_SMOKE"
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -326,6 +328,8 @@ class TestRecordedNominatimContracts:
 @pytest.mark.slow
 async def test_live_nominatim_smoke_is_rate_limited() -> None:
     """Verify one opt-in request against the public Nominatim service."""
+    if os.environ.get(NOMINATIM_SMOKE_ENV) != "1":
+        pytest.skip(f"Set {NOMINATIM_SMOKE_ENV}=1 to run the live Nominatim smoke test.")
     await asyncio.sleep(RATE_LIMIT_DELAY)
 
     result = await geocode_query("Berlin, Germany")
