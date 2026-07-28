@@ -14,7 +14,7 @@ const mockDownloadPdf: ReturnType<typeof vi.fn> = vi.fn();
 const mockClearError: ReturnType<typeof vi.fn> = vi.fn();
 const mockHandleJsChoice: ReturnType<typeof vi.fn> = vi.fn();
 
-vi.mock('@/features/omakase/lib', () => ({
+vi.mock('../../lib/usePreviewPane.ts', () => ({
   usePreviewPane: () => ({
     isGenerating: false,
     hasPreview: false,
