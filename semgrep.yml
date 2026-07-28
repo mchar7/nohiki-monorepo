@@ -30,3 +30,28 @@ rules:
         - '**/backend/services/job-ingest-discovery-service/**'
         - '**/backend/services/doc-content-service/**'
         - '**/backend/services/doc-process-service/**'
+
+  # TEST CORRECTNESS: stale import and attribute patch targets must fail instead of passing vacuously.
+  - id: no-patching-builtins-import
+    pattern-either:
+      - pattern: patch("builtins.__import__", ...)
+      - pattern: $M.patch("builtins.__import__", ...)
+    message: "Patch the import function used by production (for example, module.importlib.import_module), not builtins.__import__."
+    languages: [python]
+    severity: ERROR
+
+  - id: no-mock-patch-create
+    pattern-either:
+      - pattern: patch(..., create=True, ...)
+      - pattern: patch.object(..., create=True, ...)
+      - pattern: $M.patch(..., create=True, ...)
+      - pattern: $M.patch.object(..., create=True, ...)
+    message: "Do not pass create=True to mock.patch; a missing patch target must fail the test."
+    languages: [python]
+    severity: ERROR
+
+  - id: no-monkeypatch-setattr-raising-false
+    pattern: $MONKEYPATCH.setattr(..., raising=False)
+    message: "Do not pass raising=False to monkeypatch.setattr; a missing patch target must fail the test."
+    languages: [python]
+    severity: ERROR
