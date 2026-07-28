@@ -44,6 +44,10 @@ _NETWORK_ALLOWED_MARKERS: frozenset[str] = frozenset(
 )
 
 
+class _OutboundNetworkProhibited(BaseException):
+    """Keep blocked calls visible through dependency exception wrappers."""
+
+
 class _DockerAvailabilityModule(Protocol):
     def docker_daemon_available(self) -> bool: ...
 
@@ -95,13 +99,13 @@ def pytest_configure(config: pytest.Config) -> None:
             config.pluginmanager.register(fixture_plugin, plugin_name)
 
 
-def _network_error(request: pytest.FixtureRequest, call: str, target: object) -> AssertionError:
+def _network_error(request: pytest.FixtureRequest, call: str, target: object) -> _OutboundNetworkProhibited:
     message = (
         f"Unmocked outbound network in {request.node.nodeid}: socket.{call}({target!r}). "
         "Stub the network-facing function the test depends on at its module boundary. "
         "If the traffic is intentional, mark the test with an integration marker excluded from the unit lane."
     )
-    return AssertionError(message)
+    return _OutboundNetworkProhibited(message)
 
 
 def _is_numeric_host(host: str | bytes | None) -> bool:

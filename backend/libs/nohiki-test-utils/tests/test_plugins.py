@@ -90,12 +90,40 @@ class TestOutboundNetworkIsolation:
     """Tests for the unit-test network boundary."""
 
     def test_unmarked_test_cannot_resolve_a_network_peer(self) -> None:
-        """The autouse guard fails before DNS or transport I/O."""
+        """The guard bypasses dependency exception wrappers before DNS or transport I/O."""
+
+        def resolve_through_dependency_wrapper() -> None:
+            try:
+                socket.getaddrinfo("example.com", 443)
+            except Exception:
+                pytest.fail("The network guard was hidden by a dependency exception wrapper")
+
         with pytest.raises(
-            AssertionError,
+            plugins._OutboundNetworkProhibited,
             match=r"Unmocked outbound network.*socket\.getaddrinfo.*Stub the network-facing function",
         ):
-            socket.getaddrinfo("example.com", 443)
+            resolve_through_dependency_wrapper()
+
+    def test_import_time_block_retains_the_guard_diagnostic(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An import-time network attempt reports the blocked call instead of a broken module."""
+        module_name = "_network_guard_import_probe"
+        (tmp_path / f"{module_name}.py").write_text(
+            'import socket\nsocket.getaddrinfo("example.com", 443)\n',
+            encoding="utf-8",
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+
+        with pytest.raises(
+            plugins._OutboundNetworkProhibited,
+            match=r"Unmocked outbound network.*socket\.getaddrinfo.*Stub the network-facing function",
+        ):
+            importlib.import_module(module_name)
+
+        assert module_name not in sys.modules
 
     @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "203.0.113.10"])
     def test_numeric_address_resolution_stays_local(self, host: str) -> None:

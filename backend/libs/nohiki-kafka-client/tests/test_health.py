@@ -45,8 +45,14 @@ class TestKafkaHealthProbe:
             capabilities={KafkaCapability.BROKER_CONNECTIVITY},
             timeout_seconds=1.0,
         )
-        result = await probe.check()
+        broker_check = AsyncMock(return_value=(False, 0, "Connection refused"))
+
+        with patch("nohiki_kafka_client.observability.health.check_broker_connectivity", broker_check):
+            result = await probe.check()
+
         assert result.status.value == "unhealthy"
+        assert result.message == "Connection refused"
+        broker_check.assert_awaited_once_with("invalid:9092", timeout_seconds=1.0)
 
     @pytest.mark.asyncio
     async def test_check_consumer_ready_no_manager(self) -> None:

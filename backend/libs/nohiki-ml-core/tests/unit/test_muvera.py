@@ -196,14 +196,15 @@ def test_muvera_lazy_loading_import_error(
     encoder = MUVERAEncoder(manifest)
 
     with (
-        patch.dict("sys.modules", {"fastembed": None, "fastembed.postprocess.muvera": None}),
         patch(
-            "builtins.__import__",
+            "nohiki_ml_core.encoders.muvera.importlib.import_module",
             side_effect=ImportError("No module named 'fastembed'"),
         ),
-        pytest.raises(ImportError),
+        pytest.raises(RuntimeError, match="Failed to initialize MUVERA encoder") as error,
     ):
         encoder._ensure_encoder()
+
+    assert isinstance(error.value.__cause__, ImportError)
 
 
 @pytest.mark.usefixtures("mock_require_fastembed")
