@@ -1,7 +1,7 @@
 """Exact deterministic policy tests for document qualification."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,6 +33,7 @@ from llm_benchmark.engine.document_qualification import (
     redact_for_evidence,
     validate_approved_document_chain,
 )
+from llm_benchmark.pricing import PricingSnapshot
 from llm_benchmark.schemas.document_qualification import (
     ArtifactEvidence,
     FailureCode,
@@ -43,6 +44,17 @@ from llm_benchmark.schemas.document_qualification import (
 
 _PROXY = "https://provider.example.test/v1"
 _FIXTURE = get_document_fixture("unicode_complete_resume")
+
+
+@pytest.fixture(autouse=True)
+def _fixed_pricing() -> Iterator[MagicMock]:
+    """The kimi route names a provider, which otherwise resolves prices over the network."""
+    snapshot = PricingSnapshot(input_per_million_usd=1.0, output_per_million_usd=2.0, source="test")
+    with patch(
+        "llm_benchmark.engine.document_qualification.resolve_pricing_snapshot",
+        return_value=snapshot,
+    ) as stub:
+        yield stub
 
 
 def _models() -> tuple[LLMModelConfig, ...]:
