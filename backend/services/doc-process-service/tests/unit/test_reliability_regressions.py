@@ -21,6 +21,14 @@ from nohiki.doc.process.v1 import ProcessedDocumentSnapshot, ProcessingLevel
 from nohiki_s3_client import S3ObjectTooLargeError
 
 
+def _reject_request(request: httpx.Request) -> httpx.Response:
+    pytest.fail(f"Unexpected outbound request: {request.url}")
+
+
+def _http_client() -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(_reject_request))
+
+
 def _client(*, poll_interval: float = 0.1, max_poll_attempts: int = 3) -> DoclingClient:
     return DoclingClient.from_settings(
         DoclingSettings(
@@ -170,7 +178,7 @@ def test_polling_stops_at_monotonic_deadline_even_before_attempt_limit() -> None
         patch("doc_process_service.providers.docling.client.time.sleep"),
         pytest.raises(TimeoutError, match="Timeout waiting"),
     ):
-        client._poll_for_result(httpx.Client(), "task-id")
+        client._poll_for_result(_http_client(), "task-id")
 
     poll_once.assert_called_once()
 

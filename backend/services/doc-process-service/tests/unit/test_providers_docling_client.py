@@ -9,6 +9,14 @@ from doc_process_service.models.domain import ProcessingOptions
 from doc_process_service.providers.docling.client import DoclingClient, DoclingClientConfig
 
 
+def _reject_request(request: httpx.Request) -> httpx.Response:
+    pytest.fail(f"Unexpected outbound request: {request.url}")
+
+
+def _http_client() -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(_reject_request))
+
+
 @pytest.fixture
 def docling_settings() -> DoclingSettings:
     """Create Docling provider settings for testing."""
@@ -108,7 +116,7 @@ class TestDoclingClient:
         mock_post.return_value = MagicMock(status_code=200)
         mock_post.return_value.json.return_value = {"task_id": "task_123"}
 
-        task_id = docling_client._submit_task(httpx.Client(), b"content", "application/pdf")
+        task_id = docling_client._submit_task(_http_client(), b"content", "application/pdf")
         assert task_id == "task_123"
 
         submitted_files = mock_post.call_args.kwargs["files"]
@@ -126,7 +134,7 @@ class TestDoclingClient:
         mock_post.return_value.json.return_value = {}
 
         with pytest.raises(ValueError, match="No task_id"):
-            docling_client._submit_task(httpx.Client(), b"content", "application/pdf")
+            docling_client._submit_task(_http_client(), b"content", "application/pdf")
 
     def test_extract_json_content(self, docling_client: DoclingClient) -> None:
         """Test extracting json_content from API response."""
@@ -142,7 +150,7 @@ class TestDoclingClient:
     def test_try_fetch_result_404(self, mock_get: MagicMock, docling_client: DoclingClient) -> None:
         """Test result fetch returns None on 404."""
         mock_get.return_value = MagicMock(status_code=404)
-        assert docling_client._try_fetch_result(httpx.Client(), "task_123") is None
+        assert docling_client._try_fetch_result(_http_client(), "task_123") is None
 
     @patch("httpx.Client.get")
     def test_poll_once_success(self, mock_get: MagicMock, docling_client: DoclingClient) -> None:
@@ -151,7 +159,7 @@ class TestDoclingClient:
         mock_get.return_value.json.return_value = {"task_status": "success"}
 
         with patch.object(DoclingClient, "_fetch_result", return_value={"doc": 1}):
-            result = docling_client._poll_once(httpx.Client(), "url", "task_123", {}, float("inf"))
+            result = docling_client._poll_once(_http_client(), "url", "task_123", {}, float("inf"))
             assert result == {"doc": 1}
 
     @patch("httpx.Client.get")
@@ -161,7 +169,7 @@ class TestDoclingClient:
         mock_get.return_value.json.return_value = {"task_status": "failure", "error_message": "crash"}
 
         with pytest.raises(ValueError, match="Task failed: crash"):
-            docling_client._poll_once(httpx.Client(), "url", "task_123", {}, float("inf"))
+            docling_client._poll_once(_http_client(), "url", "task_123", {}, float("inf"))
 
     @pytest.mark.usefixtures("_mock_sleep")
     @patch("httpx.Client.get")
@@ -193,7 +201,7 @@ class TestDoclingClient:
             patch.object(docling_client, "_config", new_config),
             pytest.raises(TimeoutError, match="Timeout waiting"),
         ):
-            docling_client._poll_for_result(httpx.Client(), "task_123")
+            docling_client._poll_for_result(_http_client(), "task_123")
 
         assert mock_get.call_count == 2
 
@@ -272,7 +280,7 @@ class TestDoclingClient:
         mock_get.return_value = MagicMock(status_code=200)
         mock_get.return_value.json.return_value = {"task_status": "unknown_status"}
 
-        result = docling_client._poll_once(httpx.Client(), "url", "task_123", {}, float("inf"))
+        result = docling_client._poll_once(_http_client(), "url", "task_123", {}, float("inf"))
         assert result is None
 
     @pytest.mark.usefixtures("_mock_sleep")
@@ -289,7 +297,7 @@ class TestDoclingClient:
             "doc_process_service.providers.docling.client.DoclingClient._try_fetch_result",
             return_value={"doc": 1},
         ):
-            result = docling_client._poll_once(httpx.Client(), "url", "task_123", {}, float("inf"))
+            result = docling_client._poll_once(_http_client(), "url", "task_123", {}, float("inf"))
             assert result == {"doc": 1}
 
     @patch("httpx.Client.get")
@@ -309,7 +317,7 @@ class TestDoclingClient:
             ),
             patch("doc_process_service.providers.docling.client.time.sleep") as mock_sleep,
         ):
-            result = docling_client._poll_once(httpx.Client(), "url", "task_123", {}, 10.05)
+            result = docling_client._poll_once(_http_client(), "url", "task_123", {}, 10.05)
 
         assert result is None
         assert mock_get.call_args.kwargs["params"]["wait"] == pytest.approx(0.05)
@@ -321,7 +329,7 @@ class TestDoclingClient:
         mock_get.return_value = MagicMock(status_code=200)
         mock_get.return_value.json.return_value = {"document": {"content": "test"}}
 
-        result = docling_client._try_fetch_result(httpx.Client(), "task_123")
+        result = docling_client._try_fetch_result(_http_client(), "task_123")
         assert result == {"document": {"content": "test"}}
 
     @patch("httpx.Client.get")
@@ -331,7 +339,7 @@ class TestDoclingClient:
         mock_response.status_code = 404
         mock_get.side_effect = httpx.HTTPStatusError("Not found", request=MagicMock(), response=mock_response)
 
-        result = docling_client._try_fetch_result(httpx.Client(), "task_123")
+        result = docling_client._try_fetch_result(_http_client(), "task_123")
         assert result is None
 
     @patch("httpx.Client.get")
@@ -340,7 +348,7 @@ class TestDoclingClient:
         mock_get.return_value = MagicMock(status_code=200)
         mock_get.return_value.json.return_value = {"document": {"content": "test"}}
 
-        result = docling_client._fetch_result(httpx.Client(), "task_123")
+        result = docling_client._fetch_result(_http_client(), "task_123")
         assert result == {"document": {"content": "test"}}
 
     def test_extract_json_content_list_of_documents(self, docling_client: DoclingClient) -> None:

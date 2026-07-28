@@ -11,6 +11,7 @@ root with:
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,7 @@ PHOENIX_ENDPOINT: Final[str] = "http://localhost:4320"
 PHOENIX_UI_URL: Final[str] = "http://localhost:6006"
 PHOENIX_GRAPHQL_URL: Final[str] = f"{PHOENIX_UI_URL}/graphql"
 PHOENIX_PROJECT: Final[str] = "nohiki-integration-test"
+PHOENIX_SMOKE_ENV: Final[str] = "NOHIKI_RUN_PHOENIX_SMOKE"
 SERVICE_NAME: Final[str] = "llm-client-integration-test"
 
 console = Console(stderr=True)
@@ -63,6 +65,12 @@ class LLMTestResult:
     response: str | None
     error: str | None
     duration_ms: int
+
+
+def _require_smoke_opt_in() -> None:
+    if os.environ.get(PHOENIX_SMOKE_ENV) != "1":
+        console.print(f"[red]Set {PHOENIX_SMOKE_ENV}=1 to run the external Phoenix smoke.[/red]")
+        raise typer.Exit(2)
 
 
 def _load_api_key(key_file: Path) -> str:
@@ -404,6 +412,7 @@ def run(
     ] = False,
 ) -> None:
     """Run Phoenix integration tests with real LLM calls."""
+    _require_smoke_opt_in()
     console.print()
     console.print(
         Panel.fit(
@@ -468,6 +477,7 @@ def _check_phoenix_health() -> httpx.Response | None:
 @app.command()
 def check() -> None:
     """Check that Phoenix is running and accessible."""
+    _require_smoke_opt_in()
     console.print()
     console.print("[bold]Checking Phoenix availability...[/bold]")
     console.print()
@@ -500,6 +510,16 @@ def check() -> None:
         console.print("[green]✓[/green] OpenRouter API key file found")
 
     console.print()
+
+
+def test_external_smoke_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """External Phoenix commands fail closed unless the operator opts in."""
+    monkeypatch.delenv(PHOENIX_SMOKE_ENV, raising=False)
+
+    with pytest.raises(typer.Exit) as error:
+        _require_smoke_opt_in()
+
+    assert error.value.exit_code == 2
 
 
 @pytest.mark.asyncio

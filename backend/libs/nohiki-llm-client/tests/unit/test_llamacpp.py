@@ -15,6 +15,10 @@ def _require_profile(value: object) -> Mapping[str, object]:
     return {key: item for key, item in value.items() if isinstance(key, str)}
 
 
+def _reject_request(request: httpx.Request) -> httpx.Response:
+    pytest.fail(f"Unexpected outbound request: {request.url}")
+
+
 class TestLlamaCppProviderInit:
     """Tests for LlamaCppProvider initialization."""
 
@@ -99,14 +103,14 @@ class TestLlamaCppProviderInit:
     @pytest.mark.asyncio
     async def test_custom_http_client_still_rejects_blank_explicit_base(self) -> None:
         """Supplying transport ownership does not relax endpoint validation."""
-        async with httpx.AsyncClient(timeout=60.0) as http_client:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_reject_request), timeout=60.0) as http_client:
             with pytest.raises(ValueError, match="base_url"):
                 LlamaCppProvider(base_url="", http_client=http_client)
 
     @pytest.mark.asyncio
     async def test_init_with_custom_http_client(self) -> None:
         """Provider accepts a custom client alongside an explicit endpoint."""
-        async with httpx.AsyncClient(timeout=60.0) as http_client:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_reject_request), timeout=60.0) as http_client:
             provider = LlamaCppProvider(
                 base_url="http://localhost:8080/v1",
                 http_client=http_client,

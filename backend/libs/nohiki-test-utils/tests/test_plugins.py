@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import socket
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -83,6 +84,34 @@ class TestCollectionModifyItems:
         message = str(error.value)
         assert "tests/test_postgres.py::test_query (fixtures: async_engine, postgres_container)" in message
         assert "tests/test_redis.py::test_get (fixtures: redis_client, redis_container)" in message
+
+
+class TestOutboundNetworkIsolation:
+    """Tests for the unit-test network boundary."""
+
+    def test_unmarked_test_cannot_resolve_a_network_peer(self) -> None:
+        """The autouse guard fails before DNS or transport I/O."""
+        with pytest.raises(
+            AssertionError,
+            match=r"Unmocked outbound network.*socket\.getaddrinfo.*Stub the network-facing function",
+        ):
+            socket.getaddrinfo("example.com", 443)
+
+    @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "203.0.113.10"])
+    def test_numeric_address_resolution_stays_local(self, host: str) -> None:
+        """Parsing an IP literal does not perform DNS or transport I/O."""
+        assert socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+
+    @pytest.mark.parametrize("marker", sorted(plugins._NETWORK_ALLOWED_MARKERS))
+    def test_ci_excluded_markers_allow_network(self, marker: str) -> None:
+        """Every marker excluded from the unit lane is an explicit guard opt-out."""
+        request = MagicMock(spec=pytest.FixtureRequest)
+        request.node.get_closest_marker.side_effect = lambda candidate: object() if candidate == marker else None
+        monkeypatch = MagicMock(spec=pytest.MonkeyPatch)
+
+        plugins._no_outbound_network.__wrapped__(request, monkeypatch)
+
+        monkeypatch.setattr.assert_not_called()
 
 
 class TestPluginMarkers:
