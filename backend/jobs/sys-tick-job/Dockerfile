@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.16
+# syntax=docker/dockerfile:1.16@sha256:e2dd261f92e4b763d789984f6eab84be66ab4f5f08052316d8eb8f173593acf7
 FROM docker.io/library/golang:1.26.5-bookworm@sha256:18aedc16aa19b3fd7ded7245fc14b109e054d65d22ed53c355c899582bbb2113 AS supercronic-builder
 ARG SUPERCRONIC_VERSION=v0.2.47
 RUN test "$(go env GOVERSION)" = "go1.26.5" && \
