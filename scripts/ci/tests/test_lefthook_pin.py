@@ -96,7 +96,7 @@ def _assert_empty_staged_files_guard(run: str, tool_fragments: tuple[str, ...]) 
 def test_lefthook_non_python_staged_mutators_skip_empty_staged_files() -> None:
     commands = _load_yaml(_LEFTHOOK)["pre-commit"]["commands"]
     expected = {
-        "*.{ts,tsx,js,jsx,css}": ("pnpm exec biome check --write {staged_files}",),
+        "*.{ts,tsx,js,jsx,css}": ("pnpm exec biome check --write --no-errors-on-unmatched {staged_files}",),
         "*.md": ("pnpm exec markdownlint-cli2 --fix {staged_files}",),
     }
 

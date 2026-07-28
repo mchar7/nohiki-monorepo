@@ -14,6 +14,19 @@ interface TemplateInfo {
   };
 }
 
+const DEFAULT_TEMPLATE_VERSION = '1.0';
+
+/**
+ * Version component of a render-preference key.
+ *
+ * Reads and writes must derive it identically, so an empty version normalises to the
+ * same default on both sides. `??` would store under the default and look up under ''.
+ */
+function prefVersion(tmpl: TemplateInfo): string {
+  // biome-ignore lint/nursery/useNullishCoalescing: '' is not a version; it must normalise
+  return tmpl.version || DEFAULT_TEMPLATE_VERSION;
+}
+
 interface UseTemplateJsWarningReturn {
   showWarning: boolean;
   templateName: string;
@@ -56,7 +69,7 @@ function checkSavedPreferences(
   tmpl: TemplateInfo,
   getStoredPref: (id: string, version: string) => RenderMethod | null,
 ): { found: boolean; method: RenderMethod | null } {
-  const version = tmpl.version ?? '1.0';
+  const version = prefVersion(tmpl);
   const savedPref = getStoredPref(tmpl.id, version);
   if (savedPref) {
     return { found: true, method: savedPref };
@@ -106,7 +119,7 @@ function evaluateJsRequirement(
   }
   return {
     templateName: ctx.template.displayName || 'Unavailable',
-    templateVersion: ctx.template.version ?? '1.0',
+    templateVersion: prefVersion(ctx.template),
     reason: buildWarningReason(jsReqs.isDeclared, jsReqs.reason),
   };
 }
@@ -121,7 +134,7 @@ function useTemplateJsWarning(
   const setTemplateRenderPref = useDocumentBuilderStore((state) => state.setTemplateRenderPref);
   const [displayState, setDisplayState] = useState<WarningDisplayState>({
     templateName: '',
-    templateVersion: '1.0',
+    templateVersion: DEFAULT_TEMPLATE_VERSION,
     reason: undefined,
   });
 
@@ -157,7 +170,7 @@ function useTemplateJsWarning(
     if (!template) {
       return;
     }
-    const version = template.version || '1.0';
+    const version = prefVersion(template);
     if (remember) {
       setTemplateRenderPref(template.id, version, method);
     } else {
