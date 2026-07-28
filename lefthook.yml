@@ -277,6 +277,17 @@ pre-push:
             glob: "**/pyproject.toml"
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks build-backend --scope all --ci --strict
 
+          - name: frontend-fsd
+            glob:
+              - "typescript/apps/frontend/src/**/*.{ts,tsx,js,jsx}"
+              - "typescript/apps/frontend/package.json"
+              - "typescript/apps/frontend/steiger.config.ts"
+              - "typescript/apps/frontend/tsconfig*.json"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+            run: scripts/dev/env-lock.sh shared node_modules -- pnpm --filter nohiki-frontend run lint:fsd
+
     # Phase 4: Generated API artifacts
     - name: api-schema-freshness
       # Shared libs are included because exported schemas flow through them.

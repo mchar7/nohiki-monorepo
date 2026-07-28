@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 /** Duration to show copy-success feedback before resetting (ms) */
 const COPY_SUCCESS_RESET_MS: number = 2000;
 
-import { logger } from '@/shared/lib/utils/logger.ts';
+import { logger } from '@/shared/lib/index.ts';
 import { Alert, AlertDescription } from '@/shared/ui/alert.tsx';
 import { Badge } from '@/shared/ui/badge.tsx';
 import { Button } from '@/shared/ui/button.tsx';

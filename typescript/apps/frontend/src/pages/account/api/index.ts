@@ -1,12 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { resetDocumentEventStream } from '@/entities/document/index.ts';
-import { resetDocumentBuilderStore } from '@/features/omakase/document-builder/model/store.ts';
-import type { UserResponse } from '@/shared/api';
-import { publishAuthTransition } from '@/shared/api/auth-sync.ts';
-import { $api } from '@/shared/api/index.ts';
-import { cancelScheduledRefresh } from '@/shared/api/tokenRefresh.ts';
+import {
+  $api,
+  cancelScheduledRefresh,
+  publishAuthTransition,
+  resetUserSessionResources,
+  type UserResponse,
+} from '@/shared/api/index.ts';
+import { logger } from '@/shared/lib/index.ts';
 import { clearUserScopedPersistence } from '@/shared/lib/persistence/index.ts';
-import { logger } from '@/shared/lib/utils/logger.ts';
 import { useAppStore } from '@/shared/model/index.ts';
 
 export { useAccount } from '@features/account';
@@ -29,8 +30,7 @@ export function useDeleteAccount() {
       appStore.logout();
       appStore.clearPendingCommands();
       appStore.setSelectedProfileId(null);
-      resetDocumentBuilderStore();
-      resetDocumentEventStream();
+      resetUserSessionResources();
       cancelScheduledRefresh();
       queryClient.clear();
 

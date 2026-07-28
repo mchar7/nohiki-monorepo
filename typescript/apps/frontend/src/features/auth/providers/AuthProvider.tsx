@@ -12,17 +12,16 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from '@tanstack/react-router';
 import type { JSX } from 'react';
 import { type ReactNode, useCallback, useEffect, useRef } from 'react';
-import { resetDocumentEventStream } from '@/entities/document/index.ts';
-import { resetDocumentBuilderStore } from '@/features/omakase/document-builder/model/store.ts';
-import { subscribeToAuthTransitions } from '@/shared/api/auth-sync.ts';
 import {
   cancelScheduledRefresh,
   refreshToken,
+  resetUserSessionResources,
   scheduleTokenRefresh,
+  subscribeToAuthTransitions,
   useSession,
 } from '@/shared/api/index.ts';
+import { handleNavigationPromise } from '@/shared/lib/index.ts';
 import { clearUserScopedPersistence } from '@/shared/lib/persistence/index.ts';
-import { handleNavigationPromise } from '@/shared/lib/utils/navigation.ts';
 import type { AppStore } from '@/shared/model/index.ts';
 import { useAppStore } from '@/shared/model/index.ts';
 
@@ -108,8 +107,7 @@ function useSessionSync(): void {
         storeLogout();
         useAppStore.getState().clearPendingCommands();
         useAppStore.getState().setSelectedProfileId(null);
-        resetDocumentBuilderStore();
-        resetDocumentEventStream();
+        resetUserSessionResources();
         cancelScheduledRefresh();
         void queryClient
           .cancelQueries({ predicate: userScopedQuery })

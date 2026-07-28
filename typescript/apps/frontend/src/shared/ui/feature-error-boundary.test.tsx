@@ -7,6 +7,10 @@ import '@/test/axe-setup.ts';
 import { i18n } from '@/test/i18n-setup.ts';
 import { FeatureErrorBoundary } from './feature-error-boundary.tsx';
 
+vi.mock('@/shared/lib/i18n.ts', () => ({
+  i18n: { t: (key: string) => key },
+}));
+
 /** Throws on render to trigger the error boundary fallback. */
 function ThrowingChild(): JSX.Element {
   throw new Error('Test error');

@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, vi } from 'vitest';
+import type * as DocumentGeneration from '@/features/document-generation';
 import { useDocumentSSE, useGenerateTailoredDocument } from '@/features/document-generation';
 import { useTemplateFamilies } from '@/features/omakase/document-builder';
 import { TailoredDocumentAction } from './TailoredDocumentAction.tsx';
@@ -19,8 +20,11 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   };
 });
 
-vi.mock('@/features/document-generation', () => ({
+vi.mock('@/features/document-generation/api/useDocumentSSE.ts', () => ({
   useDocumentSSE: vi.fn(),
+}));
+vi.mock('@/features/document-generation', async (importOriginal) => ({
+  ...(await importOriginal<typeof DocumentGeneration>()),
   useGenerateTailoredDocument: vi.fn(),
 }));
 vi.mock('@/features/omakase/document-builder', () => ({

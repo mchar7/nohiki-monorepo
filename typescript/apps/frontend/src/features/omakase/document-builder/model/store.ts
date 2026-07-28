@@ -1,6 +1,7 @@
 import { create, type UseBoundStore } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { StoreApi } from 'zustand/vanilla';
+import { registerSessionReset } from '@/shared/lib/index.ts';
 import { createDatasetSlice, type DatasetSlice, rebuildIndex } from './slices/datasetSlice.ts';
 import {
   createTemplateRenderPrefsSlice,
@@ -64,3 +65,5 @@ export function resetDocumentBuilderStore(): void {
     templateRenderPrefs: {},
   });
 }
+
+registerSessionReset(resetDocumentBuilderStore);

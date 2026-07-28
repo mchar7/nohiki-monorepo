@@ -369,7 +369,7 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
     [
         (
             "typescript/apps/frontend/src/App.tsx",
-            {"lint_frontend", "typecheck_frontend", "frontend_tests", "frontend_smoke"},
+            {"lint_frontend", "lint_steiger", "typecheck_frontend", "frontend_tests", "frontend_smoke"},
         ),
         (
             "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
@@ -383,6 +383,7 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
             "typescript/libs/tsconfig/base.json",
             {
                 "lint_frontend",
+                "lint_steiger",
                 "typecheck_frontend",
                 "frontend_tests",
                 "edge_worker",
@@ -423,6 +424,11 @@ def test_evaluate_typescript_surfaces_without_python(path: str, expected: set[st
 )
 def test_frontend_smoke_selects_every_image_build_context_input(path: str) -> None:
     assert "frontend_smoke" in evaluate({path}, _synthetic_packages()).flags
+
+
+@pytest.mark.parametrize("path", ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"])
+def test_steiger_selects_every_root_node_toolchain_input(path: str) -> None:
+    assert "lint_steiger" in evaluate({path}, _synthetic_packages()).flags
 
 
 @pytest.mark.parametrize(
@@ -1723,15 +1729,21 @@ def test_e2e_specs_lint_and_typecheck_without_running_vitest(path: str) -> None:
         "typescript/apps/frontend/.ast-grep/rules/no-memo-ts.yaml",
         "typescript/apps/frontend/components.json",
         "typescript/apps/frontend/knip.ts",
-        "typescript/apps/frontend/steiger.config.ts",
     ],
 )
 def test_frontend_tooling_configs_select_no_lane_without_falling_broad(path: str) -> None:
-    """No checks.yml step runs ast-grep, knip or steiger, and biome, tsc and vitest all exclude them."""
+    """No checks.yml step runs ast-grep or knip, and biome, tsc and vitest all exclude them."""
     decision = evaluate({path}, _synthetic_packages())
 
     assert not decision.full
     assert decision.flags == set()
+
+
+def test_steiger_config_selects_architecture_lane_without_falling_broad() -> None:
+    decision = evaluate({"typescript/apps/frontend/steiger.config.ts"}, _synthetic_packages())
+
+    assert not decision.full
+    assert decision.flags == {"lint_steiger"}
 
 
 def test_lefthook_config_selects_its_contract_test_not_the_nix_lane() -> None:

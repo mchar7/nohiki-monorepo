@@ -5,11 +5,10 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { resetDocumentEventStream } from '@/entities/document/index.ts';
-import { resetDocumentBuilderStore } from '@/features/omakase/document-builder/model/store.ts';
+import { logger } from '@/shared/lib/index.ts';
 import { clearUserScopedPersistence } from '@/shared/lib/persistence/index.ts';
-import { logger } from '@/shared/lib/utils/logger.ts';
 import { useAppStore } from '@/shared/model/index.ts';
+import { resetUserSessionResources } from '../lib/session-reset.ts';
 import { authApi } from './auth-client.ts';
 import { publishAuthTransition } from './auth-sync.ts';
 import { CACHE_CONFIG } from './config.ts';
@@ -103,8 +102,7 @@ export function useLogout(): UseMutationResult<
     appStore.logout();
     appStore.clearPendingCommands();
     appStore.setSelectedProfileId(null);
-    resetDocumentBuilderStore();
-    resetDocumentEventStream();
+    resetUserSessionResources();
     cancelScheduledRefresh();
     queryClient.setQueryData<SessionResponse | null>(queryKeys.session, null);
     queryClient.clear();

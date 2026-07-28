@@ -1,4 +1,4 @@
-import { useGenerateDocument } from '@features/document-generation';
+import { GenerationProgress, useGenerateDocument } from '@features/document-generation';
 import { Check } from 'lucide-react';
 import { type JSX, useReducer, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -17,7 +17,6 @@ import {
   STEP_TYPE,
   wizardReducer,
 } from '../../lib/wizardReducer.ts';
-import { GenerationProgress } from './GenerationProgress.tsx';
 import { MatchStep } from './MatchStep.tsx';
 import { ProfileStep } from './ProfileStep.tsx';
 import { ReviewStep } from './ReviewStep.tsx';

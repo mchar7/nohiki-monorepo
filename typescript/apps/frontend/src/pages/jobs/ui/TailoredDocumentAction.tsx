@@ -1,4 +1,4 @@
-import { useGenerateTailoredDocument } from '@features/document-generation';
+import { GenerationProgress, useGenerateTailoredDocument } from '@features/document-generation';
 import { useTemplateFamilies } from '@features/omakase/document-builder';
 import { AlertCircle, FileText, Loader2, RefreshCw, X } from 'lucide-react';
 import { type FormEvent, type JSX, useId, useState } from 'react';
@@ -14,7 +14,6 @@ import {
   SelectValue,
 } from '@/shared/ui/select.tsx';
 import { Skeleton } from '@/shared/ui/skeleton.tsx';
-import { GenerationProgress } from '../../documents/ui/wizard/GenerationProgress.tsx';
 
 type OutputFormat = 'pdf' | 'html' | 'png';
 

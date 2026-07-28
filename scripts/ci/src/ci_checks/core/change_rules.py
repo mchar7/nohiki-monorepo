@@ -23,6 +23,7 @@ FLAG_NAMES: tuple[str, ...] = (
     "nix",
     "lint_python",
     "lint_frontend",
+    "lint_steiger",
     "lint_proto",
     "lint_markdown",
     "lint_workflows",
@@ -61,6 +62,7 @@ BROAD_PYTHON_FLAGS: tuple[str, ...] = (
 # Application source and toolchain changes exercise every hosted app contract.
 _FRONTEND_APP_FLAGS: tuple[str, ...] = (
     "lint_frontend",
+    "lint_steiger",
     "typecheck_frontend",
     "frontend_tests",
 )
@@ -182,17 +184,21 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         ),
         flags=_FRONTEND_APP_FLAGS,
     ),
-    # Frontend app files no hosted lane opens: ast-grep, knip and steiger have no
-    # step in checks.yml, and components.json is shadcn CLI input that biome, tsc
-    # and vitest all exclude. Classified so they stay off the broad path.
+    SurfaceRule(("typescript/apps/frontend/steiger.config.ts",), flags=("lint_steiger",)),
+    # Frontend app files no hosted lane opens: ast-grep and knip have no step in
+    # checks.yml, and components.json is shadcn CLI input that biome, tsc and
+    # vitest all exclude. Classified so they stay off the broad path.
     SurfaceRule(
         (
             "typescript/apps/frontend/.ast-grep/*",
             "typescript/apps/frontend/.ast-grep/**/*",
             "typescript/apps/frontend/components.json",
             "typescript/apps/frontend/knip.ts",
-            "typescript/apps/frontend/steiger.config.ts",
         ),
+    ),
+    SurfaceRule(
+        ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"),
+        flags=("lint_steiger",),
     ),
     SurfaceRule(
         # The production image COPYs the root manifests and the whole typescript

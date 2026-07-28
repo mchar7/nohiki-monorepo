@@ -3,8 +3,7 @@ import type { JSX } from 'react';
 
 import { AuthPage } from '@/features/auth/index.ts';
 import { ROUTE_PATHS } from '@/shared/config/index.ts';
-import { getSafeReturnUrl } from '@/shared/lib/security/sanitization.ts';
-import { handleNavigationPromise } from '@/shared/lib/utils/navigation.ts';
+import { getSafeReturnUrl, handleNavigationPromise } from '@/shared/lib/index.ts';
 import { AuthLayout } from './AuthLayout';
 
 interface LoginProps {

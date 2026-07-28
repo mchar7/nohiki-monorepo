@@ -7,12 +7,8 @@ import { BaseLayout } from './BaseLayout.tsx';
 
 const BREADCRUMB_RE = /breadcrumb/iu;
 
-// Mock next-themes
-vi.mock('next-themes', () => ({
-  useTheme: () => ({
-    theme: 'light',
-    setTheme: vi.fn(),
-  }),
+vi.mock('@features/account', () => ({
+  useAccount: () => ({ data: null }),
 }));
 
 // Mock i18n - return the key as the translation

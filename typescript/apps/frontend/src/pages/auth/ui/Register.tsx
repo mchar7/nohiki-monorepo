@@ -3,7 +3,7 @@ import type { JSX } from 'react';
 
 import { AuthPage } from '@/features/auth/index.ts';
 import { ROUTE_PATHS } from '@/shared/config/index.ts';
-import { handleNavigationPromise } from '@/shared/lib/utils/navigation.ts';
+import { handleNavigationPromise } from '@/shared/lib/index.ts';
 import { AuthLayout } from './AuthLayout';
 
 export function Register(): JSX.Element {

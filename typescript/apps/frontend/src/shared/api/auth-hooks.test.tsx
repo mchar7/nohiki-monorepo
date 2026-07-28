@@ -5,15 +5,11 @@ import { afterEach, beforeEach, describe, expect, vi } from 'vitest';
 
 const mockClearUserScopedPersistence = vi.hoisted(() => vi.fn());
 const mockPublishAuthTransition = vi.hoisted(() => vi.fn());
-const mockResetDocumentBuilderStore = vi.hoisted(() => vi.fn());
-const mockResetDocumentEventStream = vi.hoisted(() => vi.fn());
+const mockResetUserSessionResources = vi.hoisted(() => vi.fn());
 const mockCancelScheduledRefresh = vi.hoisted(() => vi.fn());
 
-vi.mock('@/features/omakase/document-builder/model/store.ts', () => ({
-  resetDocumentBuilderStore: mockResetDocumentBuilderStore,
-}));
-vi.mock('@/entities/document/index.ts', () => ({
-  resetDocumentEventStream: mockResetDocumentEventStream,
+vi.mock('../lib/session-reset.ts', () => ({
+  resetUserSessionResources: mockResetUserSessionResources,
 }));
 vi.mock('./tokenRefresh.ts', () => ({ cancelScheduledRefresh: mockCancelScheduledRefresh }));
 
@@ -222,8 +218,7 @@ describe('useLogout', () => {
     expect(useAppStore.getState().session).toBeNull();
     expect(useAppStore.getState().pendingCommands.size).toBe(0);
     expect(useAppStore.getState().selectedProfileId).toBeNull();
-    expect(mockResetDocumentBuilderStore).toHaveBeenCalledTimes(1);
-    expect(mockResetDocumentEventStream).toHaveBeenCalledTimes(1);
+    expect(mockResetUserSessionResources).toHaveBeenCalledTimes(1);
     expect(mockCancelScheduledRefresh).toHaveBeenCalledTimes(1);
     expect(globalThis.location.href).toBe('');
 
