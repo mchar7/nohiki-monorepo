@@ -54,6 +54,12 @@ const mockUseJobListingsFilters = vi.fn<(...args: unknown[]) => unknown>().mockR
   activeFilterCount: 0,
 });
 
+vi.mock('@/features/job-matching/index.ts', () => ({
+  TopMatchesWidget: () => null,
+  useMyCorrelations: () => ({ data: undefined }),
+  useRecordFeedback: () => ({ mutate: vi.fn() }),
+}));
+
 vi.mock('@/features/job-search/index.ts', () => ({
   useListings: (...args: unknown[]) => mockUseListings(...args),
   useJobListingsFilters: (...args: unknown[]) => mockUseJobListingsFilters(...args),
