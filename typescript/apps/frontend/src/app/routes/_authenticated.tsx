@@ -14,7 +14,7 @@ import { useEffect } from 'react';
 import type { RouterContext } from '@/app/router-context.ts';
 import { AuthProvider } from '@/features/auth/index.ts';
 import { ApiError, authApi, CACHE_CONFIG, queryKeys } from '@/shared/api/index.ts';
-import { HTTP_STATUS } from '@/shared/config/constants.ts';
+import { HTTP_STATUS } from '@/shared/config/index.ts';
 import { handleNavigationPromise } from '@/shared/lib/index.ts';
 import { PageLoading } from '@/shared/ui/page-loading.tsx';
 import { BaseLayout } from '@/widgets/layout/index.ts';

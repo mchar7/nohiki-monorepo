@@ -22,6 +22,8 @@ vi.mock('@/shared/api/index.ts', () => ({
   scheduleTokenRefresh: vi.fn(),
   cancelScheduledRefresh: vi.fn(),
   refreshToken: vi.fn().mockResolvedValue(true),
+  resetUserSessionResources: vi.fn(),
+  subscribeToAuthTransitions: vi.fn(() => vi.fn()),
 }));
 
 import { cancelScheduledRefresh, refreshToken, useSession } from '@/shared/api/index.ts';

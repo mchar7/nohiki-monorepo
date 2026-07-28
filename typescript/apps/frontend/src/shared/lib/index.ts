@@ -29,8 +29,13 @@ export { useSwipeToDismiss } from './hooks/useSwipeToDismiss.ts';
 export { useThemeColor } from './hooks/useThemeColor.ts';
 export { useUnsavedChanges } from './hooks/useUnsavedChanges.ts';
 export { useUrlListState } from './hooks/useUrlListState.ts';
-export { getSafeExternalUrl, getSafeGeneratedDocumentUrl } from './security/sanitization.ts';
+export {
+  getSafeExternalUrl,
+  getSafeGeneratedDocumentUrl,
+  getSafeReturnUrl,
+} from './security/sanitization.ts';
 export { asJSONSchemaDefinition } from './services/importExport/index.ts';
+export { registerSessionReset, resetUserSessionResources } from './session-reset.ts';
 export {
   THEME_COLORS,
   type ThemeColor,

@@ -10,29 +10,19 @@ interface DeleteMutationOptions {
 const mockUseMutation = vi.hoisted(() => vi.fn());
 const mockClearUserScopedPersistence = vi.hoisted(() => vi.fn());
 const mockPublishAuthTransition = vi.hoisted(() => vi.fn());
-const mockResetDocumentBuilderStore = vi.hoisted(() => vi.fn());
-const mockResetDocumentEventStream = vi.hoisted(() => vi.fn());
+const mockResetUserSessionResources = vi.hoisted(() => vi.fn());
 const mockCancelScheduledRefresh = vi.hoisted(() => vi.fn());
-
-vi.mock('@/features/omakase/document-builder/model/store.ts', () => ({
-  resetDocumentBuilderStore: mockResetDocumentBuilderStore,
-}));
-vi.mock('@/entities/document/index.ts', () => ({
-  resetDocumentEventStream: mockResetDocumentEventStream,
-}));
-vi.mock('@/shared/api/tokenRefresh.ts', () => ({
-  cancelScheduledRefresh: mockCancelScheduledRefresh,
-}));
 
 vi.mock('@/shared/lib/persistence/index.ts', () => ({
   clearUserScopedPersistence: mockClearUserScopedPersistence,
 }));
-vi.mock('@/shared/api/auth-sync.ts', () => ({ publishAuthTransition: mockPublishAuthTransition }));
-
 vi.mock('@/shared/api/index.ts', () => ({
   $api: {
     useMutation: mockUseMutation,
   },
+  cancelScheduledRefresh: mockCancelScheduledRefresh,
+  publishAuthTransition: mockPublishAuthTransition,
+  resetUserSessionResources: mockResetUserSessionResources,
 }));
 
 vi.mock('@features/account', () => ({ useAccount: vi.fn() }));
@@ -112,8 +102,7 @@ describe('useDeleteAccount', () => {
     expect(useAppStore.getState().session).toBeNull();
     expect(useAppStore.getState().pendingCommands.size).toBe(0);
     expect(useAppStore.getState().selectedProfileId).toBeNull();
-    expect(mockResetDocumentBuilderStore).toHaveBeenCalledTimes(1);
-    expect(mockResetDocumentEventStream).toHaveBeenCalledTimes(1);
+    expect(mockResetUserSessionResources).toHaveBeenCalledTimes(1);
     expect(mockCancelScheduledRefresh).toHaveBeenCalledTimes(1);
     expect(globalThis.location.href).toBe('');
 

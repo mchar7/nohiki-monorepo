@@ -10,24 +10,20 @@ import { AuthProvider } from './AuthProvider.tsx';
 
 const mocks = vi.hoisted(() => ({
   clearPersistence: vi.fn<() => Promise<void>>(),
-  resetDocumentBuilder: vi.fn(),
+  resetResources: vi.fn(),
   subscribe: vi.fn(),
 }));
 
 vi.mock('@/shared/lib/persistence/index.ts', () => ({
   clearUserScopedPersistence: mocks.clearPersistence,
 }));
-vi.mock('@/features/omakase/document-builder/model/store.ts', () => ({
-  resetDocumentBuilderStore: mocks.resetDocumentBuilder,
-}));
-vi.mock('@/shared/api/auth-sync.ts', () => ({
-  subscribeToAuthTransitions: mocks.subscribe,
-}));
 vi.mock('@/shared/api/index.ts', () => ({
   useSession: vi.fn(),
   scheduleTokenRefresh: vi.fn(),
   cancelScheduledRefresh: vi.fn(),
   refreshToken: vi.fn().mockResolvedValue(true),
+  resetUserSessionResources: mocks.resetResources,
+  subscribeToAuthTransitions: mocks.subscribe,
 }));
 
 import { useSession } from '@/shared/api/index.ts';
@@ -84,7 +80,7 @@ describe('AuthProvider remote auth transitions', () => {
     await waitFor(() => expect(globalThis.location.href).toBe('/auth'));
     expect(cancelQueries).toHaveBeenCalledTimes(1);
     expect(mocks.clearPersistence).toHaveBeenCalledTimes(1);
-    expect(mocks.resetDocumentBuilder).toHaveBeenCalledTimes(1);
+    expect(mocks.resetResources).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().session).toBeNull();
     expect(useAppStore.getState().selectedProfileId).toBeNull();
     expect(queryClient.getQueryData(['profiles'])).toBeUndefined();
@@ -153,7 +149,7 @@ describe('AuthProvider remote auth transitions', () => {
     await act(async () => remoteTransition?.('current-user'));
 
     expect(mocks.clearPersistence).not.toHaveBeenCalled();
-    expect(mocks.resetDocumentBuilder).not.toHaveBeenCalled();
+    expect(mocks.resetResources).not.toHaveBeenCalled();
     expect(queryClient.getQueryData(['profiles'])).toEqual([{ id: 'private-profile' }]);
     expect(globalThis.location.href).toBe('');
   });

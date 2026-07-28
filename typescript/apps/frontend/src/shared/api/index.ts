@@ -1,3 +1,4 @@
+export { registerSessionReset, resetUserSessionResources } from '../lib/session-reset.ts';
 export { authApi } from './auth-client.ts';
 export {
   useLogin,

@@ -1,4 +1,3 @@
-import { useDocumentSSE } from '@features/document-generation';
 import { Link } from '@tanstack/react-router';
 import {
   AlertCircle,
@@ -14,6 +13,7 @@ import { ROUTE_PATHS } from '@/shared/config';
 import { Button } from '@/shared/ui/button.tsx';
 import { Card, CardContent } from '@/shared/ui/card.tsx';
 import { Progress } from '@/shared/ui/progress.tsx';
+import { useDocumentSSE } from '../api/useDocumentSSE.ts';
 
 const TIMER_INTERVAL_MS = 1000;
 const SECONDS_PER_MINUTE = 60;

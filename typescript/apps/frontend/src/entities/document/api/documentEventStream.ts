@@ -1,4 +1,5 @@
 import { SseStreamManager } from '@/shared/api/index.ts';
+import { registerSessionReset } from '@/shared/lib/index.ts';
 
 const DOCUMENT_STATUS_EVENT = 'document_status';
 
@@ -32,3 +33,5 @@ export function resetDocumentEventStream(requestId?: string): void {
   }
   streams.clear();
 }
+
+registerSessionReset(resetDocumentEventStream);
