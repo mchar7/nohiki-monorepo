@@ -223,6 +223,7 @@ def run_training(dataset_path: Path, config: TrainingConfig) -> TrainingResult:
         SentenceTransformerTrainingArguments,
     )
     from sentence_transformers.training_args import BatchSamplers
+    from transformers import PreTrainedTokenizerBase
 
     _set_seed(config.seed)
 
@@ -239,12 +240,23 @@ def run_training(dataset_path: Path, config: TrainingConfig) -> TrainingResult:
     console.print(f"[dim]Loading model: {config.model_name}[/dim]")
     sbert_model = SentenceTransformer(config.model_name)
 
-    # Qwen3-Embedding is a causal decoder: requires left padding for last-token pooling
-    sbert_model[0].tokenizer.padding_side = "left"
+    # Qwen3-Embedding is a causal decoder: requires left padding for last-token pooling.
+    # Index 0 is only a Transformer for HF-backbone models; static-embedding backbones have no tokenizer,
+    # and InputModule.tokenizer also admits a raw tokenizers.Tokenizer that carries no padding_side.
+    transformer = sbert_model[0]
+    if not isinstance(transformer, sentence_transformers.models.Transformer):
+        message = f"{config.model_name} has {type(transformer).__name__} at index 0, expected Transformer"
+        raise TypeError(message)
+    tokenizer = transformer.tokenizer
+    if not isinstance(tokenizer, PreTrainedTokenizerBase):
+        message = f"{config.model_name} uses {type(tokenizer).__name__}, which has no padding_side"
+        raise TypeError(message)
+    tokenizer.padding_side = "left"
 
-    # Override pooling to last-token (causal decoder extracts meaning from final token)
+    # Override pooling to last-token (causal decoder extracts meaning from final token).
+    # Pooling takes the backbone hidden size, which the Transformer reports as a plain int.
     sbert_model[1] = sentence_transformers.models.Pooling(
-        word_embedding_dimension=sbert_model.get_sentence_embedding_dimension(),
+        word_embedding_dimension=transformer.get_word_embedding_dimension(),
         pooling_mode="lasttoken",
     )
 

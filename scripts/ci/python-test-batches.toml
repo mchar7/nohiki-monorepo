@@ -1,15 +1,18 @@
-# Measured 2026-07-20 on local Linux (Intel Core i7-13700H) in the Nix CI shell.
+# Measured on local Linux (Intel Core i7-13700H) in the Nix CI shell, 2026-07-20 and 2026-07-27.
 # Each weight is package wall time in seconds from `ci-checks tests all --ci --workers 2`;
 # packages without tests use the measured global median (29 seconds).
 
 [weights]
+"ast-explorer" = 29
 "bff-service" = 25
+"calibrate-skill-thresholds" = 29
 "ci-checks" = 121
 "doc-content-service" = 32
 "doc-process-service" = 27
 "doc-template-service" = 50
 "health-check" = 44
 "job-correlation-evaluation-service" = 48
+"job-embedding-finetuning" = 17
 "job-ingest-discovery-service" = 28
 "job-ingest-enrichment-service" = 38
 "job-ingest-schedule-service" = 24
@@ -40,6 +43,7 @@
 "notification-service" = 32
 "qdrant-init" = 20
 "skill-graph-service" = 49
+"skill-semantic-analysis" = 29
 "snapshot-refresh-job" = 29
 "sys-tick-job" = 16
 "tailor" = 81
@@ -60,8 +64,10 @@ packages = [
   "health-check",
   "job-ingest-discovery-service",
   "ml-compute-service",
-  "nohiki-finance",
+  "nohiki-common-exceptions",
+  "nohiki-fastapi-utils",
   "nohiki-geo-utils",
+  "nohiki-integration-tests",
   "nohiki-observability",
   "nohiki-s3-client",
   "qdrant-init",
@@ -72,9 +78,10 @@ packages = [
 name = "batch-2"
 needs_pnpm = false
 packages = [
+  "calibrate-skill-thresholds",
+  "job-embedding-finetuning",
   "job-storage-service",
   "nohiki-db-utils",
-  "nohiki-domain-models",
   "nohiki-llm-client",
   "nohiki-ml-core",
   "nohiki-ml-manifest",
@@ -93,19 +100,20 @@ packages = [
 name = "batch-3"
 needs_pnpm = false
 packages = [
+  "ast-explorer",
   "job-correlation-evaluation-service",
   "job-ingest-enrichment-service",
   "job-ingest-schedule-service",
   "job-query-composition-service",
   "llm-benchmark",
   "ml-gateway-service",
-  "nohiki-common-exceptions",
   "nohiki-core-settings",
+  "nohiki-domain-models",
   "nohiki-embedding-client",
-  "nohiki-fastapi-utils",
-  "nohiki-integration-tests",
+  "nohiki-finance",
   "nohiki-kafka-client",
   "nohiki-qdrant-client",
   "nohiki-scaffold",
+  "skill-semantic-analysis",
   "tailor",
 ]
