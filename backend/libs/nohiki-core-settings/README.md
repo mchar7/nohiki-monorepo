@@ -231,8 +231,11 @@ OTel endpoint is `BFF__OBSERVABILITY__OTEL_ENDPOINT`.
 
 ## Testing
 
-In tests, avoid loading from real `.env` files or `/run/secrets`. The `conftest.py` provided in
-this library's own test suite demonstrates the recommended isolation pattern:
+`SECRETS_DIR` is read on every settings construction, so it can be redirected from a fixture. Every
+pytest session already runs against an empty secrets tree: the `nohiki-test-utils` plugin points
+`SECRETS_DIR` at a throwaway empty directory before any conftest loads, so no suite reads the
+developer's `infra/shared/secrets`. Narrow the isolation further per package where it helps. The
+`conftest.py` in this library's own test suite shows the pattern:
 
 ```python
 @pytest.fixture(autouse=True)
@@ -242,7 +245,7 @@ def isolate_test_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
 ```
 
-This prevents `/run/secrets` from being read and ensures Azure Key Vault is never contacted.
+This pins the secrets directory for the test and ensures Azure Key Vault is never contacted.
 
 For service-level tests, define a minimal concrete subclass with required fields as defaults so
 tests can instantiate settings without any environment setup:

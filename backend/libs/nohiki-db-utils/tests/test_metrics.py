@@ -161,6 +161,10 @@ class TestDatabaseMetrics:
 class TestGetDatabaseMetrics:
     """Tests for get_database_metrics singleton function."""
 
+    def teardown_method(self) -> None:
+        """Clear the cached metrics instance after each test."""
+        get_database_metrics.cache_clear()
+
     def test_returns_singleton(self) -> None:
         """Test that get_database_metrics returns the same instance."""
         # Clear the cache first

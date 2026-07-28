@@ -11,6 +11,7 @@ dependencies = [
     "faker>=38.2.0",
     "polyfactory>=3.2.0,<4",
     "pyjwt>=2.10.1",
+    "fastapi>=0.120.4",
     "nohiki-domain-models",
 ]
 

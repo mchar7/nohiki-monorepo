@@ -18,19 +18,24 @@ def pytest_configure() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Generator[None]:
     """Reset settings cache between tests."""
     from doc_process_service.core.config import get_settings
 
     get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture(autouse=True)
-def _initialize_metrics() -> None:
+def _initialize_metrics() -> Generator[None]:
     """Initialize DocProcessMetrics singleton for each test."""
     from doc_process_service.metrics import DocProcessMetrics
 
+    previous = DocProcessMetrics._instance
     DocProcessMetrics.initialize()
+    yield
+    DocProcessMetrics._instance = previous
 
 
 @pytest.fixture

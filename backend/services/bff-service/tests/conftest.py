@@ -14,8 +14,9 @@ os.environ["BFF_S3__BUCKET"] = "test"
 
 import logging
 import sys
+from collections.abc import Generator
 from types import ModuleType
-from typing import Self, cast
+from typing import Self
 
 import pytest
 
@@ -108,8 +109,8 @@ def _set_correlation_id(_value: str) -> None:
     """Stub for set_correlation_id function."""
 
 
-class _ObservabilityModule:
-    """Module-like stub for nohiki_observability."""
+class _ObservabilityModule(ModuleType):
+    """Module stub for nohiki_observability."""
 
     get_logger = staticmethod(_get_stub_logger)
     observability_class = _ObservabilityStub
@@ -123,12 +124,16 @@ class _ObservabilityModule:
     set_correlation_id = staticmethod(_set_correlation_id)
 
 
-sys.modules.setdefault("nohiki_observability", cast(ModuleType, _ObservabilityModule))
+_OBSERVABILITY_MODULE = _ObservabilityModule("nohiki_observability")
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
-    """Reset settings cache between tests."""
+def _reset_global_test_state(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Restore the observability module and settings cache after each test."""
+    monkeypatch.setitem(sys.modules, "nohiki_observability", _OBSERVABILITY_MODULE)
+
     from bff_service.core.config import get_settings
 
+    get_settings.cache_clear()
+    yield
     get_settings.cache_clear()

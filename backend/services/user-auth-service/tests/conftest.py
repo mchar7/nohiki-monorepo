@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Generator
 
 import pytest
 
@@ -20,8 +21,10 @@ os.environ["USER_AUTH_REDIS__DSN"] = "redis://localhost:6379/0"
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Generator[None]:
     """Reset settings cache between tests."""
     from user_auth_service.core.config import get_settings
 
+    get_settings.cache_clear()
+    yield
     get_settings.cache_clear()

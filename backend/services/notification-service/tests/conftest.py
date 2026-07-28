@@ -48,10 +48,12 @@ __all__ = [
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Generator[None]:
     """Reset settings cache between tests."""
     from notification_service.core.config import get_settings
 
+    get_settings.cache_clear()
+    yield
     get_settings.cache_clear()
 
 

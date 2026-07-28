@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -20,9 +21,81 @@ from nohiki_observability import (
     OtelConfig,
     get_logger,
 )
+from opentelemetry import propagate as otel_propagate
+from opentelemetry import trace as otel_trace
+from opentelemetry._logs import _internal as otel_logs_internal
+from opentelemetry.metrics import _internal as otel_metrics_internal
+from opentelemetry.util._once import Once
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+
+type _LoggerState = tuple[list[logging.Handler], list[logging.Filter], int, bool, bool]
+
+_MUTATED_LOGGERS = (
+    "",
+    "uvicorn",
+    "uvicorn.access",
+    "uvicorn.error",
+    "alembic",
+    "alembic.env",
+    "alembic.runtime.migration",
+)
+
+
+def _capture_logger_state(logger: logging.Logger) -> _LoggerState:
+    return (
+        list(logger.handlers),
+        list(logger.filters),
+        logger.level,
+        logger.propagate,
+        logger.disabled,
+    )
+
+
+def _restore_logger_state(logger: logging.Logger, state: _LoggerState) -> None:
+    handlers, filters, level, propagate, disabled = state
+    logger.handlers[:] = handlers
+    logger.filters[:] = filters
+    logger.setLevel(level)
+    logger.propagate = propagate
+    logger.disabled = disabled
+
+
+@pytest.fixture(autouse=True)
+def restore_process_observability_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None]:
+    """Restore logging, structlog, and OpenTelemetry globals after each test."""
+    loggers = {name: logging.getLogger(name) for name in _MUTATED_LOGGERS}
+    logger_states = {name: _capture_logger_state(logger) for name, logger in loggers.items()}
+    structlog_config = structlog.get_config()
+
+    for handler in loggers[""].handlers:
+        monkeypatch.setattr(handler, "close", lambda: None)
+
+    monkeypatch.setattr(otel_trace, "_TRACER_PROVIDER", None)
+    monkeypatch.setattr(otel_trace, "_TRACER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(otel_metrics_internal, "_METER_PROVIDER", None)
+    monkeypatch.setattr(otel_metrics_internal, "_METER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(otel_logs_internal, "_LOGGER_PROVIDER", None)
+    monkeypatch.setattr(otel_logs_internal, "_LOGGER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(otel_propagate, "_HTTP_TEXT_FORMAT", otel_propagate._HTTP_TEXT_FORMAT)
+
+    yield
+
+    for provider in (
+        otel_trace._TRACER_PROVIDER,
+        otel_metrics_internal._METER_PROVIDER,
+        otel_logs_internal._LOGGER_PROVIDER,
+    ):
+        if provider is not None:
+            provider.shutdown()
+
+    structlog.configure(**structlog_config)
+    for name, logger in loggers.items():
+        _restore_logger_state(logger, logger_states[name])
 
 
 @pytest.fixture

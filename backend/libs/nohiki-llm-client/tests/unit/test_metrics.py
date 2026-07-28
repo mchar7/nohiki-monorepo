@@ -14,7 +14,11 @@ from nohiki_llm_client.config.constants import (
     METRIC_LLM_REQUESTS_TOTAL,
     OTEL_METER_NAME,
 )
-from nohiki_llm_client.observability.metrics import LLMMetrics, RequestMetricsParams, get_llm_metrics
+from nohiki_llm_client.observability.metrics import (
+    LLMMetrics,
+    RequestMetricsParams,
+    get_llm_metrics,
+)
 
 
 class TestLLMMetrics:
@@ -219,7 +223,12 @@ class TestLLMMetricsRecordRequest:
         m = LLMMetrics()
 
         m.record_request(
-            RequestMetricsParams(model="gpt-4", provider="openai", duration_seconds=1.0, prompt_tokens=100)
+            RequestMetricsParams(
+                model="gpt-4",
+                provider="openai",
+                duration_seconds=1.0,
+                prompt_tokens=100,
+            )
         )
 
         expected_attrs = {"model": "gpt-4", "provider": "openai", "status": "success"}
@@ -266,7 +275,12 @@ class TestLLMMetricsRecordRequest:
         m = LLMMetrics()
 
         m.record_request(
-            RequestMetricsParams(model="gpt-4", provider="openai", duration_seconds=1.0, completion_tokens=50)
+            RequestMetricsParams(
+                model="gpt-4",
+                provider="openai",
+                duration_seconds=1.0,
+                completion_tokens=50,
+            )
         )
 
         expected_attrs = {"model": "gpt-4", "provider": "openai", "status": "success"}
@@ -291,7 +305,12 @@ class TestLLMMetricsRecordRequest:
         m = LLMMetrics()
 
         m.record_request(
-            RequestMetricsParams(model="gpt-4", provider="openai", duration_seconds=1.0, completion_tokens=0)
+            RequestMetricsParams(
+                model="gpt-4",
+                provider="openai",
+                duration_seconds=1.0,
+                completion_tokens=0,
+            )
         )
 
         mock_completion_tokens.add.assert_not_called()
@@ -316,7 +335,12 @@ class TestLLMMetricsRecordRequest:
         m = LLMMetrics()
 
         m.record_request(
-            RequestMetricsParams(model="gpt-4", provider="openai", duration_seconds=1.0, cache_read_tokens=25)
+            RequestMetricsParams(
+                model="gpt-4",
+                provider="openai",
+                duration_seconds=1.0,
+                cache_read_tokens=25,
+            )
         )
 
         expected_attrs = {"model": "gpt-4", "provider": "openai", "status": "success"}
@@ -343,7 +367,12 @@ class TestLLMMetricsRecordRequest:
         m = LLMMetrics()
 
         m.record_request(
-            RequestMetricsParams(model="gpt-4", provider="openai", duration_seconds=1.0, cache_read_tokens=0)
+            RequestMetricsParams(
+                model="gpt-4",
+                provider="openai",
+                duration_seconds=1.0,
+                cache_read_tokens=0,
+            )
         )
 
         mock_cache_hits.add.assert_not_called()
@@ -368,7 +397,12 @@ class TestLLMMetricsRecordRequest:
         m = LLMMetrics()
 
         m.record_request(
-            RequestMetricsParams(model="gpt-4", provider="openai", duration_seconds=1.0, cache_write_tokens=30)
+            RequestMetricsParams(
+                model="gpt-4",
+                provider="openai",
+                duration_seconds=1.0,
+                cache_write_tokens=30,
+            )
         )
 
         expected_attrs = {"model": "gpt-4", "provider": "openai", "status": "success"}
@@ -393,7 +427,12 @@ class TestLLMMetricsRecordRequest:
         m = LLMMetrics()
 
         m.record_request(
-            RequestMetricsParams(model="gpt-4", provider="openai", duration_seconds=1.0, cost_microdollars=500)
+            RequestMetricsParams(
+                model="gpt-4",
+                provider="openai",
+                duration_seconds=1.0,
+                cost_microdollars=500,
+            )
         )
 
         expected_attrs = {"model": "gpt-4", "provider": "openai", "status": "success"}
@@ -418,7 +457,12 @@ class TestLLMMetricsRecordRequest:
         m = LLMMetrics()
 
         m.record_request(
-            RequestMetricsParams(model="gpt-4", provider="openai", duration_seconds=1.0, cost_microdollars=None)
+            RequestMetricsParams(
+                model="gpt-4",
+                provider="openai",
+                duration_seconds=1.0,
+                cost_microdollars=None,
+            )
         )
 
         mock_cost.add.assert_not_called()
@@ -442,7 +486,12 @@ class TestLLMMetricsRecordRequest:
         m = LLMMetrics()
 
         m.record_request(
-            RequestMetricsParams(model="gpt-4", provider="openai", duration_seconds=1.0, use_case="resume_tailoring")
+            RequestMetricsParams(
+                model="gpt-4",
+                provider="openai",
+                duration_seconds=1.0,
+                use_case="resume_tailoring",
+            )
         )
 
         expected_attrs = {
@@ -456,6 +505,10 @@ class TestLLMMetricsRecordRequest:
 
 class TestGetLLMMetrics:
     """Tests for get_llm_metrics function."""
+
+    def teardown_method(self) -> None:
+        """Clear the cached metrics instance after each test."""
+        get_llm_metrics.cache_clear()
 
     def test_returns_llm_metrics_instance(self) -> None:
         """Returns an LLMMetrics instance."""

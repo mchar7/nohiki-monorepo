@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
+import sys
 from collections.abc import Callable
-from importlib import reload
 from unittest.mock import MagicMock, patch
 
 from nohiki_kafka_client import Topics
@@ -83,6 +84,7 @@ class TestModuleExports:
 
 def test_registers_revocation_handlers_on_dedicated_group() -> None:
     """Both auth revocation events register on the independent replay group."""
+    from bff_service.events import projections
     from bff_service.events.projections import user_auth
 
     registrations: list[tuple[object, object, dict[str, object]]] = []
@@ -92,10 +94,17 @@ def test_registers_revocation_handlers_on_dedicated_group() -> None:
         return lambda function: function
 
     with (
+        patch.dict(sys.modules),
+        patch.object(projections, "user_auth", user_auth),
         patch.object(user_auth.kafka_client, "message_handler", side_effect=message_handler),
-        patch.object(user_auth.kafka_client, "with_db_session", side_effect=lambda: lambda function: function),
+        patch.object(
+            user_auth.kafka_client,
+            "with_db_session",
+            side_effect=lambda: lambda function: function,
+        ),
     ):
-        reload(user_auth)
+        del sys.modules[user_auth.__name__]
+        isolated_user_auth = importlib.import_module(user_auth.__name__)
 
     revocation_registrations = {
         topic: kwargs
@@ -107,6 +116,6 @@ def test_registers_revocation_handlers_on_dedicated_group() -> None:
         Topics.USER_AUTH_ACCOUNT_DELETED,
     }
     assert {kwargs["group_id"] for kwargs in revocation_registrations.values()} == {
-        user_auth.projection_auth_revocation_group_id
+        isolated_user_auth.projection_auth_revocation_group_id
     }
     assert all(kwargs["preserve_partition_order"] is False for kwargs in revocation_registrations.values())

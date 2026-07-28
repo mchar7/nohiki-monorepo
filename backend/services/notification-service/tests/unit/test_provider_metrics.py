@@ -14,7 +14,9 @@ class TestNotificationProviderMetrics:
             mock_meter = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
 
@@ -47,7 +49,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             from notification_service.core.provider_metrics import SendMetricData
@@ -76,7 +80,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             from notification_service.core.provider_metrics import SendMetricData
@@ -104,7 +110,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             from notification_service.core.provider_metrics import SendMetricData
@@ -132,7 +140,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             metrics_instance.record_delivery_event("resend", "email", "delivered")
@@ -149,7 +159,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             metrics_instance.record_delivery_event("resend", "email", "bounce")
@@ -166,7 +178,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             metrics_instance.record_delivery_event("resend", "email", "complaint")
@@ -183,7 +197,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             metrics_instance.record_delivery_event("resend", "email", "open")
@@ -200,7 +216,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             metrics_instance.record_delivery_event("resend", "email", "click")
@@ -217,7 +235,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             metrics_instance.record_delivery_event("resend", "email", "unsubscribe")
@@ -234,7 +254,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = MagicMock()
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             metrics_instance.record_rate_limit("resend", "email")
@@ -251,7 +273,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = mock_up_down
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             metrics_instance.update_queue_size(5)
@@ -268,7 +292,9 @@ class TestNotificationProviderMetrics:
             mock_meter.create_up_down_counter.return_value = mock_up_down
             mock_metrics.get_meter.return_value = mock_meter
 
-            from notification_service.core.provider_metrics import NotificationProviderMetrics
+            from notification_service.core.provider_metrics import (
+                NotificationProviderMetrics,
+            )
 
             metrics_instance = NotificationProviderMetrics()
             metrics_instance.update_queue_size(-3)
@@ -278,6 +304,14 @@ class TestNotificationProviderMetrics:
 
 class TestGetNotificationProviderMetrics:
     """Tests for get_notification_provider_metrics singleton function."""
+
+    def teardown_method(self) -> None:
+        """Clear the cached metrics instance after each test."""
+        from notification_service.core.provider_metrics import (
+            get_notification_provider_metrics,
+        )
+
+        get_notification_provider_metrics.cache_clear()
 
     def test_returns_singleton_instance(self) -> None:
         """Test that the function returns a singleton instance."""
@@ -296,7 +330,9 @@ class TestGetNotificationProviderMetrics:
 
     def test_has_expected_attributes(self) -> None:
         """Test that the singleton has all expected attributes."""
-        from notification_service.core.provider_metrics import get_notification_provider_metrics
+        from notification_service.core.provider_metrics import (
+            get_notification_provider_metrics,
+        )
 
         get_notification_provider_metrics.cache_clear()
         metrics = get_notification_provider_metrics()

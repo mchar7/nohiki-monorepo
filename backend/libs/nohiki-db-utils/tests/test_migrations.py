@@ -9,6 +9,7 @@ from collections.abc import Awaitable
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import nohiki_db_utils.migrations.state as migrations_state_module
 import pytest
 from nohiki_db_utils.migrations import (
     DatabaseConfig,
@@ -124,6 +125,11 @@ class TestMigrationState:
         assert result["healthy"] is True
         assert result["started_at"] == pytest.approx(123.0)
         assert result["completed_at"] == pytest.approx(456.0)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_migration_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(migrations_state_module, "_migration_state", MigrationState())
 
 
 class TestGetAndSetMigrationState:
@@ -377,7 +383,9 @@ class TestRunWithLock:
         assert "Migration failed" in state.error
 
     @pytest.mark.asyncio
-    async def test_timeout_then_cancellation_keeps_lock_until_executor_exits(self) -> None:
+    async def test_timeout_then_cancellation_keeps_lock_until_executor_exits(
+        self,
+    ) -> None:
         """A cancellation during timeout draining cannot release a live migration lock."""
         loop = asyncio.get_running_loop()
         executor = _BlockedExecutor(loop)
@@ -405,8 +413,14 @@ class TestRunWithLock:
         conn = AsyncMock()
         ctx = LockContext("test-service", "pod-1", "postgresql://localhost/db", "alembic.ini")
         with (
-            patch("nohiki_db_utils.migrations.executor.asyncio.get_event_loop", return_value=executor_loop),
-            patch("nohiki_db_utils.migrations.executor.asyncio.wait_for", side_effect=force_timeout),
+            patch(
+                "nohiki_db_utils.migrations.executor.asyncio.get_event_loop",
+                return_value=executor_loop,
+            ),
+            patch(
+                "nohiki_db_utils.migrations.executor.asyncio.wait_for",
+                side_effect=force_timeout,
+            ),
             patch(
                 "nohiki_db_utils.migrations.coordinator.clear_lock_metadata",
                 new_callable=AsyncMock,
@@ -439,7 +453,9 @@ class TestRunWithLock:
         mock_release.assert_awaited_once_with(conn, 12345)
 
     @pytest.mark.asyncio
-    async def test_cancellation_before_timeout_keeps_lock_until_executor_exits(self) -> None:
+    async def test_cancellation_before_timeout_keeps_lock_until_executor_exits(
+        self,
+    ) -> None:
         """Cancellation before the deadline drains the executor before releasing the lock."""
         loop = asyncio.get_running_loop()
         executor = _BlockedExecutor(loop)
@@ -468,8 +484,14 @@ class TestRunWithLock:
         conn = AsyncMock()
         ctx = LockContext("test-service", "pod-1", "postgresql://localhost/db", "alembic.ini")
         with (
-            patch("nohiki_db_utils.migrations.executor.asyncio.get_event_loop", return_value=executor_loop),
-            patch("nohiki_db_utils.migrations.executor.asyncio.wait_for", side_effect=wait_without_timeout),
+            patch(
+                "nohiki_db_utils.migrations.executor.asyncio.get_event_loop",
+                return_value=executor_loop,
+            ),
+            patch(
+                "nohiki_db_utils.migrations.executor.asyncio.wait_for",
+                side_effect=wait_without_timeout,
+            ),
             patch(
                 "nohiki_db_utils.migrations.coordinator.clear_lock_metadata",
                 new_callable=AsyncMock,
@@ -502,7 +524,9 @@ class TestRunWithLock:
         mock_release.assert_awaited_once_with(conn, 12345)
 
     @pytest.mark.asyncio
-    async def test_repeated_cancellation_drains_executor_before_releasing_lock(self) -> None:
+    async def test_repeated_cancellation_drains_executor_before_releasing_lock(
+        self,
+    ) -> None:
         """Repeated cancellation cannot interrupt draining a blocked executor thread."""
         loop = asyncio.get_running_loop()
         executor = _BlockedExecutor(loop)
@@ -531,8 +555,14 @@ class TestRunWithLock:
         conn = AsyncMock()
         ctx = LockContext("test-service", "pod-1", "postgresql://localhost/db", "alembic.ini")
         with (
-            patch("nohiki_db_utils.migrations.executor.asyncio.get_event_loop", return_value=executor_loop),
-            patch("nohiki_db_utils.migrations.executor.asyncio.wait_for", side_effect=wait_without_timeout),
+            patch(
+                "nohiki_db_utils.migrations.executor.asyncio.get_event_loop",
+                return_value=executor_loop,
+            ),
+            patch(
+                "nohiki_db_utils.migrations.executor.asyncio.wait_for",
+                side_effect=wait_without_timeout,
+            ),
             patch(
                 "nohiki_db_utils.migrations.coordinator.clear_lock_metadata",
                 new_callable=AsyncMock,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Generator
 
 os.environ["USER_UPLOAD_DATABASE__DSN"] = "postgresql://test:test@localhost:5432/test"
 os.environ["USER_UPLOAD_DATABASE__SCHEMA_NAME"] = "user_upload_schema"
@@ -19,10 +20,12 @@ os.environ["OTEL_SDK_DISABLED"] = "true"
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Generator[None]:
     """Reset settings cache between tests."""
     from user_upload_service.core.config import get_settings
 
+    get_settings.cache_clear()
+    yield
     get_settings.cache_clear()
 
 

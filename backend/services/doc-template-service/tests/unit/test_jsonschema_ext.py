@@ -1,9 +1,12 @@
 """Tests for extended JSON Schema validator."""
 
+from collections.abc import Generator
+
 import pytest
 from doc_template_service.core.validation._jsonschema_ext import (
     CUSTOM_KEYWORDS,
     RichValidator,
+    _get_cached_validator_sync,
     get_cached_validator,
     get_validator,
     validate_data,
@@ -13,6 +16,13 @@ from doc_template_service.core.validation._jsonschema_ext import (
     x_ui_type_validator,
 )
 from doc_template_service.schemas.models import ValidationIssue
+
+
+@pytest.fixture(autouse=True)
+def _clear_validator_cache() -> Generator[None]:
+    _get_cached_validator_sync.cache_clear()
+    yield
+    _get_cached_validator_sync.cache_clear()
 
 
 class TestCustomKeywordValidators:
@@ -61,14 +71,20 @@ class TestRichValidator:
 
     def test_iter_errors_valid_data(self) -> None:
         """Test iter_errors with valid data."""
-        schema: dict[str, object] = {"type": "object", "properties": {"name": {"type": "string"}}}
+        schema: dict[str, object] = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+        }
         validator = RichValidator(schema)
         errors = list(validator.iter_errors({"name": "test"}))
         assert errors == []
 
     def test_iter_errors_invalid_data(self) -> None:
         """Test iter_errors with invalid data."""
-        schema: dict[str, object] = {"type": "object", "properties": {"name": {"type": "string"}}}
+        schema: dict[str, object] = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+        }
         validator = RichValidator(schema)
         errors = list(validator.iter_errors({"name": 123}))
         assert len(errors) == 1
@@ -105,7 +121,12 @@ class TestRichValidator:
         """Test iter_errors_with_paths returns errors with paths."""
         schema: dict[str, object] = {
             "type": "object",
-            "properties": {"nested": {"type": "object", "properties": {"value": {"type": "number"}}}},
+            "properties": {
+                "nested": {
+                    "type": "object",
+                    "properties": {"value": {"type": "number"}},
+                }
+            },
         }
         validator = RichValidator(schema)
         errors = validator.iter_errors_with_paths({"nested": {"value": "not a number"}})
@@ -192,8 +213,14 @@ class TestGetValidator:
 
     def test_caches_equivalent_schemas(self) -> None:
         """Test that equivalent schemas return same cached validator."""
-        schema1: dict[str, object] = {"type": "object", "properties": {"a": {"type": "string"}}}
-        schema2: dict[str, object] = {"properties": {"a": {"type": "string"}}, "type": "object"}
+        schema1: dict[str, object] = {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+        }
+        schema2: dict[str, object] = {
+            "properties": {"a": {"type": "string"}},
+            "type": "object",
+        }
         validator1 = get_validator(schema1)
         validator2 = get_validator(schema2)
         # Same schema (sorted keys), should be same cached instance

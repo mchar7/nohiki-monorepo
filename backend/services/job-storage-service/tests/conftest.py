@@ -23,6 +23,8 @@ os.environ.setdefault("JOB_STORAGE_KAFKA__DSN", "kafka://localhost:29092")
 os.environ.setdefault("JOB_STORAGE_KAFKA__CONSUMER_GROUP", "test-consumer-group")
 os.environ.setdefault("ENVIRONMENT", "development")
 
+from collections.abc import Generator
+
 import pytest
 from nohiki_db_utils.testing import (
     async_engine,
@@ -42,8 +44,10 @@ __all__ = [
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Generator[None]:
     """Reset settings cache between tests."""
     from job_storage_service.core.config import get_settings
 
+    get_settings.cache_clear()
+    yield
     get_settings.cache_clear()

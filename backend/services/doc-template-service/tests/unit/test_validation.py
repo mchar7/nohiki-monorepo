@@ -10,6 +10,7 @@ Tests are organized by module to match the new modular validation package struct
 """
 
 import json
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -40,9 +41,18 @@ COMPLETE_SEED_DATA: dict[str, dict[str, object]] = {
         },
         "projects": {
             "label": "Projects",
-            "entries": [{"title": "Nohiki", "subtitle": "Open source", "bullets": ["Stack: Python"]}],
+            "entries": [
+                {
+                    "title": "Nohiki",
+                    "subtitle": "Open source",
+                    "bullets": ["Stack: Python"],
+                }
+            ],
         },
-        "skills": {"label": "Skills", "categories": [{"name": "Languages", "skills": ["Python"]}]},
+        "skills": {
+            "label": "Skills",
+            "categories": [{"name": "Languages", "skills": ["Python"]}],
+        },
         "education": {
             "label": "Education",
             "entries": [
@@ -53,7 +63,10 @@ COMPLETE_SEED_DATA: dict[str, dict[str, object]] = {
                 }
             ],
         },
-        "certifications": {"label": "Certifications", "entries": [{"date": "2024", "name": "CSP"}]},
+        "certifications": {
+            "label": "Certifications",
+            "entries": [{"date": "2024", "name": "CSP"}],
+        },
         "hobbies": {"label": "Interests", "entries": ["Climbing"]},
     },
     "default_cover_letter_template.html": {
@@ -89,6 +102,7 @@ from doc_template_service.core.validation import (
 from doc_template_service.core.validation.html import validate_html_output
 from doc_template_service.core.validation.javascript import validate_javascript_presence
 from doc_template_service.core.validation.schema import (
+    _get_cached_validator,
     get_schema_validator,
     validate_data_against_schema,
 )
@@ -97,6 +111,13 @@ from doc_template_service.core.validation.template import (
     validate_template_syntax,
 )
 from doc_template_service.schemas.models import ValidationReport
+
+
+@pytest.fixture(autouse=True)
+def _clear_schema_validator_cache() -> Generator[None]:
+    _get_cached_validator.cache_clear()
+    yield
+    _get_cached_validator.cache_clear()
 
 
 class TestExtractJsRequirementsFromTemplate:
@@ -175,7 +196,10 @@ class TestGetSchemaValidator:
 
     def test_returns_draft7_validator(self) -> None:
         """Returns a Draft7Validator instance."""
-        schema: dict[str, object] = {"type": "object", "properties": {"name": {"type": "string"}}}
+        schema: dict[str, object] = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+        }
         validator = get_schema_validator(schema)
         assert validator is not None
         errors = list(validator.iter_errors({"name": "test"}))
@@ -559,7 +583,9 @@ class TestValidateAll:
         assert not any("javascript" in issue.keyword for issue in report.issues)
 
     @pytest.mark.asyncio
-    async def test_legacy_seed_reproduces_javascript_and_missing_name_errors(self) -> None:
+    async def test_legacy_seed_reproduces_javascript_and_missing_name_errors(
+        self,
+    ) -> None:
         """The original failure has both unsafe script and absent required-name causes."""
         template = """<!-- TMPL_META
 {"name": "legacy", "requires_javascript": {"required": false}}
@@ -620,7 +646,10 @@ class TestSchemaErrorHandling:
     def test_schema_validation_error_with_invalid_data(self) -> None:
         """Schema validation error is reported for type mismatch."""
         result = ValidationResult()
-        schema: dict[str, object] = {"type": "object", "properties": {"age": {"type": "integer"}}}
+        schema: dict[str, object] = {
+            "type": "object",
+            "properties": {"age": {"type": "integer"}},
+        }
         data = {"age": "not_an_integer"}
 
         validate_data_against_schema(data, schema, result)
@@ -746,7 +775,9 @@ class TestOrchestratorRenderingErrors:
         """TemplateComplexityError is handled during rendering."""
         from unittest.mock import AsyncMock, patch
 
-        from doc_template_service.core.templates.jinja_engine import TemplateComplexityError
+        from doc_template_service.core.templates.jinja_engine import (
+            TemplateComplexityError,
+        )
 
         validator = Validator()
 
@@ -768,7 +799,9 @@ class TestOrchestratorRenderingErrors:
         """TemplateRenderTimeoutError is handled during rendering."""
         from unittest.mock import AsyncMock, patch
 
-        from doc_template_service.core.templates.jinja_engine import TemplateRenderTimeoutError
+        from doc_template_service.core.templates.jinja_engine import (
+            TemplateRenderTimeoutError,
+        )
 
         validator = Validator()
 

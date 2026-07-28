@@ -19,6 +19,11 @@ from nohiki_fastapi_utils.jwks import (
 from pydantic import ValidationError as PydanticValidationError
 
 
+@pytest.fixture(autouse=True)
+def _isolate_verifier_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(JWKSVerifier, "_instance", None)
+
+
 class TestJWKSConfig:
     """Tests for JWKSConfig model."""
 

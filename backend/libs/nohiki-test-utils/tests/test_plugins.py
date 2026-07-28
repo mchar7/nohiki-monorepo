@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from importlib import reload
+import importlib
+import os
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import nohiki_test_utils
 import pytest
 from nohiki_test_utils import plugins
 
@@ -20,14 +22,19 @@ class TestPytestConfigure:
         assert any("integration" in str(m) for m in markers)
 
     def test_plugin_and_package_exports_reload_cleanly(self) -> None:
-        """Entrypoint and lazy package exports remain valid on normal Python reload."""
-        reloaded_package = reload(nohiki_test_utils)
-        reloaded_plugin = reload(plugins)
+        """Entrypoint and lazy package exports remain valid on a fresh import."""
+        with patch.dict(sys.modules):
+            for name in tuple(sys.modules):
+                if name == "nohiki_test_utils" or name.startswith("nohiki_test_utils."):
+                    del sys.modules[name]
 
-        assert callable(reloaded_package.docker_daemon_available)
-        assert reloaded_plugin.pytest_collection_modifyitems is not None
-        with pytest.raises(AttributeError, match="has no attribute 'missing_export'"):
-            reloaded_package.__getattr__("missing_export")
+            reloaded_package = importlib.import_module("nohiki_test_utils")
+            reloaded_plugin = importlib.import_module("nohiki_test_utils.plugins")
+
+            assert callable(reloaded_package.docker_daemon_available)
+            assert reloaded_plugin.pytest_collection_modifyitems is not None
+            with pytest.raises(AttributeError, match="has no attribute 'missing_export'"):
+                reloaded_package.__getattr__("missing_export")
 
 
 class TestCollectionModifyItems:
@@ -88,3 +95,29 @@ class TestPluginMarkers:
     @pytest.mark.requires_docker
     def test_requires_docker_marker_is_available(self) -> None:
         """Docker requirement marker is available and usable."""
+
+
+class TestSecretsIsolation:
+    """Tests for session-wide file-secret isolation."""
+
+    def test_session_secrets_dir_is_an_empty_existing_directory(self) -> None:
+        """Every session runs against a secrets tree that exists and holds no secrets."""
+        secrets_dir = Path(os.environ["SECRETS_DIR"])
+
+        assert secrets_dir.is_dir()
+        assert list(secrets_dir.iterdir()) == []
+
+    def test_teardown_removes_the_directory_the_hook_created(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The session secrets tree does not outlive the session that created it."""
+        monkeypatch.setenv("SECRETS_DIR", os.environ["SECRETS_DIR"])
+        config = MagicMock(spec=pytest.Config)
+        config.stash = pytest.Stash()
+
+        plugins.pytest_load_initial_conftests(config)
+        created = Path(config.stash[plugins._EMPTY_SECRETS_DIR_KEY])
+        assert created.is_dir()
+        assert os.environ["SECRETS_DIR"] == str(created)
+
+        plugins.pytest_unconfigure(config)
+
+        assert not created.exists()

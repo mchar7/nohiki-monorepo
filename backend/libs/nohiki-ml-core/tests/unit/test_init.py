@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import importlib
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -114,40 +115,26 @@ class TestModuleImports:
             "nohiki_ml_core.pipeline",
         ]
 
-        saved = {k: sys.modules[k] for k in sys.modules if k.startswith("nohiki_ml_core")}
-        try:
-            for mod in lazy_modules:
-                sys.modules.pop(mod, None)
+        with patch.dict(sys.modules):
+            for name in tuple(sys.modules):
+                if name == "nohiki_ml_core" or name.startswith("nohiki_ml_core."):
+                    del sys.modules[name]
 
-            import nohiki_ml_core
-
-            importlib.reload(nohiki_ml_core)
+            importlib.import_module("nohiki_ml_core")
 
             for mod in lazy_modules:
                 assert mod not in sys.modules, f"{mod} should not be loaded yet"
-        finally:
-            stale = [m for m in sys.modules if m.startswith("nohiki_ml_core")]
-            for mod in stale:
-                del sys.modules[mod]
-            sys.modules.update(saved)
 
     def test_accessing_lazy_import_loads_module(self) -> None:
         """Test that accessing a lazy import loads the module."""
-        saved = {k: sys.modules[k] for k in sys.modules if k.startswith("nohiki_ml_core")}
-        try:
-            for mod in ["nohiki_ml_core.encoders.colbert", "nohiki_ml_core.encoders.dense"]:
-                sys.modules.pop(mod, None)
+        with patch.dict(sys.modules):
+            for name in tuple(sys.modules):
+                if name == "nohiki_ml_core" or name.startswith("nohiki_ml_core."):
+                    del sys.modules[name]
 
-            import nohiki_ml_core
-
-            importlib.reload(nohiki_ml_core)
+            nohiki_ml_core = importlib.import_module("nohiki_ml_core")
 
             with contextlib.suppress(Exception):
                 _ = nohiki_ml_core.ColBERTEncoder
 
             assert "nohiki_ml_core.encoders.colbert" in sys.modules
-        finally:
-            stale = [m for m in sys.modules if m.startswith("nohiki_ml_core")]
-            for mod in stale:
-                del sys.modules[mod]
-            sys.modules.update(saved)

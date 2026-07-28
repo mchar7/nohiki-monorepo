@@ -13,6 +13,11 @@ from __future__ import annotations
 from nohiki_redis_utils.metrics import RedisMetrics, get_redis_metrics
 
 
+def teardown_module() -> None:
+    """Clear the cached metrics instance after this module."""
+    get_redis_metrics.cache_clear()
+
+
 class TestRedisMetricsRecordOperation:
     """Tests for record_operation method with edge cases."""
 

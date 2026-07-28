@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
 import os
+from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -22,25 +24,23 @@ os.environ.setdefault("DOC_TEMPLATE_S3__REGION", "us-east-1")
 os.environ.setdefault("TEST_MODE", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
-# Mock create_cache BEFORE importing service modules to prevent real Redis connections
+# Initialize only the service-local cache singletons with the test cache.
 _mock_cache = AsyncMock()
 _mock_cache.get = AsyncMock(return_value=None)
 _mock_cache.set = AsyncMock(return_value=None)
 _mock_cache.delete = AsyncMock(return_value=None)
 _mock_cache.close = AsyncMock(return_value=None)
 
-_create_cache_patcher = patch("nohiki_redis_utils.create_cache", return_value=_mock_cache)
-_create_cache_patcher.start()
-
-
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:  # noqa: ARG001
-    """Clean up patchers after test session."""
-    _create_cache_patcher.stop()
+with patch("nohiki_redis_utils.create_cache", return_value=_mock_cache):
+    importlib.import_module("doc_template_service.core.generator.cache")
+    importlib.import_module("doc_template_service.services.template_service")
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings_cache() -> None:
+def _reset_settings_cache() -> Generator[None]:
     """Reset settings cache between tests."""
     from doc_template_service.core.config import get_settings
 
+    get_settings.cache_clear()
+    yield
     get_settings.cache_clear()
