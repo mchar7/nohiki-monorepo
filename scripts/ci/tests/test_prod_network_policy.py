@@ -9,11 +9,11 @@ from typing import Any
 
 import pytest
 import yaml
+from ci_checks.core.image_inventory import load_inventory
 from helm_test_utils import runtime_eso_args
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
-_MATRIX = _ROOT / ".github" / "workflows" / "build-push.yml"
 _IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
 _NETWORK = Path(__file__).parent / "fixtures" / "values.prod.network.yaml"
 _FIRST_PARTY_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
@@ -29,9 +29,8 @@ _MANAGED_PORTS = {443, 5432, 6334, 6380, 9093}
 
 
 def _digest_overlay(tmp_path: Path) -> Path:
-    matrix = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"]["include"]
     digests = {
-        f"{_FIRST_PARTY_PREFIX}{entry['name']}": f"sha256:{index + 1:064x}" for index, entry in enumerate(matrix)
+        f"{_FIRST_PARTY_PREFIX}{name}": f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)
     }
     path = tmp_path / "values.prod.digests.yaml"
     path.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")

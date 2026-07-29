@@ -12,16 +12,17 @@ from typing import Any
 
 import pytest
 import yaml
+from ci_checks.core.image_inventory import load_inventory
 
 ROOT = Path(__file__).resolve().parents[4]
 CHART = ROOT / "infra/k8s/helm"
 GITOPS = ROOT / "infra/k8s/gitops"
 OBSERVABILITY = ROOT / "infra/k8s/observability"
 WORKFLOW = ROOT / ".github/workflows/cd_deploy-to-aks_nohiki.yml"
+BUILD_PUSH_WORKFLOW = ROOT / ".github/workflows/build-push.yml"
 BOOTSTRAP = GITOPS / "install/bootstrap.sh"
 IDENTITY_FIXTURE = ROOT / "scripts/ci/tests/fixtures/values.prod.identity.yaml"
 NETWORK_FIXTURE = ROOT / "scripts/ci/tests/fixtures/values.prod.network.yaml"
-BUILD_MATRIX = ROOT / ".github/workflows/build-push.yml"
 LOCAL_SECRET_CONTRACT = ROOT / "scripts/infra/local_secret_contract.py"
 
 CLUSTERS = {
@@ -123,12 +124,9 @@ def _kustomize(relative: str) -> tuple[dict[str, Any], ...]:
 
 
 def _digest_values(tmp_path: Path) -> Path:
-    matrix = yaml.safe_load(BUILD_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"][
-        "include"
-    ]
     digests = {
-        f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": f"sha256:{index + 1:064x}"
-        for index, entry in enumerate(matrix)
+        f"ghcr.io/mchar7/nohiki-monorepo/{name}": f"sha256:{index + 1:064x}"
+        for index, name in enumerate(load_inventory().names)
     }
     path = tmp_path / "values.prod.digests.yaml"
     path.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
@@ -450,7 +448,7 @@ def test_prod_values_files_are_present_before_activation_or_generated_by_promoti
 
     producer_workflows = (
         workflow,
-        yaml.safe_load(BUILD_MATRIX.read_text(encoding="utf-8")),
+        yaml.safe_load(BUILD_PUSH_WORKFLOW.read_text(encoding="utf-8")),
     )
     promotion_steps = {
         step["name"]: step

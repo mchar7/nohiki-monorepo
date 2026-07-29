@@ -11,11 +11,8 @@ from pathlib import Path
 import pytest
 from _documents import (
     Manifest,
-    WorkflowMatrix,
-    WorkflowStrategy,
     load_manifests,
     load_mapping,
-    load_workflow,
 )
 from ci_checks.checks.migration_truth import (
     MigrationInventory,
@@ -26,6 +23,7 @@ from ci_checks.checks.migration_truth import (
     render_live_verifier,
     validate_migration_truth,
 )
+from ci_checks.core.image_inventory import load_inventory
 from helm_test_utils import runtime_eso_args
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -84,14 +82,7 @@ def _render_environment(values_file: str) -> tuple[Manifest, ...]:
                 *runtime_eso_args("prod"),
             ]
         )
-    workflow = load_workflow(_REPOSITORY_ROOT / ".github/workflows/build-push.yml")
-    strategy: WorkflowStrategy = workflow["jobs"]["build-push"]["strategy"]
-    matrix: WorkflowMatrix = strategy["matrix"]
-    image_names = [entry["name"] for entry in matrix["include"]]
-    assert all(isinstance(name, str) for name in image_names)
-    image_digests = {
-        f"ghcr.io/mchar7/nohiki-monorepo/{name}": _MIGRATION_DIGEST for name in image_names if isinstance(name, str)
-    }
+    image_digests = {f"ghcr.io/mchar7/nohiki-monorepo/{name}": _MIGRATION_DIGEST for name in load_inventory().names}
     command.extend(["--set-json", f"global.imageDigests={json.dumps(image_digests)}"])
     result = subprocess.run(
         command,

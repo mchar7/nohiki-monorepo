@@ -15,6 +15,7 @@ from _documents import (
     metadata_of,
     string_at,
 )
+from ci_checks.core.image_inventory import load_inventory
 from test_image_digest_gitops import _digest_values
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -100,9 +101,7 @@ def _named(documents: list[Manifest], kind: str, name: str) -> Manifest:
 def test_staging_uses_canonical_first_party_images_and_external_jwt_secret(
     tmp_path: Path,
 ) -> None:
-    workflow = load_workflow(_ROOT / ".github" / "workflows" / "build-push.yml")
-    entries = mapping_sequence_at(workflow, "jobs", "build-push", "strategy", "matrix", "include")
-    names = {string_at(entry, "name") for entry in entries}
+    names = set(load_inventory().names)
     documents = _helm("values.staging.yaml", tmp_path)
     images = {image for document in documents for image in _container_images(document)}
     first_party = {image for image in images if any(f"/{name}:" in image for name in names)}

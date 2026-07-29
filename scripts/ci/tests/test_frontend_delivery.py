@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import pytest
 import yaml
+from ci_checks.core.image_inventory import load_inventory
 from helm_test_utils import runtime_eso_args
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -26,10 +27,8 @@ _CADDYFILE = _FRONTEND / "Caddyfile"
 _API_CLIENT = _FRONTEND / "src" / "shared" / "api" / "client.ts"
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _FRONTEND_CHART = _CHART / "charts" / "nohiki-frontend"
-_BUILD_WORKFLOW = _ROOT / ".github" / "workflows" / "build-push.yml"
 _CHECKS_WORKFLOW = _ROOT / ".github" / "workflows" / "checks.yml"
 _IMAGE_INVENTORY = _ROOT / "infra" / "k8s" / "local" / "images.json"
-_JUSTFILE = _ROOT / "Justfile"
 _DOCKERIGNORE = _ROOT / ".dockerignore"
 _LOCAL_PLATFORM = _ROOT / "infra" / "k8s" / "gitops" / "platform" / "local"
 _FRONTEND_ARCHIVE = _CHART / "charts" / "nohiki-frontend-0.1.0.tgz"
@@ -38,14 +37,9 @@ _PROD_NETWORK = Path(__file__).parent / "fixtures" / "values.prod.network.yaml"
 _IMAGE_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 
 
-def _matrix() -> list[dict[str, Any]]:
-    workflow = yaml.safe_load(_BUILD_WORKFLOW.read_text(encoding="utf-8"))
-    return workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
-
-
 def _digest_overlay(tmp_path: Path, environment: str) -> tuple[Path, str]:
     prefix = "localhost:5000/" if environment == "local" else _IMAGE_PREFIX
-    digests = {f"{prefix}{entry['name']}": f"sha256:{index + 1:064x}" for index, entry in enumerate(_matrix())}
+    digests = {f"{prefix}{name}": f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)}
     overlay = tmp_path / f"values.{environment}.frontend-digests.yaml"
     overlay.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
     return overlay, digests[f"{prefix}frontend"]
@@ -103,21 +97,6 @@ def _named(documents: tuple[dict[str, Any], ...], kind: str, name: str) -> dict[
     ]
     assert len(matches) == 1, f"expected one {kind} named {name}, got {len(matches)}"
     return matches[0]
-
-
-def _just_image_specs() -> set[tuple[str, str, str, str | None]]:
-    value = subprocess.run(
-        ["just", "--evaluate", "first_party_image_specs"],
-        cwd=_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    specs: set[tuple[str, str, str, str | None]] = set()
-    for raw_spec in value.split():
-        name, context, dockerfile, *build_arg = raw_spec.split("|")
-        specs.add((name, context, dockerfile, build_arg[0] if build_arg else None))
-    return specs
 
 
 def _request(url: str) -> tuple[int, bytes, str]:
@@ -416,15 +395,10 @@ def test_frontend_chart_lock_and_archive_exactly_match_source() -> None:
         assert archived_files[name] == source_files[name], name
 
 
-def test_canonical_workflow_inventory_and_justfile_image_specs_are_equal() -> None:
-    workflow_specs = {
-        (
-            entry["name"],
-            entry.get("context", "."),
-            entry["dockerfile"],
-            entry.get("build_args"),
-        )
-        for entry in _matrix()
+def test_canonical_release_and_local_image_specs_are_equal() -> None:
+    release_specs = {
+        (record.name, record.context, record.dockerfile, record.build_args or None)
+        for record in load_inventory().images
     }
     inventory = json.loads(_IMAGE_INVENTORY.read_text(encoding="utf-8"))
     inventory_specs = {
@@ -445,7 +419,7 @@ def test_canonical_workflow_inventory_and_justfile_image_specs_are_equal() -> No
         )
         for name, context, dockerfile, build_arg in inventory_specs
     }
-    assert workflow_specs == normalized_inventory_specs == _just_image_specs()
+    assert release_specs == normalized_inventory_specs
 
 
 def test_checks_workflow_container_contracts_split_by_artifact_budget() -> None:
@@ -522,7 +496,7 @@ def test_checks_workflow_container_contracts_split_by_artifact_budget() -> None:
 def test_frontend_is_in_canonical_local_and_release_image_inventories() -> None:
     inventory = json.loads(_IMAGE_INVENTORY.read_text(encoding="utf-8"))
     inventory_rows = [entry for entry in inventory["images"] if entry["name"] == "frontend"]
-    workflow_rows = [entry for entry in _matrix() if entry["name"] == "frontend"]
+    release_rows = [record for record in load_inventory().images if record.name == "frontend"]
 
     assert inventory["schemaVersion"] == 1
     assert inventory_rows == [
@@ -533,13 +507,8 @@ def test_frontend_is_in_canonical_local_and_release_image_inventories() -> None:
             "local": True,
         }
     ]
-    assert workflow_rows == [
-        {
-            "name": "frontend",
-            "context": ".",
-            "dockerfile": "typescript/apps/frontend/Dockerfile",
-            "lockfile": "pnpm-lock.yaml",
-        }
+    assert [(row.name, row.context, row.dockerfile, row.lockfile) for row in release_rows] == [
+        ("frontend", ".", "typescript/apps/frontend/Dockerfile", "pnpm-lock.yaml")
     ]
 
 

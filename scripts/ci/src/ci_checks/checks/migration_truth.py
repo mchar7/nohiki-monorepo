@@ -14,6 +14,8 @@ from typing import cast
 
 import yaml
 
+from ci_checks.core.image_inventory import InventoryError, load_inventory
+
 
 @dataclass(frozen=True, slots=True)
 class MigrationInventoryEntry:
@@ -330,30 +332,21 @@ def _canonical_image(values: dict[str, object], service: str) -> tuple[str, str]
 def _validation_digests(values: dict[str, object], inventory: MigrationInventory, repo_root: Path) -> dict[str, str]:
     nonproduction = _merge_values(values, {"global": {"environment": "validation"}})
     repositories = {_canonical_image(nonproduction, entry.service)[0] for entry in inventory.entries}
-    workflow = _load_values(repo_root / ".github/workflows/build-push.yml")
     try:
-        jobs = cast(dict[str, object], workflow["jobs"])
-        build_push = cast(dict[str, object], jobs["build-push"])
-        strategy = cast(dict[str, object], build_push["strategy"])
-        workflow_matrix = cast(dict[str, object], strategy["matrix"])
-        matrix = workflow_matrix["include"]
-    except (KeyError, TypeError) as exc:
-        msg = "build workflow has no canonical image matrix"
+        image_names = load_inventory(repo_root / "scripts/ci/image_inventory.json", repo_root).names
+    except InventoryError as exc:
+        msg = f"canonical image inventory is unusable: {exc}"
         raise MigrationTruthError(msg) from exc
     global_values = nonproduction.get("global", {})
     global_image = global_values.get("nohikiImage", {}) if isinstance(global_values, dict) else {}
-    if not isinstance(matrix, list) or not isinstance(global_image, dict):
-        msg = "invalid canonical image matrix"
+    if not isinstance(global_image, dict):
+        msg = "invalid canonical image registry values"
         raise MigrationTruthError(msg)
     registry = global_image.get("registry", "")
     owner = global_image.get("owner", "")
     repository_name = global_image.get("repositoryName", "")
-    for raw in matrix:
-        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
-            msg = "invalid canonical image matrix entry"
-            raise MigrationTruthError(msg)
-        name = cast(dict[str, object], raw)["name"]
-        repository = str(name)
+    for name in image_names:
+        repository = name
         if registry and owner and repository_name:
             repository = f"{registry}/{owner}/{repository_name}/{name}"
         elif registry:

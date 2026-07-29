@@ -11,16 +11,15 @@ from _documents import (
     containers_of,
     load_manifests,
     load_mapping,
-    load_workflow,
     mapping_at,
     metadata_of,
     string_at,
 )
+from ci_checks.core.image_inventory import load_inventory
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm"
 _SECRET_NAME = "kafka-sasl-credentials"
-_WORKFLOW = _REPOSITORY_ROOT / ".github" / "workflows" / "build-push.yml"
 _FIRST_PARTY_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 _TLS_ENV_SUFFIXES = (
     "KAFKA__SECURITY__TLS__CA_LOCATION",
@@ -65,11 +64,8 @@ _WAL_CONFIG = {
 
 
 def _digest_values(tmp_path: Path) -> Path:
-    workflow = load_workflow(_WORKFLOW)
-    entries = workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
     digests = {
-        f"{_FIRST_PARTY_PREFIX}{string_at(entry, 'name')}": f"sha256:{index + 1:064x}"
-        for index, entry in enumerate(entries)
+        f"{_FIRST_PARTY_PREFIX}{name}": f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)
     }
     path = tmp_path / "values.prod.digests.yaml"
     path.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")

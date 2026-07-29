@@ -7,7 +7,8 @@ from functools import cache
 from pathlib import Path
 
 import pytest
-from _documents import Workflow, WorkflowInputValue, load_mapping, load_workflow
+from _documents import Workflow, load_mapping, load_workflow
+from ci_checks.core.image_inventory import load_inventory
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _IMAGE_INVENTORY = _REPOSITORY_ROOT / "infra" / "k8s" / "local" / "images.json"
@@ -53,33 +54,15 @@ def _image_inventory_specs() -> tuple[tuple[str, str, str, str | None, bool], ..
 
 
 @cache
-def _evaluate(name: str) -> str:
-    return subprocess.run(
-        ["just", "--evaluate", name],
-        cwd=_REPOSITORY_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-
-
-@cache
-def _first_party_image_specs() -> tuple[tuple[str, str, str, str | None], ...]:
-    specs: list[tuple[str, str, str, str | None]] = []
-    for spec in _evaluate("first_party_image_specs").split():
-        image, context, dockerfile, *rest = spec.split("|")
-        specs.append((image, context, dockerfile, rest[0] if rest else None))
-    return tuple(specs)
+def _first_party_image_specs() -> tuple[tuple[str, str, str, str], ...]:
+    return tuple(
+        (record.name, record.context, record.dockerfile, record.build_args) for record in load_inventory().images
+    )
 
 
 @cache
 def _build_workflow() -> Workflow:
     return load_workflow(_REPOSITORY_ROOT / ".github" / "workflows" / "build-push.yml")
-
-
-@cache
-def _matrix_include() -> list[dict[str, WorkflowInputValue]]:
-    return _build_workflow()["jobs"]["build-push"]["strategy"]["matrix"]["include"]
 
 
 def _fake_container_runtime(tmp_path: Path) -> tuple[Path, Path]:
@@ -169,25 +152,15 @@ def test_single_image_build_uses_every_canonical_spec(tmp_path: Path) -> None:
         "RUNTIME_CALLS": str(calls),
     }
 
-    inventory_specs = {
-        (image, context, dockerfile, build_arg) for image, context, dockerfile, build_arg, _ in _image_inventory_specs()
+    local_specs = {
+        (image, context, dockerfile, build_arg or "")
+        for image, context, dockerfile, build_arg, _ in _image_inventory_specs()
     }
-    workflow_specs = {
-        (
-            str(entry["name"]),
-            str(entry.get("context", ".")),
-            str(entry["dockerfile"]),
-            str(entry["build_args"]) if "build_args" in entry else None,
-        )
-        for entry in _matrix_include()
-    }
-    assert set(specs) == inventory_specs == workflow_specs
+    assert set(specs) == local_specs
     build_args = {image: build_arg for image, _, _, build_arg in specs}
-    assert build_args == {
-        image: inventory_build_arg for image, _, _, inventory_build_arg, _ in _image_inventory_specs()
-    }
+    assert build_args == {image: local_build_arg or "" for image, _, _, local_build_arg, _ in _image_inventory_specs()}
     assert build_args["ml-compute-service-gpu"] == "ML_COMPUTE_BUILDER=sync-gpu"
-    assert build_args["ml-compute-service"] is None
+    assert build_args["ml-compute-service"] == ""
     command = ["just"]
     for image, *_ in specs:
         command.extend(("build", image))
@@ -199,7 +172,7 @@ def test_single_image_build_uses_every_canonical_spec(tmp_path: Path) -> None:
     }
     for image, context, dockerfile, build_arg in specs:
         expected = ["build", "-f", dockerfile]
-        if build_arg is not None:
+        if build_arg:
             expected += ["--build-arg", build_arg]
         expected += ["-t", f"{image}:latest", context]
         assert invocations[f"{image}:latest"] == expected
@@ -225,26 +198,19 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
     workflow = _build_workflow()
     jobs = workflow["jobs"]
     validation = jobs["event-validation"]
-    assert validation["permissions"] == {"contents": "read"}
+    assert validation["permissions"] == {"actions": "read", "contents": "read"}
     build = jobs["build-push"]
     build_steps = build["steps"]
     steps = {step.get("id", step["name"]): step for step in build_steps}
 
-    include = build["strategy"]["matrix"]["include"]
-    names: list[str] = []
-    for entry in include:
-        match entry["name"]:
-            case str(name):
-                names.append(name)
-            case _:
-                pytest.fail("build matrix names must be strings")
-    assert len(names) == len(set(names))
-    assert set(names) == {image for image, *_ in _image_inventory_specs()}
-    cpu = next(entry for entry in include if entry["name"] == "ml-compute-service")
-    gpu = next(entry for entry in include if entry["name"] == "ml-compute-service-gpu")
-    assert "build_args" not in cpu
-    assert gpu["build_args"] == "ML_COMPUTE_BUILDER=sync-gpu"
-    assert gpu["dockerfile"] == cpu["dockerfile"] == "backend/services/ml-compute-service/Dockerfile"
+    records = {record.name: record for record in load_inventory().images}
+    assert len(records) == len(load_inventory().names)
+    assert set(records) == {image for image, *_ in _image_inventory_specs()}
+    cpu = records["ml-compute-service"]
+    gpu = records["ml-compute-service-gpu"]
+    assert cpu.build_args == ""
+    assert gpu.build_args == "ML_COMPUTE_BUILDER=sync-gpu"
+    assert gpu.dockerfile == cpu.dockerfile == "backend/services/ml-compute-service/Dockerfile"
     build_with = steps["build"]["with"]
     image_base_path = "steps.image-base-path.outputs.image_base_path"
     assert build_with["cache-from"] == (
@@ -265,13 +231,11 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
     assert next(index for index, step in enumerate(build_steps) if step["name"] == login_name) < next(
         index for index, step in enumerate(build_steps) if step.get("id") == "build"
     )
-    kafka_entry = next(entry for entry in include if entry["name"] == "kafka-connect")
-    assert kafka_entry == {
-        "name": "kafka-connect",
-        "context": "infra/k8s/kafka-connect",
-        "dockerfile": "infra/k8s/kafka-connect/Dockerfile",
-        "lockfile": "infra/k8s/kafka-connect/smt/build.gradle.kts",
-    }
+    kafka_entry = records["kafka-connect"]
+    assert kafka_entry.context == "infra/k8s/kafka-connect"
+    assert kafka_entry.dockerfile == "infra/k8s/kafka-connect/Dockerfile"
+    assert kafka_entry.lockfile == "infra/k8s/kafka-connect/smt/build.gradle.kts"
+    assert kafka_entry.build_args == ""
     assert steps["capture-digest"]["if"] == "steps.mode.outputs.push == 'true'"
     assert steps["capture-digest"]["env"]["IMAGE_DIGEST"] == "${{ steps.build.outputs.digest }}"
     assert steps["upload-digest"]["if"] == "steps.mode.outputs.push == 'true'"
@@ -345,9 +309,9 @@ def test_build_workflow_reclaims_build_cache_before_trivy_scan() -> None:
 def test_local_deploy_inventory_excludes_gpu_and_kafka_connect() -> None:
     inventory = _image_inventory_specs()
     inventory_names = {image for image, *_ in inventory}
-    release_names = set(_evaluate("first_party_image_names").split())
+    release_names = set(load_inventory().names)
     assert len(inventory_names) == len(inventory)
-    assert inventory_names == release_names == {str(entry["name"]) for entry in _matrix_include()}
+    assert inventory_names == release_names
 
     non_local_names = {image for image, *_, local in inventory if not local}
     assert non_local_names == {"ml-compute-service-gpu", "kafka-connect"}

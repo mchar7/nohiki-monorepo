@@ -25,6 +25,7 @@ from ci_checks.core.change_gate import (
     selected_test_packages,
 )
 from ci_checks.core.change_rules import FLAG_NAMES
+from ci_checks.core.image_inventory import affected_images, load_inventory, write_affected_record
 from ci_checks.core.packages import REPO_ROOT, Scope, load_packages_with_deps
 
 
@@ -530,6 +531,10 @@ def gate_cmd(
             help="GitHub owner/repo for changed-file links",
         ),
     ] = None,
+    affected_images_record: Annotated[
+        Path | None,
+        typer.Option("--affected-images-record", help="Push-only affected-image record to write"),
+    ] = None,
 ) -> None:
     """Compute lane activation for the current diff and emit workflow outputs.
 
@@ -546,6 +551,10 @@ def gate_cmd(
         github_output: Optional $GITHUB_OUTPUT path to append key=value lines.
         summary: Optional $GITHUB_STEP_SUMMARY path for the verdict table.
         repository: Optional GitHub ``owner/repo`` for changed-file links.
+        affected_images_record: Optional push-only path for the SHA-bound affected-image record.
+
+    Raises:
+        typer.BadParameter: If the record is requested for anything but a push.
     """
     console = Console()
     packages = load_packages_with_deps(Scope.ALL)
@@ -567,7 +576,13 @@ def gate_cmd(
         ref_name=ref_name,
         protected_main=evidence,
     )
+    if affected_images_record is not None and event != "push":
+        msg = "--affected-images-record is a push-only producer output"
+        raise typer.BadParameter(msg)
     decision = GateDecision()
+    # None means the changed set is unknown, which images treat as "build everything" while the
+    # Checks classification keeps its own fail-closed verdict.
+    changed: set[str] | None = None
 
     if not base_ref or set(base_ref) == {"0"}:
         decision = evaluate(set(), packages, context)
@@ -584,6 +599,11 @@ def gate_cmd(
             decision.flags.update(FLAG_NAMES)
         else:
             decision = evaluate(changed, packages, context)
+
+    if affected_images_record is not None:
+        inventory = load_inventory()
+        names = inventory.names if changed is None else affected_images(changed, inventory)
+        write_affected_record(affected_images_record, head_ref, names)
 
     selected_tests = selected_test_packages(decision, packages)
     outputs = render_outputs(decision, selected_tests, event)

@@ -6,19 +6,18 @@ from typing import Any
 
 import pytest
 import yaml
+from ci_checks.core.image_inventory import load_inventory
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra/k8s/helm"
 _IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
-_MATRIX = _ROOT / ".github" / "workflows" / "build-push.yml"
 _LOCAL_SECRET_CONTRACT = _ROOT / "scripts/infra/local_secret_contract.py"
 
 
 def _digest_fixture(tmp_path: Path) -> Path:
-    matrix = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"]["include"]
     digests = {
-        f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": f"sha256:{index + 1:064x}"
-        for index, entry in enumerate(matrix)
+        f"ghcr.io/mchar7/nohiki-monorepo/{name}": f"sha256:{index + 1:064x}"
+        for index, name in enumerate(load_inventory().names)
     }
     path = tmp_path / "values.prod.digests.yaml"
     path.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")

@@ -599,6 +599,7 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
         for job in jobs.values()
         for step in _steps(job)
         if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        and step["with"]["name"] == "checks-attestation"
     ]
     assert len(uploads) == 1
     assert uploads[0]["with"] == {
@@ -949,3 +950,73 @@ def test_python_test_packages_come_from_change_gate_in_both_classes() -> None:
     assert selected_tests["env"]["TEST_PACKAGES"] == ("${{ needs.changes.outputs.test_packages }}")
     assert 'test -n "$TEST_PACKAGES"' in selected_tests["run"]
     assert '--packages "$TEST_PACKAGES"' in selected_tests["run"]
+
+
+def test_router_syncs_only_the_gate_package_and_runs_it_without_resyncing() -> None:
+    """The router owns one dependency install, scoped to the package that computes the gate."""
+    changes = _jobs()["changes"]
+    steps = _steps(changes)
+
+    checkout = next(step for step in steps if "actions/checkout@" in str(step.get("uses", "")))
+    assert checkout["with"]["fetch-depth"] == 0
+
+    syncs = [step for step in steps if "uv sync" in str(step.get("run", ""))]
+    assert [step["run"].strip() for step in syncs] == ["uv sync --locked --package ci-checks -q"]
+
+    gate = next(step for step in steps if step.get("name") == "Compute change gate")
+    assert "uv run --no-sync ci-checks gate " in gate["run"]
+
+
+def test_gate_step_requests_the_affected_image_record_on_push_alone() -> None:
+    gate = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Compute change gate")
+    assert gate["id"] == "gate"
+
+    command = gate["run"]
+    assert gate["env"]["EVENT"] == "${{ github.event_name }}"
+    assert "--affected-images-record affected-images.json" in command
+    # The option sits behind a push guard, so a pull_request run expands the array to nothing.
+    assert '[ "$EVENT" = push ]' in command
+    assert '"${record[@]}"' in command
+
+
+def test_affected_image_record_uploads_immediately_after_the_gate_computes_it() -> None:
+    steps = _steps(_jobs()["changes"])
+    names = [step.get("name") for step in steps]
+    upload = steps[names.index("Compute change gate") + 1]
+
+    assert upload["name"] == "Upload affected image record"
+    assert upload["if"] == "github.event_name == 'push'"
+    assert upload["uses"].startswith("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
+    assert upload["with"] == {
+        "name": "affected-images",
+        "path": "affected-images.json",
+        "if-no-files-found": "error",
+        "retention-days": 7,
+    }
+
+
+def test_push_and_pull_request_runs_each_upload_exactly_one_router_artifact() -> None:
+    """The record is a push producer and the attestation a pull_request producer, never both."""
+    uploads = [
+        (step["with"]["name"], step["if"])
+        for job in _jobs().values()
+        for step in _steps(job)
+        if "actions/upload-artifact@" in str(step.get("uses", ""))
+    ]
+
+    # A dict alone cannot count: duplicate artifact names would collapse and pass.
+    assert len(uploads) == 2
+    assert dict(uploads) == {
+        "affected-images": "github.event_name == 'push'",
+        "checks-attestation": "github.event_name == 'pull_request' && github.event.action != 'edited'",
+    }
+
+
+def test_router_publishes_the_image_selection_as_an_artifact_not_a_job_output() -> None:
+    jobs = _jobs()
+    assert set(jobs) == {"changes", "worker", "container-contracts", "playwright-image", "title-policy", "checks"}
+
+    # `image_matrix_parity` is a lane flag, not a build matrix; no other output may carry one.
+    outputs = {name: value for name, value in jobs["changes"]["outputs"].items() if name not in FLAG_NAMES}
+    assert not [name for name in outputs if "matrix" in name or "image" in name]
+    assert not [name for name, value in outputs.items() if "matrix" in str(value) or "image" in str(value)]
