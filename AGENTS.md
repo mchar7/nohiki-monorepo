@@ -699,6 +699,11 @@ Projections are updated via Kafka CDC/fct event handlers maintaining eventual co
 - Test desired behavior based on design intent; if code is wrong, fix the code first
 - Never weaken or delete tests to make them pass
 - Use `setattr()` to mutate frozen dataclass fields in tests (direct assignment raises `FrozenInstanceError`)
+- For bot-managed dependencies, test observable contracts: dependency identity, immutable pin shape,
+  required major-version capabilities, and parity between duplicate consumers. Derive or compare
+  current values instead of copying updater-managed SHAs or versions. Permit an exact current value
+  only as an explicit manual compatibility or security-review gate whose test names the
+  version-specific invariant to revalidate when the pin moves.
 
 ## E2E Testing
 

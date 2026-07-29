@@ -6,8 +6,7 @@ from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
 
-import pytest
-from _documents import Workflow, WorkflowStep, load_mapping, load_workflow
+from _documents import Workflow, WorkflowStep, load_workflow
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _WORKFLOWS = _REPOSITORY_ROOT / ".github" / "workflows"
@@ -19,11 +18,8 @@ _ACTION = re.compile(
     r"^\s*uses:\s*(?P<action>[^@\s]+)@(?P<ref>[^\s#]+)(?:\s+#\s*(?P<version>\S+))?\s*$",
     re.MULTILINE,
 )
-_DOWNLOAD_ARTIFACT_REF = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
-_DOWNLOAD_ARTIFACT_VERSION = "v8.0.1"
+_DOWNLOAD_ARTIFACT_MAJOR = "v8"
 _OPENTOFU_VERSION = "1.12.3"
-_SETUP_OPENTOFU_REF = "a1320f892987e89d278cc92dc5adc984fb93aca4"
-_SETUP_OPENTOFU_RELEASE = "v2.0.2"
 _INFRASTRUCTURE_SETUP_COUNTS = {
     "cd_deploy-to-aks_nohiki.yml": 1,
     "cd_destroy-aks_nohiki.yml": 1,
@@ -31,12 +27,9 @@ _INFRASTRUCTURE_SETUP_COUNTS = {
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _DOWNLOAD = re.compile(r"\b(?:curl|wget)\b.*https://")
 
-_FOUNDATION_CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm-foundation"
 _GATEWAY_API_CRDS = _REPOSITORY_ROOT / "infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml"
 _GATEWAY_API_VERSION = "v1.6.0"
 _GATEWAY_API_EXPECTED_HEX = "a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d"
-_KGATEWAY_VERSION = "v2.3.6"
-_CNPG_VERSION = "0.29.0"
 _VENDOR_MARKER = b"# ---8<--- BEGIN VENDORED CONTENT ---8<---\n"
 
 
@@ -85,34 +78,18 @@ def test_vendored_gateway_api_crds_match_pinned_release_checksum() -> None:
     assert hashlib.sha256(vendored).hexdigest() == _GATEWAY_API_EXPECTED_HEX
 
 
-def test_foundation_chart_pins_kgateway_and_cnpg() -> None:
-    chart = load_mapping(_FOUNDATION_CHART / "Chart.yaml")
-    match chart.get("dependencies"):
-        case list(dependencies):
-            versions: dict[str, object] = {}
-            for dependency in dependencies:
-                match dependency:
-                    case {"name": str(name), "version": version}:
-                        versions[name] = version
-                    case _:
-                        pytest.fail("chart dependency must have a string name and version")
-        case _:
-            pytest.fail("chart dependencies must be a list")
-    assert versions["kgateway"] == _KGATEWAY_VERSION
-    assert versions["kgateway-crds"] == _KGATEWAY_VERSION
-    assert versions["cloudnative-pg"] == _CNPG_VERSION
-
-
-def test_every_download_artifact_action_uses_the_audited_release() -> None:
+def test_every_download_artifact_action_supports_cross_run_retrieval() -> None:
     occurrences = [
-        (workflow_path, match["ref"], match["version"])
+        (workflow_path, match["version"])
         for workflow_path in sorted(_WORKFLOWS.glob("*.yml"))
         for match in _DOWNLOAD_ARTIFACT.finditer(_read_text(workflow_path))
     ]
 
     assert occurrences, "no download-artifact actions discovered"
+    # Cross-run retrieval requires the run-id and github-token inputs supported by v8.
+    # Revalidate those inputs before changing the required major.
     assert all(
-        (ref, version) == (_DOWNLOAD_ARTIFACT_REF, _DOWNLOAD_ARTIFACT_VERSION) for _, ref, version in occurrences
+        version is not None and version.partition(".")[0] == _DOWNLOAD_ARTIFACT_MAJOR for _, version in occurrences
     ), occurrences
 
 
@@ -126,17 +103,20 @@ def test_buf_comes_from_the_flake_not_workflow_actions() -> None:
     assert not occurrences, occurrences
 
 
-def test_infrastructure_workflows_use_only_the_audited_opentofu_setup() -> None:
-    occurrences: list[tuple[Path, str, str | None, object]] = []
-    setup_pins: list[tuple[Path, str, str | None]] = []
+def test_infrastructure_workflows_use_the_declared_opentofu_toolchain() -> None:
+    occurrences: list[tuple[Path, str | None, object]] = []
     counts: dict[str, int] = {}
     setup_terraform: list[Path] = []
+    tofu_invocations: dict[str, bool] = {}
 
     for workflow_path in sorted(_WORKFLOWS.glob("*.yml")):
         workflow = load_workflow(workflow_path)
         setup_steps = list(_action_steps(workflow, "opentofu/setup-opentofu"))
         if setup_steps:
             counts[workflow_path.name] = len(setup_steps)
+            tofu_invocations[workflow_path.name] = any(
+                re.search(r"\btofu\b", script) is not None for script in _run_scripts(workflow)
+            )
         if list(_action_steps(workflow, "hashicorp/setup-terraform")):
             setup_terraform.append(workflow_path)
         for step in setup_steps:
@@ -146,26 +126,15 @@ def test_infrastructure_workflows_use_only_the_audited_opentofu_setup() -> None:
             occurrences.append(
                 (
                     workflow_path,
-                    step["uses"].partition("@")[2],
                     tofu_version,
                     with_inputs.get("tofu_wrapper", True),
                 )
             )
-        setup_pins.extend(
-            (workflow_path, match["ref"], match["version"])
-            for match in _ACTION.finditer(_read_text(workflow_path))
-            if match["action"] == "opentofu/setup-opentofu"
-        )
 
     assert not setup_terraform, f"infrastructure workflows must use only setup-opentofu: {setup_terraform}"
     assert counts == _INFRASTRUCTURE_SETUP_COUNTS
-    assert all(
-        (ref, version, wrapper) == (_SETUP_OPENTOFU_REF, _OPENTOFU_VERSION, True)
-        for _, ref, version, wrapper in occurrences
-    ), occurrences
-    assert all((ref, release) == (_SETUP_OPENTOFU_REF, _SETUP_OPENTOFU_RELEASE) for _, ref, release in setup_pins), (
-        setup_pins
-    )
+    assert all(tofu_invocations.values()), tofu_invocations
+    assert all((version, wrapper) == (_OPENTOFU_VERSION, True) for _, version, wrapper in occurrences), occurrences
 
 
 def test_third_party_actions_are_immutable_and_duplicate_pins_stay_aligned() -> None:
