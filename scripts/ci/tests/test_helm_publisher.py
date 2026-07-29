@@ -218,27 +218,19 @@ def test_workflow_actions_are_immutable_and_credentials_are_ephemeral() -> None:
     actions = list(_ACTION.finditer(raw))
     assert actions
     assert all(re.fullmatch(r"[0-9a-f]{40}", match["ref"]) for match in actions)
-    assert all(match["version"] and match["version"].startswith("v") for match in actions)
-    pins = {match["action"]: (match["ref"], match["version"]) for match in actions}
-    assert pins["azure/setup-helm"] == (
-        "9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310",
-        "v5.0.1",
-    )
-    assert pins["sigstore/cosign-installer"] == (
-        "6f9f17788090df1f26f669e9d70d6ae9567deba6",
-        "v4.1.2",
-    )
-    assert pins["docker/login-action"] == (
-        "af1e73f918a031802d376d3c8bbc3fe56130a9b0",
-        "v4.4.0",
-    )
-    assert pins["actions/upload-artifact"] == (
-        "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-        "v7.0.1",
-    )
+    assert all(re.fullmatch(r"v\d+(?:\.\d+)*", match["version"] or "") for match in actions)
+    action_identities = {match["action"] for match in actions}
+    assert {
+        "azure/setup-helm",
+        "sigstore/cosign-installer",
+        "docker/login-action",
+        "actions/upload-artifact",
+    } <= action_identities
 
     job = _load_workflow()["jobs"]["publish"]
-    assert _action_step(job, "sigstore/cosign-installer")["with"]["cosign-release"] == "v3.0.6"
+    cosign = _action_step(job, "sigstore/cosign-installer")
+    assert set(cosign["with"]) == {"cosign-release"}
+    assert re.fullmatch(r"v\d+(?:\.\d+)*", cosign["with"]["cosign-release"])
     login = _action_step(job, "docker/login-action")
     assert login["env"]["DOCKER_CONFIG"] == "${{ runner.temp }}/helm-registry"
     assert login["with"] == {

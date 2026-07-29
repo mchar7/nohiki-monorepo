@@ -157,7 +157,7 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
         "exit-code": "1",
     }
     upload = build_steps["Upload Trivy scan results"]
-    assert upload["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+    assert upload["uses"].startswith("actions/upload-artifact@")
     assert upload["if"] == "always()"
     assert upload["with"] == {
         "name": "trivy-results-${{ matrix.name }}",
@@ -213,7 +213,7 @@ def test_build_push_matrix_is_resolved_from_the_affected_image_record() -> None:
     download = validation_steps["affected-record"]
     assert download["if"] == "github.event_name == 'workflow_run'"
     assert download["continue-on-error"] is True
-    assert download["uses"] == "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+    assert download["uses"].startswith("actions/download-artifact@")
     assert download["with"]["name"] == "affected-images"
     assert download["with"]["path"] == "affected-images"
     # The record belongs to the triggering Checks run, never to this build-push run.

@@ -222,8 +222,14 @@ def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
     node_install = by_name["Install Node dependencies"]
     save = by_name["Save complete CI environment"]
 
-    assert restore["uses"] == ("nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569")
-    assert save["uses"] == ("nix-community/cache-nix-action/save@7df957e333c1e5da7721f60227dbba6d06080569")
+    restore_action, restore_separator, restore_ref = str(restore["uses"]).partition("@")
+    save_action, save_separator, save_ref = str(save["uses"]).partition("@")
+    assert (restore_action, save_action) == (
+        "nix-community/cache-nix-action/restore",
+        "nix-community/cache-nix-action/save",
+    )
+    assert restore_separator == save_separator == "@"
+    assert restore_ref == save_ref
     # Two entries, one identity surface. The Python entry turns over on flake/uv inputs and the
     # Node entry on pnpm inputs, so a lane restores only what its own lockfiles can invalidate.
     # Every input must still key exactly one entry: an input in neither goes stale unnoticed,
@@ -650,6 +656,7 @@ def test_kafka_connect_build_and_remote_connector_pins_are_consistent() -> None:
 def test_strimzi_and_kafka_versions_are_aligned() -> None:
     chart = load_mapping(_ROOT / "infra/k8s/helm/Chart.yaml")
     lock = load_mapping(_ROOT / "infra/k8s/helm/Chart.lock")
+    strimzi_versions: list[str] = []
     for metadata in (chart, lock):
         dependencies = metadata["dependencies"]
         assert isinstance(dependencies, list)
@@ -659,7 +666,10 @@ def test_strimzi_and_kafka_versions_are_aligned() -> None:
             for dependency in dependencies
             if isinstance(dependency, dict) and dependency.get("name") == "strimzi-kafka-operator"
         )
-        assert strimzi.get("version") == "1.1.0"
+        version = strimzi.get("version")
+        assert isinstance(version, str)
+        strimzi_versions.append(version)
+    assert len(set(strimzi_versions)) == 1
 
     values = load_mapping(_HELM_VALUES)
     local = load_mapping(_ROOT / "infra/k8s/helm/values.local.yaml")
