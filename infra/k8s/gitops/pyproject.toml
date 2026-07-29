@@ -1,0 +1,16 @@
+[project]
+name = "gitops-contract-tests"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "Flux bootstrap, secret-topology, and rendered-stack contract tests"
+requires-python = ">=3.14"
+dependencies = [
+    "pytest>=9.0.1",
+    "pyyaml>=6.0.3",
+]
+
+# No [build-system]: this member carries contract tests only, no importable source, and is
+# intentionally never built as a wheel.
+
+# No [tool.pytest.ini_options]: that section would make this directory a pytest rootdir, and a
+# direct run would then drop a cache tree inside the manifest surface the contract tests scan.
