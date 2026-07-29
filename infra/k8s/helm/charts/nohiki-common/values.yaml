@@ -300,7 +300,7 @@ gpuDevicePlugin:
   name: nvidia-device-plugin
   image:
     repository: nvcr.io/nvidia/k8s-device-plugin
-    tag: ""  # required when enabled: "<version>@sha256:<digest>"
+    tag: v0.19.3@sha256:25cc340fe6fd53c101e16fc452f503e7a92c219c64a80ed5381784b522dbbf77
     pullPolicy: IfNotPresent
   priorityClassName: system-node-critical
   updateStrategy: RollingUpdate

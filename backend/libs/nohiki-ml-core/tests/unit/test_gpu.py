@@ -81,7 +81,7 @@ class TestCheckCudaDepsInstalled:
 
     def test_returns_false_when_torch_not_installed(self) -> None:
         """Test returns False when torch is not importable."""
-        with patch.dict("sys.modules", {"torch": None}), patch("builtins.__import__", side_effect=ImportError):
+        with patch("nohiki_ml_core.gpu.importlib.import_module", side_effect=ImportError):
             result = _check_cuda_deps_installed()
             assert result is False
 
@@ -120,7 +120,7 @@ class TestGetCudaVersion:
 
     def test_returns_none_when_torch_not_installed(self) -> None:
         """Test returns None when torch is not importable."""
-        with patch.dict("sys.modules", {"torch": None}), patch("builtins.__import__", side_effect=ImportError):
+        with patch("nohiki_ml_core.gpu.importlib.import_module", side_effect=ImportError):
             result = _get_cuda_version()
             assert result is None
 
@@ -139,7 +139,7 @@ class TestGetDeviceInfo:
 
     def test_returns_empty_when_torch_not_installed(self) -> None:
         """Test returns (0, ()) when torch is not importable."""
-        with patch.dict("sys.modules", {"torch": None}), patch("builtins.__import__", side_effect=ImportError):
+        with patch("nohiki_ml_core.gpu.importlib.import_module", side_effect=ImportError):
             result = _get_device_info()
             assert result == (0, ())
 
@@ -465,7 +465,7 @@ class TestGetTorch:
 
     def test_returns_none_when_torch_not_installed(self) -> None:
         """Test returns None when torch is not importable."""
-        with patch.dict("sys.modules", {"torch": None}), patch("builtins.__import__", side_effect=ImportError):
+        with patch("nohiki_ml_core.gpu.importlib.import_module", side_effect=ImportError):
             result = _get_torch()
             assert result is None
 

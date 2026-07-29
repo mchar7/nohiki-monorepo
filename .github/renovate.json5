@@ -49,8 +49,7 @@
     "managerFilePatterns": ["/^infra\\/k8s\\/gitops\\/.+\\.ya?ml$/"]
   },
   "helm-values": {
-    "managerFilePatterns": ["/^infra\\/k8s\\/.+\\/values\\.ya?ml$/", "/^infra\\/k8s\\/helm\\/values\\.local\\.ya?ml$/"],
-    "pinDigests": true
+    "managerFilePatterns": ["/^infra\\/k8s\\/.+\\/values\\.ya?ml$/", "/^infra\\/k8s\\/helm\\/values\\.local\\.ya?ml$/"]
   },
   "kubernetes": {
     "managerFilePatterns": ["/^infra\\/k8s\\/.+\\.ya?ml$/"]
