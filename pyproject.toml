@@ -571,7 +571,8 @@ markers = [
     "benchmark: mark performance benchmarks (run with --codspeed)",
     "llm_cost: mark tests that make real LLM API calls (incurs costs, skipped by default)",
 ]
-cache_dir = ".cache/pytest"
+# Outside the workspace: Skylos does not exclude this directory from its fingerprint.
+cache_dir = "$HOME/.cache/nohiki/pytest"
 filterwarnings = [
     "error",
     # TODO(google-genai): remove once googleapis/python-genai#1939 is merged and released.
@@ -580,7 +581,8 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-data_file = ".cache/.coverage"
+# Outside the workspace for the same reason; only direct `pytest --cov` uses this setting.
+data_file = "$HOME/.cache/nohiki/coverage/.coverage"
 source = ["backend"]
 omit = [
     "*/tests/*",
