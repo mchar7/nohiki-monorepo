@@ -24,13 +24,6 @@ dev_image_tag := env_var_or_default("DEV_IMAGE_TAG", "dev")
 # Context the destructive reset may target; empty is fail-closed (no reset allowed).
 k8s_local_context := env_var_or_default("K8S_LOCAL_CONTEXT", "")
 
-# First-party release images. Release names/specs must match build-push.yml's matrix
-# (all 27 rows, including verification runners and the ml-compute-service-gpu CUDA
-# variant). Spec fields are name|context|dockerfile|build_args; build_args is optional
-# and set only for the gpu row.
-first_party_image_names := "user-auth-service user-pref-service user-upload-service user-entitlement-service job-storage-service job-ingest-discovery-service job-ingest-schedule-service job-ingest-enrichment-service job-query-composition-service job-correlation-evaluation-service skill-graph-service doc-template-service doc-content-service doc-process-service notification-service bff-service ml-gateway-service ml-compute-service ml-compute-service-gpu sys-tick-job snapshot-refresh-job qdrant-init kafka-connect frontend api-verification-runner playwright-verification-runner health-runner"
-first_party_image_specs := "user-auth-service|.|backend/services/user-auth-service/Dockerfile user-pref-service|.|backend/services/user-pref-service/Dockerfile user-upload-service|.|backend/services/user-upload-service/Dockerfile user-entitlement-service|.|backend/services/user-entitlement-service/Dockerfile job-storage-service|.|backend/services/job-storage-service/Dockerfile job-ingest-discovery-service|.|backend/services/job-ingest-discovery-service/Dockerfile job-ingest-schedule-service|.|backend/services/job-ingest-schedule-service/Dockerfile job-ingest-enrichment-service|.|backend/services/job-ingest-enrichment-service/Dockerfile job-query-composition-service|.|backend/services/job-query-composition-service/Dockerfile job-correlation-evaluation-service|.|backend/services/job-correlation-evaluation-service/Dockerfile skill-graph-service|.|backend/services/skill-graph-service/Dockerfile doc-template-service|.|backend/services/doc-template-service/Dockerfile doc-content-service|.|backend/services/doc-content-service/Dockerfile doc-process-service|.|backend/services/doc-process-service/Dockerfile notification-service|.|backend/services/notification-service/Dockerfile bff-service|.|backend/services/bff-service/Dockerfile ml-gateway-service|.|backend/services/ml-gateway-service/Dockerfile ml-compute-service|.|backend/services/ml-compute-service/Dockerfile ml-compute-service-gpu|.|backend/services/ml-compute-service/Dockerfile|ML_COMPUTE_BUILDER=sync-gpu sys-tick-job|.|backend/jobs/sys-tick-job/Dockerfile snapshot-refresh-job|.|backend/jobs/snapshot-refresh-job/Dockerfile qdrant-init|.|infra/shared/qdrant-init/Dockerfile kafka-connect|infra/k8s/kafka-connect|infra/k8s/kafka-connect/Dockerfile frontend|.|typescript/apps/frontend/Dockerfile api-verification-runner|.|tests/Dockerfile.api-runner playwright-verification-runner|.|typescript/apps/frontend/Dockerfile.playwright-runner health-runner|.|scripts/util/health_check/Dockerfile"
-
 # Local K3s deploy inventory: excludes ml-compute-service-gpu and kafka-connect, since
 # neither is built or pushed for the GPU-less local cluster (local ml-compute uses the CPU image).
 local_image_names := "user-auth-service user-pref-service user-upload-service user-entitlement-service job-storage-service job-ingest-discovery-service job-ingest-schedule-service job-ingest-enrichment-service job-query-composition-service job-correlation-evaluation-service skill-graph-service doc-template-service doc-content-service doc-process-service notification-service bff-service ml-gateway-service ml-compute-service sys-tick-job snapshot-refresh-job qdrant-init frontend"
@@ -380,16 +373,14 @@ logs service:
 build service:
     #!/usr/bin/env bash
     set -euo pipefail
-    read -ra specs <<< "{{ first_party_image_specs }}"
-    for spec in "${specs[@]}"; do
-        IFS='|' read -r image context dockerfile build_arg <<< "$spec"
+    while IFS=$'\t' read -r image context dockerfile build_arg; do
         if [[ "$image" == "{{ service }}" ]]; then
             if [[ -n "$build_arg" ]]; then
                 exec {{ docker }} build -f "$dockerfile" --build-arg "$build_arg" -t "${image}:latest" "$context"
             fi
             exec {{ docker }} build -f "$dockerfile" -t "${image}:latest" "$context"
         fi
-    done
+    done < <(python3 scripts/ci/image_matrix.py specs)
     printf 'error: unknown first-party image: %s\n' "{{ service }}" >&2
     exit 1
 
@@ -413,35 +404,30 @@ build-pilots:
 build-all:
     #!/usr/bin/env bash
     set -uo pipefail
-    read -ra specs <<< "{{ first_party_image_specs }}"
     pids=()
-    for spec in "${specs[@]}"; do
-        IFS='|' read -r image context dockerfile build_arg <<< "$spec"
+    while IFS=$'\t' read -r image context dockerfile build_arg; do
         if [[ -n "$build_arg" ]]; then
             {{ docker }} build -f "$dockerfile" --build-arg "$build_arg" -t "${image}:latest" "$context" &
         else
             {{ docker }} build -f "$dockerfile" -t "${image}:latest" "$context" &
         fi
         pids+=("$!")
-    done
+    done < <(python3 scripts/ci/image_matrix.py specs)
     status=0
     for pid in "${pids[@]}"; do
         wait "$pid" || status=1
     done
     exit "$status"
 
-# Ensure release image specs cannot drift across their three canonical inventories
+# Ensure release image specs cannot drift between the canonical release inventory and the
+# local-deployment view.
 image-matrix-check:
     #!/usr/bin/env bash
     set -euo pipefail
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
 
-    yq -r '
-        .jobs."build-push".strategy.matrix.include[]
-        | [.name, (.context // "."), .dockerfile, (.build_args // "")]
-        | join("|")
-    ' .github/workflows/build-push.yml | sort > "$tmp/workflow"
+    python3 scripts/ci/image_matrix.py specs | sort > "$tmp/release"
 
     jq -r '
         .images[]
@@ -452,17 +438,13 @@ image-matrix-check:
             (if $context == "." then .dockerfile else $context + "/" + .dockerfile end),
             ((.buildArgs // {}) | to_entries | sort_by(.key) | map("\(.key)=\(.value)") | join(","))
         ]
-        | join("|")
-    ' infra/k8s/local/images.json | sort > "$tmp/inventory"
+        | @tsv
+    ' infra/k8s/local/images.json | sort > "$tmp/local"
+    diff -u --label release-inventory --label local-images "$tmp/release" "$tmp/local"
 
-    read -ra specs <<< "{{ first_party_image_specs }}"
-    printf '%s\n' "${specs[@]}" | awk -F'|' 'BEGIN { OFS="|" } { print $1, $2, $3, $4 }' | sort > "$tmp/just"
-    diff -u --label workflow --label inventory "$tmp/workflow" "$tmp/inventory"
-    diff -u --label workflow --label justfile "$tmp/workflow" "$tmp/just"
-
-    printf '%s\n' {{ first_party_image_names }} | sort > "$tmp/names"
-    cut -d'|' -f1 "$tmp/just" | sort > "$tmp/spec-names"
-    diff -u --label first_party_image_names --label first_party_image_specs "$tmp/names" "$tmp/spec-names"
+    python3 scripts/ci/image_matrix.py names | sort > "$tmp/names"
+    cut -f1 "$tmp/release" | sort > "$tmp/spec-names"
+    diff -u --label names --label specs "$tmp/names" "$tmp/spec-names"
 
 # Measure image size after build
 build-measure service:

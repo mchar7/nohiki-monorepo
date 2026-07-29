@@ -209,6 +209,8 @@ members = [
     "tests",
     # Infrastructure init tools
     "infra/shared/qdrant-init",
+    # GitOps contract tests (collected only as a workspace member)
+    "infra/k8s/gitops",
     # CLI tools (scripts that need workspace deps)
     "scripts/ci",
     "scripts/util/tailor",

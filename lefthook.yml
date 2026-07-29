@@ -67,7 +67,10 @@ pre-commit:
 
     # Frontend: Biome lint/format with auto-fix
     frontend-lint:
-      glob: "*.{ts,tsx,js,jsx,css}"
+      glob:
+        - "*.{ts,tsx,js,jsx,mjs,css}"
+        - "typescript/apps/frontend/e2e/*.json"
+        - "typescript/apps/frontend/e2e/**/*.json"
       exclude:
         - "**/api/generated/**"
         - "**/node_modules/**"
@@ -76,14 +79,16 @@ pre-commit:
         # The biome config `files.includes` is narrower than this glob (root-level configs
         # such as vitest.config.ts are out of scope), and biome exits non-zero when every
         # path handed to it is excluded. --no-errors-on-unmatched stops that failing commits.
-        if [ -n "{staged_files}" ]; then
-          ../../../scripts/dev/env-lock.sh shared node_modules -- pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
-        fi
+        ../../../scripts/dev/env-lock.sh shared node_modules -- pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
       stage_fixed: true
 
     # Proto: buf lint
     proto-lint:
-      glob: "*.proto"
+      glob:
+        - "proto/*.proto"
+        - "proto/**/*.proto"
+        - "proto/buf.yaml"
+        - "proto/buf.lock"
       root: proto/
       run: |
         if command -v buf &>/dev/null; then
@@ -100,20 +105,26 @@ pre-commit:
     # IMPORTANT: .markdownlint-cli2.jsonc must NOT contain "globs" (see
     # comment in that file). File discovery is solely via {staged_files}.
     markdown-lint:
-      glob: "*.md"
+      glob:
+        - "*.md"
+        - ".markdownlint-cli2.jsonc"
+        - ".markdownlintignore"
+        - ".markdownlint.json"
       exclude:
         - "**/node_modules/**"
       run: |
-        if [ -n "{staged_files}" ]; then
-          scripts/dev/env-lock.sh shared node_modules -- pnpm exec markdownlint-cli2 --fix {staged_files}
-        fi
+        scripts/dev/env-lock.sh shared node_modules -- pnpm exec markdownlint-cli2 --fix {staged_files}
       stage_fixed: true
 
     # i18n: Validate translation keys (only on frontend src/locale changes)
     i18n-check:
       glob:
+        - "typescript/apps/frontend/src/*.{ts,tsx}"
         - "typescript/apps/frontend/src/**/*.{ts,tsx}"
         - "typescript/apps/frontend/public/locales/**"
+        - "typescript/apps/frontend/scripts/i18n-check.mjs"
+        - "typescript/apps/frontend/scripts/i18n/*"
+        - "typescript/apps/frontend/scripts/i18n/**/*"
       root: typescript/apps/frontend/
       run: ../../../scripts/dev/env-lock.sh shared node_modules -- pnpm run i18n:check
 
@@ -133,7 +144,9 @@ pre-commit:
 
     # Workflows: actionlint plus the pinned SchemaStore workflow schema.
     actions-lint:
-      glob: ".github/workflows/*.{yml,yaml}"
+      glob:
+        - ".github/workflows/*.{yml,yaml}"
+        - ".github/actions/**"
       run: |
         # Remove when rhysd/actionlint#694 and #695 reach pinned nixpkgs.
         ignore='^step must run script with "run" section or run action with "uses" section$'
@@ -158,7 +171,10 @@ pre-commit:
 
     # Dockerfiles: hadolint (rules in .hadolint.yaml)
     docker-lint:
-      glob: "**/Dockerfile{,.*}"
+      glob:
+        - "**/Dockerfile{,.*}"
+        - "Dockerfile"
+        - ".hadolint.yaml"
       exclude:
         - "**/*.dockerignore"
         - "**/*.j2"
@@ -204,21 +220,42 @@ pre-push:
         parallel: true
         jobs:
           - name: python-typecheck
-            glob:
+            glob: &python_workspace_surface
+              - "backend/*.py"
               - "backend/**/*.py"
-              - "infra/shared/qdrant-init/**/*.py"
-              - "scripts/ci/**/*.py"
-              - "scripts/util/**/*.py"
-              - "scripts/benchmark/**/*.py"
-              - "scripts/ml/**/*.py"
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+              - "backend/pyproject.toml"
+              - "backend/**/pyproject.toml"
+              - "scripts/*.py"
+              - "scripts/**/*.py"
+              - "scripts/pyproject.toml"
+              - "scripts/**/pyproject.toml"
+              - "infra/*.py"
+              - "infra/**/*.py"
+              - "infra/pyproject.toml"
+              - "infra/**/pyproject.toml"
+              - "tests/*.py"
+              - "tests/**/*.py"
+              - "tests/pyproject.toml"
+              - "tests/**/pyproject.toml"
+              - "pyproject.toml"
+              - "uv.lock"
+              - ".python-version"
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init infra/k8s/gitops scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
 
           - name: frontend-typecheck
             glob:
               - "typescript/apps/frontend/**/*.{ts,tsx}"
+              - "typescript/apps/frontend/public/*"
+              - "typescript/apps/frontend/public/**/*"
               - "typescript/apps/frontend/package.json"
               - "typescript/apps/frontend/tsconfig*.json"
               - "typescript/apps/frontend/vite.config.*"
+              - "typescript/apps/frontend/vitest.config.*"
+              - "typescript/libs/**"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - ".npmrc"
             run: scripts/dev/env-lock.sh shared node_modules -- sh -c 'cd typescript/apps/frontend && pnpm type-check'
 
     # Phase 2: Unit Tests (parallel, runs after typecheck)
@@ -227,14 +264,10 @@ pre-push:
     - group:
         parallel: true
         jobs:
+          # No glob: `ci-checks tests affected` is the single authority on which packages a
+          # push selects, and it reads the push range itself. A glob would be a second copy
+          # of that policy, and the copy is what drifts.
           - name: python-tests
-            glob:
-              - "backend/**/*.py"
-              - "infra/shared/qdrant-init/**/*.py"
-              - "scripts/ci/**/*.py"
-              - "scripts/util/**/*.py"
-              - "scripts/benchmark/**/*.py"
-              - "scripts/ml/**/*.py"
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks tests affected --mode push --ci
             env:
               OTEL_SDK_DISABLED: "true"
@@ -252,9 +285,21 @@ pre-push:
           - name: frontend-tests
             glob:
               - "typescript/apps/frontend/src/**/*.{ts,tsx}"
+              - "typescript/apps/frontend/__mocks__/*"
+              - "typescript/apps/frontend/__mocks__/**/*"
+              - "typescript/apps/frontend/scripts/*"
+              - "typescript/apps/frontend/scripts/**/*"
+              - "typescript/apps/frontend/public/locales/*"
+              - "typescript/apps/frontend/public/locales/**/*"
               - "typescript/apps/frontend/package.json"
+              - "typescript/apps/frontend/tsconfig*.json"
               - "typescript/apps/frontend/vitest.config.*"
               - "typescript/apps/frontend/vite.config.*"
+              - "typescript/libs/**"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - ".npmrc"
             run: scripts/dev/env-lock.sh shared node_modules -- sh -c 'cd typescript/apps/frontend && pnpm test --run --maxWorkers=25%'
 
     # Phase 3: Code Hygiene (parallel, runs after tests)
@@ -262,67 +307,86 @@ pre-push:
         parallel: true
         jobs:
           - name: deadcode
-            glob:
-              - "backend/**/*.py"
-              - "infra/shared/qdrant-init/**/*.py"
-              - "scripts/ci/**/*.py"
-              - "scripts/util/**/*.py"
-              - "scripts/benchmark/**/*.py"
-              - "scripts/ml/**/*.py"
+            glob: *python_workspace_surface
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
 
           - name: deptry
-            glob:
-              - "backend/**/*.py"
-              - "infra/shared/qdrant-init/**/*.py"
-              - "scripts/ci/**/*.py"
-              - "scripts/util/**/*.py"
-              - "scripts/benchmark/**/*.py"
-              - "scripts/ml/**/*.py"
+            glob: *python_workspace_surface
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deptry --scope all --ci
 
           - name: semgrep
-            glob: "backend/**/*.py"
+            glob:
+              - "backend/**/*.py"
+              - "semgrep.yml"
+              - "semgrep-overrides.txt"
             run: env -u LD_LIBRARY_PATH uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/
 
           - name: build-backend
-            glob: "**/pyproject.toml"
+            glob: *python_workspace_surface
             run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks build-backend --scope all --ci --strict
 
           - name: frontend-fsd
             glob:
-              - "typescript/apps/frontend/src/**/*.{ts,tsx,js,jsx}"
+              - "typescript/apps/frontend/src/*"
+              - "typescript/apps/frontend/src/**/*"
               - "typescript/apps/frontend/package.json"
               - "typescript/apps/frontend/steiger.config.ts"
               - "typescript/apps/frontend/tsconfig*.json"
               - "package.json"
               - "pnpm-lock.yaml"
               - "pnpm-workspace.yaml"
+              - ".npmrc"
+              - "typescript/libs/**"
             run: scripts/dev/env-lock.sh shared node_modules -- pnpm --filter nohiki-frontend run lint:fsd
 
     # Phase 4: Generated API artifacts
     - name: api-schema-freshness
-      # Shared libs are included because exported schemas flow through them.
+      # Library entries are the transitive dependency closure of the two exporter
+      # services, mirroring the hosted reverse-dependency selection.
       glob:
         - "backend/services/bff-service/**/*.py"
         - "backend/services/user-auth-service/**/*.py"
-        - "backend/libs/**/*.py"
+        - "backend/libs/nohiki-common-exceptions/**/*.py"
+        - "backend/libs/nohiki-core-settings/**/*.py"
+        - "backend/libs/nohiki-db-utils/**/*.py"
+        - "backend/libs/nohiki-domain-models/**/*.py"
+        - "backend/libs/nohiki-fastapi-utils/**/*.py"
+        - "backend/libs/nohiki-kafka-client/**/*.py"
+        - "backend/libs/nohiki-observability/**/*.py"
+        - "backend/libs/nohiki-redis-utils/**/*.py"
+        - "backend/libs/nohiki-s3-client/**/*.py"
+        - "backend/libs/nohiki-test-utils/**/*.py"
         - "scripts/util/export-openapi.py"
         - "docs/api/nohiki.openapi.json"
         - "typescript/apps/frontend/src/api/schema.d.ts"
         - "uv.lock"
+        - "package.json"
         - "pnpm-lock.yaml"
+        - "pnpm-workspace.yaml"
+        - "Justfile"
+        - "pyproject.toml"
+        - ".npmrc"
       run: just api-schema-check
 
     - name: image-matrix-parity
       glob:
         - "Justfile"
         - ".github/workflows/build-push.yml"
+        - "infra/k8s/local/images.json"
+        - "scripts/ci/image_inventory.json"
+        - "scripts/ci/image_matrix.py"
       run: just image-matrix-check
 
     # Phase 5: Proto Breaking Changes
     - name: proto-breaking
-      glob: "proto/**/*.proto"
+      glob:
+        - "proto/*.proto"
+        - "proto/**/*.proto"
+        - "proto/buf.yaml"
+        - "proto/buf.lock"
+        - "scripts/proto_gen/*.py"
+        - "scripts/proto_gen/**/*.py"
+        - "scripts/proto_gen/pyproject.toml"
       run: |
         if git ls-tree --name-only main proto/ 2>/dev/null | grep -q .; then
           if command -v buf &>/dev/null; then

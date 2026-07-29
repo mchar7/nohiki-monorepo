@@ -42,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 1
     permissions:
+      # Cross-run download of the triggering Checks run's affected-image record.
+      actions: read
       contents: read
     outputs:
       authorized: ${{ steps.authorize.outputs.authorized }}
@@ -50,6 +52,9 @@ jobs:
       should_push: ${{ steps.validate-event.outputs.should_push }}
       image_tags_metadata_string: ${{ steps.validate-event.outputs.tags_metadata_string }}
       common_image_tag_output: ${{ steps.validate-event.outputs.common_tag }}
+      matrix: ${{ steps.resolve-images.outputs.matrix }}
+      images: ${{ steps.resolve-images.outputs.images }}
+      has_images: ${{ steps.resolve-images.outputs.has_images }}
     steps:
       - name: Validate publication event
         id: validate-event
@@ -138,49 +143,58 @@ jobs:
           fi
           echo "authorized=$authorized" >> "$GITHUB_OUTPUT"
 
+      # One attempt only: the triggering workflow is already completed, so a retry loop would
+      # buy nothing inside the one-minute authorization budget. Any failure resolves full.
+      - name: Download affected image record
+        id: affected-record
+        if: github.event_name == 'workflow_run'
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: affected-images
+          path: affected-images
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Resolve affected image matrix
+        id: resolve-images
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RECORD_OUTCOME: ${{ steps.affected-record.outcome }}
+          SOURCE_SHA: ${{ steps.validate-event.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          selection=()
+          if [[ "$EVENT_NAME" == "workflow_run" && "$RECORD_OUTCOME" == "success" ]]; then
+            selection=(--artifact affected-images/affected-images.json --source-sha "$SOURCE_SHA")
+          fi
+          matrix="$(python3 scripts/ci/image_matrix.py matrix "${selection[@]}")"
+          images="$(jq -c '[.include[].name]' <<< "$matrix")"
+          count="$(jq -r '.include | length' <<< "$matrix")"
+          has_images=false
+          if (( count > 0 )); then
+            has_images=true
+          fi
+          echo "Resolved ${count} affected image(s)."
+          {
+            echo "matrix=$matrix"
+            echo "images=$images"
+            echo "has_images=$has_images"
+          } >> "$GITHUB_OUTPUT"
+
   build-push:
     needs: [ event-validation ]
-    if: needs.event-validation.outputs.authorized == 'true'
+    # GitHub applies strategy.matrix only after the job `if`, so an explicit has_images gate keeps
+    # a valid empty selection from constructing a job at all.
+    if: needs.event-validation.outputs.authorized == 'true' && needs.event-validation.outputs.has_images == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { name: user-auth-service, dockerfile: backend/services/user-auth-service/Dockerfile, lockfile: uv.lock }
-          - { name: user-pref-service, dockerfile: backend/services/user-pref-service/Dockerfile, lockfile: uv.lock }
-          - { name: user-upload-service, dockerfile: backend/services/user-upload-service/Dockerfile, lockfile: uv.lock }
-          - { name: user-entitlement-service, dockerfile: backend/services/user-entitlement-service/Dockerfile, lockfile: uv.lock }
-          - { name: job-storage-service, dockerfile: backend/services/job-storage-service/Dockerfile, lockfile: uv.lock }
-          - { name: job-ingest-discovery-service, dockerfile: backend/services/job-ingest-discovery-service/Dockerfile, lockfile: uv.lock }
-          - { name: job-ingest-schedule-service, dockerfile: backend/services/job-ingest-schedule-service/Dockerfile, lockfile: uv.lock }
-          - { name: job-ingest-enrichment-service, dockerfile: backend/services/job-ingest-enrichment-service/Dockerfile, lockfile: uv.lock }
-          - { name: job-query-composition-service, dockerfile: backend/services/job-query-composition-service/Dockerfile, lockfile: uv.lock }
-          - { name: job-correlation-evaluation-service, dockerfile: backend/services/job-correlation-evaluation-service/Dockerfile, lockfile: uv.lock }
-          - { name: skill-graph-service, dockerfile: backend/services/skill-graph-service/Dockerfile, lockfile: uv.lock }
-          - { name: doc-template-service, dockerfile: backend/services/doc-template-service/Dockerfile, lockfile: uv.lock }
-          - { name: doc-content-service, dockerfile: backend/services/doc-content-service/Dockerfile, lockfile: uv.lock }
-          - { name: doc-process-service, dockerfile: backend/services/doc-process-service/Dockerfile, lockfile: uv.lock }
-          - { name: notification-service, dockerfile: backend/services/notification-service/Dockerfile, lockfile: uv.lock }
-          - { name: bff-service, dockerfile: backend/services/bff-service/Dockerfile, lockfile: uv.lock }
-          - { name: frontend, context: ., dockerfile: typescript/apps/frontend/Dockerfile, lockfile: pnpm-lock.yaml }
-          - { name: api-verification-runner, context: ., dockerfile: tests/Dockerfile.api-runner, lockfile: uv.lock }
-          - { name: playwright-verification-runner, context: ., dockerfile: typescript/apps/frontend/Dockerfile.playwright-runner, lockfile: pnpm-lock.yaml }
-          - { name: health-runner, context: ., dockerfile: scripts/util/health_check/Dockerfile, lockfile: uv.lock }
-          - { name: ml-gateway-service, dockerfile: backend/services/ml-gateway-service/Dockerfile, lockfile: uv.lock }
-          - { name: ml-compute-service, dockerfile: backend/services/ml-compute-service/Dockerfile, lockfile: uv.lock }
-          # Production GPU variant: same Dockerfile + single lockfile, built via the
-          # CUDA builder stage (torch +cu130). Distinct image name so its digest keys a
-          # separate global.imageDigests entry; only values.prod.yaml points ml-compute
-          # at it, keeping local/staging on the CPU ml-compute-service image.
-          - { name: ml-compute-service-gpu, dockerfile: backend/services/ml-compute-service/Dockerfile, build_args: ML_COMPUTE_BUILDER=sync-gpu, lockfile: uv.lock }
-          - { name: sys-tick-job, dockerfile: backend/jobs/sys-tick-job/Dockerfile, lockfile: uv.lock }
-          - { name: snapshot-refresh-job, dockerfile: backend/jobs/snapshot-refresh-job/Dockerfile, lockfile: uv.lock }
-          - { name: qdrant-init, dockerfile: infra/shared/qdrant-init/Dockerfile, lockfile: uv.lock }
-          - { name: kafka-connect, context: infra/k8s/kafka-connect, dockerfile: infra/k8s/kafka-connect/Dockerfile, lockfile: infra/k8s/kafka-connect/smt/build.gradle.kts }
-    timeout-minutes: 16
+      matrix: ${{ fromJSON(needs.event-validation.outputs.matrix) }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -241,6 +255,10 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+      # ml-compute-service-gpu shares the ml-compute Dockerfile and lockfile, built through the
+      # CUDA builder stage (torch +cu130). Its distinct image name keys a separate
+      # global.imageDigests entry, so only values.prod.yaml points ml-compute at the GPU image
+      # while local and staging stay on the CPU one.
       - name: Build container image for ${{ matrix.name }}
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         id: build
@@ -368,8 +386,15 @@ jobs:
       - name: Assemble and validate production digests
         if: env.DIGESTS_ENABLED == 'true'
         env:
+          AFFECTED_IMAGES: ${{ needs.event-validation.outputs.images }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 scripts/ci/image_digests.py assemble --records digest-records --repository "$GITHUB_REPOSITORY" --output infra/k8s/helm/values.prod.digests.yaml
+        run: >-
+          python3 scripts/ci/image_digests.py assemble
+          --records digest-records
+          --existing infra/k8s/helm/values.prod.digests.yaml
+          --affected "$AFFECTED_IMAGES"
+          --repository "$GITHUB_REPOSITORY"
+          --output infra/k8s/helm/values.prod.digests.yaml
 
       - name: Upload aggregate production digests
         if: env.DIGESTS_ENABLED == 'true'

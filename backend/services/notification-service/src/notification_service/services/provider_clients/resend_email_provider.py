@@ -20,6 +20,7 @@ from notification_service.core.provider_metrics import (
     get_notification_provider_metrics,
 )
 from notification_service.core.providers import BaseProvider, EmailConfig, ProviderResult, parse_retry_after
+from notification_service.services.provider_clients.http_pool import build_pooled_client
 
 if TYPE_CHECKING:
     from notification_service.db.models import Message
@@ -45,18 +46,27 @@ class ResendEmailProvider(BaseProvider):
         )
 
         self.base_url = "https://api.resend.com"
-        self.client_config: dict[str, Any] = {
-            "base_url": self.base_url,
-            "headers": {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            "timeout": 30.0,
+        self._headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
         }
+        self._client: httpx.AsyncClient | None = None
 
         self._last_validation_time: datetime | None = None
         self._validation_cache_ttl = timedelta(minutes=15)
         self._validation_result: bool = False
+
+    @property
+    def _http(self) -> httpx.AsyncClient:
+        """Pooled client, built on first use and reused by every later call.
+
+        Built lazily rather than in ``__init__`` so the pool is bound to the
+        loop that actually drives sends, not to whichever thread happened to
+        register the provider.
+        """
+        if self._client is None:
+            self._client = build_pooled_client(base_url=self.base_url, headers=self._headers)
+        return self._client
 
     @tracer.start_as_current_span("resend.send")
     async def send(self, message: Message) -> ProviderResult:
@@ -69,15 +79,14 @@ class ResendEmailProvider(BaseProvider):
         try:
             payload = self._create_mail_payload(message)
 
-            async with httpx.AsyncClient(**self.client_config) as client:
-                response = await client.post(
-                    "/emails",
-                    json=payload,
-                    headers={"Idempotency-Key": str(message.id)},
-                )
-                if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-                    metrics.record_rate_limit(self.name, "email")
-                result = self._handle_response(message, response)
+            response = await self._http.post(
+                "/emails",
+                json=payload,
+                headers={"Idempotency-Key": str(message.id)},
+            )
+            if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+                metrics.record_rate_limit(self.name, "email")
+            result = self._handle_response(message, response)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
                 metrics.record_rate_limit(self.name, "email")
@@ -256,19 +265,18 @@ class ResendEmailProvider(BaseProvider):
 
     async def _attempt_validation(self) -> bool:
         """Attempt a single validation request to Resend."""
-        async with httpx.AsyncClient(**self.client_config) as client:
-            response = await client.get("/api-keys")
+        response = await self._http.get("/api-keys")
 
-            if response.status_code == status.HTTP_200_OK:
-                logger.info("Resend API key validated")
-                return True
+        if response.status_code == status.HTTP_200_OK:
+            logger.info("Resend API key validated")
+            return True
 
-            if response.status_code == status.HTTP_403_FORBIDDEN:
-                logger.error("Resend API key is invalid or lacks permissions")
-                return False
-
-            logger.error("Resend validation failed", status_code=response.status_code)
+        if response.status_code == status.HTTP_403_FORBIDDEN:
+            logger.error("Resend API key is invalid or lacks permissions")
             return False
+
+        logger.error("Resend validation failed", status_code=response.status_code)
+        return False
 
     def _should_retry_dns_error(self, error: httpx.ConnectError, attempt: int, max_retries: int) -> bool:
         """Check if DNS error should be retried."""
@@ -314,4 +322,9 @@ class ResendEmailProvider(BaseProvider):
         return None
 
     async def aclose(self) -> None:
-        """Cleanup resources."""
+        """Release the pooled connections and drop the client."""
+        if self._client is None:
+            return
+        client = self._client
+        self._client = None
+        await client.aclose()

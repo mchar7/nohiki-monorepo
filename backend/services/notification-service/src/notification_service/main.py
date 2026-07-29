@@ -25,6 +25,7 @@ from nohiki_redis_utils import (
     CacheFactory,
     CircuitBreakerConfig,
     RateLimiter,
+    RateLimitFailurePolicy,
     create_cache,
     create_token_bucket_limiter,
 )
@@ -33,11 +34,13 @@ from notification_service.core.config import get_settings
 from notification_service.core.kafka import kafka_client
 from notification_service.core.providers import (
     EmailConfig,
+    aclose_all_providers,
     configure_email_provider,
     register_provider,
 )
 from notification_service.events import start_event_consumer
-from notification_service.services.outbox import OutboxWorker
+from notification_service.services.frequency_checker import FrequencyChecker
+from notification_service.services.outbox import MessageExpirySweep, OutboxWorker
 from notification_service.services.outbox.provider_router import ProviderRouter
 from notification_service.services.provider_clients.resend_email_provider import (
     ResendEmailProvider,
@@ -61,7 +64,9 @@ class _AppState:
     """Container for application-level state initialized during startup."""
 
     rate_limiter: RateLimiter | None = field(default=None)
+    frequency_checker: FrequencyChecker | None = field(default=None)
     shutdown_event: asyncio.Event | None = field(default=None)
+    sweep_task: asyncio.Task[None] | None = field(default=None)
 
 
 _app_state = _AppState()
@@ -77,6 +82,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     try:
         await initialize_database(settings)
         _setup_rate_limiter()
+        _setup_frequency_checker()
         if not _register_providers():
             msg = "Failed to configure notification providers"
             raise RuntimeError(msg)
@@ -110,6 +116,41 @@ def _setup_rate_limiter() -> None:
         requests=settings.rate_limit.requests_per_window,
         window_seconds=settings.rate_limit.window_seconds,
         algorithm="token_bucket",
+    )
+
+
+def _setup_frequency_checker() -> None:
+    """Initialize the per-user frequency cap, if enabled.
+
+    The bucket is separate from the provider rate limiter: one bounds how fast
+    we hit a provider, the other bounds how often one user hears from us. Their
+    failure policies differ for the same reason. The provider limiter fails open
+    because a Redis outage must not stop delivery to protect a vendor quota;
+    this cap fails closed because the inbox bound and the sender's reputation it
+    protects are exactly what a correlation storm plus a Redis outage would
+    breach. Fail-closed here defers rather than drops: the worker commits a
+    future ``retry_at`` and the row is reconsidered once Redis recovers.
+    """
+    if not settings.frequency_cap.enabled:
+        logger.info("Per-user frequency cap disabled")
+        return
+
+    cache = create_cache(settings.service_name, redis_url=settings.redis.connection_string)
+    limiter = create_token_bucket_limiter(
+        cache=cache,
+        requests=settings.frequency_cap.max_per_window,
+        window_seconds=settings.frequency_cap.window_seconds,
+        failure_policy=RateLimitFailurePolicy.FAIL_CLOSED,
+    )
+    _app_state.frequency_checker = FrequencyChecker(
+        limiter,
+        max_per_window=settings.frequency_cap.max_per_window,
+        window_seconds=settings.frequency_cap.window_seconds,
+    )
+    logger.info(
+        "Per-user frequency cap initialized",
+        max_per_window=settings.frequency_cap.max_per_window,
+        window_seconds=settings.frequency_cap.window_seconds,
     )
 
 
@@ -148,7 +189,11 @@ def _build_provider_router() -> ProviderRouter:
 
 
 def _start_workers() -> tuple[asyncio.Task[Any], OutboxWorker]:
-    """Spin up the outbox worker task and return it alongside the instance."""
+    """Spin up the outbox worker task and return it alongside the instance.
+
+    The TTL sweep shares the worker's shutdown event and is parked on
+    ``_app_state`` rather than returned, so the worker handle stays a pair.
+    """
     shutdown_event = asyncio.Event()
     _app_state.shutdown_event = shutdown_event
 
@@ -157,11 +202,22 @@ def _start_workers() -> tuple[asyncio.Task[Any], OutboxWorker]:
     worker_instance = OutboxWorker(
         provider_router=provider_router,
         rate_limiter=_app_state.rate_limiter,
+        frequency_checker=_app_state.frequency_checker,
         shutdown_event=shutdown_event,
     )
 
     worker_task = asyncio.create_task(worker_instance.start(), name="notification-outbox-worker")
     logger.info("Outbox worker started")
+
+    sweep = MessageExpirySweep(
+        shutdown=shutdown_event,
+        interval_seconds=settings.message_ttl.sweep_interval_seconds,
+        batch_size=settings.message_ttl.sweep_batch_size,
+    )
+    _app_state.sweep_task = asyncio.create_task(
+        sweep.run_loop(get_async_sessionmaker(settings.database)),
+        name="notification-expiry-sweep",
+    )
 
     # AutoKafkaClient starts consumers automatically when handlers register
     # via the decorator in events_boot, so there's nothing to schedule here.
@@ -182,8 +238,9 @@ async def _shutdown_components(
     one in-flight ``provider.send`` plus one commit, bounded by the provider
     HTTP timeout.
 
-    Then in order: stop Kafka consumers (no new work), close Kafka, close
-    Redis, dispose DB engines, flush observability.
+    Then in order: stop the TTL sweep, close provider connection pools while
+    the network is still up, stop Kafka consumers (no new work), close Kafka,
+    close Redis, dispose DB engines, flush observability.
 
     Args:
         worker_task: Task from :func:`_start_workers`, or ``None`` in tests.
@@ -193,6 +250,11 @@ async def _shutdown_components(
     logger.info("Shutting down service", service=settings.service_name)
 
     await _stop_outbox_worker(worker_task=worker_task, worker_instance=worker_instance)
+
+    await _stop_expiry_sweep()
+
+    await aclose_all_providers()
+    logger.debug("Provider connection pools closed")
 
     await kafka_client.stop_consumers()
     logger.debug("Kafka consumers stopped")
@@ -230,6 +292,25 @@ async def _stop_outbox_worker(
     worker_instance.stop()
     await worker_task
     logger.info("Outbox worker task exited cleanly")
+
+
+async def _stop_expiry_sweep() -> None:
+    """Wait for the TTL sweep to finish its current pass and exit.
+
+    The sweep watches the same event the worker does, so stopping the worker
+    has already signalled it; setting the event again covers a shutdown where
+    the worker was never constructed.
+    """
+    sweep_task = _app_state.sweep_task
+    if sweep_task is None:
+        return
+
+    if _app_state.shutdown_event is not None:
+        _app_state.shutdown_event.set()
+
+    _app_state.sweep_task = None
+    await sweep_task
+    logger.info("Message expiry sweep task exited cleanly")
 
 
 app = FastAPI(

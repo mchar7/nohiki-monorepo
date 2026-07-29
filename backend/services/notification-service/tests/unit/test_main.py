@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 from fastapi.testclient import TestClient
+from nohiki_redis_utils import RateLimitFailurePolicy
 from notification_service.main import app
 
 
@@ -228,6 +229,39 @@ class TestSetupFunctions:
             )
             mock_create_limiter.assert_called_once()
 
+    def test_provider_limiter_keeps_failing_open(self) -> None:
+        """The provider bucket protects a vendor quota, so availability wins."""
+        with (
+            patch("notification_service.main.create_cache"),
+            patch("notification_service.main.create_token_bucket_limiter") as mock_create_limiter,
+            patch("notification_service.main.settings") as mock_settings,
+        ):
+            mock_settings.rate_limit.requests_per_window = 100
+            mock_settings.rate_limit.window_seconds = 60
+
+            from notification_service.main import _setup_rate_limiter
+
+            _setup_rate_limiter()
+
+            assert "failure_policy" not in mock_create_limiter.call_args.kwargs
+
+    def test_frequency_cap_fails_closed(self) -> None:
+        """A Redis outage must not lift the per-user inbox bound."""
+        with (
+            patch("notification_service.main.create_cache"),
+            patch("notification_service.main.create_token_bucket_limiter") as mock_create_limiter,
+            patch("notification_service.main.settings") as mock_settings,
+        ):
+            mock_settings.frequency_cap.enabled = True
+            mock_settings.frequency_cap.max_per_window = 5
+            mock_settings.frequency_cap.window_seconds = 3600
+
+            from notification_service.main import _setup_frequency_checker
+
+            _setup_frequency_checker()
+
+            assert mock_create_limiter.call_args.kwargs["failure_policy"] is RateLimitFailurePolicy.FAIL_CLOSED
+
     def test_register_providers_success(self) -> None:
         """Test successful provider registration."""
         with (
@@ -360,6 +394,7 @@ class TestLifespanContext:
         with (
             patch("notification_service.main.initialize_database", new_callable=AsyncMock) as mock_init_db,
             patch("notification_service.main._setup_rate_limiter") as mock_rate_limiter,
+            patch("notification_service.main._setup_frequency_checker"),
             patch("notification_service.main._register_providers"),
             patch("notification_service.main._shutdown_components", new_callable=AsyncMock),
             patch("notification_service.main.settings") as mock_settings,
@@ -402,6 +437,7 @@ class TestLifespanContext:
         with (
             patch("notification_service.main.initialize_database", new_callable=AsyncMock),
             patch("notification_service.main._setup_rate_limiter"),
+            patch("notification_service.main._setup_frequency_checker"),
             patch("notification_service.main._register_providers"),
             patch("notification_service.main.ensure_kafka_ready", new_callable=AsyncMock),
             patch("notification_service.main.get_async_sessionmaker") as mock_get_sessionmaker,
@@ -438,6 +474,7 @@ class TestLifespanContext:
         with (
             patch("notification_service.main.initialize_database", new_callable=AsyncMock),
             patch("notification_service.main._setup_rate_limiter"),
+            patch("notification_service.main._setup_frequency_checker"),
             patch("notification_service.main._register_providers", return_value=True),
             patch("notification_service.main.ensure_kafka_ready", new_callable=AsyncMock),
             patch(
@@ -483,6 +520,7 @@ class TestLifespanContext:
         with (
             patch("notification_service.main.initialize_database", new_callable=AsyncMock),
             patch("notification_service.main._setup_rate_limiter"),
+            patch("notification_service.main._setup_frequency_checker"),
             patch("notification_service.main._register_providers", return_value=True),
             patch("notification_service.main.kafka_client") as mock_kafka,
             patch("notification_service.main._shutdown_components", new_callable=AsyncMock),

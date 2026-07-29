@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -355,13 +356,25 @@ def test_bootstrap_secret_apply_is_idempotent_and_silent() -> None:
     assert "set -x" not in text
 
 
-def test_tracked_files_contain_no_private_age_key_or_cli_secret_literal() -> None:
-    completed = subprocess.run(
+# A bech32-encoded age identity: the uppercase HRP, an optional variant infix (`PQ-` for the
+# post-quantum hybrid identities age 1.3 emits under `age-keygen -pq`), the `1` separator, then a
+# bech32 body. Both current formats carry 52 data characters plus a 6-character checksum, so the
+# minimum body length is what separates a leaked key from documentation naming the prefix; an
+# open-ended minimum keeps the scan honest if a future variant encodes a longer secret. The
+# character class is age's bech32 charset (`qpzry9x8gf2tvdw0s3jn54khce6mua7l`) uppercased: age's
+# identity parser only registers the uppercase HRPs, and a lowercase-encoded identity is rejected
+# with "unknown identity type", so an uppercase-only class cannot miss a usable key.
+_AGE_PRIVATE_KEY_PATTERN = r"AGE-SECRET-KEY-([A-Z0-9]+-)?1[023456789ACDEFGHJKLMNPQRSTUVWXYZ]{58,}"
+_SECRET_LITERAL_PATTERN = rf"{_AGE_PRIVATE_KEY_PATTERN}|SOPS_AGE_KEY="
+
+
+def _scan_tracked_files() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         [
             "git",
             "grep",
             "-En",
-            r"AGE-SECRET-KEY-|SOPS_AGE_KEY=",
+            _SECRET_LITERAL_PATTERN,
             "--",
             ":(exclude,glob)**/tests/**",
         ],
@@ -370,5 +383,36 @@ def test_tracked_files_contain_no_private_age_key_or_cli_secret_literal() -> Non
         capture_output=True,
         text=True,
     )
+
+
+def test_tracked_files_contain_no_private_age_key_or_cli_secret_literal() -> None:
+    completed = _scan_tracked_files()
     assert completed.returncode in {0, 1}, completed.stderr
     assert completed.stdout == "", completed.stdout
+
+
+@pytest.mark.parametrize("prefix", ["AGE-SECRET-KEY-1", "AGE-SECRET-KEY-PQ-1"])
+def test_secret_literal_pattern_detects_an_age_private_key_shape(prefix: str) -> None:
+    # Built here so no key-shaped literal is ever committed.
+    body = "".join("023456789ACDEFGHJKLMNPQRSTUVWXYZ"[index % 32] for index in range(58))
+
+    assert re.search(_SECRET_LITERAL_PATTERN, prefix + body), "a real age identity shape must be detected"
+
+
+def test_secret_literal_pattern_detects_the_cli_secret_variable() -> None:
+    assert re.search(_SECRET_LITERAL_PATTERN, "export SOPS_AGE_KEY=redacted")
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "Never commit an AGE-SECRET-KEY- literal to the repository.",
+        "The identity file begins with AGE-SECRET-KEY-1 followed by the bech32 body.",
+        "AGE-SECRET-KEY-1SHORT",
+        "AGE-SECRET-KEY-PQ-1SHORT",
+        "A post-quantum identity begins with AGE-SECRET-KEY-PQ-1 and is bech32 encoded.",
+        "SOPS_AGE_KEY_FILE=/run/secrets/age.agekey",
+    ],
+)
+def test_secret_literal_pattern_ignores_benign_prose(prose: str) -> None:
+    assert not re.search(_SECRET_LITERAL_PATTERN, prose), prose

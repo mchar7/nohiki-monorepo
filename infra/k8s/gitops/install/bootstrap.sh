@@ -62,11 +62,20 @@ validate_slug() {
   [[ "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "${label} contains unsupported characters."
 }
 
+flux_sync_url() {
+  printf 'ssh://git@github.com/%s/%s.git\n' "$1" "$2"
+}
+
 validate_remote_origin() {
-  local repo="$1" owner="$2" repository="$3" origin
+  local repo="$1" owner="$2" repository="$3" origin sync_url
   origin="$(git -C "${repo}" remote get-url origin 2>/dev/null)" || fail "Git remote 'origin' is required."
+  sync_url="$(flux_sync_url "${owner}" "${repository}")"
+  # The emitted Flux sync URL is itself an accepted origin: a worktree whose remote is exactly the
+  # URL Flux syncs from must not be rejected. The https and SCP forms stay accepted as operator
+  # input; only the emitted value is normalised to the ssh scheme Flux requires.
   case "${origin}" in
-    "https://github.com/${owner}/${repository}" | "https://github.com/${owner}/${repository}.git" | \
+    "${sync_url}" | "${sync_url%.git}" | \
+      "https://github.com/${owner}/${repository}" | "https://github.com/${owner}/${repository}.git" | \
       "git@github.com:${owner}/${repository}" | "git@github.com:${owner}/${repository}.git") ;;
     *) fail "Git remote 'origin' does not exactly match the declared GitHub owner/repository." ;;
   esac
@@ -220,7 +229,7 @@ execute_bootstrap() {
   validate_slug GITOPS_GITHUB_OWNER "${GITOPS_GITHUB_OWNER}"
   validate_slug GITOPS_GITHUB_REPOSITORY "${GITOPS_GITHUB_REPOSITORY}"
   case "${GITOPS_GITHUB_PERSONAL}" in true | false) ;; *) fail "GITOPS_GITHUB_PERSONAL must be true or false." ;; esac
-  repository_url="git@github.com:${GITOPS_GITHUB_OWNER}/${GITOPS_GITHUB_REPOSITORY}.git"
+  repository_url="$(flux_sync_url "${GITOPS_GITHUB_OWNER}" "${GITOPS_GITHUB_REPOSITORY}")"
   generated_names=(gotk-components.yaml gotk-sync.yaml kustomization.yaml)
   generated_paths=(
     "${cluster_path}/flux-system/gotk-components.yaml"
@@ -422,7 +431,7 @@ main() {
       umask 077
       BOOTSTRAP_TMP_ROOT="$(mktemp -d)" || fail "failed to create a temporary Flux render directory."
       dry_run_dir="${BOOTSTRAP_TMP_ROOT}/flux-output"
-      repository_url="git@github.com:${GITOPS_GITHUB_OWNER}/${GITOPS_GITHUB_REPOSITORY}.git"
+      repository_url="$(flux_sync_url "${GITOPS_GITHUB_OWNER}" "${GITOPS_GITHUB_REPOSITORY}")"
       generate_flux_output "${dry_run_dir}" "${cluster_path}" "${repository_url}" "${NOHIKI_RUNTIME_CONTROL_BRANCH}"
       python3 "${SNAPSHOT_HELPER}" validate-flux "${dry_run_dir}"
       validate_flux_output_allowlist "${dry_run_dir}" || exit 1

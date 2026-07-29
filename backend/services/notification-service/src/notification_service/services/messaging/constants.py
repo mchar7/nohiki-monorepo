@@ -23,6 +23,9 @@ TEMPLATE_NOT_FOUND_ERROR: Final[str] = "Template not found in namespace with vis
 
 # Pattern mapping for error message to protobuf DeliveryFailureCause
 FAILURE_CAUSE_PATTERNS: Final[list[tuple[list[str], DeliveryFailureCause]]] = [
+    # TTL expiry is a policy outcome with no provider involved; the default
+    # PROVIDER_ERROR fallthrough would page a provider owner for it.
+    (["ttl exceeded"], DeliveryFailureCause.UNEXPECTED_ERROR),
     (["provider not found"], DeliveryFailureCause.PROVIDER_NOT_FOUND),
     (["rate limit"], DeliveryFailureCause.RATE_LIMITED),
     (["template"], DeliveryFailureCause.TEMPLATE_ERROR),

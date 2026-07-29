@@ -11,7 +11,8 @@ from pathlib import Path
 import jsonschema
 import pytest
 import yaml
-from _documents import Manifest, load_manifests, load_mapping, load_workflow
+from _documents import Manifest, load_manifests, load_mapping
+from ci_checks.core.image_inventory import load_inventory
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra/k8s/helm"
@@ -19,7 +20,6 @@ _AGENTGATEWAY_CRDS = _ROOT / "infra/k8s/helm-foundation/charts/agentgateway-crds
 _GATEWAY_API_CRDS = _ROOT / "infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml"
 _IDENTITY = Path(__file__).parent / "fixtures/values.prod.identity.yaml"
 _NETWORK = Path(__file__).parent / "fixtures/values.prod.network.yaml"
-_IMAGE_MATRIX = _ROOT / ".github/workflows/build-push.yml"
 _GATEWAY_NAME = "nohiki-model-egress"
 _GATEWAY_HOST = f"{_GATEWAY_NAME}.nohiki.svc.cluster.local"
 _GATEWAY_ORIGIN = f"https://{_GATEWAY_HOST}:8443"
@@ -151,11 +151,9 @@ def _render_environment(values_name: str, tmp_path: Path) -> tuple[Manifest, ...
         str(_CHART / values_name),
     ]
     if environment == "prod":
-        workflow = load_workflow(_IMAGE_MATRIX)
-        matrix = workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
         digests = {
-            f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": f"sha256:{index + 1:064x}"
-            for index, entry in enumerate(matrix)
+            f"ghcr.io/mchar7/nohiki-monorepo/{name}": f"sha256:{index + 1:064x}"
+            for index, name in enumerate(load_inventory().names)
         }
         digest_values = tmp_path / "values.prod.digests.yaml"
         digest_values.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")

@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 import yaml
+from ci_checks.core.image_inventory import load_inventory
 
 ROOT = Path(__file__).resolve().parents[4]
 CHART = ROOT / "infra/k8s/helm"
@@ -16,7 +17,6 @@ GITOPS = ROOT / "infra/k8s/gitops"
 OBSERVABILITY = ROOT / "infra/k8s/observability"
 IDENTITY_FIXTURE = ROOT / "scripts/ci/tests/fixtures/values.prod.identity.yaml"
 NETWORK_FIXTURE = ROOT / "scripts/ci/tests/fixtures/values.prod.network.yaml"
-BUILD_MATRIX = ROOT / ".github/workflows/build-push.yml"
 
 ENVIRONMENTS = {
     "local": ("local", "nohiki", "values.local.yaml"),
@@ -90,12 +90,9 @@ def _kustomize(relative: str) -> list[dict[str, Any]]:
 
 
 def _digest_values(tmp_path: Path) -> Path:
-    matrix = yaml.safe_load(BUILD_MATRIX.read_text(encoding="utf-8"))["jobs"]["build-push"]["strategy"]["matrix"][
-        "include"
-    ]
     digests = {
-        f"ghcr.io/mchar7/nohiki-monorepo/{entry['name']}": f"sha256:{index + 1:064x}"
-        for index, entry in enumerate(matrix)
+        f"ghcr.io/mchar7/nohiki-monorepo/{name}": f"sha256:{index + 1:064x}"
+        for index, name in enumerate(load_inventory().names)
     }
     path = tmp_path / "values.prod.digests.yaml"
     path.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
