@@ -224,13 +224,82 @@ def test_dry_run_renders_the_reviewed_local_flux_source_with_exact_arguments(
     assert sandbox.calls.read_text(encoding="utf-8").splitlines() == [
         "install --export",
         "create source git flux-system "
-        "--url=git@github.com:portable-owner/portable-repo.git "
+        "--url=ssh://git@github.com/portable-owner/portable-repo.git "
         f"--branch={RUNTIME_CONTROL_BRANCH} --secret-ref=flux-system "
         "--interval=1m --export",
         "create kustomization flux-system --source=GitRepository/flux-system "
         "--path=./infra/k8s/gitops/clusters/local --prune=true "
         "--interval=10m --export",
     ]
+
+
+def _emitted_sync_url(sandbox: BootstrapSandbox) -> str:
+    result = _run_bootstrap(sandbox, "--dry-run")
+    assert result.returncode == 0, result.stderr
+    match = re.search(r"--url=(\S+)", sandbox.calls.read_text(encoding="utf-8"))
+    assert match is not None, "the dry run did not emit a Flux sync URL"
+    return match.group(1)
+
+
+def _validate_origin(sandbox: BootstrapSandbox) -> subprocess.CompletedProcess[str]:
+    return _run(
+        [
+            "bash",
+            "-c",
+            f'source "{sandbox.script}"; validate_remote_origin "$1" "$2" "$3"',
+            "bootstrap-validator",
+            str(sandbox.repo),
+            sandbox.env["GITOPS_GITHUB_OWNER"],
+            sandbox.env["GITOPS_GITHUB_REPOSITORY"],
+        ],
+        cwd=sandbox.repo,
+        env=sandbox.env,
+    )
+
+
+def test_emitted_sync_url_uses_the_ssh_scheme_flux_requires(tmp_path: Path) -> None:
+    # Flux validates GitRepository .spec.url against ^(http|https|ssh)://.*$, so the scp-like
+    # git@host:path form is rejected by the API server.
+    url = _emitted_sync_url(_bootstrap_sandbox(tmp_path))
+
+    assert url == "ssh://git@github.com/portable-owner/portable-repo.git", url
+
+
+def test_origin_validator_accepts_the_sync_url_the_script_emits(tmp_path: Path) -> None:
+    # Root-cause guard: the emitted sync URL and the accepted-origin set are one contract. If
+    # either side moves alone, a worktree whose remote is exactly the Flux source is rejected.
+    sandbox = _bootstrap_sandbox(tmp_path)
+    _git(sandbox.repo, "remote", "add", "origin", _emitted_sync_url(sandbox))
+
+    result = _validate_origin(sandbox)
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://github.com/portable-owner/portable-repo.git",
+        "git@github.com:portable-owner/portable-repo.git",
+    ],
+)
+def test_origin_validator_still_accepts_operator_supplied_remote_forms(tmp_path: Path, origin: str) -> None:
+    sandbox = _bootstrap_sandbox(tmp_path)
+    _git(sandbox.repo, "remote", "add", "origin", origin)
+
+    result = _validate_origin(sandbox)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_origin_validator_rejects_a_foreign_remote(tmp_path: Path) -> None:
+    sandbox = _bootstrap_sandbox(tmp_path)
+    _git(sandbox.repo, "remote", "add", "origin", "ssh://git@github.com/other-owner/portable-repo.git")
+
+    result = _validate_origin(sandbox)
+
+    assert result.returncode != 0
+    assert "does not exactly match the declared GitHub owner/repository" in result.stderr
 
 
 def test_bootstrap_rejects_nonlocal_cluster_before_flux_or_kubernetes_access(
