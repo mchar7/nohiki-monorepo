@@ -164,8 +164,10 @@ jobs:
           COMMIT_CLASS: ${{ steps.gate.outputs.commit_class }}
         run: |
           case "$COMMIT_CLASS" in
-            # Owner directive, wall under 10 minutes. One budget, both classes.
-            standard|broad) wall_budget_seconds=600 ;;
+            # S-90 split the wall budget into a cold and a warm one. This value is fixed when the
+            # matrix is created, before any leg knows whether its ready cache will hit, so only the
+            # larger of the two can bound a hang without killing a legitimately cold worker.
+            standard|broad) cold_wall_budget_seconds=844 ;;
             *)
               echo "cannot derive a guard for commit class: $COMMIT_CLASS" >&2
               exit 1
@@ -174,7 +176,7 @@ jobs:
           # A timeout is a hang guard, not the class budget verdict. Parallel broad units
           # share one fan-in wall clock, so each uses the same wall-plus-grace guard.
           hang_grace_minutes=2
-          timeout=$((wall_budget_seconds / 60 + hang_grace_minutes))
+          timeout=$((cold_wall_budget_seconds / 60 + hang_grace_minutes))
           echo "worker_timeout_minutes=$timeout" >> "$GITHUB_OUTPUT"
       - name: Write Checks attestation
         if: github.event_name == 'pull_request' && github.event.action != 'edited'
@@ -299,6 +301,11 @@ jobs:
       # nothing. `false` is NOT empty by that check, hence the '' spelling below.
       node_group_executed: ${{ steps.setup-ci.outputs.node-group-executed == 'true' && 'true' || '' }}
       commitlint_executed: ${{ steps.commitlint-range.outcome == 'success' && 'true' || '' }}
+      # Warmth needs two single-writer signals, not one tri-state: an empty output is
+      # indistinguishable from a leg that never reported, and S-90 requires an unreported run to
+      # take the cold budget. A miss on any leg publishes the miss; a hit publishes only the hit.
+      ready_cache_missed: ${{ steps.setup-ci.outputs.ready-cache-hit != 'true' && 'true' || '' }}
+      ready_cache_hit: ${{ steps.setup-ci.outputs.ready-cache-hit == 'true' && 'true' || '' }}
     steps:
       - name: Start worker timing
         id: timing
@@ -1219,6 +1226,10 @@ jobs:
           CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
           PLAYWRIGHT_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true') }}
           TITLE_POLICY_EXPECTED: ${{ needs.changes.outputs.title_only == 'true' }}
+          # First consumer of the worker's ready-cache signal. Both legs share one outputs map, so
+          # each name is written by the single leg whose expression is non-empty.
+          WORKER_READY_CACHE_MISSED: ${{ needs.worker.outputs.ready_cache_missed }}
+          WORKER_READY_CACHE_HIT: ${{ needs.worker.outputs.ready_cache_hit }}
         run: |
           now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           run="$(gh api "repos/$REPO/actions/runs/$RUN_ID")"
@@ -1234,14 +1245,32 @@ jobs:
           ' <<< "$jobs")"
           case '${{ needs.changes.outputs.commit_class }}' in
             standard|broad)
-              # Owner directive, wall under 10 minutes. One budget, both classes.
-              wall_budget_seconds=600
+              # S-90 replaced one budget with two, selected by ready-cache warmth. Warm keeps the
+              # owner's under-10-minutes target; cold carries the measured cold-run surcharge.
+              warm_wall_budget_seconds=600
+              cold_wall_budget_seconds=844
               ;;
             *)
               echo "cannot account for an invalid commit class" >&2
               exit 1
               ;;
           esac
+          # One missed leg makes the whole run cold: the wall is the span across every leg, so the
+          # run paid cold setup even where a sibling leg restored. An absent or empty signal is cold
+          # too, because the warm budget would bind a run that never reported a chance of meeting it.
+          if [ "${WORKER_READY_CACHE_MISSED:-}" = true ]; then
+            wall_budget_seconds=$cold_wall_budget_seconds
+            wall_budget_class=cold
+            wall_budget_basis="a worker leg missed the ready-cache primary key"
+          elif [ "${WORKER_READY_CACHE_HIT:-}" = true ]; then
+            wall_budget_seconds=$warm_wall_budget_seconds
+            wall_budget_class=warm
+            wall_budget_basis="every reporting worker leg restored the ready-cache primary key"
+          else
+            wall_budget_seconds=$cold_wall_budget_seconds
+            wall_budget_class=cold
+            wall_budget_basis="no worker leg reported ready-cache warmth"
+          fi
           # $0.006/min, Linux x64 2-vCPU, verified against this account's own July billing.
           estimated_cost_usd="$(printf '%d.%03d' \
             "$((billable_minutes * 6 / 1000))" "$((billable_minutes * 6 % 1000))")"
@@ -1280,6 +1309,8 @@ jobs:
             echo "|---|---:|"
             echo "| Wall seconds | $wall_seconds |"
             echo "| Wall budget seconds | $wall_budget_seconds |"
+            echo "| Wall budget class | $wall_budget_class |"
+            echo "| Wall budget basis | $wall_budget_basis |"
             echo "| Reconstructed billable minutes | $billable_minutes |"
             echo "| Estimated cost USD | $estimated_cost_usd |"
             echo
@@ -1289,6 +1320,7 @@ jobs:
             echo "- jobs API accounting aggregation"
           } >> "$GITHUB_STEP_SUMMARY"
           if ((wall_seconds >= wall_budget_seconds)); then
-            echo "wall budget breached: observed=${wall_seconds}s budget<${wall_budget_seconds}s" >&2
+            echo "wall budget breached: class=${wall_budget_class} observed=${wall_seconds}s" \
+              "budget<${wall_budget_seconds}s basis=${wall_budget_basis}" >&2
             exit 1
           fi
