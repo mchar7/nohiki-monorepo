@@ -28,6 +28,7 @@ from ci_checks.core.change_gate import (
 )
 from ci_checks.core.change_rules import FLAG_NAMES, SURFACE_RULES
 from ci_checks.core.display import LANE_DISPLAY_NAMES, LANE_RUNNERS
+from ci_checks.core.image_inventory import load_inventory
 from ci_checks.core.packages import (
     REPO_ROOT,
     Package,
@@ -1968,3 +1969,179 @@ def test_broad_unbounded_is_the_only_output_the_cause_can_move() -> None:
         "worker_units",
         "commitlint_expected",
     }
+
+
+_RECORD_HEAD_SHA = "9c1d4b7a2e5f80c3d6a9b2e5f8014b7ad3c6e9f2"
+
+
+def _run_gate_producer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    diff: Callable[[str, str], set[str]],
+    *,
+    event: str = "push",
+    base_ref: str = "base123",
+    with_record: bool = True,
+    label: str = "gate",
+) -> tuple[int, str, dict[str, str], Path]:
+    """Drive the gate CLI and return its exit code, output, emitted outputs and record path."""
+    monkeypatch.setattr(checks_gate, "_diff_files", diff)
+    monkeypatch.setattr(checks_gate, "load_packages_with_deps", lambda _scope: _synthetic_packages())
+    app = typer.Typer()
+    app.command("gate")(gate_cmd)
+    github_output = tmp_path / f"{label}-github-output"
+    record = tmp_path / f"{label}-affected-images.json"
+    arguments = [
+        "--event",
+        event,
+        "--base-ref",
+        base_ref,
+        "--head-ref",
+        _RECORD_HEAD_SHA,
+        "--github-output",
+        str(github_output),
+    ]
+    if with_record:
+        arguments += ["--affected-images-record", str(record)]
+
+    result = CliRunner().invoke(app, arguments)
+
+    emitted = (
+        dict(line.split("=", maxsplit=1) for line in github_output.read_text(encoding="utf-8").splitlines())
+        if github_output.exists()
+        else {}
+    )
+    return result.exit_code, result.output, emitted, record
+
+
+def test_record_holds_the_declaration_ordered_owner_union_for_a_service_diff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The record is a byte-exact contract: the consumer parses it with no schema tolerance."""
+    exit_code, output, _emitted, record = _run_gate_producer(
+        tmp_path,
+        monkeypatch,
+        lambda _base, _head: {"backend/services/notification-service/src/app.py"},
+    )
+
+    assert exit_code == 0, output
+    assert record.read_text(encoding="utf-8") == (
+        f'{{"head_sha":"{_RECORD_HEAD_SHA}","images":["notification-service","health-runner"]}}\n'
+    )
+
+
+def test_record_is_empty_and_successful_when_the_diff_owns_no_image(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A no-image push must publish an empty selection, not fail and not fall back to everything."""
+    exit_code, output, _emitted, record = _run_gate_producer(
+        tmp_path,
+        monkeypatch,
+        lambda _base, _head: {"README.md", "scripts/dev/env-lock.sh"},
+    )
+
+    assert exit_code == 0, output
+    assert json.loads(record.read_text(encoding="utf-8")) == {"head_sha": _RECORD_HEAD_SHA, "images": []}
+
+
+@pytest.mark.parametrize("base_ref", ["", "0" * 40])
+def test_record_names_every_image_when_the_base_ref_gives_no_diff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    base_ref: str,
+) -> None:
+    def unreachable_diff(_base: str, _head: str) -> set[str]:
+        raise AssertionError
+
+    exit_code, output, _emitted, record = _run_gate_producer(
+        tmp_path,
+        monkeypatch,
+        unreachable_diff,
+        base_ref=base_ref,
+    )
+
+    assert exit_code == 0, output
+    assert json.loads(record.read_text(encoding="utf-8"))["images"] == list(load_inventory().names)
+
+
+def test_unresolvable_diff_builds_every_image_and_keeps_the_fail_closed_classification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Images and lanes fail closed off the same unknown changed set, and neither may drift."""
+
+    def failing_diff(_base: str, _head: str) -> set[str]:
+        message = "fatal: bad object base123"
+        raise RuntimeError(message)
+
+    exit_code, output, emitted, record = _run_gate_producer(tmp_path, monkeypatch, failing_diff)
+
+    assert exit_code == 0, output
+    assert json.loads(record.read_text(encoding="utf-8"))["images"] == list(load_inventory().names)
+    assert emitted["full"] == "true"
+    assert [flag for flag in FLAG_NAMES if emitted[flag] != "true"] == []
+
+
+def test_record_and_lane_classification_share_one_diff_invocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two consumers of the changed set must not cost two `git diff` calls."""
+    calls: list[tuple[str, str]] = []
+
+    def counting_diff(base: str, head: str) -> set[str]:
+        calls.append((base, head))
+        return {"backend/services/notification-service/src/app.py"}
+
+    exit_code, output, _emitted, record = _run_gate_producer(tmp_path, monkeypatch, counting_diff)
+
+    assert exit_code == 0, output
+    assert calls == [("base123", _RECORD_HEAD_SHA)]
+    assert record.exists()
+
+
+@pytest.mark.parametrize("event", ["pull_request", "workflow_dispatch"])
+def test_record_option_is_rejected_off_a_push_without_writing_a_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    event: str,
+) -> None:
+    """Only a push has a mainline SHA the selection can bind to."""
+    exit_code, output, _emitted, record = _run_gate_producer(
+        tmp_path,
+        monkeypatch,
+        lambda _base, _head: {"backend/services/notification-service/src/app.py"},
+        event=event,
+    )
+
+    assert exit_code != 0
+    assert "--affected-images-record" in output
+    assert not record.exists()
+
+
+def test_producing_the_record_leaves_every_router_output_identical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The record is a side output: the lane verdict a push publishes must not move with it."""
+    changed = {"backend/libs/lib-a/src/lib_a.py", "uv.lock"}
+    _code, _output, with_record, _record = _run_gate_producer(
+        tmp_path,
+        monkeypatch,
+        lambda _base, _head: changed,
+        label="with-record",
+    )
+    _bare_code, _bare_output, without_record, _bare = _run_gate_producer(
+        tmp_path,
+        monkeypatch,
+        lambda _base, _head: changed,
+        with_record=False,
+        label="without-record",
+    )
+
+    assert with_record == without_record
+    assert with_record["commit_class"]
+    assert "protected_main_smoke" in with_record
+    assert "test_packages" in with_record
