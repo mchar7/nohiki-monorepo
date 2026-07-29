@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import yaml
+from ci_checks.core.image_inventory import load_inventory
 
 _ROOT = Path(__file__).resolve().parents[3]
 _WORKFLOW = _ROOT / ".github" / "workflows" / "build-push.yml"
@@ -51,7 +52,7 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
     assert condition.count("vars.IMAGE_PUBLICATION_ENABLED == 'true'") == 1
     validation_steps_env = next(step["env"] for step in validation["steps"] if step.get("id") == "validate-event")
     assert validation_steps_env["PUBLICATION_ENABLED"] == "${{ vars.IMAGE_PUBLICATION_ENABLED }}"
-    assert validation["permissions"] == {"contents": "read"}
+    assert validation["permissions"] == {"actions": "read", "contents": "read"}
 
     validation_steps = {step.get("id", step["name"]): step for step in validation["steps"]}
     script = validation_steps["validate-event"]["run"]
@@ -95,18 +96,17 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
 
     build = jobs["build-push"]
     build_steps = {step.get("id", step["name"]): step for step in build["steps"]}
-    matrix = build["strategy"]["matrix"]["include"]
-    for image in matrix:
+    for record in load_inventory().images:
         expected_lockfile = (
             "pnpm-lock.yaml"
-            if image["name"] in {"frontend", "playwright-verification-runner"}
+            if record.name in {"frontend", "playwright-verification-runner"}
             else "infra/k8s/kafka-connect/smt/build.gradle.kts"
-            if image["name"] == "kafka-connect"
+            if record.name == "kafka-connect"
             else "uv.lock"
         )
-        assert image["lockfile"] == expected_lockfile
-        assert (_ROOT / image["dockerfile"]).is_file()
-        assert (_ROOT / image["lockfile"]).is_file()
+        assert record.lockfile == expected_lockfile
+        assert (_ROOT / record.dockerfile).is_file()
+        assert (_ROOT / record.lockfile).is_file()
 
     cache_inputs = "hashFiles(matrix.dockerfile, matrix.lockfile)"
     assert build_steps["build"]["with"]["cache-from"] == (
@@ -126,7 +126,11 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
         " }}"
     )
     assert build["needs"] == ["event-validation"]
-    assert build["if"] == "needs.event-validation.outputs.authorized == 'true'"
+    for gate in (
+        "needs.event-validation.outputs.authorized == 'true'",
+        "needs.event-validation.outputs.has_images == 'true'",
+    ):
+        assert gate in build["if"]
     assert build["permissions"] == {
         "contents": "read",
         "packages": "write",
@@ -180,6 +184,76 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
         for job_name, job in jobs.items()
         if any(job["permissions"].get(name) == "write" for name in ("contents", "pull-requests"))
     } == {"aggregate-digests"}
+
+
+def test_build_push_matrix_is_resolved_from_the_affected_image_record() -> None:
+    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    triggers = workflow.get("on", workflow.get(True))
+    assert set(triggers) == {"workflow_run", "workflow_dispatch"}
+    assert "schedule" not in triggers
+
+    jobs = workflow["jobs"]
+    assert set(jobs) == {"event-validation", "build-push", "aggregate-digests"}
+
+    validation = jobs["event-validation"]
+    assert validation["timeout-minutes"] == 1
+    assert validation["outputs"] == {
+        "authorized": "${{ steps.authorize.outputs.authorized }}",
+        "source_sha": "${{ steps.validate-event.outputs.source_sha }}",
+        "short_source_sha": "${{ steps.validate-event.outputs.short_source_sha }}",
+        "should_push": "${{ steps.validate-event.outputs.should_push }}",
+        "image_tags_metadata_string": "${{ steps.validate-event.outputs.tags_metadata_string }}",
+        "common_image_tag_output": "${{ steps.validate-event.outputs.common_tag }}",
+        "matrix": "${{ steps.resolve-images.outputs.matrix }}",
+        "images": "${{ steps.resolve-images.outputs.images }}",
+        "has_images": "${{ steps.resolve-images.outputs.has_images }}",
+    }
+
+    validation_steps = {step.get("id", step["name"]): step for step in validation["steps"]}
+    download = validation_steps["affected-record"]
+    assert download["if"] == "github.event_name == 'workflow_run'"
+    assert download["continue-on-error"] is True
+    assert download["uses"] == "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+    assert download["with"]["name"] == "affected-images"
+    assert download["with"]["path"] == "affected-images"
+    # The record belongs to the triggering Checks run, never to this build-push run.
+    assert download["with"]["run-id"] == "${{ github.event.workflow_run.id }}"
+    assert "github.run_id" not in download["with"]["run-id"]
+    assert download["with"]["github-token"] == "${{ github.token }}"
+    assert all("sleep" not in step.get("run", "") for step in validation["steps"])
+    assert (
+        sum(
+            1
+            for job in jobs.values()
+            for step in job["steps"]
+            if "actions/download-artifact" in step.get("uses", "") and "run-id" in step.get("with", {})
+        )
+        == 1
+    )
+
+    resolve = validation_steps["resolve-images"]
+    assert resolve["env"]["RECORD_OUTCOME"] == "${{ steps.affected-record.outcome }}"
+    assert "$RECORD_OUTCOME" in resolve["run"]
+    assert "python3 scripts/ci/image_matrix.py matrix" in resolve["run"]
+    assert "uv sync" not in resolve["run"]
+    assert "uv run" not in resolve["run"]
+
+    build = jobs["build-push"]
+    strategy = build["strategy"]
+    assert "include" not in strategy
+    assert strategy["fail-fast"] is False
+    assert strategy["matrix"] == "${{ fromJSON(needs.event-validation.outputs.matrix) }}"
+    assert build["timeout-minutes"] == "${{ matrix.timeout_minutes }}"
+    assert {record.timeout for record in load_inventory().images} == {16}
+
+    assemble = next(
+        step
+        for step in jobs["aggregate-digests"]["steps"]
+        if step["name"] == "Assemble and validate production digests"
+    )
+    assert assemble["env"]["AFFECTED_IMAGES"] == "${{ needs.event-validation.outputs.images }}"
+    assert "--existing infra/k8s/helm/values.prod.digests.yaml" in assemble["run"]
+    assert '--affected "$AFFECTED_IMAGES"' in assemble["run"]
 
 
 def test_trivy_waivers_each_have_a_reason_and_expiry() -> None:
