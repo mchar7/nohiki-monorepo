@@ -764,10 +764,10 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
     assert test["env"]["SUMMARY_TITLE"] == "${{ needs.changes.outputs.commit_class }}"
     assert test["env"]["CI_CHECKS_SKIP_WORKSPACE_SYNC"] == "1"
 
-    # The bounded Python command is alone in its broad unit, and runs in the single
-    # standard unit alongside everything else.
+    # The bounded Python command is alone in its named payload leg in both classes.
     condition = str(test["if"])
-    assert "matrix.unit == 'all' || matrix.unit == 'python'" in condition
+    assert "matrix.unit == 'python'" in condition
+    assert "matrix.unit == 'frontend'" not in condition
     assert condition.endswith("needs.changes.outputs.python_any == 'true')")
 
     docker_smoke = next(

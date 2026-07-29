@@ -5,6 +5,7 @@ a deterministic mapping from inputs to a decision, so the whole engine is
 unit-testable without git or GitHub.
 """
 
+import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 from urllib.parse import quote
@@ -279,6 +280,26 @@ def selected_test_packages(decision: GateDecision, packages: dict[str, Package])
     return tuple(sorted(name for name in selected if name in packages and packages[name].has_tests))
 
 
+_WORKER_UNIT_ORDER = ("python", "frontend")
+
+
+def _worker_units(decision: GateDecision, outputs: dict[str, str]) -> tuple[str, ...]:
+    """Return the named worker legs needed for this decision."""
+    if decision.protected_main_smoke:
+        return ("python",)
+    if decision.full:
+        return _WORKER_UNIT_ORDER
+
+    selected = {
+        LANE_RUNNERS[flag]
+        for flag in FLAG_NAMES
+        if outputs[flag] == "true" and LANE_RUNNERS[flag] in _WORKER_UNIT_ORDER
+    }
+    # Every substantive worker run scans either the changed content or the repository.
+    selected.add("frontend")
+    return tuple(unit for unit in _WORKER_UNIT_ORDER if unit in selected)
+
+
 def render_outputs(
     decision: GateDecision,
     test_packages: tuple[str, ...],
@@ -310,6 +331,7 @@ def render_outputs(
     for flag in FLAG_NAMES:
         outputs[flag] = str(decision.flag_value(flag)).lower()
     outputs["python_any"] = str(bool(test_packages)).lower()
+    outputs["worker_units"] = json.dumps(_worker_units(decision, outputs), separators=(",", ":"))
     outputs["commitlint_expected"] = str(event == "pull_request").lower()
     return outputs
 
@@ -390,9 +412,9 @@ def render_summary(
     if decision.full:
         lines += ["Broad class selects every lane.", ""]
     lines += [
-        "`Runs in` names the broad-class bin; a standard run executes every selected lane in the "
-        "single `all` unit. Lane outcomes are not known at gate time and are reported by the "
-        "`Checks` fan-in.",
+        "`Runs in` names the payload leg that owns each lane. The gate emits only the named legs "
+        "needed by the decision, and each lane has one owner. Lane outcomes are not known at gate "
+        "time and are reported by the `Checks` fan-in.",
         "",
     ]
     lines += markdown_table(

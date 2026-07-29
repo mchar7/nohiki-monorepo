@@ -38,33 +38,32 @@ LANE_DISPLAY_NAMES: dict[str, str] = {
     "proto_breaking": "Protobuf compatibility",
 }
 
-# Where each lane executes on a broad run. A standard run collapses every selected lane onto the
-# single `all` unit, so this names the broad-class bin only. It lives beside the display names
-# because the step summary is its only consumer; `test_change_gate_workflow` asserts it against the
-# workflow's own binning, so a rebin cannot silently make the summary lie.
+# Where each lane executes in the split worker. The frontend leg carries hygiene because moving
+# its Nix-dependent lanes to Python would turn the 344s Python long pole into a full-payload leg.
+# The workflow parity test keeps these labels aligned with the matrix-gated step definitions.
 LANE_RUNNERS: dict[str, str] = {
-    "nix": "hygiene",
-    "lint_python": "hygiene",
+    "nix": "frontend",
+    "lint_python": "frontend",
     "lint_frontend": "frontend",
     "lint_steiger": "frontend",
-    "lint_proto": "hygiene",
+    "lint_proto": "frontend",
     "lint_markdown": "frontend",
-    "lint_workflows": "hygiene",
-    "lint_docker": "hygiene",
-    "typecheck_backend": "hygiene",
-    "build_backend": "hygiene",
+    "lint_workflows": "frontend",
+    "lint_docker": "frontend",
+    "typecheck_backend": "frontend",
+    "build_backend": "frontend",
     "typecheck_frontend": "frontend",
     "python_any": "python",
     "frontend_tests": "frontend",
     "frontend_smoke": "Container contracts",
     "frontend_e2e": "Playwright runner image",
-    "node_workspace_contracts": "hygiene",
+    "node_workspace_contracts": "frontend",
     "edge_worker": "frontend",
     "otel_collector": "Container contracts",
-    "hygiene": "hygiene",
-    "api_schema_freshness": "hygiene",
-    "image_matrix_parity": "hygiene",
-    "proto_breaking": "hygiene",
+    "hygiene": "frontend",
+    "api_schema_freshness": "frontend",
+    "image_matrix_parity": "frontend",
+    "proto_breaking": "frontend",
 }
 
 type ColumnAlign = Literal["left", "center", "right"]

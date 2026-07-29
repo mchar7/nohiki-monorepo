@@ -304,8 +304,9 @@ def test_lefthook_nix_attribute_evaluates_to_verified_source() -> None:
 
 def test_standard_ci_worker_checks_flake_and_ci_shell_lefthook_version() -> None:
     standard_job = _load_yaml(_CHECKS)["jobs"]["worker"]
-    steps = {step.get("name"): step for step in standard_job["steps"]}
-    commands = "\n".join(str(step.get("run", "")) for step in standard_job["steps"])
+    flat = [inner for step in standard_job["steps"] for inner in step.get("parallel", [step])]
+    steps = {step.get("name"): step for step in flat}
+    commands = "\n".join(str(step.get("run", "")) for step in flat)
     lefthook_step = steps["Check Lefthook version"]
 
     assert lefthook_step["env"]["LEFTHOOK_VERSION"] == _LEFTHOOK_VERSION

@@ -188,6 +188,7 @@
           pkgs.jq
           pkgs.yq-go
           pkgs.actionlint
+          pkgs.check-jsonschema
           pkgs.hadolint
           pkgs.buf
           lefthookPackage
