@@ -112,11 +112,9 @@ def test_workflow_checkouts_do_not_persist_credentials() -> None:
 def _python_dockerfiles() -> tuple[Path, ...]:
     return tuple(
         sorted(
-            [
-                *_ROOT.glob("backend/services/*/Dockerfile"),
-                *_ROOT.glob("backend/jobs/*/Dockerfile"),
-                _ROOT / "infra" / "shared" / "qdrant-init" / "Dockerfile",
-            ]
+            path
+            for path in _ROOT.glob("**/Dockerfile*")
+            if path.is_file() and "ghcr.io/astral-sh/uv:" in _read_text(path)
         )
     )
 
@@ -473,7 +471,7 @@ def test_codeql_sarif_permissions_are_least_privilege() -> None:
 
 def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
     dockerfiles = _python_dockerfiles()
-    assert dockerfiles, "no Python production Dockerfiles discovered"
+    assert dockerfiles, "no uv-bearing Dockerfiles discovered"
 
     python_repository = "public.ecr.aws/docker/library/python"
     uv_repository = "ghcr.io/astral-sh/uv"
@@ -493,8 +491,9 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
             expected_python,
         ]:
             mismatches.append(f"{dockerfile.relative_to(_ROOT)}: Python base does not match scaffold builder/runtime")
-        if [(match["version"], match["digest"]) for match in uv_images] != [expected_uv]:
-            mismatches.append(f"{dockerfile.relative_to(_ROOT)}: uv image does not match scaffold")
+        uv_pins = [(match["version"], match["digest"]) for match in uv_images]
+        if not uv_pins or any(pin != expected_uv for pin in uv_pins):
+            mismatches.append(f"{dockerfile.relative_to(_ROOT)}: uv images do not match scaffold")
     assert not mismatches, "\n".join(mismatches)
 
     assert "env" not in load_workflow(_CHECKS), "checks.yml must not re-pin toolchain versions beside the flake"
@@ -506,9 +505,28 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
     assert tomllib.loads(_read_text(_ROOT / "uv.lock"))["requires-python"] == f">={python_minor}"
 
     flake = _read_text(_FLAKE)
-    assert f"python = pkgs.python{python_minor.replace('.', '')};" in flake
-    assert f'version = "{expected_uv[0]}";' in flake
-    assert f"/download/{expected_uv[0]}/uv-${{uvRelease.target}}.tar.gz" in flake
+    uv_versions = subprocess.run(
+        [
+            "/bin/sh",
+            "-c",
+            r"""sed -n 's/^[[:space:]]*uvVersion = "\([^"]*\)";[[:space:]]*$/\1/p' "$1" """,
+            "uv-version",
+            str(_FLAKE),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert len(uv_versions) == 1, f"flake.nix must declare exactly one uvVersion: {uv_versions}"
+    uv_version = uv_versions[0]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", uv_version)
+    assert expected_uv[0] == uv_version
+    assert flake.count(f'uvVersion = "{uv_version}";') == 1
+    assert "version = uvVersion;" in flake
+    expected_uv_url = (
+        'url = "https://github.com/astral-sh/uv/releases/download/${uvVersion}/uv-${uvRelease.target}.tar.gz";'
+    )
+    assert expected_uv_url in flake
     nix_digests = re.findall(r'sha256 = "([0-9a-f]+)";', flake)
     assert len(nix_digests) == 4
     assert all(_SHA256.fullmatch(digest) for digest in nix_digests)
@@ -565,15 +583,46 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     worker_setup = next(step for step in _steps(jobs["worker"]) if step.get("name") == "Set up selected environments")
     assert worker_setup["uses"] == "./.github/actions/setup-ci"
     assert worker_setup["with"]["node"] == "${{ env.NODE_SETUP_SELECTED }}"
-    uv_version = re.search(r'uvPackage.*?version = "([^"]+)";', _read_text(_FLAKE), re.DOTALL)
-    assert uv_version
+    uv_version_output = "${{ steps.uv-version.outputs.version }}"
     python_version = _images(_SCAFFOLD_DOCKERFILE, "public.ecr.aws/docker/library/python")[0]["version"]
     assert setup_uv["with"] == {
-        "version": uv_version[1],
+        "version": uv_version_output,
         "python-version": python_version.removesuffix("-slim"),
         "enable-cache": True,
         "cache-dependency-glob": "uv.lock",
     }
+
+    workflow_paths = sorted((*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")))
+    uv_installers: list[tuple[Path, str, list[WorkflowStep], int]] = []
+    for path in workflow_paths:
+        assert "UV_VERSION" not in _read_text(path), f"{path.relative_to(_ROOT)} must not declare UV_VERSION"
+        for job_name, job in _workflow_jobs(path).items():
+            steps = _steps(job)
+            uv_installers.extend(
+                (path, job_name, steps, index)
+                for index, step in enumerate(steps)
+                if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+            )
+
+    assert uv_installers, "no workflow uv installers discovered"
+    extractor_sed = (
+        r"""sed -n 's/^[[:space:]]*uvVersion = "\([^"]*\)";"""
+        r"""[[:space:]]*$/\1/p' flake.nix"""
+    )
+    for path, job_name, steps, setup_index in uv_installers:
+        setup_step = steps[setup_index]
+        location = f"{path.relative_to(_ROOT)}:{job_name}"
+        assert setup_step.get("with", {}).get("version") == uv_version_output, location
+        extractors = [(index, step) for index, step in enumerate(steps) if step.get("id") == "uv-version"]
+        assert len(extractors) == 1, location
+        extractor_index, extractor = extractors[0]
+        assert extractor_index < setup_index, location
+        assert extractor.get("shell") == "/bin/sh {0}", location
+        extractor_run = str(extractor.get("run", ""))
+        assert extractor_sed in extractor_run, location
+        assert """sed -n '$='""" in extractor_run, location
+        assert r"/^[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$/p" in extractor_run, location
+        assert 'printf \'version=%s\\n\' "$uv_version" >> "$GITHUB_OUTPUT"' in extractor_run, location
 
 
 def test_kafka_connect_build_and_remote_connector_pins_are_consistent() -> None:
