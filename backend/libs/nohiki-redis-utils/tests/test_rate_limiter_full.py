@@ -16,6 +16,7 @@ import pytest
 from nohiki_redis_utils.rate_limiter import (
     RateLimitAlgorithm,
     RateLimitConfig,
+    RateLimitFailurePolicy,
     SlidingWindowRateLimiter,
     TokenBucketRateLimiter,
     create_sliding_window_limiter,
@@ -144,6 +145,34 @@ class TestFactoryFunctions:
         )
 
         assert isinstance(limiter, TokenBucketRateLimiter)
+
+    @pytest.mark.asyncio
+    async def test_token_bucket_defaults_to_failing_open(self) -> None:
+        """Existing callers pass no policy and must keep their availability bias."""
+        mock_cache = MagicMock()
+        mock_cache.eval_script = AsyncMock(side_effect=RedisError("down"))
+
+        limiter = create_token_bucket_limiter(cache=mock_cache, requests=10, window_seconds=60)
+
+        assert (await limiter.check("k")).allowed is True
+
+    @pytest.mark.asyncio
+    async def test_token_bucket_can_fail_closed(self) -> None:
+        """A caller whose bound must hold during an outage can select FAIL_CLOSED."""
+        mock_cache = MagicMock()
+        mock_cache.eval_script = AsyncMock(side_effect=RedisError("down"))
+
+        limiter = create_token_bucket_limiter(
+            cache=mock_cache,
+            requests=10,
+            window_seconds=60,
+            failure_policy=RateLimitFailurePolicy.FAIL_CLOSED,
+        )
+
+        result = await limiter.check("k")
+
+        assert result.allowed is False
+        assert result.retry_after == 60.0
 
     def test_create_sliding_window_limiter(self) -> None:
         """Should create SlidingWindowRateLimiter (lines 393-398)."""
