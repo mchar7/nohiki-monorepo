@@ -30,7 +30,10 @@ def _jobs() -> dict[str, WorkflowJob]:
 
 
 def _steps(job: WorkflowJob) -> list[WorkflowStep]:
-    return job.get("steps", [])
+    steps: list[WorkflowStep] = []
+    for step in job.get("steps", []):
+        steps.extend(step.get("parallel", [step]))
+    return steps
 
 
 _CONTAINER_EXECUTORS = {
@@ -38,12 +41,11 @@ _CONTAINER_EXECUTORS = {
     "frontend_e2e": "playwright-image",
     "otel_collector": "container-contracts",
 }
-# One job definition owns every lane in both classes. The class chooses how many runners
-# the same step bodies are spread across, not which job defines them.
+# One job definition owns every lane in both classes. The gate emits only the payload legs
+# selected by the decision, and never emits a third hygiene runner.
 _STANDARD_EXECUTORS = dict.fromkeys(FLAG_NAMES, "worker") | _CONTAINER_EXECUTORS
 _BROAD_EXECUTORS = _STANDARD_EXECUTORS
-_BROAD_UNITS = ["python", "frontend", "hygiene"]
-_STANDARD_UNITS = ["all"]
+_WORKER_UNITS = ["python", "frontend"]
 _NON_EXECUTOR_JOB_IDS = {
     "changes",
     "checks",
@@ -207,22 +209,20 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
     assert "needs.changes.outputs.broad == 'true'" in worker["if"]
     assert worker["needs"] == ["changes"]
 
-    # The class picks the runner count, not the step bodies: standard takes one unit and
-    # broad takes three. A failing unit must not cancel the verdicts of its siblings.
+    # The gate, not the commit-class label, chooses which of the two named payload legs run.
     matrix = str(worker["strategy"]["matrix"]["unit"])
     assert worker["strategy"]["fail-fast"] is False
-    broad_units, standard_units = (json.loads(group) for group in re.findall(r"'(\[[^']*\])'", matrix))
-    assert broad_units == _BROAD_UNITS
-    assert standard_units == _STANDARD_UNITS
+    assert matrix == "${{ fromJSON(needs.changes.outputs.worker_units) }}"
+    assert jobs["changes"]["outputs"]["worker_units"] == "${{ steps.gate.outputs.worker_units }}"
 
     bins = {
-        "hygiene": {
+        "frontend": {
             "Check flake",
             "Check Lefthook version",
             "Lint Python",
             "Check Python formatting",
             "Lint protos",
-            "Lint workflows (actionlint)",
+            "Lint workflows",
             "Lint Dockerfiles (hadolint)",
             "Scan repository for secrets",
             "Typecheck backend",
@@ -235,8 +235,6 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Check proto compatibility",
             "Run Node workspace contract tests",
             "Run Skylos cache contract tests",
-        },
-        "frontend": {
             "Lint Markdown",
             "Lint frontend",
             "Check i18n keys",
@@ -250,7 +248,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
         },
         "python": {"Run selected Python tests"},
     }
-    assert set(bins) == set(_BROAD_UNITS)
+    assert set(bins) == set(_WORKER_UNITS)
 
     # No lane may be defined twice anywhere in the file: the standard and broad paths were
     # two copies of the same checks, and that is the duplication this topology retires.
@@ -277,7 +275,6 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             for flag, expression in worker["env"].items():
                 condition = condition.replace(f"env.{flag}", str(expression))
             assert f"matrix.unit == '{unit_name}'" in condition, name
-            assert "matrix.unit == 'all'" in condition, name
             for other in set(bins) - {unit_name}:
                 assert f"matrix.unit == '{other}'" not in condition, (name, other)
 
@@ -396,12 +393,10 @@ def test_python_test_lane_uses_gate_scope_once_per_class() -> None:
     assert '--packages "$TEST_PACKAGES"' in command
     assert '--summary-title "$SUMMARY_TITLE"' in command
     assert run_tests["env"]["SUMMARY_TITLE"] == ("${{ needs.changes.outputs.commit_class }}")
-    # The 354s test step is the long pole and the only member of its bin, so the broad
-    # critical path is that step plus one bootstrap. Sharing a bin would lengthen it.
+    # The 344s test step is the long pole and the only member of its payload leg.
     condition = str(run_tests["if"])
     assert "matrix.unit == 'python'" in condition
     assert "matrix.unit == 'frontend'" not in condition
-    assert "matrix.unit == 'hygiene'" not in condition
 
 
 def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> None:
@@ -410,11 +405,11 @@ def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> No
     node_lane = steps["Run Node workspace contract tests"]
     assert f"{_CI_TESTS} -m {_NODE_WORKSPACE_MARKER}" in str(node_lane["run"])
 
-    # The `python` payload restores no node_modules, so a marked test cannot pass in that unit.
+    # The Python payload restores no node_modules, so a marked test cannot pass in that unit.
     setup = next(step for step in _steps(worker) if step.get("uses") == "./.github/actions/setup-ci")
-    assert "matrix.unit == 'python' && 'python'" in str(setup["with"]["payload"])
+    assert setup["with"]["payload"] == "${{ matrix.unit == 'python' && 'python' || 'full' }}"
     condition = str(node_lane["if"])
-    assert "matrix.unit == 'all' || matrix.unit == 'hygiene'" in condition
+    assert "matrix.unit == 'frontend'" in condition
     assert "matrix.unit == 'python'" not in condition
 
     # The gate names this step's own inputs: the k8s Playwright config, the journeys it collects,
@@ -581,6 +576,7 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
         "commit_class",
         "standard",
         "broad",
+        "worker_units",
         # Splits the class signal: the step disjuncts consume this, the scope selectors do not.
         "broad_unbounded",
         "worker_timeout_minutes",
@@ -830,10 +826,10 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> Non
     assert setup["uses"] == "./.github/actions/setup-ci"
     assert setup["with"]["ready-cache"] == "${{ env.NIX_SETUP_SELECTED }}"
     assert setup["with"]["node"] == "${{ env.NODE_SETUP_SELECTED }}"
-    # Exactly one cache writer per run, now that the dedicated prewarm job is gone. Standard
-    # writes from main pushes only, because a pull-request entry is scoped to its own ref.
+    # Frontend is the only full-payload leg and the only possible cache writer. Pull requests
+    # write only for broad decisions; main pushes write for either class.
     assert setup["with"]["save-ready-cache"] == (
-        "${{ matrix.unit == 'hygiene' || (github.event_name == 'push' && matrix.unit == 'all') }}"
+        "${{ matrix.unit == 'frontend' && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
     )
 
     for name in ("Lint Python", "Check Python formatting"):
@@ -857,6 +853,33 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> Non
     full = steps["Scan repository for secrets"]
     assert full["if"].endswith("env.DOCS_ONLY != 'true'")
     assert "detect --source . --config .gitleaks.toml --no-banner --redact" in full["run"]
+
+
+def test_native_overlap_is_memory_bounded_to_measured_low_rss_pairs() -> None:
+    worker = _jobs()["worker"]
+    groups = [step["parallel"] for step in worker["steps"] if "parallel" in step]
+    names = [{nested["name"] for nested in group} for group in groups]
+
+    assert all(len(group) == 2 for group in groups)
+    assert names == [
+        {"Check flake", "Check Lefthook version"},
+        {"Lint frontend architecture (Steiger)", "Check i18n keys"},
+        {"Scan architecture", "Check build backends"},
+        {"Check API schema freshness", "Check image matrix parity"},
+    ]
+    standalone = {
+        "Scan repository for secrets",
+        "Typecheck backend",
+        "Check selected dead code",
+        "Typecheck frontend",
+        "Run selected Python tests",
+        "Run Node workspace contract tests",
+        "Run Skylos cache contract tests",
+        "Test frontend",
+        "Check dependencies",
+    }
+    assert standalone.isdisjoint(set().union(*names))
+    assert all("background" not in step and "cancel" not in step for step in worker["steps"])
 
 
 def test_deadcode_runs_once_with_split_static_cache_save() -> None:

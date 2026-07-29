@@ -3785,6 +3785,7 @@ def test_nix_shells_declare_the_pinned_python_and_validator_runtime() -> None:
     declared = set(re.findall(r"pkgs\.([\w-]+)", policy_tools + test_tools))
     validators = (
         "actionlint",
+        "check-jsonschema",
         "age",
         "buf",
         "gitleaks",

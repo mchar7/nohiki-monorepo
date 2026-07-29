@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
@@ -9,6 +8,7 @@ from pathlib import Path
 import pytest
 from _documents import WorkflowJob, load_mapping, load_workflow
 from ci_checks.app import app
+from ci_checks.core.change_gate import GateDecision, render_outputs
 from ci_checks.core.packages import PackageType, Scope, _scope_filter
 from typer.testing import CliRunner
 
@@ -26,14 +26,22 @@ _CI_PACKAGE_TOKENS = (
     "pkgs.openssh",
     "pkgs.gitleaks",
     "pkgs.actionlint",
+    "pkgs.check-jsonschema",
     "pkgs.hadolint",
     "pkgs.buf",
     "pkgs.skopeo",
 )
 
 
+def _steps(job: WorkflowJob) -> list[Mapping[str, object]]:
+    steps: list[Mapping[str, object]] = []
+    for step in job.get("steps", []):
+        steps.extend(step.get("parallel", [step]))
+    return steps
+
+
 def _commands(job: WorkflowJob) -> list[str]:
-    return [step["run"] for step in job.get("steps", []) if "run" in step]
+    return [str(step["run"]) for step in _steps(job) if "run" in step]
 
 
 def test_ci_nix_shell_includes_local_secret_bootstrap_tools() -> None:
@@ -61,7 +69,7 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     # measuring real work after a frame step is renamed.
     work = "\n".join(
         step["run"]
-        for step in jobs["worker"]["steps"]
+        for step in _steps(jobs["worker"])
         if "run" in step and not str(step.get("name", "")).startswith(("Open ", "Report "))
     )
     container_contracts = "\n".join(_commands(jobs["container-contracts"]))
@@ -106,17 +114,17 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     assert "lefthook run pre-push" not in all_commands
 
 
-def test_python_tests_use_one_runner_per_commit_class() -> None:
+def test_python_tests_use_the_named_python_payload_leg() -> None:
     workflow = load_workflow(_CHECKS)
     job = workflow["jobs"]["worker"]
     assert job["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
-    # Standard takes one unit, broad three, and the Python tests are alone in their unit.
-    broad_units, standard_units = (
-        json.loads(group) for group in re.findall(r"'(\[[^']*\])'", str(job["strategy"]["matrix"]["unit"]))
-    )
-    assert broad_units == ["python", "frontend", "hygiene"]
-    assert standard_units == ["all"]
-    steps = {step["name"]: step for step in job["steps"] if "name" in step}
+    assert job["strategy"]["matrix"]["unit"] == "${{ fromJSON(needs.changes.outputs.worker_units) }}"
+    assert json.loads(render_outputs(GateDecision(full=True), (), "push")["worker_units"]) == [
+        "python",
+        "frontend",
+    ]
+    assert json.loads(render_outputs(GateDecision(), (), "pull_request")["worker_units"]) == ["frontend"]
+    steps = {step["name"]: step for step in _steps(job) if "name" in step}
     run_tests = steps["Run selected Python tests"]
     command = str(run_tests["run"])
     assert command.count("ci-checks tests all --scope all") == 1
@@ -132,6 +140,23 @@ def test_python_tests_use_one_runner_per_commit_class() -> None:
         "UV_NO_SYNC": "1",
         "COVERAGE_CORE": "sysmon",
     }
+
+
+def test_workflow_validators_are_pinned_in_hosted_and_local_paths() -> None:
+    workflow = load_workflow(_CHECKS)
+    lint = next(step for step in _steps(workflow["jobs"]["worker"]) if step.get("name") == "Lint workflows")
+    command = str(lint["run"])
+    ignore = '-ignore \'^step must run script with "run" section or run action with "uses" section$\''
+
+    assert ignore in command
+    assert "check-jsonschema" in command
+    assert "--builtin-schema vendor.github-workflows .github/workflows/*.yml" in command
+
+    lefthook = load_mapping(_LEFTHOOK)
+    local = str(lefthook["pre-commit"]["commands"]["actions-lint"]["run"])
+    assert "rhysd/actionlint#694 and #695" in local
+    assert 'ignore=\'^step must run script with "run" section or run action with "uses" section$\'' in local
+    assert "--builtin-schema vendor.github-workflows" in local
 
 
 def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -> None:

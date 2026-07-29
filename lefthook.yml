@@ -131,16 +131,28 @@ pre-commit:
           exit 1
         fi
 
-    # Workflows: actionlint (shellcheck on embedded run blocks)
+    # Workflows: actionlint plus the pinned SchemaStore workflow schema.
     actions-lint:
       glob: ".github/workflows/*.{yml,yaml}"
       run: |
+        # Remove when rhysd/actionlint#694 and #695 reach pinned nixpkgs.
+        ignore='^step must run script with "run" section or run action with "uses" section$'
         if command -v actionlint &>/dev/null; then
-          actionlint
+          actionlint -ignore "$ignore"
         elif command -v nix &>/dev/null; then
-          nix run nixpkgs#actionlint
+          nix run nixpkgs#actionlint -- -ignore "$ignore"
         else
           echo "ERROR: actionlint not found. Install it or activate the dev shell (direnv allow)."
+          exit 1
+        fi
+        if command -v check-jsonschema &>/dev/null; then
+          git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' \
+            | xargs -0 -r check-jsonschema --builtin-schema vendor.github-workflows
+        elif command -v nix &>/dev/null; then
+          git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' \
+            | xargs -0 -r nix run nixpkgs#check-jsonschema -- --builtin-schema vendor.github-workflows
+        else
+          echo "ERROR: check-jsonschema not found. Install it or activate the dev shell (direnv allow)."
           exit 1
         fi
 
