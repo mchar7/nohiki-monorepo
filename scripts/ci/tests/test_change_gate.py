@@ -2116,8 +2116,11 @@ def test_record_option_is_rejected_off_a_push_without_writing_a_file(
         event=event,
     )
 
-    assert exit_code != 0
-    assert "--affected-images-record" in output
+    # Exit 2 is the usage-error code, so this pins the rejection to argument validation rather
+    # than a runtime failure. The rendered message is deliberately not asserted: Typer routes
+    # usage errors through Rich, whose wrapping and truncation differ between a local shell and
+    # a hosted xdist worker, and a test of the contract must not depend on presentation.
+    assert exit_code == 2, output
     assert not record.exists()
 
 
