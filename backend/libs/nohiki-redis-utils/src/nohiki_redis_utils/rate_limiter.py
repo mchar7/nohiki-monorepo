@@ -358,6 +358,7 @@ def create_token_bucket_limiter(
     requests: int,
     window_seconds: int,
     burst_size: int | None = None,
+    failure_policy: RateLimitFailurePolicy = RateLimitFailurePolicy.FAIL_OPEN,
 ) -> RateLimiter:
     """Create a token bucket rate limiter with simple parameters.
 
@@ -369,6 +370,9 @@ def create_token_bucket_limiter(
         requests: Maximum requests per window
         window_seconds: Time window in seconds
         burst_size: Maximum burst size (defaults to requests)
+        failure_policy: Decision when the backend is unavailable. The default
+            protects availability; pass ``FAIL_CLOSED`` for a limiter whose
+            bound must hold even during a Redis outage.
 
     Returns:
         Configured token bucket rate limiter
@@ -379,6 +383,7 @@ def create_token_bucket_limiter(
         window_seconds=window_seconds,
         algorithm=RateLimitAlgorithm.TOKEN_BUCKET,
         burst_size=burst_size,
+        failure_policy=failure_policy,
     )
     return TokenBucketRateLimiter(cache, config)
 

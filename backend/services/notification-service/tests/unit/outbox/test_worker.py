@@ -9,20 +9,25 @@ session are both mocked.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from nohiki.common.v1 import NotificationChannel
 from nohiki_db_utils.testing import create_mock_session
+from nohiki_redis_utils import RateLimitFailurePolicy, RateLimitResult, create_token_bucket_limiter
 from notification_service.core.providers import ProviderResult
 from notification_service.db.models import Message, MessageStatus
+from notification_service.services.frequency_checker import FrequencyChecker
 from notification_service.services.outbox import OutboxWorker
 from notification_service.services.outbox.event_publisher import NotificationEventPublisher
+from notification_service.services.outbox.expiry_sweep import EXPIRED_ERROR
 from notification_service.services.outbox.provider_router import ProviderRouter, SendOutcome, SendVerdict
 from notification_service.services.outbox.retry_strategy import RetryDecision, RetryStrategy
+from notification_service.services.outbox.worker import MIN_THROTTLE_DEFER_SECONDS
+from redis.asyncio import RedisError
 from sqlalchemy.dialects import postgresql
 
 if TYPE_CHECKING:
@@ -66,11 +71,13 @@ def _all_open_outcome() -> SendOutcome:
     return SendOutcome(verdict=SendVerdict.ALL_CIRCUITS_OPEN, provider=None, result=None)
 
 
-def _make_message() -> MagicMock:
+def _make_message(*, expires_at: datetime | None = None, user_id: UUID | None = None) -> MagicMock:
     msg = MagicMock(spec=Message)
     msg.id = uuid4()
     msg.retry_count = 0
     msg.provider_name = "resend"
+    msg.expires_at = expires_at
+    msg.user_id = user_id
     msg.channel = MagicMock()
     msg.channel.to_proto.return_value = NotificationChannel.EMAIL
     return msg
@@ -147,6 +154,15 @@ class TestBuildPendingQuery:
         assert "STATUS IN" in sql.upper() or "status IN" in sql
         assert "'pending'" in sql
         assert "'retrying'" in sql
+
+    def test_compiled_sql_skips_rows_with_a_future_retry_at(self) -> None:
+        """A deferred row leaves the runnable set until its ``retry_at`` elapses."""
+        stmt = OutboxWorker._build_pending_query(limit=1)
+        sql = str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+        normalised = " ".join(sql.split())
+
+        column = "notification_schema.messages.retry_at"
+        assert f"{column} IS NULL OR {column} <= now()" in normalised
 
     def test_compiled_sql_orders_by_priority_then_created_at(self) -> None:
         """High-priority messages drain first, FIFO within priority."""
@@ -495,10 +511,10 @@ class TestSendMessage:
         base_strategy: MagicMock,
         pending_message: MagicMock,
     ) -> None:
-        """When the rate limiter denies, the router is not invoked."""
+        """When the provider bucket denies, the router is not invoked."""
         router = _make_router()
         limiter = AsyncMock()
-        limiter.check.return_value = MagicMock(allowed=False)
+        limiter.check.return_value = MagicMock(allowed=False, retry_after=6.0)
         worker = OutboxWorker(
             provider_router=router,
             rate_limiter=limiter,
@@ -508,27 +524,218 @@ class TestSendMessage:
 
         progressed = await worker._send_message(mock_db, pending_message)
 
-        assert progressed is False
+        assert progressed is True
         router.send.assert_not_called()
+        assert pending_message.retry_at > datetime.now(UTC)
+
+
+class TestFrequencyCap:
+    """Per-user cap sits between the claim and the provider."""
+
+    @staticmethod
+    def _checker(*, allowed: bool, retry_after: float | None = 45.0) -> MagicMock:
+        checker = MagicMock(spec=FrequencyChecker)
+        checker.check = AsyncMock(
+            return_value=RateLimitResult(
+                allowed=allowed,
+                remaining=0 if not allowed else 1,
+                reset_at=datetime.now(UTC).timestamp() + 60,
+                retry_after=None if allowed else retry_after,
+            ),
+        )
+        return checker
+
+    @pytest.mark.asyncio
+    async def test_capped_user_never_reaches_a_provider(self) -> None:
+        """A throttled message costs no provider quota."""
+        router = _make_router()
+        worker = OutboxWorker(provider_router=router, frequency_checker=self._checker(allowed=False))
+        message = _make_message(user_id=uuid4())
+        message.status = MessageStatus.PENDING
+        mock_db = create_mock_session()
+
+        progressed = await worker._send_message(mock_db, message)
+
+        assert progressed is True
+        router.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cap_denial_charges_no_provider_token(self) -> None:
+        """The recipient cap is evaluated before any provider quota is spent."""
+        limiter = AsyncMock()
+        limiter.check.return_value = MagicMock(allowed=True, retry_after=None)
+        worker = OutboxWorker(
+            provider_router=_make_router(),
+            rate_limiter=limiter,
+            frequency_checker=self._checker(allowed=False),
+        )
+        message = _make_message(user_id=uuid4())
+        message.status = MessageStatus.PENDING
+
+        await worker._send_message(create_mock_session(), message)
+
+        limiter.check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_throttled_row_is_deferred_by_the_limiters_retry_after(self) -> None:
+        """The row keeps its status and becomes eligible when tokens refill."""
+        worker = OutboxWorker(
+            provider_router=_make_router(),
+            frequency_checker=self._checker(allowed=False, retry_after=45.0),
+        )
+        message = _make_message(user_id=uuid4())
+        message.status = MessageStatus.PENDING
+        message.retry_count = 3
+        mock_db = create_mock_session()
+
+        before = datetime.now(UTC)
+        await worker._send_message(mock_db, message)
+
+        assert message.status == MessageStatus.PENDING
+        assert message.retry_count == 3
+        # Deferred by the bucket's own estimate, not a fixed poll-interval delay.
+        assert timedelta(seconds=44) <= message.retry_at - before <= timedelta(seconds=46)
+        mock_db.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_throttle_defer_has_a_floor(self) -> None:
+        """A sub-second retry_after would be past by the next claim and reselect the row."""
+        worker = OutboxWorker(
+            provider_router=_make_router(),
+            frequency_checker=self._checker(allowed=False, retry_after=0.002),
+        )
+        message = _make_message(user_id=uuid4())
+        message.status = MessageStatus.PENDING
+
+        before = datetime.now(UTC)
+        await worker._send_message(create_mock_session(), message)
+
+        assert message.retry_at - before >= timedelta(seconds=MIN_THROTTLE_DEFER_SECONDS)
+
+    @pytest.mark.asyncio
+    async def test_user_below_the_cap_is_dispatched(self) -> None:
+        """Admitting the send routes it and charges the user exactly once."""
+        router = _make_router()
+        checker = self._checker(allowed=True)
+        worker = OutboxWorker(
+            provider_router=router,
+            retry_strategy=MagicMock(spec=RetryStrategy),
+            event_publisher=AsyncMock(),
+            frequency_checker=checker,
+        )
+        user_id = uuid4()
+        message = _make_message(user_id=user_id)
+        mock_db = create_mock_session()
+
+        progressed = await worker._send_message(mock_db, message)
+
+        assert progressed is True
+        assert message.status == MessageStatus.SENT
+        router.send.assert_awaited_once_with(message)
+        checker.check.assert_awaited_once_with(user_id)
+
+    @pytest.mark.asyncio
+    async def test_no_checker_leaves_dispatch_untouched(self) -> None:
+        """With the cap disabled the worker behaves exactly as before."""
+        router = _make_router()
+        worker = OutboxWorker(provider_router=router, event_publisher=AsyncMock())
+
+        await worker._send_message(create_mock_session(), _make_message(user_id=uuid4()))
+
+        router.send.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_message_without_a_user_is_not_capped(self) -> None:
+        """A system message with no recipient id has no bucket to charge."""
+        router = _make_router()
+        checker = self._checker(allowed=False)
+        worker = OutboxWorker(
+            provider_router=router,
+            event_publisher=AsyncMock(),
+            frequency_checker=checker,
+        )
+
+        await worker._send_message(create_mock_session(), _make_message(user_id=None))
+
+        checker.check.assert_not_called()
+        router.send.assert_awaited_once()
+
+
+class TestPreSendExpiry:
+    """TTL guard between claiming a row and dispatching it."""
+
+    @pytest.mark.asyncio
+    async def test_expired_message_is_cancelled_without_a_send(self) -> None:
+        """A row whose TTL elapsed after the claim is never delivered."""
+        router = _make_router()
+        publisher = AsyncMock(spec=NotificationEventPublisher)
+        worker = OutboxWorker(provider_router=router, event_publisher=publisher)
+        message = _make_message(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        mock_db = create_mock_session()
+
+        progressed = await worker._send_message(mock_db, message)
+
+        assert progressed is True
+        assert message.status == MessageStatus.CANCELLED
+        assert message.last_error == EXPIRED_ERROR
+        assert message.retry_at is None
+        mock_db.commit.assert_awaited_once()
+        router.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_expiry_between_claim_and_send_emits_one_lifecycle_event(self) -> None:
+        """The worker's own expiry path is as observable as the sweep's."""
+        publisher = AsyncMock(spec=NotificationEventPublisher)
+        worker = OutboxWorker(provider_router=_make_router(), event_publisher=publisher)
+        message = _make_message(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        mock_db = create_mock_session()
+
+        await worker._send_message(mock_db, message)
+
+        publisher.publish_failed.assert_awaited_once_with(mock_db, message)
+
+    @pytest.mark.asyncio
+    async def test_message_still_within_its_ttl_is_sent(self) -> None:
+        """An unexpired row takes the normal dispatch path."""
+        router = _make_router()
+        worker = OutboxWorker(provider_router=router, event_publisher=AsyncMock())
+        message = _make_message(expires_at=datetime.now(UTC) + timedelta(hours=1))
+
+        await worker._send_message(create_mock_session(), message)
+
+        assert message.status == MessageStatus.SENT
+        router.send.assert_awaited_once_with(message)
+
+    @pytest.mark.asyncio
+    async def test_message_without_an_expiry_is_never_cancelled(self) -> None:
+        """``expires_at`` NULL means no TTL, not an elapsed one."""
+        router = _make_router()
+        worker = OutboxWorker(provider_router=router, event_publisher=AsyncMock())
+        message = _make_message(expires_at=None)
+
+        await worker._send_message(create_mock_session(), message)
+
+        assert message.status == MessageStatus.SENT
+        router.send.assert_awaited_once_with(message)
 
 
 class TestCheckRateLimits:
-    """Rate-limit branch coverage."""
+    """Provider-bucket branch coverage. ``None`` means admitted."""
 
     @pytest.mark.asyncio
-    async def test_no_limiter_returns_true(self) -> None:
+    async def test_no_limiter_admits(self) -> None:
         """Without a limiter, every message is allowed."""
         worker = OutboxWorker(provider_router=_make_router(), rate_limiter=None)
         msg = MagicMock(spec=Message)
         msg.provider_name = "resend"
 
-        assert await worker._check_rate_limits(msg) is True
+        assert await worker._check_rate_limits(msg) is None
 
     @pytest.mark.asyncio
     async def test_default_provider_is_rate_limited(self) -> None:
         """A message without an override still uses the configured provider bucket."""
         limiter = AsyncMock()
-        limiter.check.return_value = MagicMock(allowed=False)
+        limiter.check.return_value = MagicMock(allowed=False, retry_after=6.0)
         worker = OutboxWorker(provider_router=_make_router(), rate_limiter=limiter)
         msg = MagicMock(spec=Message)
         msg.provider_name = None
@@ -538,32 +745,32 @@ class TestCheckRateLimits:
             "notification_service.services.outbox.worker.get_default_provider_name",
             return_value="resend",
         ):
-            allowed = await worker._check_rate_limits(msg)
+            retry_after = await worker._check_rate_limits(msg)
 
-        assert allowed is False
+        assert retry_after == 6.0
         limiter.check.assert_awaited_once_with("provider:resend")
 
     @pytest.mark.asyncio
     async def test_rate_limit_allowed(self) -> None:
-        """Limiter ``allowed=True`` returns True."""
+        """Limiter ``allowed=True`` reports no deferral."""
         limiter = AsyncMock()
-        limiter.check.return_value = MagicMock(allowed=True)
+        limiter.check.return_value = MagicMock(allowed=True, retry_after=None)
         worker = OutboxWorker(provider_router=_make_router(), rate_limiter=limiter)
         msg = MagicMock(spec=Message)
         msg.provider_name = "resend"
 
-        assert await worker._check_rate_limits(msg) is True
+        assert await worker._check_rate_limits(msg) is None
 
     @pytest.mark.asyncio
-    async def test_rate_limit_denied(self) -> None:
-        """Limiter ``allowed=False`` returns False."""
+    async def test_rate_limit_denied_reports_the_buckets_estimate(self) -> None:
+        """Limiter ``allowed=False`` surfaces the seconds until a token returns."""
         limiter = AsyncMock()
-        limiter.check.return_value = MagicMock(allowed=False)
+        limiter.check.return_value = MagicMock(allowed=False, retry_after=12.5)
         worker = OutboxWorker(provider_router=_make_router(), rate_limiter=limiter)
         msg = MagicMock(spec=Message)
         msg.provider_name = "resend"
 
-        assert await worker._check_rate_limits(msg) is False
+        assert await worker._check_rate_limits(msg) == 12.5
 
 
 class TestOutcomeInvariants:
@@ -734,3 +941,103 @@ class TestGetMetrics:
 
         snapshot["messages_sent"] = 999
         assert worker.metrics["messages_sent"] == 5
+
+
+class TestThrottleLiveness:
+    """A capped recipient must not starve the rest of the queue."""
+
+    @staticmethod
+    def _runnable(queue: list[MagicMock]) -> MagicMock:
+        """Claim the first row the queue predicate would actually select."""
+        now = datetime.now(UTC)
+        result = MagicMock()
+        eligible = [
+            msg
+            for msg in queue
+            if msg.status in (MessageStatus.PENDING, MessageStatus.RETRYING)
+            and (msg.retry_at is None or msg.retry_at <= now)
+        ]
+        result.scalars.return_value.first.return_value = eligible[0] if eligible else None
+        return result
+
+    @pytest.mark.asyncio
+    async def test_capped_user_does_not_block_another_users_row(self) -> None:
+        """The batch continues past a throttled head instead of ending on it."""
+        capped_user = uuid4()
+        capped = _make_message(user_id=capped_user)
+        capped.status = MessageStatus.PENDING
+        capped.retry_at = None
+        other = _make_message(user_id=uuid4())
+        other.status = MessageStatus.PENDING
+        other.retry_at = None
+        queue = [capped, other]
+
+        async def _check(user_id: UUID) -> RateLimitResult:
+            allowed = user_id != capped_user
+            return RateLimitResult(
+                allowed=allowed,
+                remaining=0,
+                reset_at=datetime.now(UTC).timestamp() + 60,
+                retry_after=None if allowed else 30.0,
+            )
+
+        checker = MagicMock(spec=FrequencyChecker)
+        checker.check = AsyncMock(side_effect=_check)
+
+        mock_db = create_mock_session()
+        mock_db.execute = AsyncMock(side_effect=lambda _stmt: self._runnable(queue))
+        router = _make_router()
+        worker = OutboxWorker(
+            provider_router=router,
+            frequency_checker=checker,
+            event_publisher=AsyncMock(),
+        )
+
+        with (
+            patch(
+                "notification_service.services.outbox.worker.db_session",
+                return_value=MagicMock(__aenter__=AsyncMock(return_value=mock_db), __aexit__=AsyncMock()),
+            ),
+            patch("notification_service.services.outbox.worker.settings") as mock_settings,
+        ):
+            mock_settings.outbox.batch_size = 10
+            mock_settings.database = MagicMock()
+            await worker._drain_batch()
+
+        router.send.assert_awaited_once_with(other)
+        assert other.status == MessageStatus.SENT
+        assert capped.status == MessageStatus.PENDING
+        assert capped.retry_at > datetime.now(UTC)
+
+
+class TestCapFailsClosed:
+    """The inbox bound has to hold when its backend is the thing that broke."""
+
+    @pytest.mark.asyncio
+    async def test_redis_failure_does_not_admit_a_send(self) -> None:
+        """An unreachable bucket defers the row rather than waving it through."""
+        cache = MagicMock()
+        cache.eval_script = AsyncMock(side_effect=RedisError("redis unreachable"))
+        limiter = create_token_bucket_limiter(
+            cache=cache,
+            requests=3,
+            window_seconds=60,
+            failure_policy=RateLimitFailurePolicy.FAIL_CLOSED,
+        )
+        router = _make_router()
+        worker = OutboxWorker(
+            provider_router=router,
+            frequency_checker=FrequencyChecker(limiter, max_per_window=3, window_seconds=60),
+            event_publisher=AsyncMock(),
+        )
+        message = _make_message(user_id=uuid4())
+        message.status = MessageStatus.PENDING
+        mock_db = create_mock_session()
+
+        progressed = await worker._send_message(mock_db, message)
+
+        assert progressed is True
+        router.send.assert_not_called()
+        assert message.status == MessageStatus.PENDING
+        assert message.retry_at > datetime.now(UTC)
+        mock_db.commit.assert_awaited_once()

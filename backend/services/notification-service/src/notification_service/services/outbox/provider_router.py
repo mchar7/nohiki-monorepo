@@ -58,11 +58,15 @@ class SendVerdict(Enum):
             No provider was actually contacted. The caller should leave the
             message in its current state and re-poll later, when the breaker
             timeout has elapsed.
+        THROTTLED: A limiter refused this send, so no provider was contacted.
+            Never produced by the router; the worker raises it ahead of
+            dispatch so its match stays exhaustive.
     """
 
     DELIVERED = "delivered"
     FAILED = "failed"
     ALL_CIRCUITS_OPEN = "all_circuits_open"
+    THROTTLED = "throttled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,12 +74,16 @@ class SendOutcome:
     """Typed outcome of a :meth:`ProviderRouter.send` call.
 
     ``provider`` and ``result`` are ``None`` exactly when ``verdict`` is
-    :attr:`SendVerdict.ALL_CIRCUITS_OPEN` (no provider was contacted).
+    :attr:`SendVerdict.ALL_CIRCUITS_OPEN` or :attr:`SendVerdict.THROTTLED`
+    (no provider was contacted). ``retry_after`` is set only for
+    :attr:`SendVerdict.THROTTLED`, carrying the refusing limiter's own estimate
+    of the seconds until capacity returns.
     """
 
     verdict: SendVerdict
     provider: BaseProvider | None
     result: ProviderResult | None
+    retry_after: float | None = None
 
 
 class _ProviderSendError(Exception):
