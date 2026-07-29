@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 from functools import cache
@@ -10,13 +9,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from ci_checks.core.image_inventory import load_inventory
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "verification" / "health"
 _RELEASE = _ROOT / "infra" / "k8s" / "gitops" / "verification" / "helmrelease.yaml"
 _LOCAL = _ROOT / "infra" / "k8s" / "gitops" / "clusters" / "local"
 _DIGEST_VALUES = _ROOT / "infra" / "k8s" / "gitops" / "platform" / "local" / "image-digests.values.yaml"
-_IMAGES = _ROOT / "infra" / "k8s" / "local" / "images.json"
 _NAME = "nohiki-health-verification"
 _DIGEST = "sha256:" + "a" * 64
 _READ_ONLY_VERBS = {"get", "list", "watch"}
@@ -180,16 +179,17 @@ def test_health_rbac_is_read_only_without_secret_or_subresource_access() -> None
 
 
 def test_health_image_is_inventory_owned_and_digest_rendered() -> None:
-    image_inventory = json.loads(_IMAGES.read_text(encoding="utf-8"))
-    health_images = [image for image in image_inventory["images"] if image["name"] == "health-runner"]
-    assert health_images == [
-        {
-            "name": "health-runner",
-            "context": ".",
-            "dockerfile": "scripts/util/health_check/Dockerfile",
-            "local": True,
-        }
-    ]
+    health_records = [record for record in load_inventory().images if record.name == "health-runner"]
+    assert len(health_records) == 1
+    health = health_records[0]
+    assert health.context == "."
+    assert health.dockerfile == "scripts/util/health_check/Dockerfile"
+    assert health.lockfile == "uv.lock"
+    assert health.build_args == ""
+    assert health.timeout == 16
+    # scripts/util/health_check/Dockerfile COPYs backend/services and scripts/ci into the image.
+    assert "scripts/ci/" in health.ownership
+    assert "backend/services/" in health.ownership
 
     container = _container()
     assert container["image"] == f"localhost:5000/health-runner:immutable@{_DIGEST}"

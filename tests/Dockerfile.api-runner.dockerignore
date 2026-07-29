@@ -1,5 +1,17 @@
-.git
-.local/
+# Explicit context contract for tests/Dockerfile.api-runner. The Dockerfile enumerates its COPY
+# roots; this allow-list is what bounds the effective context, so an input absent here cannot reach
+# the build and is not an image ownership input either.
+**
+!pyproject.toml
+!uv.lock
+!backend/libs/**
+!docs/api/nohiki.openapi.json
+!scripts/util/health_check/**
+!tests/**
+
+# Re-exclusions inside the admitted trees.
+# A uv workspace has exactly one lock, at the root; a nested one is stray local output.
+tests/uv.lock
 **/.env
 **/.env.*
 !**/.env.example
@@ -18,5 +30,3 @@
 **/.pytest_cache/
 **/.coverage
 **/coverage.xml
-# A uv workspace has exactly one lock, at the root; a nested one is stray local output.
-tests/uv.lock
