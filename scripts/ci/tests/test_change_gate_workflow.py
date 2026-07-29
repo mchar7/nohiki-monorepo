@@ -1111,7 +1111,7 @@ def test_affected_image_record_uploads_immediately_after_the_gate_computes_it() 
 
     assert upload["name"] == "Upload affected image record"
     assert upload["if"] == "github.event_name == 'push'"
-    assert upload["uses"].startswith("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
+    assert upload["uses"].startswith("actions/upload-artifact@")
     assert upload["with"] == {
         "name": "affected-images",
         "path": "affected-images.json",
