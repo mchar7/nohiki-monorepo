@@ -20,6 +20,7 @@ from notification_service.core.provider_metrics import (
     get_notification_provider_metrics,
 )
 from notification_service.core.providers import BaseProvider, EmailConfig, ProviderResult, parse_retry_after
+from notification_service.services.provider_clients.http_pool import build_pooled_client
 
 if TYPE_CHECKING:
     from notification_service.db.models import Message
@@ -51,7 +52,7 @@ class TwilioSendGridProvider(BaseProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        self._timeout = 30.0
+        self._client: httpx.AsyncClient | None = None
 
         # Cache validation results for 15 minutes to avoid excessive API calls
         self._last_validation_time: datetime | None = None
@@ -60,6 +61,18 @@ class TwilioSendGridProvider(BaseProvider):
 
         # Don't validate during startup - wait until actually needed
         self._validation_task: asyncio.Task[None] | None = None
+
+    @property
+    def _http(self) -> httpx.AsyncClient:
+        """Pooled client, built on first use and reused by every later call.
+
+        Built lazily rather than in ``__init__`` so the pool is bound to the
+        loop that actually drives sends, not to whichever thread happened to
+        register the provider.
+        """
+        if self._client is None:
+            self._client = build_pooled_client(base_url=self.base_url, headers=self._headers)
+        return self._client
 
     @tracer.start_as_current_span("twilio_sendgrid.send")
     async def send(self, message: Message) -> ProviderResult:
@@ -72,13 +85,10 @@ class TwilioSendGridProvider(BaseProvider):
         try:
             payload = self._create_mail_payload(message)
 
-            async with httpx.AsyncClient(
-                base_url=self.base_url, headers=self._headers, timeout=self._timeout
-            ) as client:
-                response = await client.post("/mail/send", json=payload)
-                if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-                    metrics.record_rate_limit(self.name, "email")
-                result = self._handle_response(message, response)
+            response = await self._http.post("/mail/send", json=payload)
+            if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+                metrics.record_rate_limit(self.name, "email")
+            result = self._handle_response(message, response)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
                 metrics.record_rate_limit(self.name, "email")
@@ -294,14 +304,13 @@ class TwilioSendGridProvider(BaseProvider):
 
     async def _attempt_validation(self) -> bool:
         """Attempt a single validation request to SendGrid."""
-        async with httpx.AsyncClient(base_url=self.base_url, headers=self._headers, timeout=self._timeout) as client:
-            response = await client.get("/scopes")
+        response = await self._http.get("/scopes")
 
-            if response.status_code != status.HTTP_200_OK:
-                logger.error("SendGrid validation failed", status_code=response.status_code)
-                return False
+        if response.status_code != status.HTTP_200_OK:
+            logger.error("SendGrid validation failed", status_code=response.status_code)
+            return False
 
-            return self._validate_scopes_response(response)
+        return self._validate_scopes_response(response)
 
     def _validate_scopes_response(self, response: httpx.Response) -> bool:
         """Validate the scopes response from SendGrid."""
@@ -359,5 +368,9 @@ class TwilioSendGridProvider(BaseProvider):
         return None
 
     async def aclose(self) -> None:
-        """Cleanup resources."""
-        # No background tasks to cleanup anymore
+        """Release the pooled connections and drop the client."""
+        if self._client is None:
+            return
+        client = self._client
+        self._client = None
+        await client.aclose()

@@ -18,6 +18,7 @@ worker, which means a ``CancelledError`` cannot land between
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from nohiki_db_utils import db_session
@@ -28,6 +29,7 @@ from notification_service.core.config import settings
 from notification_service.core.providers import BaseProvider, ProviderResult, get_default_provider_name
 from notification_service.db.models import Message, MessageStatus
 from notification_service.services.outbox.event_publisher import NotificationEventPublisher
+from notification_service.services.outbox.expiry_sweep import expire_message
 from notification_service.services.outbox.provider_router import ProviderRouter, SendOutcome, SendVerdict
 from notification_service.services.outbox.retry_strategy import RetryStrategy
 
@@ -35,7 +37,12 @@ if TYPE_CHECKING:
     from nohiki_redis_utils import RateLimiter
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from notification_service.services.frequency_checker import FrequencyChecker
+
 logger = get_logger(__name__)
+
+MIN_THROTTLE_DEFER_SECONDS = 1.0
+"""Floor on a throttled row's deferral, so its ``retry_at`` lands in the future."""
 
 
 class OutboxWorker:
@@ -46,13 +53,14 @@ class OutboxWorker:
     :class:`RetryStrategy`.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - every collaborator is separately injectable for tests
         self,
         provider_router: ProviderRouter,
         *,
         rate_limiter: RateLimiter | None = None,
         retry_strategy: RetryStrategy | None = None,
         event_publisher: NotificationEventPublisher | None = None,
+        frequency_checker: FrequencyChecker | None = None,
         shutdown_event: asyncio.Event | None = None,
     ) -> None:
         """Build a worker.
@@ -66,6 +74,8 @@ class OutboxWorker:
                 :class:`RetryStrategy`.
             event_publisher: Lifecycle event publisher. Defaults to a new
                 :class:`NotificationEventPublisher`.
+            frequency_checker: Optional per-user frequency cap consulted just
+                before dispatch. ``None`` disables the cap.
             shutdown_event: Optional shared shutdown signal. Pass the same
                 event used by the lifespan handler so one ``set()`` stops
                 both. A private event is created if omitted.
@@ -75,6 +85,7 @@ class OutboxWorker:
         self.rate_limiter = rate_limiter
         self._retry_strategy = retry_strategy or RetryStrategy()
         self._event_publisher = event_publisher or NotificationEventPublisher()
+        self._frequency_checker = frequency_checker
         self._shutdown = shutdown_event or asyncio.Event()
         self._init_metrics()
 
@@ -221,12 +232,16 @@ class OutboxWorker:
             db: Session holding the row's lock.
             message: The locked row.
 
-        """
-        if not await self._check_rate_limits(message):
-            logger.debug("Rate limit exceeded; deferring message", message_id=str(message.id))
-            return False
+        Returns:
+            ``True`` when the row reached a committed terminal, retrying, or
+            deferred state, so the batch may continue with the next row.
+            ``False`` when it was left untouched for a later cycle.
 
-        outcome = await self._provider_router.send(message)
+        """
+        if await self._expire_if_stale(db, message):
+            return True
+
+        outcome = await self._dispatch(message)
 
         match outcome.verdict:
             case SendVerdict.DELIVERED:
@@ -243,6 +258,112 @@ class OutboxWorker:
                     message_id=str(message.id),
                 )
                 return False
+            case SendVerdict.THROTTLED:
+                await self._defer_throttled(db, message, outcome)
+                return True
+
+    async def _dispatch(self, message: Message) -> SendOutcome:
+        """Apply the per-user frequency cap and provider quota, then route.
+
+        The cap sits here rather than in the router because it is a property of
+        the recipient, not of provider health. It is evaluated before the
+        provider bucket so a capped recipient spends no provider quota: a cap
+        denial never reaches provider routing, so charging for it would let one
+        capped user drain the bucket everyone else shares.
+
+        Args:
+            message: The locked row about to be sent.
+
+        Returns:
+            :attr:`SendVerdict.THROTTLED` when the recipient is over their cap
+            or the provider bucket is empty, otherwise whatever the router
+            returns.
+
+        """
+        if self._frequency_checker is not None and message.user_id is not None:
+            verdict = await self._frequency_checker.check(message.user_id)
+            if not verdict.allowed:
+                logger.info(
+                    "User frequency cap reached; deferring message",
+                    message_id=str(message.id),
+                    user_id=str(message.user_id),
+                )
+                return SendOutcome(
+                    verdict=SendVerdict.THROTTLED,
+                    provider=None,
+                    result=None,
+                    retry_after=verdict.retry_after,
+                )
+
+        provider_retry_after = await self._check_rate_limits(message)
+        if provider_retry_after is not None:
+            logger.debug("Provider rate limit exceeded; deferring message", message_id=str(message.id))
+            return SendOutcome(
+                verdict=SendVerdict.THROTTLED,
+                provider=None,
+                result=None,
+                retry_after=provider_retry_after,
+            )
+
+        return await self._provider_router.send(message)
+
+    async def _defer_throttled(self, db: AsyncSession, message: Message, outcome: SendOutcome) -> None:
+        """Push a throttled row out of the runnable set until capacity returns.
+
+        ``status`` and ``retry_count`` are deliberately left alone. A cap is not
+        a delivery attempt, so RETRYING would misreport it as a provider
+        failure and a bumped count would consume real retry budget; PENDING
+        keeps the row where the queue index expects it. ``retry_at`` alone
+        gates eligibility in the claim predicate, so committing a future value
+        both frees the batch to continue with other users' rows and makes this
+        row eligible again exactly when the limiter says capacity returns.
+
+        Args:
+            db: Session holding the row's lock.
+            message: The throttled row.
+            outcome: The THROTTLED outcome carrying the limiter's ``retry_after``.
+
+        """
+        # A sub-second retry_at is already in the past by the next claim, which
+        # would reselect this same row and starve the queue again.
+        delay = max(outcome.retry_after or 0.0, MIN_THROTTLE_DEFER_SECONDS)
+        message.retry_at = datetime.now(UTC) + timedelta(seconds=delay)
+        await db.commit()
+
+        logger.info(
+            "Throttled message deferred",
+            message_id=str(message.id),
+            retry_at=message.retry_at,
+            delay_seconds=delay,
+        )
+
+    async def _expire_if_stale(self, db: AsyncSession, message: Message) -> bool:
+        """Cancel the message if its TTL elapsed before dispatch.
+
+        Closes the window between the sweep's last pass and this claim, and the
+        window between the claim and the send.
+
+        Args:
+            db: Session holding the row's lock.
+            message: The locked row.
+
+        Returns:
+            ``True`` when the row was cancelled and committed.
+
+        """
+        if message.expires_at is None or message.expires_at > datetime.now(UTC):
+            return False
+
+        # Outbox row and status update must commit together.
+        await expire_message(db, message, self._event_publisher)
+        await db.commit()
+
+        logger.info(
+            "Message expired before dispatch; cancelled",
+            message_id=str(message.id),
+            expires_at=message.expires_at,
+        )
+        return True
 
     async def _handle_delivered(self, db: AsyncSession, message: Message, outcome: SendOutcome) -> None:
         """Persist a successful delivery and emit the lifecycle event."""
@@ -338,27 +459,30 @@ class OutboxWorker:
                 retry_count=message.retry_count,
             )
 
-    async def _check_rate_limits(self, message: Message) -> bool:
-        """Check the per-provider rate limiter, if any.
+    async def _check_rate_limits(self, message: Message) -> float | None:
+        """Charge the per-provider rate limiter, if any.
 
         Args:
             message: Message about to be dispatched.
 
         Returns:
-            ``True`` when no limiter is configured or the limiter allows the
-            provider bucket. ``False`` only when the limiter explicitly denies.
+            ``None`` when no limiter is configured or the provider bucket
+            admitted this send, otherwise the limiter's estimate of the seconds
+            until a token is available.
 
         """
         if not self.rate_limiter:
-            return True
+            return None
 
         provider_name = message.provider_name or get_default_provider_name(message.channel.to_proto())
         if provider_name is None:
-            return True
+            return None
 
         rate_limit_key = f"provider:{provider_name}"
         check_result = await self.rate_limiter.check(rate_limit_key)
-        return check_result.allowed
+        if check_result.allowed:
+            return None
+        return check_result.retry_after
 
     def get_metrics(self) -> dict[str, Any]:
         """Return a defensive copy of in-process metrics counters."""

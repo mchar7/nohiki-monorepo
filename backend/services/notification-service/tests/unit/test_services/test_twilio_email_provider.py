@@ -114,7 +114,7 @@ async def test_send_success(
     with patch("httpx.AsyncClient") as mock_client_class:
         mock_client = AsyncMock()
         mock_client.post.return_value = mock_http_response
-        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_client_class.return_value = mock_client
 
         provider = provider_with_cleanup
         result = await provider.send(mock_message)
@@ -158,7 +158,7 @@ async def test_send_http_error(mock_message: Message, email_config: EmailConfig)
         mock_client.post.side_effect = httpx.HTTPStatusError(
             message="Bad request", request=MagicMock(), response=mock_error_response
         )
-        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_client_class.return_value = mock_client
 
         provider = TwilioSendGridProvider(email_config)
         result = await provider.send(mock_message)
@@ -178,7 +178,7 @@ async def test_send_network_error(mock_message: Message, email_config: EmailConf
     with patch("httpx.AsyncClient") as mock_client_class:
         mock_client = AsyncMock()
         mock_client.post.side_effect = httpx.ConnectError("Network issue")
-        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_client_class.return_value = mock_client
 
         provider = TwilioSendGridProvider(email_config)
         result = await provider.send(mock_message)
@@ -222,7 +222,7 @@ async def test_validate_config_success(email_config: EmailConfig) -> None:
         mock_response.status_code = 200
         mock_response.json.return_value = {"scopes": ["mail.send"]}
         mock_client.get.return_value = mock_response
-        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_client_class.return_value = mock_client
 
         provider = TwilioSendGridProvider(email_config)
         is_valid = await provider.validate_config()
@@ -241,7 +241,7 @@ async def test_validate_config_missing_scopes(email_config: EmailConfig) -> None
         mock_response.status_code = 200
         mock_response.json.return_value = {"scopes": ["mail.read"]}  # Missing mail.send
         mock_client.get.return_value = mock_response
-        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_client_class.return_value = mock_client
 
         provider = TwilioSendGridProvider(email_config)
         is_valid = await provider.validate_config()

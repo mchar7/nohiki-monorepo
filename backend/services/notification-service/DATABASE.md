@@ -78,6 +78,13 @@ it through its lifecycle states until the message is `sent`, `failed`, or `cance
   `max_retry_delay_seconds`. The worker skips messages where `retry_at > now()`.
 - **`sent_at`** (`TIMESTAMPTZ`): Timestamp of successful provider delivery. A CHECK constraint
   enforces that this is non-NULL when `status = 'sent'`.
+- **`expires_at`** (`TIMESTAMPTZ`): Point past which the message is cancelled instead of sent.
+  Stamped at creation from `message_ttl.default_ttl_hours`, relative to `scheduled_at` when a
+  schedule is given. `MessageExpirySweep` cancels elapsed rows that are still awaiting delivery,
+  and the outbox worker re-checks the value before each dispatch to cover the gap between claim
+  and send. Either path writes a `NotificationFailed` outbox row in the same transaction, so an
+  expiry is observable downstream rather than a row that silently stopped moving. NULL means
+  no expiry.
 - **`last_error`** (`TEXT`): Error description from the most recent failed delivery attempt.
   Overwritten on each failure.
 - **`provider_msg_id`** (`VARCHAR(255)`): The message ID assigned by the external provider on
@@ -101,6 +108,11 @@ it through its lifecycle states until the message is `sent`, `failed`, or `cance
   `correlation_id IS NOT NULL`: Lookup messages by originating Kafka correlation ID for tracing.
 - **`ix_messages_stored_listing_id`** partial B-tree on `(stored_listing_id)` WHERE
   `stored_listing_id IS NOT NULL`: Lookup all notifications related to a specific job listing.
+- **`ix_messages_expires_at`** partial B-tree on `(expires_at)` WHERE `status IN
+  ('pending', 'waiting_for_render', 'retrying') AND expires_at IS NOT NULL`: The TTL sweep's claim
+  index. The status list is every state still awaiting a delivery attempt and must stay identical
+  to `MessageExpirySweep.build_expired_query`, or the sweep degrades to a sequential scan. Partial
+  so the sweep never walks terminal rows or rows without an expiry.
 
 #### Constraints
 

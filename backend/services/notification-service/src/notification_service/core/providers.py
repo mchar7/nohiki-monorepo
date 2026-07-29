@@ -157,6 +157,14 @@ class BaseProvider(ABC):
 
         """
 
+    async def aclose(self) -> None:
+        """Release long-lived resources held by this provider.
+
+        Providers holding a connection pool override this. The base keeps a
+        no-op so :func:`aclose_all_providers` can call it unconditionally.
+        """
+        logger.debug("Provider holds no closable resources", provider=self.name)
+
     def __repr__(self) -> str:
         """Return string representation of provider."""
         return f"{self.__class__.__name__}(channel={self.channel}, name={self.name})"
@@ -390,3 +398,24 @@ def clear_provider_registry() -> None:
     """Clear the provider registry (primarily for testing)."""
     _registry.clear()
     logger.info("Provider registry cleared")
+
+
+async def aclose_all_providers() -> None:
+    """Close every instantiated provider's long-lived resources.
+
+    Runs during application shutdown, before Redis and the database go away,
+    because a provider may still be draining network work. One provider
+    failing to close must not strand the others, so failures are logged and
+    the loop continues.
+    """
+    for channel, channel_instances in _registry.instances.items():
+        for provider in channel_instances.values():
+            try:
+                await provider.aclose()
+            except Exception:  # noqa: BLE001 - one bad provider must not strand its siblings
+                logger.warning(
+                    "Provider close failed",
+                    channel=channel,
+                    provider=provider.name,
+                    exc_info=True,
+                )

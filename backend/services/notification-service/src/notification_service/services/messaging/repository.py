@@ -1,6 +1,7 @@
 """Message repository for database CRUD operations."""
 
 import re
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from nohiki.doc.template.v1 import DocumentRenderRequested
@@ -150,6 +151,11 @@ class MessageRepository:
         else:
             status = MessageStatus.PENDING
 
+        # Relative to the schedule when one is given, so a deferred send gets a
+        # full TTL rather than expiring before it is ever eligible.
+        ttl_base = message.scheduled_at or datetime.now(UTC)
+        expires_at = ttl_base + timedelta(hours=settings.message_ttl.default_ttl_hours)
+
         db_message = Message(
             user_id=message.user_id,
             correlation_id=message.correlation_id,
@@ -165,6 +171,7 @@ class MessageRepository:
             provider_payload=provider_payload,
             priority=message.priority,
             scheduled_at=message.scheduled_at,
+            expires_at=expires_at,
             status=status,
         )
 
