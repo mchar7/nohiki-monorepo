@@ -40,7 +40,11 @@ _FIRST_PARTY_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 _ML_COMPUTE = "nohiki-ml-compute-service"
 _DEVICE_PLUGIN_REPO = "nvcr.io/nvidia/k8s-device-plugin"
 _GPU_RESOURCE = "nvidia.com/gpu"
-_DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
+_PINNED_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}@sha256:[0-9a-f]{64}")
+
+
+def _is_digest_pinned_tag(tag: object) -> bool:
+    return isinstance(tag, str) and _PINNED_TAG_RE.fullmatch(tag) is not None
 
 
 @dataclass(frozen=True)
@@ -193,13 +197,32 @@ def _terraform_label_and_taint() -> tuple[dict[str, str], str, str]:
 
 
 def test_base_values_pin_device_plugin_and_default_to_no_gpu() -> None:
-    values = yaml.safe_load((_CHART / "charts" / "ml-compute-service" / "values.yaml").read_text(encoding="utf-8"))
-    plugin = values["gpuDevicePlugin"]
-    # Every knob configurable, but GPU is off unless an environment opts in.
-    assert plugin["enabled"] is False
-    assert plugin["image"]["repository"] == _DEVICE_PLUGIN_REPO
-    assert _DIGEST_RE.search(plugin["image"]["tag"]), "device plugin image must be digest-pinned"
-    assert "gpu" not in values.get("resources", {})
+    for chart_name in ("nohiki-common", "ml-compute-service"):
+        values = yaml.safe_load((_CHART / "charts" / chart_name / "values.yaml").read_text(encoding="utf-8"))
+        plugin = values["gpuDevicePlugin"]
+        # Every knob configurable, but GPU is off unless an environment opts in.
+        assert plugin["enabled"] is False
+        assert plugin["image"]["repository"] == _DEVICE_PLUGIN_REPO
+        assert _is_digest_pinned_tag(plugin["image"]["tag"]), f"{chart_name} device plugin image must be digest-pinned"
+        if chart_name == "ml-compute-service":
+            assert "gpu" not in values.get("resources", {})
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "@sha256:" + "a" * 64,
+        "sha256:" + "a" * 64,
+        "v1.12.2@sha256:" + "a" * 64 + "@sha256:" + "a" * 64,
+        "",
+    ],
+)
+def test_device_plugin_tag_guard_rejects_malformed_digest_pins(tag: str) -> None:
+    assert not _is_digest_pinned_tag(tag)
+
+
+def test_device_plugin_tag_guard_accepts_complete_version_and_digest() -> None:
+    assert _is_digest_pinned_tag("v0.17.4@sha256:" + "a" * 64)
 
 
 def test_production_advertises_gpu_via_pinned_device_plugin(
@@ -212,8 +235,11 @@ def test_production_advertises_gpu_via_pinned_device_plugin(
     spec = _pod_spec(daemonsets[0])
     container = spec["containers"][0]
 
-    assert container["image"].startswith(f"{_DEVICE_PLUGIN_REPO}:")
-    assert _DIGEST_RE.search(container["image"]), "device plugin must be pinned by digest"
+    image = container["image"]
+    assert image.startswith(f"{_DEVICE_PLUGIN_REPO}:")
+    assert _is_digest_pinned_tag(image.removeprefix(f"{_DEVICE_PLUGIN_REPO}:")), (
+        "device plugin must use a complete version@sha256 digest reference"
+    )
 
     # Runs only on the GPU pool.
     assert spec["nodeSelector"] == label
