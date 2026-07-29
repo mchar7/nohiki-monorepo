@@ -82,6 +82,7 @@ def upgrade() -> None:
             scheduled_at TIMESTAMPTZ,
             retry_at TIMESTAMPTZ,
             sent_at TIMESTAMPTZ,
+            expires_at TIMESTAMPTZ,
             last_error TEXT,
             provider_msg_id VARCHAR(255),
 
@@ -123,6 +124,14 @@ def upgrade() -> None:
         CREATE INDEX ix_messages_queue
         ON {SCHEMA_NAME}.messages (priority DESC, created_at)
         WHERE status IN ('pending', 'retrying')
+    """)
+
+    # Index for the TTL sweep; the predicate must stay identical to
+    # ``MessageExpirySweep.build_expired_query`` or the sweep degrades to a scan
+    op.execute(f"""
+        CREATE INDEX ix_messages_expires_at
+        ON {SCHEMA_NAME}.messages (expires_at)
+        WHERE status IN ('pending', 'waiting_for_render', 'retrying') AND expires_at IS NOT NULL
     """)
 
     # Index for user message history
