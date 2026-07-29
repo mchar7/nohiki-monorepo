@@ -200,8 +200,10 @@ def test_colbert_lazy_loading_import_error(
     encoder = ColBERTEncoder(manifest)
 
     with (
-        patch.dict("sys.modules", {"pylate": None, "pylate.models": None}),
-        patch("builtins.__import__", side_effect=ImportError("No module named 'pylate'")),
+        patch(
+            "nohiki_ml_core.encoders.colbert.importlib.import_module",
+            side_effect=ImportError("No module named 'pylate'"),
+        ),
         pytest.raises(ImportError),
     ):
         encoder._ensure_model()
