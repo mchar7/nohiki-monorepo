@@ -5,6 +5,7 @@ import re
 import shlex
 import subprocess
 import tomllib
+from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
 from typing import cast
@@ -33,6 +34,8 @@ _ML_COMPUTE_DOCKERFILE = _ROOT / "backend" / "services" / "ml-compute-service" /
 _KAFKA_README = _KAFKA_DOCKERFILE.parent / "smt" / "README.md"
 _HELM_VALUES = _ROOT / "infra" / "k8s" / "helm" / "values.yaml"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# A digest-pinned helm tag keeps its version component: "<version>@sha256:<64 hex>".
+_PINNED_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}@sha256:[0-9a-f]{64}")
 _IMAGE = re.compile(
     r"(?:FROM |--from=)(?P<ref>(?P<repository>[^:@\s]+(?:/[^:@\s]+)*):"
     r"(?P<version>[^@\s]+)@sha256:(?P<digest>[0-9a-f]{64}))"
@@ -669,6 +672,8 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         r"/^infra\/k8s\/.+\/values\.ya?ml$/",
         r"/^infra\/k8s\/helm\/values\.local\.ya?ml$/",
     ]
+    # A manager block is merged into the dependency config before packageRules run, so pinDigests declared
+    # there cannot override docker:pinDigests inherited from config:best-practices.
     assert "pinDigests" not in helm_values_manager
     assert "custom.regex" not in enabled_managers
     assert "customManagers" not in config
@@ -678,6 +683,10 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     assert all(isinstance(rule, dict) for rule in rules)
     major_rule = next(rule for rule in rules if isinstance(rule, dict) and rule.get("matchUpdateTypes") == ["major"])
     assert major_rule.get("dependencyDashboardApproval") is True
+    pin_rules = [rule for rule in rules if isinstance(rule, dict) and "pinDigests" in rule]
+    assert len(pin_rules) == 1
+    assert pin_rules[0].get("matchManagers") == ["helm-values"]
+    assert pin_rules[0].get("pinDigests") is False
 
     grouped_ecosystems = (
         {"npm"},
@@ -703,6 +712,56 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         assert all(isinstance(update_type, str) for update_type in match_update_types)
         assert {"minor", "patch"} <= set(match_update_types)
         assert rule.get("groupName")
+
+
+def _helm_values_managed_files() -> list[Path]:
+    """Files the Renovate `helm-values` manager matches, derived from that manager's own patterns."""
+    manager = _renovate_config()["helm-values"]
+    assert isinstance(manager, dict)
+    patterns = manager.get("managerFilePatterns")
+    assert isinstance(patterns, list)
+    assert all(isinstance(pattern, str) for pattern in patterns)
+    matchers = [re.compile(cast(str, pattern).strip("/")) for pattern in patterns]
+    paths = [
+        path
+        for path in sorted((_ROOT / "infra" / "k8s").rglob("*.y*ml"))
+        if any(matcher.search(path.relative_to(_ROOT).as_posix()) for matcher in matchers)
+    ]
+    assert paths, "no values files match the helm-values manager patterns"
+    return paths
+
+
+def _tagged_blocks(node: object, location: str) -> Iterator[tuple[str, dict[str, object]]]:
+    if isinstance(node, dict):
+        if "tag" in node:
+            yield location or "<root>", cast(dict[str, object], node)
+        for key, value in node.items():
+            yield from _tagged_blocks(value, f"{location}.{key}" if location else str(key))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _tagged_blocks(value, f"{location}[{index}]")
+
+
+def test_helm_values_image_tags_never_duplicate_a_sibling_digest_or_drop_their_version() -> None:
+    """Guard the rendered shape, not the bot configuration, so a mispinned tag fails whatever pins it.
+
+    Charts take either a self-contained `tag: <version>@sha256:<digest>` or a bare `tag:` beside a
+    `digest:`/`sha:` key that the template appends itself. A digest written into the second shape's tag
+    renders a double-digest reference, and a digest replacing the version renders a tag-less one.
+    """
+    failures: list[str] = []
+    for path in _helm_values_managed_files():
+        for location, block in _tagged_blocks(load_mapping(path), ""):
+            tag = block.get("tag")
+            if not isinstance(tag, str) or "@sha256:" not in tag:
+                continue
+            relative = path.relative_to(_ROOT)
+            siblings = sorted(key for key in ("digest", "sha") if key in block)
+            if siblings:
+                failures.append(f"{relative}: {location}.tag carries a digest beside sibling {siblings}")
+            if _PINNED_TAG.fullmatch(tag) is None:
+                failures.append(f"{relative}: {location}.tag is not <version>@sha256:<digest>: {tag!r}")
+    assert not failures, "\n".join(failures)
 
 
 def test_remote_kubernetes_manifests_are_versioned_and_checksum_verified_before_apply() -> None:
