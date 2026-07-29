@@ -3,6 +3,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
 from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, mapping_sequence_at
@@ -34,6 +35,37 @@ def _steps(job: WorkflowJob) -> list[WorkflowStep]:
     for step in job.get("steps", []):
         steps.extend(step.get("parallel", [step]))
     return steps
+
+
+def _accounting_command() -> str:
+    report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
+    return str(report["run"])
+
+
+def _wall_budgets() -> dict[str, int]:
+    """Return the fan-in's wall budgets by class, read out of the workflow rather than restated."""
+    pairs = re.findall(r"(warm|cold)_wall_budget_seconds=(\d+)", _accounting_command())
+    return {name: int(seconds) for name, seconds in pairs}
+
+
+def _wall_verdict_script() -> str:
+    """Lift the fan-in's budget selection, its summary rows and its wall enforcement, ready to run.
+
+    Only the commit-class expression is substituted, because a workflow expression is interpolated
+    before bash ever sees it. Everything the assertions exercise is the file's own text.
+    """
+    command = _accounting_command()
+    selection = command.index("case '${{ needs.changes.outputs.commit_class }}' in")
+    cost = command.index("# $0.006/min", selection)
+    enforcement = command.index("if ((wall_seconds >= wall_budget_seconds)); then")
+    rows = [line.strip() for line in command.splitlines() if line.strip().startswith('echo "| Wall budget')]
+    return "\n".join(
+        [
+            command[selection:cost].replace("'${{ needs.changes.outputs.commit_class }}'", '"$COMMIT_CLASS"'),
+            *rows,
+            command[enforcement:],
+        ]
+    )
 
 
 _CONTAINER_EXECUTORS = {
@@ -288,6 +320,10 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
     assert worker["outputs"] == {
         "node_group_executed": ("${{ steps.setup-ci.outputs.node-group-executed == 'true' && 'true' || '' }}"),
         "commitlint_executed": ("${{ steps.commitlint-range.outcome == 'success' && 'true' || '' }}"),
+        # Warmth publishes two names for one fact because '' cannot distinguish "this leg restored"
+        # from "this leg never reported", and S-90 makes the second case cold.
+        "ready_cache_missed": ("${{ steps.setup-ci.outputs.ready-cache-hit != 'true' && 'true' || '' }}"),
+        "ready_cache_hit": ("${{ steps.setup-ci.outputs.ready-cache-hit == 'true' && 'true' || '' }}"),
     }
 
 
@@ -304,8 +340,11 @@ def test_execution_attestations_are_not_scoped_to_one_commit_class() -> None:
     fan_in = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Require every selected check")
     env = fan_in["env"]
 
+    assert {name for name in worker_outputs if name.endswith("_executed")} == {
+        "node_group_executed",
+        "commitlint_executed",
+    }
     for name, value in worker_outputs.items():
-        assert name.endswith("_executed"), name
         # A per-unit claim may read steps and matrix state; a commit class is not per-unit.
         assert "needs.changes.outputs.standard" not in value, name
         assert "needs.changes.outputs.broad" not in value, name
@@ -458,17 +497,22 @@ def test_skylos_cache_tests_run_only_where_the_private_analyzer_is_installed() -
     assert all(name.startswith(f"{_CI_TESTS}/") for name in marked), marked
 
 
-def test_worker_guards_are_two_minutes_above_the_owner_wall_target() -> None:
+def test_worker_guard_bounds_a_hang_against_the_cold_budget() -> None:
     changes = _jobs()["changes"]
     assert changes["outputs"]["worker_timeout_minutes"] == ("${{ steps.guards.outputs.worker_timeout_minutes }}")
     guards = next(step for step in _steps(changes) if step.get("name") == "Derive worker guard")
     command = str(guards["run"])
-    # One wall budget governs the whole file, so the guard derives one timeout for both classes.
-    assert "standard|broad) wall_budget_seconds=600 ;;" in command
-    assert re.findall(r"wall_budget_seconds=(\d+)", command) == ["600"]
+    budgets = _wall_budgets()
+    cold = budgets["cold"]
+    # The matrix is created before any leg knows whether its ready cache will hit, so the guard
+    # cannot read warmth. Deriving it from the warm budget would kill a cold worker the fan-in
+    # still allows to finish, so it must take the larger of the two budgets.
+    assert cold == max(budgets.values())
+    assert f"standard|broad) cold_wall_budget_seconds={cold} ;;" in command
+    assert re.findall(r"wall_budget_seconds=(\d+)", command) == [str(cold)]
     assert "hang_grace_minutes=2" in command
-    assert "wall_budget_seconds / 60 + hang_grace_minutes" in command
-    assert 600 // 60 + 2 == 12
+    assert "cold_wall_budget_seconds / 60 + hang_grace_minutes" in command
+    assert cold // 60 + 2 == 16
 
     assert _jobs()["worker"]["timeout-minutes"] == ("${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}")
 
@@ -633,7 +677,7 @@ def test_runtime_accounting_reads_run_level_metadata() -> None:
     assert 'gh api "repos/$REPO/actions/runs/$RUN_ID"' in command
 
 
-def test_runtime_accounting_enforces_only_the_owner_wall_target() -> None:
+def test_runtime_accounting_enforces_the_two_wall_targets_and_no_billable_ceiling() -> None:
     report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
     command = report["run"]
     env = report["env"]
@@ -641,10 +685,12 @@ def test_runtime_accounting_enforces_only_the_owner_wall_target() -> None:
     assert "if ((wall_seconds >= wall_budget_seconds)); then" in command
     assert "exit 1" in command
 
-    # The owner set one wall target, 10 minutes, and no billable-minute figure. Billable is
-    # reported and never enforced; the dollar ceiling binds at the account spending limit,
-    # because it is a monthly cumulative quantity no single run can measure.
-    assert re.findall(r"wall_budget_seconds=(\d+)", command) == ["600"]
+    # S-90: two wall targets, warm at the owner's 10 minutes and cold 244s above it, that being the
+    # widest wall penalty measured between a cold attempt and its warm re-run of the same tree
+    # (run 30415430344: 676s cold, 432s warm; run 30413265571: 681s cold, 455s warm). No
+    # billable-minute figure: billable is reported and never enforced, because the dollar ceiling
+    # binds at the account spending limit, a monthly cumulative quantity no single run can measure.
+    assert _wall_budgets() == {"warm": 600, "cold": 844}
     assert "billable_budget_minutes" not in command
     assert "| Reconstructed billable minutes | $billable_minutes |" in command
     assert "| Estimated cost USD | $estimated_cost_usd |" in command
@@ -661,6 +707,85 @@ def test_runtime_accounting_enforces_only_the_owner_wall_target() -> None:
     assert jobs["container-contracts"]["timeout-minutes"] == 13
     assert jobs["playwright-image"]["timeout-minutes"] == 9
     assert jobs["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+
+
+def test_fan_in_consumes_the_worker_ready_cache_signal() -> None:
+    report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
+    assert report["env"]["WORKER_READY_CACHE_MISSED"] == "${{ needs.worker.outputs.ready_cache_missed }}"
+    assert report["env"]["WORKER_READY_CACHE_HIT"] == "${{ needs.worker.outputs.ready_cache_hit }}"
+    assert "worker" in _jobs()["checks"]["needs"]
+
+    # The worker publishes what the composite action reports, so the output the legs read must exist.
+    action_outputs = cast(dict[str, object], load_mapping(_SETUP_CI)["outputs"])
+    assert "ready-cache-hit" in action_outputs
+    setup = next(step for step in _steps(_jobs()["worker"]) if step.get("uses") == "./.github/actions/setup-ci")
+    assert setup["id"] == "setup-ci"
+
+
+def _wall_verdict(wall_seconds: int, missed: str = "", hit: str = "") -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is not available")
+    return subprocess.run(
+        [bash, "-uo", "pipefail", "-c", _wall_verdict_script()],
+        env={
+            "COMMIT_CLASS": "broad",
+            "WORKER_READY_CACHE_MISSED": missed,
+            "WORKER_READY_CACHE_HIT": hit,
+            "wall_seconds": str(wall_seconds),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_a_cold_run_is_measured_against_the_cold_budget() -> None:
+    cold = _wall_budgets()["cold"]
+
+    inside = _wall_verdict(cold - 1, missed="true")
+    assert inside.returncode == 0, inside.stderr
+    assert "| Wall budget class | cold |" in inside.stdout
+    assert "| Wall budget basis | a worker leg missed the ready-cache primary key |" in inside.stdout
+
+    beyond = _wall_verdict(cold, missed="true")
+    assert beyond.returncode == 1
+    assert f"class=cold observed={cold}s budget<{cold}s" in beyond.stderr
+
+
+def test_a_warm_run_keeps_the_ten_minute_target() -> None:
+    warm = _wall_budgets()["warm"]
+
+    inside = _wall_verdict(warm - 1, hit="true")
+    assert inside.returncode == 0, inside.stderr
+    assert "| Wall budget class | warm |" in inside.stdout
+
+    # The cold budget is the wider one, so a warm run beyond 10 minutes must still fail: taking the
+    # cold allowance without having paid cold setup is exactly what the split must not permit.
+    beyond = _wall_verdict(warm, hit="true")
+    assert beyond.returncode == 1
+    assert f"class=warm observed={warm}s budget<{warm}s" in beyond.stderr
+
+
+def test_an_absent_or_mixed_warmth_signal_takes_the_cold_budget() -> None:
+    budgets = _wall_budgets()
+    cold, warm = budgets["cold"], budgets["warm"]
+
+    # A skipped worker, a protected-main smoke run and a leg that died before setup all publish
+    # nothing. Warm would then enforce a target the run never had a chance to meet.
+    absent = _wall_verdict(warm, missed="", hit="")
+    assert absent.returncode == 0, absent.stderr
+    assert "| Wall budget class | cold |" in absent.stdout
+    assert "| Wall budget basis | no worker leg reported ready-cache warmth |" in absent.stdout
+    assert _wall_verdict(cold, missed="", hit="").returncode == 1
+
+    # The wall is the span across every leg, so one missed leg means the run paid cold setup even
+    # where a sibling leg restored. Today both legs share one primary key and so always agree, but
+    # the rule must not depend on that: only the frontend leg writes the entry, and a second writer
+    # or a third leg would make the two predicates differ.
+    mixed = _wall_verdict(warm, missed="true", hit="true")
+    assert mixed.returncode == 0, mixed.stderr
+    assert "| Wall budget class | cold |" in mixed.stdout
 
 
 def test_runtime_accounting_jq_distinguishes_running_completed_and_both_skips() -> None:
