@@ -79,38 +79,36 @@ def test_lefthook_serializes_scalable_staged_python_mutator() -> None:
     assert run.index(check) < run.index(format_command)
 
 
-def _assert_empty_staged_files_guard(run: str, tool_fragments: tuple[str, ...]) -> None:
-    guard = re.search(
-        r"""if\s+\[\s*-n\s+["']?\{staged_files\}["']?\s*\];\s*then(?P<body>.*?)\bfi\b""",
-        run,
-        re.DOTALL,
-    )
-    assert guard, "staged-file mutator must guard an empty {staged_files} expansion"
-
-    body = guard["body"]
-    for fragment in tool_fragments:
-        assert run.count(fragment) == 1, fragment
-        assert fragment in body, f"{fragment!r} must execute inside the staged-file guard"
-
-
-def test_lefthook_non_python_staged_mutators_skip_empty_staged_files() -> None:
+def test_lefthook_non_python_staged_mutators_delegate_empty_sets_to_the_scheduler() -> None:
+    """Biome and markdownlint take the staged template bare; lefthook skips an empty set pre-spawn."""
     commands = _load_yaml(_LEFTHOOK)["pre-commit"]["commands"]
     expected = {
-        "*.{ts,tsx,js,jsx,css}": ("pnpm exec biome check --write --no-errors-on-unmatched {staged_files}",),
-        "*.md": ("pnpm exec markdownlint-cli2 --fix {staged_files}",),
+        "frontend-lint": (
+            [
+                "*.{ts,tsx,js,jsx,mjs,css}",
+                "typescript/apps/frontend/e2e/*.json",
+                "typescript/apps/frontend/e2e/**/*.json",
+            ],
+            "pnpm exec biome check --write --no-errors-on-unmatched {staged_files}",
+        ),
+        "markdown-lint": (
+            ["*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore", ".markdownlint.json"],
+            "pnpm exec markdownlint-cli2 --fix {staged_files}",
+        ),
     }
 
-    stage_fixed = [
-        command for command in commands.values() if isinstance(command, dict) and command.get("stage_fixed") is True
-    ]
-    assert len(stage_fixed) == len(expected) + 1
+    stage_fixed = sorted(
+        name for name, command in commands.items() if isinstance(command, dict) and command.get("stage_fixed") is True
+    )
+    assert stage_fixed == sorted([*expected, "python-check-format"])
 
-    for glob, tool_fragments in expected.items():
-        matches = [command for command in stage_fixed if command.get("glob") == glob]
-        assert len(matches) == 1, glob
-        run = matches[0].get("run")
+    for name, (globs, tool_fragment) in expected.items():
+        command = commands[name]
+        assert command["glob"] == globs, name
+        run = command["run"]
         assert isinstance(run, str)
-        _assert_empty_staged_files_guard(run, tool_fragments)
+        assert run.count(tool_fragment) == 1, name
+        assert "if [ -n" not in run, f"{name} must leave the empty-set skip to the scheduler"
 
 
 def _write_fake_uv(bin_dir: Path) -> None:
