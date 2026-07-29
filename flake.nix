@@ -17,6 +17,7 @@
         python = pkgs.python314;
         nodejs = pkgs.nodejs_26;
         corepackPackage = pkgs.corepack.override { nodejs-slim = nodejs; };
+        uvVersion = "0.11.28";
         uvRelease = {
           x86_64-linux = {
             target = "x86_64-unknown-linux-gnu";
@@ -37,9 +38,9 @@
         }.${system};
         uvPackage = pkgs.stdenvNoCC.mkDerivation {
           pname = "uv";
-          version = "0.11.28";
+          version = uvVersion;
           src = pkgs.fetchurl {
-            url = "https://github.com/astral-sh/uv/releases/download/0.11.28/uv-${uvRelease.target}.tar.gz";
+            url = "https://github.com/astral-sh/uv/releases/download/${uvVersion}/uv-${uvRelease.target}.tar.gz";
             inherit (uvRelease) sha256;
           };
           sourceRoot = "uv-${uvRelease.target}";
