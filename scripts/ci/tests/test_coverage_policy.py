@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import configparser
+import os
+import tomllib
 from pathlib import Path, PurePath
 
+import pytest
 from ci_checks.checks.tests import (
     CoverageResult,
     FileCoverage,
@@ -19,7 +22,7 @@ from ci_checks.checks.tests import (
 from ci_checks.checks.tests import (
     TestResult as RunnerTestResult,
 )
-from ci_checks.core.packages import Package, PackageType, Scope, load_packages
+from ci_checks.core.packages import REPO_ROOT, Package, PackageType, Scope, load_packages
 from coverage.files import GlobMatcher
 from rich.console import Console
 
@@ -43,6 +46,24 @@ def _package(tmp_path: Path, name: str, src_dir: str) -> Package:
     (path / src_dir).mkdir(parents=True)
     (path / "pyproject.toml").write_text(f'[tool.pytest.ini_options]\naddopts = "--cov={src_dir}"\n', encoding="utf-8")
     return Package(name=name, path=path, pkg_type=PackageType.LIB)
+
+
+def test_local_test_caches_resolve_outside_the_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct local pytest and coverage runs must not perturb Skylos's workspace fingerprint."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with (REPO_ROOT / "pyproject.toml").open("rb") as config_file:
+        config = tomllib.load(config_file)
+
+    pytest_cache = Path(os.path.expandvars(config["tool"]["pytest"]["ini_options"]["cache_dir"]))
+    coverage_data = Path(os.path.expandvars(config["tool"]["coverage"]["run"]["data_file"]))
+
+    assert pytest_cache.is_absolute()
+    assert coverage_data.is_absolute()
+    assert not pytest_cache.is_relative_to(REPO_ROOT)
+    assert not coverage_data.is_relative_to(REPO_ROOT)
 
 
 def test_omit_cancellation_fires_for_a_five_component_source_target() -> None:
