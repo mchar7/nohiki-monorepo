@@ -7,7 +7,7 @@ import os
 import shutil
 import socket
 import tempfile
-from collections.abc import Buffer, Callable
+from collections.abc import Buffer, Callable, Iterator
 from importlib import import_module
 from typing import Protocol, cast
 
@@ -41,6 +41,22 @@ _NETWORK_ALLOWED_MARKERS: frozenset[str] = frozenset(
         "integration",
         "requires_docker",
     }
+)
+
+# Git exports its repository-discovery variables to hooks, where they override cwd-based
+# discovery. A scratch-repo `git init` under a leaked worktree GIT_DIR therefore targets the
+# real repository: it re-initializes the shared repo as bare, and the `git add`/`git commit`
+# calls that follow rewrite and delete that repository's tracked files. The guard belongs to
+# this plugin rather than one package's conftest so every package shelling out to git
+# inherits it without declaring a conftest of its own.
+_GIT_DISCOVERY_ENV: tuple[str, ...] = (
+    "GIT_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_WORK_TREE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_PREFIX",
 )
 
 
@@ -117,6 +133,24 @@ def _is_numeric_host(host: str | bytes | None) -> bool:
     except UnicodeDecodeError, ValueError:
         return False
     return True
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _scrub_git_discovery_env() -> Iterator[None]:
+    """Detach the session from any inherited Git repository discovery.
+
+    SESSION scope is the load-bearing part: a function-scoped scrub would run after
+    module-scoped fixtures that shell out to git during setup, which is precisely when the
+    damage happens.
+
+    Yields:
+        Control for the session, with the discovery variables absent from the environment.
+    """
+    patch = pytest.MonkeyPatch()
+    for name in _GIT_DISCOVERY_ENV:
+        patch.delenv(name, raising=False)
+    yield
+    patch.undo()
 
 
 @pytest.fixture(autouse=True)

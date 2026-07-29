@@ -1560,12 +1560,14 @@ name = "gitops-contract-tests"
 version = "0.1.0"
 source = { virtual = "infra/k8s/gitops" }
 dependencies = [
+    { name = "nohiki-test-utils" },
     { name = "pytest" },
     { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "nohiki-test-utils", editable = "backend/libs/nohiki-test-utils" },
     { name = "pytest", specifier = ">=9.0.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]

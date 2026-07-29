@@ -4,9 +4,13 @@ version = "0.1.0"
 license = "AGPL-3.0-only"
 description = "Flux bootstrap, secret-topology, and rendered-stack contract tests"
 requires-python = ">=3.14"
+# nohiki-test-utils is a test dependency taken for its pytest11 plugin, not for imports:
+# these contract tests shell out to git and the plugin's session-scoped scrub is what keeps a
+# hook-leaked GIT_DIR from pointing those calls at the developer's own repository.
 dependencies = [
     "pytest>=9.0.1",
     "pyyaml>=6.0.3",
+    "nohiki-test-utils",
 ]
 
 # No [build-system]: this member carries contract tests only, no importable source, and is

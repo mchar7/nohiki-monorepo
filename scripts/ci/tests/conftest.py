@@ -16,39 +16,12 @@ def render_cache(tmp_path_factory: pytest.TempPathFactory) -> RenderCache:
     return RenderCache(session_directory / "nohiki-render-cache")
 
 
-# Git exports repository-discovery env vars (GIT_DIR, GIT_WORK_TREE, ...) to hooks;
-# under a pre-push hook these override cwd-based discovery, so a scratch-repo `git init`
-# would silently target the real repository and re-initialize it as bare. The scrub is
-# SESSION-scoped so it runs before every fixture -- including module-scoped ones (e.g. the
-# cluster-reset harness) that shell out to git during setup, which a function-scoped
-# fixture would run too late to protect.
-_GIT_DISCOVERY_ENV = (
-    "GIT_DIR",
-    "GIT_INDEX_FILE",
-    "GIT_WORK_TREE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-    "GIT_PREFIX",
-)
-
-
-def _scrub(names: tuple[str, ...]) -> Iterator[None]:
-    patch = pytest.MonkeyPatch()
-    for name in names:
-        patch.delenv(name, raising=False)
-    yield
-    patch.undo()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _scrub_git_discovery_env() -> Iterator[None]:
-    yield from _scrub(_GIT_DISCOVERY_ENV)
-
-
 # The hosted tests step exports these (checks.yml:528) and the gate CLI reads one as a
 # typer `envvar=`, so an unscrubbed suite silently exercises CI's configuration instead of
 # its own: the workspace sync is skipped and tests asserting sync behaviour never fire.
+# Git's repository-discovery variables are scrubbed session-wide by the shared
+# nohiki-test-utils plugin, which every package inherits; only this ci-checks-specific set
+# is local.
 _CI_RUNNER_ENV = (
     "CI_CHECKS_SKIP_WORKSPACE_SYNC",
     "CI_CHECKS_RUN_SUCCESS",
@@ -57,7 +30,11 @@ _CI_RUNNER_ENV = (
 
 @pytest.fixture(scope="session", autouse=True)
 def _scrub_ci_runner_env() -> Iterator[None]:
-    yield from _scrub(_CI_RUNNER_ENV)
+    patch = pytest.MonkeyPatch()
+    for name in _CI_RUNNER_ENV:
+        patch.delenv(name, raising=False)
+    yield
+    patch.undo()
 
 
 @pytest.fixture(scope="session", autouse=True)
