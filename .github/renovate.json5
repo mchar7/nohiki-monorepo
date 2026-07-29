@@ -91,6 +91,18 @@
       "groupName": "Kubernetes and Helm minor, patch, and digest"
     },
     {
+      "description": [
+        "Never inject a digest into a helm-values tag: several image blocks under infra/k8s compose the",
+        "digest in a sibling digest:/sha: key, whose chart renders repository:<tag>@sha256:<sibling>, so a",
+        "digest inside tag yields an unpullable double-digest reference. Entries whose tag already reads",
+        "<version>@sha256:<digest> keep receiving digest updates because they carry a currentDigest.",
+        "This must be a packageRule: manager-scoped config is merged before packageRules are applied, so it",
+        "cannot override docker:pinDigests from config:best-practices."
+      ],
+      "matchManagers": ["helm-values"],
+      "pinDigests": false
+    },
+    {
       "description": "Group Nix updates",
       "matchManagers": ["nix"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
