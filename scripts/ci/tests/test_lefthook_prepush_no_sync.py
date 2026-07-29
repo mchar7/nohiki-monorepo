@@ -103,10 +103,12 @@ def test_pre_push_folds_fixture_gate_into_the_single_python_test_job(
     assert semgrep_command.startswith("env -u LD_LIBRARY_PATH uvx ")
 
 
-def _glob_entries(node: object) -> set[str]:
-    """Return the glob patterns declared by a lefthook job."""
+def _glob_entries(node: object) -> set[str] | None:
+    """Return the glob patterns a lefthook job declares, or None when it is unconditional."""
     assert isinstance(node, Mapping)
     raw = node.get("glob")
+    if raw is None:
+        return None
     if isinstance(raw, str):
         return {raw}
     assert isinstance(raw, list)
@@ -160,13 +162,22 @@ def test_python_push_lanes_cover_every_workspace_package(
 
     Comparing the lanes against each other cannot see a package that is missing from
     all of them, so the workspace manifest is the reference: a new package directory
-    fails this test on the day it is added.
+    fails this test on the day it is added. The affected-test lane satisfies the same
+    guarantee by carrying no glob at all, which reaches every package by construction.
     """
     roots = _workspace_python_roots()
     assert roots, "workspace manifest declares no Python packages"
 
-    for lane in ("python-typecheck", "python-tests", "deadcode", "deptry"):
+    # `ci-checks tests affected --mode push` owns package selection, including the seeds
+    # no extension glob can express. Any glob here is a partial second copy of that
+    # policy, so the lane covers every package only while it stays unconditional.
+    assert _glob_entries(_sole_job(lefthook_config, "python-tests")) is None, (
+        "python-tests must stay unconditional; a glob narrows the affected-package closure"
+    )
+
+    for lane in ("python-typecheck", "deadcode", "deptry"):
         patterns = _glob_entries(_sole_job(lefthook_config, lane))
+        assert patterns is not None, f"{lane} is glob-gated and must declare its trigger surface"
         missing = sorted(str(root) for root in roots if not _globs_cover(root, patterns))
         assert not missing, f"{lane} globs skip workspace packages: {missing}"
 
