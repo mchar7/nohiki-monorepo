@@ -94,9 +94,7 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
         # the CI Python come from flake.nix ciPolicyTools. container-contracts
         # runs its two pytest assertions the same way and, unlike the worker
         # steps, carries no broad disjunct, so its flags are the only thing that
-        # can select it. The pnpm-driven frontend and edge lanes do not belong:
-        # broad routes them to the payload 'node' matrix unit, which sources
-        # Node from actions/setup-node, and playwright-image runs bare docker.
+        # can select it. playwright-image runs bare docker and remains excluded.
         flags=(
             "nix",
             *BROAD_PYTHON_FLAGS,

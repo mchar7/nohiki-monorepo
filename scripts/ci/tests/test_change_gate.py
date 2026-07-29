@@ -27,7 +27,7 @@ from ci_checks.core.change_gate import (
     selected_test_packages,
 )
 from ci_checks.core.change_rules import FLAG_NAMES, SURFACE_RULES
-from ci_checks.core.display import LANE_DISPLAY_NAMES
+from ci_checks.core.display import LANE_DISPLAY_NAMES, LANE_RUNNERS
 from ci_checks.core.packages import (
     REPO_ROOT,
     Package,
@@ -781,8 +781,8 @@ def test_selected_test_packages_full_and_scoped_exclude_packages_without_tests(
     assert selected_test_packages(GateDecision(affected={"untested-lib"}), packages) == ()
 
 
-def test_lane_display_names_cover_gate_flags_exactly() -> None:
-    assert set(LANE_DISPLAY_NAMES) == set(FLAG_NAMES)
+def test_lane_display_names_and_runners_cover_gate_flags_exactly() -> None:
+    assert set(LANE_DISPLAY_NAMES) == set(LANE_RUNNERS) == set(FLAG_NAMES)
 
 
 def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
@@ -798,6 +798,7 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
     assert scoped["protected_main_smoke"] == "false"
     assert scoped["lint_python"] == "true"
     assert scoped["nix"] == "false"
+    assert json.loads(scoped["worker_units"]) == ["python", "frontend"]
     assert (
         set(scoped.values())
         - {
@@ -806,6 +807,7 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
             "standard",
             "lib-a,svc-b",
             "lib-a",
+            '["python","frontend"]',
         }
         == set()
     )
@@ -813,12 +815,37 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
     assert scoped["test_packages"] == "lib-a"
     assert scoped["commitlint_expected"] == "false"
     assert render_outputs(GateDecision(), (), "pull_request")["commitlint_expected"] == "true"
+    assert json.loads(render_outputs(GateDecision(), (), "pull_request")["worker_units"]) == ["frontend"]
 
     broad = render_outputs(GateDecision(full=True), (), "push")
     assert broad["commit_class"] == "broad"
     assert broad["standard"] == "false"
     assert broad["broad"] == broad["full"] == "true"
     assert all(broad[name] == "false" for name in FLAG_NAMES)
+    assert json.loads(broad["worker_units"]) == ["python", "frontend"]
+
+
+def test_pnpm_manifest_breach_emits_both_payload_legs() -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate(
+        {
+            "package.json",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
+            "typescript/edge/auth-listings-worker/package.json",
+        },
+        packages,
+    )
+    outputs = render_outputs(decision, selected_test_packages(decision, packages), "pull_request")
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert json.loads(outputs["worker_units"]) == ["python", "frontend"]
+
+
+def test_protected_main_smoke_emits_only_the_python_payload_leg() -> None:
+    decision = GateDecision(protected_main_smoke=True)
+
+    assert json.loads(render_outputs(decision, (), "push")["worker_units"]) == ["python"]
 
 
 def _policy_reason(path: str) -> BroadReason:
@@ -838,7 +865,7 @@ def test_render_summary_uses_friendly_lanes_and_names_the_owning_bin() -> None:
     assert "`base123..head456`" in summary
     assert "| Commit class | **standard** |" in summary
     assert "| Markdown lint | ✓ | frontend |" in summary
-    assert "| Python lint | — | hygiene |" in summary
+    assert "| Python lint | — | frontend |" in summary
     assert all(f"| {name} |" in summary for name in LANE_DISPLAY_NAMES.values())
     assert "| lint_markdown |" not in summary
     assert "true" not in summary
@@ -1938,5 +1965,6 @@ def test_broad_unbounded_is_the_only_output_the_cause_can_move() -> None:
         "full",
         "affected_packages",
         "test_packages",
+        "worker_units",
         "commitlint_expected",
     }
