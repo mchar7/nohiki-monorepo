@@ -103,6 +103,20 @@
       "pinDigests": false
     },
     {
+      // cause: helm-values ignores sibling digest/sha keys, so updating these tags alone leaves stale image pins,
+      // exit: remove this after the CPR trigger gives sibling digests a native owner through Flux image-automation,
+      "description": "Keep separate-key Helm image pins under manual pair ownership",
+      "matchManagers": ["helm-values"],
+      "matchFileNames": ["infra/k8s/helm/values.yaml"],
+      "matchPackageNames": [
+        "prometheus/prometheus",
+        "prometheus/alertmanager",
+        "docker.io/grafana/alloy",
+        "quay.io/prometheus-operator/prometheus-config-reloader"
+      ],
+      "enabled": false
+    },
+    {
       "description": "Group Nix updates",
       "matchManagers": ["nix"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
