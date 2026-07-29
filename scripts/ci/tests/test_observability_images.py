@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,8 @@ from test_image_digest_gitops import _digest_values
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_VERSION_TAG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+_PINNED_TAG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}@sha256:[0-9a-f]{64}$")
 _FIRST_PARTY_IMAGE_NAMES = (
     "user-auth-service",
     "user-pref-service",
@@ -75,6 +78,18 @@ _FORBIDDEN_PREFIXES = (
     "ghcr.io/grafana/loki",
     "ghcr.io/grafana/alloy",
 )
+
+
+def _image_pin_is_unambiguous(image: object) -> bool:
+    if not isinstance(image, Mapping):
+        return False
+    tag = image.get("tag")
+    digest = image.get("digest")
+    if not isinstance(tag, str):
+        return False
+    if digest is None:
+        return _PINNED_TAG.fullmatch(tag) is not None
+    return isinstance(digest, str) and _VERSION_TAG.fullmatch(tag) is not None and _DIGEST.fullmatch(digest) is not None
 
 
 def _render(values_file: str, tmp_path: Path | None = None) -> list[Manifest]:
@@ -158,6 +173,42 @@ def test_observability_images_use_exact_refs_and_workload_counts(values_file: st
 
     assert set(by_repository) == _REPOSITORIES
     assert all(len(refs) == 1 for refs in by_repository.values())
+
+
+def test_observability_values_use_one_digest_mechanism_per_image() -> None:
+    values = load_mapping(_CHART / "values.yaml")
+    match values:
+        case {
+            "pyroscope": {
+                "alloy": {
+                    "image": dict() as alloy_image,
+                    "configReloader": {"image": dict() as config_reloader_image},
+                }
+            }
+        }:
+            pass
+        case _:
+            pytest.fail("observability values must contain the Alloy image settings")
+
+    assert _image_pin_is_unambiguous(alloy_image)
+    assert _image_pin_is_unambiguous(config_reloader_image)
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        {
+            "tag": "v1.12.2@sha256:f94b1c82957accb77cd11385fd5e3600758ef1b1ab79557c97319ad28590735a",
+            "digest": "sha256:f94b1c82957accb77cd11385fd5e3600758ef1b1ab79557c97319ad28590735a",
+        },
+        {
+            "tag": "v0.81.0@sha256:959d47672fbff2776a04ec62b8afcec89e8c036af84dc5fade50019dab212746",
+            "digest": "sha256:959d47672fbff2776a04ec62b8afcec89e8c036af84dc5fade50019dab212746",
+        },
+    ],
+)
+def test_observability_pin_guard_rejects_tag_and_digest_duplication(image: dict[str, str]) -> None:
+    assert not _image_pin_is_unambiguous(image)
 
 
 def test_loki_and_cache_images_are_aligned_without_config_changes() -> None:

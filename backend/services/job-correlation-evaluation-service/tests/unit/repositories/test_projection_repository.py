@@ -26,9 +26,25 @@ class TestGetActiveProfiles:
         return AsyncMock()
 
     @pytest.fixture
-    def repository(self, mock_session: AsyncMock) -> ProfileProjectionRepository:
-        """Create repository with mock session."""
-        return ProfileProjectionRepository(session=mock_session)
+    def mock_cache(self) -> AsyncMock:
+        """Create a cache miss without opening a Redis connection."""
+        cache = AsyncMock()
+        cache.get.return_value = None
+        return cache
+
+    @pytest.fixture
+    def mock_settings(self) -> MagicMock:
+        """Create cache settings."""
+        settings = MagicMock()
+        settings.caching.active_profiles_ttl = 300
+        return settings
+
+    @pytest.fixture
+    def repository(
+        self, mock_session: AsyncMock, mock_cache: AsyncMock, mock_settings: MagicMock
+    ) -> ProfileProjectionRepository:
+        """Create repository with database and cache dependencies isolated."""
+        return ProfileProjectionRepository(session=mock_session, cache=mock_cache, settings=mock_settings)
 
     @pytest.mark.asyncio
     async def test_get_active_profiles_returns_list(

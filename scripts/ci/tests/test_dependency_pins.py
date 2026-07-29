@@ -669,6 +669,7 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         r"/^infra\/k8s\/.+\/values\.ya?ml$/",
         r"/^infra\/k8s\/helm\/values\.local\.ya?ml$/",
     ]
+    assert "pinDigests" not in helm_values_manager
     assert "custom.regex" not in enabled_managers
     assert "customManagers" not in config
 
