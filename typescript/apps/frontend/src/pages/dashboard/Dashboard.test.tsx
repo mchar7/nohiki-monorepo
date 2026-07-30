@@ -84,11 +84,6 @@ vi.mock('./ui/index.ts', () => ({
   ReturningUserDashboard: () => <div data-testid="returning-user-dashboard">Returning User</div>,
 }));
 
-// DashboardActivityChart is lazy-imported in ReturningUserDashboard (mocked above)
-vi.mock('./ui/DashboardActivityChart.tsx', () => ({
-  DashboardActivityChart: () => <div data-testid="activity-chart">Activity Chart</div>,
-}));
-
 function createTestQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
