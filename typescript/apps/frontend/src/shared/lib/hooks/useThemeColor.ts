@@ -36,12 +36,6 @@ function themeReducer(state: ThemeState, action: ThemeAction): ThemeState {
   }
 }
 
-// Apply theme immediately on module load to prevent flash
-if (globalThis.window !== undefined) {
-  const initialState = getInitialState();
-  applyThemeColor(initialState.color, false);
-}
-
 export function useThemeColor(): {
   themeColor: ThemeColor;
   setThemeColor: (color: ThemeColor) => void;
