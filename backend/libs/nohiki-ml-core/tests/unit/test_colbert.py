@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from nohiki_ml_core._deps import LocalDependency, MissingLocalDependencyError
 from nohiki_ml_core.encoders.colbert import ColBERTEncoder
 from nohiki_ml_manifest import (
     InferenceBackend,
@@ -18,8 +19,8 @@ from nohiki_ml_manifest import (
 
 @pytest.fixture
 def mock_require_pylate() -> Generator[None]:
-    """Mock require_pylate to allow encoder construction without pylate installed."""
-    with patch("nohiki_ml_core.encoders.colbert.require_pylate"):
+    """Allow encoder construction through the owned availability seam."""
+    with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
         yield
 
 
@@ -183,10 +184,8 @@ def test_colbert_missing_pylate_raises_early(
     manifest: SemanticRepresentationManifest,
 ) -> None:
     """Test MissingLocalDependencyError is raised early when pylate not installed."""
-    from nohiki_ml_core._deps import MissingLocalDependencyError
-
     with (
-        patch("nohiki_ml_core._deps.check_pylate_available", return_value=False),
+        patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False),
         pytest.raises(MissingLocalDependencyError, match="ColBERT DIRECT backend"),
     ):
         ColBERTEncoder(manifest)
@@ -196,15 +195,15 @@ def test_colbert_missing_pylate_raises_early(
 def test_colbert_lazy_loading_import_error(
     manifest: SemanticRepresentationManifest,
 ) -> None:
-    """Test RuntimeError is raised when pylate import fails at model load time."""
+    """A missing PyLate backend raises the typed import error."""
     encoder = ColBERTEncoder(manifest)
 
     with (
         patch(
-            "nohiki_ml_core.encoders.colbert.importlib.import_module",
-            side_effect=ImportError("No module named 'pylate'"),
+            "nohiki_ml_core._deps.import_optional_module",
+            side_effect=MissingLocalDependencyError(LocalDependency.PYLATE, "ColBERT DIRECT backend"),
         ),
-        pytest.raises(ImportError),
+        pytest.raises(MissingLocalDependencyError, match="ColBERT DIRECT backend"),
     ):
         encoder._ensure_model()
 
