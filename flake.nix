@@ -17,7 +17,15 @@
         python = pkgs.python314;
         nodejs = pkgs.nodejs_26;
         corepackPackage = pkgs.corepack.override { nodejs-slim = nodejs; };
-        uvVersion = "0.11.28";
+        uvConfig = builtins.fromTOML (builtins.readFile ./toolchain/uv.toml);
+        uvVersion =
+          let
+            value = uvConfig.required-version;
+          in
+          if builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+" value != null then
+            value
+          else
+            throw "toolchain/uv.toml required-version must be an exact semantic version";
         uvRelease = {
           x86_64-linux = {
             target = "x86_64-unknown-linux-gnu";
