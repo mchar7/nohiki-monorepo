@@ -78,18 +78,6 @@ class MockPlatform:
         """Return mock port probe result."""
         return self._port_open
 
-    def check_oom_killed(self) -> list[str]:
-        """Return no OOM-killed workloads by default."""
-        return []
-
-    def check_pending_pods(self) -> list[tuple[str, str]]:
-        """Return no pending workloads by default."""
-        return []
-
-    def get_resource_usage(self) -> dict[str, dict[str, str]]:
-        """Return no resource usage by default."""
-        return {}
-
     def is_infra_managed(self) -> bool:
         """Return whether infrastructure is managed."""
         return self._is_infra_managed
