@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Sequence
 from threading import Lock
 from typing import Protocol, cast
@@ -11,10 +10,11 @@ import numpy as np
 from nohiki_ml_manifest import InferenceBackend, SemanticRepresentationManifest
 from nohiki_observability import get_logger
 
-from nohiki_ml_core._deps import require_pylate
+from nohiki_ml_core import _deps
 
 logger = get_logger(__name__)
 TOKEN_EMBEDDING_NDIM = 2
+_PYLATE_MODELS_MODULE = "pylate.models"
 
 
 class ColBERTModel(Protocol):
@@ -59,7 +59,7 @@ class ColBERTEncoder:
         if self._backend != InferenceBackend.DIRECT:
             msg = f"ColBERT supports only inference_backend='direct'; got {self._backend.value!r}"
             raise ValueError(msg)
-        require_pylate("ColBERT DIRECT backend")
+        _deps.require_pylate("ColBERT DIRECT backend", module_name=_PYLATE_MODELS_MODULE)
 
         logger.info(
             "ColBERT encoder initialized",
@@ -72,7 +72,11 @@ class ColBERTEncoder:
     def _ensure_model(self) -> ColBERTModel:
         """Lazy-load the PyLate model on first use."""
         if self._model is None:
-            models_module = importlib.import_module("pylate.models")
+            models_module = _deps.import_optional_module(
+                _PYLATE_MODELS_MODULE,
+                _deps.LocalDependency.PYLATE,
+                "ColBERT DIRECT backend",
+            )
             model_class = _load_colbert_model_class(models_module, "ColBERT")
             try:
                 self._model = model_class(model_name_or_path=self.model_id)

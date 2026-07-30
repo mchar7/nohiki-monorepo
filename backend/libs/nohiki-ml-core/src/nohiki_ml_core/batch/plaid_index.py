@@ -29,7 +29,6 @@ Usage:
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,13 +38,16 @@ from typing import Protocol, cast
 import numpy as np
 from nohiki_observability import get_logger
 
-from nohiki_ml_core._deps import get_minibatch_kmeans, require_pylate
+from nohiki_ml_core import _deps
 from nohiki_ml_core.batch.metrics import get_plaid_metrics
 
 logger = get_logger(__name__)
 
 _MIN_DOCS_FOR_CLUSTER_METRICS: int = 50
 """Minimum corpus size for statistically meaningful cluster threshold computation."""
+_PYLATE_INDEXES_MODULE = "pylate.indexes"
+_PYLATE_RETRIEVE_MODULE = "pylate.retrieve"
+
 
 _MIN_TOKENS_FOR_KMEANS: int = 2
 """Minimum tokens required for k-means clustering (need at least 2 points)."""
@@ -225,9 +227,13 @@ class PLAIDIndex:
 
         """
         if self._index is None:
-            require_pylate("PLAID index")
+            _deps.require_pylate("PLAID index", module_name=_PYLATE_INDEXES_MODULE)
 
-            indexes_module = importlib.import_module("pylate.indexes")
+            indexes_module = _deps.import_optional_module(
+                _PYLATE_INDEXES_MODULE,
+                _deps.LocalDependency.PYLATE,
+                "PLAID index",
+            )
             index_class = _load_plaid_index_class(indexes_module)
             self._index = index_class(
                 index_folder=self.config.index_folder,
@@ -410,7 +416,7 @@ class PLAIDIndex:
             MissingLocalDependencyError: If scikit-learn is not installed.
 
         """
-        minibatch_kmeans_cls = get_minibatch_kmeans("PLAID cluster threshold computation")
+        minibatch_kmeans_cls = _deps.get_minibatch_kmeans("PLAID cluster threshold computation")
 
         all_tokens: np.ndarray = np.vstack(token_arrays).astype(np.float32)
         total_tokens = len(all_tokens)
@@ -458,10 +464,14 @@ class PLAIDRetriever:
         if self._retriever is not None:
             return self._retriever
 
-        require_pylate("PLAID retriever")
+        _deps.require_pylate("PLAID retriever", module_name=_PYLATE_RETRIEVE_MODULE)
 
         plaid_index = self.index.ensure_index()
-        retrieve_module = importlib.import_module("pylate.retrieve")
+        retrieve_module = _deps.import_optional_module(
+            _PYLATE_RETRIEVE_MODULE,
+            _deps.LocalDependency.PYLATE,
+            "PLAID retriever",
+        )
         retriever_class = _load_colbert_retriever_class(retrieve_module)
         self._retriever = retriever_class(index=plaid_index)
 
