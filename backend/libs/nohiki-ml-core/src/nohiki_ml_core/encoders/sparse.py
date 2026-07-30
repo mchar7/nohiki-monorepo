@@ -1,6 +1,5 @@
 """Sparse vector encoder using sparse encoding via fastembed."""
 
-import importlib
 import math
 from dataclasses import dataclass
 from typing import Protocol, cast
@@ -8,7 +7,9 @@ from typing import Protocol, cast
 from nohiki_ml_manifest import SemanticRepresentationManifest
 from nohiki_observability import get_logger
 
-from nohiki_ml_core._deps import require_fastembed
+from nohiki_ml_core import _deps
+
+_FASTEMBED_MODULE = "fastembed"
 
 
 class _SupportsToList[T](Protocol):
@@ -118,7 +119,7 @@ class SparseEncoder:
 
         # Validate fastembed is available upfront if encoding is enabled
         if self.enabled:
-            require_fastembed("Sparse encoder")
+            _deps.require_fastembed("Sparse encoder", module_name=_FASTEMBED_MODULE)
 
         logger.info(
             "Sparse encoder initialized",
@@ -137,8 +138,12 @@ class SparseEncoder:
 
         """
         if self._model is None:
+            module = _deps.import_optional_module(
+                _FASTEMBED_MODULE,
+                _deps.LocalDependency.FASTEMBED,
+                "Sparse encoder",
+            )
             try:
-                module = importlib.import_module("fastembed")
                 model_class = _load_sparse_embedding_class(module, "SparseTextEmbedding")
                 self._model = model_class(model_name=self.model_id)
                 logger.info("Sparse model loaded", model_id=self.model_id)
