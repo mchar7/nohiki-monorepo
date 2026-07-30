@@ -6,14 +6,15 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from nohiki_ml_core._deps import LocalDependency, MissingLocalDependencyError
 from nohiki_ml_core.encoders.sparse import SparseEncoder, SparseVector
 from nohiki_ml_manifest import SemanticRepresentationManifest
 
 
 @pytest.fixture
 def mock_require_fastembed() -> Generator[None]:
-    """Mock require_fastembed to allow encoder construction without fastembed installed."""
-    with patch("nohiki_ml_core.encoders.sparse.require_fastembed"):
+    """Allow encoder construction through the owned availability seam."""
+    with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
         yield
 
 
@@ -218,10 +219,8 @@ def test_sparse_encode_batch_empty_list() -> None:
 
 def test_sparse_missing_fastembed_raises_early() -> None:
     """Test MissingLocalDependencyError is raised early when fastembed not installed."""
-    from nohiki_ml_core._deps import MissingLocalDependencyError
-
     with (
-        patch("nohiki_ml_core._deps.check_fastembed_available", return_value=False),
+        patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False),
         pytest.raises(MissingLocalDependencyError, match="Sparse encoder"),
     ):
         SparseEncoder()
@@ -229,19 +228,19 @@ def test_sparse_missing_fastembed_raises_early() -> None:
 
 @pytest.mark.usefixtures("mock_require_fastembed")
 def test_sparse_lazy_loading_import_error() -> None:
-    """Test RuntimeError is raised when fastembed import fails at model load time."""
+    """A missing fastembed backend raises the typed import error."""
     encoder = SparseEncoder()
 
     with (
         patch(
-            "nohiki_ml_core.encoders.sparse.importlib.import_module",
-            side_effect=ImportError("No module named 'fastembed'"),
+            "nohiki_ml_core._deps.import_optional_module",
+            side_effect=MissingLocalDependencyError(LocalDependency.FASTEMBED, "Sparse encoder"),
         ),
-        pytest.raises(RuntimeError, match="Failed to load sparse model") as error,
+        pytest.raises(MissingLocalDependencyError, match="Sparse encoder") as error,
     ):
         encoder._ensure_model()
 
-    assert isinstance(error.value.__cause__, ImportError)
+    assert error.value.dependency is LocalDependency.FASTEMBED
 
 
 @pytest.mark.usefixtures("mock_require_fastembed")
