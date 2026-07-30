@@ -120,6 +120,12 @@ def _load_skylos_json(raw: str) -> dict[str, object] | None:
         result = cast("dict[str, object]", value)
         if not _DEAD_CODE_KEYS.issubset(result) or any(not isinstance(result[key], list) for key in _DEAD_CODE_KEYS):
             return None
+        if any(
+            not isinstance(item, dict) or not isinstance(file_value := item.get("file"), str) or not file_value
+            for key in _DEAD_CODE_KEYS
+            for item in cast("list[object]", result[key])
+        ):
+            return None
         return result
 
     if not raw.strip():
@@ -475,15 +481,15 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
         _, stderr_bytes = await proc.communicate()
         duration_ms = int((asyncio.get_event_loop().time() - start) * 1000)
         message = f"Skylos timed out after {SKYLOS_TIMEOUT_SECONDS} seconds"
-        if stderr := stderr_bytes.decode().strip():
+        if stderr := stderr_bytes.decode(errors="replace").strip():
             message = f"{message}\n{stderr}"
         results = [DeadCodeResult(name="scanner", passed=False, duration_ms=duration_ms, error=message)]
         _write_markdown_summary(results, packages, options)
         return results
 
     duration_ms = int((asyncio.get_event_loop().time() - start) * 1000)
-    stderr = stderr_bytes.decode().strip()
-    data = _load_skylos_json(stdout_bytes.decode())
+    stderr = stderr_bytes.decode(errors="replace").strip()
+    data = _load_skylos_json(stdout_bytes.decode(errors="replace"))
     if data is None:
         message = f"Skylos returned invalid or incomplete JSON (exit code {proc.returncode})"
         if stderr:

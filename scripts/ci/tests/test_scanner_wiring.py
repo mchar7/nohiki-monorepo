@@ -127,7 +127,7 @@ async def test_deadcode_fails_closed_without_ripgrep(
     ]
 
 
-def _valid_skylos_result(*, findings: list[dict[str, object]] | None = None) -> bytes:
+def _valid_skylos_result(*, findings: list[object] | None = None) -> bytes:
     payload = {
         "unused_functions": findings or [],
         "unused_imports": [],
@@ -187,6 +187,72 @@ async def test_deadcode_fails_closed_on_invalid_or_non_finding_scanner_results(
     assert results[0].error.endswith("scanner diagnostic")
     assert not deadcode_check.render_results(results, fail_on_findings=False)
     assert not deadcode_check.static_result_published(results)
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        None,
+        "malformed",
+        {},
+        {"file": None},
+        {"file": ""},
+    ],
+)
+@pytest.mark.asyncio
+async def test_deadcode_fails_closed_on_malformed_finding_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    finding: object,
+) -> None:
+    """Malformed scanner findings must never be interpreted as a clean result."""
+    process = _SkylosProcess(0, _valid_skylos_result(findings=[finding]))
+
+    async def spawn(*_args: object, **_kwargs: object) -> _SkylosProcess:
+        return process
+
+    summary = tmp_path / "summary.md"
+    monkeypatch.setattr(deadcode_check.shutil, "which", lambda *_args, **_kwargs: "/bin/rg")
+    monkeypatch.setattr(deadcode_check.asyncio, "create_subprocess_exec", spawn)
+
+    results = await deadcode_check.scan_scope(
+        [Package(name="package", path=_ROOT, pkg_type=PackageType.OTHER)],
+        _options(summary=summary),
+    )
+
+    assert [(result.name, result.passed) for result in results] == [("scanner", False)]
+    assert "invalid or incomplete JSON" in results[0].error
+    assert not deadcode_check.render_results(results, fail_on_findings=False)
+    assert "- Verdict: **scanner failure**" in summary.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_deadcode_replaces_non_utf8_scanner_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Non-UTF-8 scanner bytes must reach the structured failure path."""
+    process = _SkylosProcess(2, b"\xff", b"scanner diagnostic \xff")
+
+    async def spawn(*_args: object, **_kwargs: object) -> _SkylosProcess:
+        return process
+
+    summary = tmp_path / "summary.md"
+    monkeypatch.setattr(deadcode_check.shutil, "which", lambda *_args, **_kwargs: "/bin/rg")
+    monkeypatch.setattr(deadcode_check.asyncio, "create_subprocess_exec", spawn)
+
+    results = await deadcode_check.scan_scope(
+        [Package(name="package", path=_ROOT, pkg_type=PackageType.OTHER)],
+        _options(summary=summary),
+    )
+
+    assert [(result.name, result.passed) for result in results] == [("scanner", False)]
+    assert "invalid or incomplete JSON" in results[0].error
+    assert "scanner diagnostic \ufffd" in results[0].error
+    assert not deadcode_check.render_results(results, fail_on_findings=False)
+    rendered = summary.read_text(encoding="utf-8")
+    assert "- Verdict: **scanner failure**" in rendered
+    assert "scanner diagnostic \ufffd" in rendered
 
 
 @pytest.mark.asyncio
@@ -491,7 +557,7 @@ async def test_deadcode_reports_only_selected_maintained_sources(
         path.write_text("pass\n", encoding="utf-8")
     _run_git(tmp_path, "add", ".")
 
-    findings = [
+    findings: list[object] = [
         {
             "name": "selected_dead",
             "file": "selected/src/definition.py",
