@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import patch
 
 import pytest
+from nohiki_ml_core import _deps
 from nohiki_ml_core._deps import (
     LocalDependency,
     MissingLocalDependencyError,
@@ -27,6 +29,9 @@ class TestLocalDependency:
         assert LocalDependency.FASTEMBED == "fastembed"
         assert LocalDependency.ONNXRUNTIME == "onnxruntime"
         assert LocalDependency.SKLEARN == "sklearn"
+        assert LocalDependency.SENTENCE_TRANSFORMERS == "sentence-transformers"
+        assert LocalDependency.TORCH == "torch"
+        assert LocalDependency.TRITON == "triton"
 
     def test_enum_is_str(self) -> None:
         """Test enum values are strings."""
@@ -64,9 +69,31 @@ class TestMissingLocalDependencyError:
         assert error.feature == "test"
 
     def test_is_import_error_subclass(self) -> None:
-        """Test error inherits from ImportError."""
+        """Missing dependencies retain Python import semantics."""
         error = MissingLocalDependencyError(LocalDependency.PYLATE, "test")
         assert isinstance(error, ImportError)
+
+
+class TestImportOptionalModule:
+    """Tests for the single lazy optional-import seam."""
+
+    def test_imports_an_available_module(self) -> None:
+        """Available modules are returned through the owned seam."""
+        module = _deps.import_optional_module("sys", LocalDependency.PYLATE, "test feature")
+        assert module is sys
+
+    def test_missing_module_raises_dependency_error(self) -> None:
+        """Missing modules do not leak raw import machinery to callers."""
+        with pytest.raises(MissingLocalDependencyError) as error:
+            _deps.import_optional_module(
+                "_nohiki_missing_optional_dependency",
+                LocalDependency.PYLATE,
+                "test feature",
+            )
+
+        assert error.value.dependency is LocalDependency.PYLATE
+        assert isinstance(error.value, ImportError)
+        assert isinstance(error.value.__cause__, ModuleNotFoundError)
 
 
 class TestCheckPylateAvailable:
@@ -74,12 +101,12 @@ class TestCheckPylateAvailable:
 
     def test_returns_true_when_installed(self) -> None:
         """Test returns True when pylate is installed."""
-        with patch("nohiki_ml_core._deps.importlib.util.find_spec", return_value=object()):
+        with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
             assert check_pylate_available() is True
 
     def test_returns_false_when_not_installed(self) -> None:
         """Test returns False when pylate import fails."""
-        with patch("nohiki_ml_core._deps.importlib.util.find_spec", return_value=None):
+        with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False):
             assert check_pylate_available() is False
 
 
@@ -88,12 +115,12 @@ class TestCheckFastembedAvailable:
 
     def test_returns_true_when_installed(self) -> None:
         """Test returns True when fastembed is installed."""
-        with patch("nohiki_ml_core._deps.importlib.util.find_spec", return_value=object()):
+        with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
             assert check_fastembed_available() is True
 
     def test_returns_false_when_not_installed(self) -> None:
         """Test returns False when fastembed import fails."""
-        with patch("nohiki_ml_core._deps.importlib.util.find_spec", return_value=None):
+        with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False):
             assert check_fastembed_available() is False
 
 
@@ -102,13 +129,13 @@ class TestRequirePylate:
 
     def test_does_not_raise_when_available(self) -> None:
         """Test no exception when pylate is available."""
-        with patch("nohiki_ml_core._deps.check_pylate_available", return_value=True):
+        with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
             require_pylate("test feature")
 
     def test_raises_when_not_available(self) -> None:
         """Test raises MissingLocalDependencyError when pylate not available."""
         with (
-            patch("nohiki_ml_core._deps.check_pylate_available", return_value=False),
+            patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False),
             pytest.raises(MissingLocalDependencyError) as exc_info,
         ):
             require_pylate("ColBERT DIRECT backend")
@@ -122,13 +149,13 @@ class TestRequireFastembed:
 
     def test_does_not_raise_when_available(self) -> None:
         """Test no exception when fastembed is available."""
-        with patch("nohiki_ml_core._deps.check_fastembed_available", return_value=True):
+        with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
             require_fastembed("test feature")
 
     def test_raises_when_not_available(self) -> None:
         """Test raises MissingLocalDependencyError when fastembed not available."""
         with (
-            patch("nohiki_ml_core._deps.check_fastembed_available", return_value=False),
+            patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False),
             pytest.raises(MissingLocalDependencyError) as exc_info,
         ):
             require_fastembed("sparse encoder")
@@ -142,12 +169,12 @@ class TestCheckSklearnAvailable:
 
     def test_returns_true_when_installed(self) -> None:
         """Test returns True when sklearn is installed."""
-        with patch("nohiki_ml_core._deps.importlib.util.find_spec", return_value=object()):
+        with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
             assert check_sklearn_available() is True
 
     def test_returns_false_when_not_installed(self) -> None:
         """Test returns False when sklearn import fails."""
-        with patch("nohiki_ml_core._deps.importlib.util.find_spec", return_value=None):
+        with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False):
             assert check_sklearn_available() is False
 
 
@@ -156,13 +183,13 @@ class TestRequireSklearn:
 
     def test_does_not_raise_when_available(self) -> None:
         """Test no exception when sklearn is available."""
-        with patch("nohiki_ml_core._deps.check_sklearn_available", return_value=True):
+        with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
             require_sklearn("cluster threshold computation")
 
     def test_raises_when_not_available(self) -> None:
         """Test raises MissingLocalDependencyError when sklearn not available."""
         with (
-            patch("nohiki_ml_core._deps.check_sklearn_available", return_value=False),
+            patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False),
             pytest.raises(MissingLocalDependencyError) as exc_info,
         ):
             require_sklearn("cluster threshold computation")
@@ -173,7 +200,7 @@ class TestRequireSklearn:
     def test_error_message_contains_sklearn(self) -> None:
         """Test error message includes sklearn dependency name."""
         with (
-            patch("nohiki_ml_core._deps.check_sklearn_available", return_value=False),
+            patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False),
             pytest.raises(MissingLocalDependencyError) as exc_info,
         ):
             require_sklearn("test feature")
@@ -188,16 +215,14 @@ class TestGetMinibatchKmeans:
 
     def test_returns_minibatch_kmeans_class_when_available(self) -> None:
         """Test returns MiniBatchKMeans class when sklearn is available."""
-        with patch("nohiki_ml_core._deps.check_sklearn_available", return_value=True):
-            result = get_minibatch_kmeans("cluster threshold")
-            from sklearn.cluster import MiniBatchKMeans
+        result = get_minibatch_kmeans("cluster threshold")
 
-            assert result is MiniBatchKMeans
+        assert result.__name__ == "MiniBatchKMeans"
 
     def test_raises_when_sklearn_not_available(self) -> None:
-        """Test raises MissingLocalDependencyError when sklearn not available."""
+        """Test raises MissingLocalDependencyError when sklearn is unavailable."""
         with (
-            patch("nohiki_ml_core._deps.check_sklearn_available", return_value=False),
+            patch.dict(sys.modules, {"sklearn": None, "sklearn.cluster": None}),
             pytest.raises(MissingLocalDependencyError) as exc_info,
         ):
             get_minibatch_kmeans("PLAID cluster threshold")
@@ -205,11 +230,12 @@ class TestGetMinibatchKmeans:
         assert exc_info.value.dependency == LocalDependency.SKLEARN
         assert exc_info.value.feature == "PLAID cluster threshold"
 
-    def test_calls_require_sklearn_with_feature(self) -> None:
-        """Test delegates to require_sklearn with correct feature string."""
+    def test_preserves_sklearn_import_error_as_cause(self) -> None:
+        """The typed dependency error keeps the underlying import failure."""
         with (
-            patch("nohiki_ml_core._deps.require_sklearn") as mock_require,
-            patch("nohiki_ml_core._deps.check_sklearn_available", return_value=True),
+            patch.dict(sys.modules, {"sklearn": None, "sklearn.cluster": None}),
+            pytest.raises(MissingLocalDependencyError) as exc_info,
         ):
             get_minibatch_kmeans("test feature")
-            mock_require.assert_called_once_with("test feature")
+
+        assert isinstance(exc_info.value.__cause__, ImportError)

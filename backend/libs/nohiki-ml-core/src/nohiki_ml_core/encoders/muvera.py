@@ -1,15 +1,15 @@
 """MUVERA Fixed-Dimensional Encoding."""
 
-import importlib
 from typing import Protocol, cast
 
 import numpy as np
 from nohiki_ml_manifest import SemanticRepresentationManifest
 from nohiki_observability import get_logger
 
-from nohiki_ml_core._deps import require_fastembed
+from nohiki_ml_core import _deps
 
 logger = get_logger(__name__)
+_FASTEMBED_MUVERA_MODULE = "fastembed.postprocess.muvera"
 
 
 class MuveraProtocol(Protocol):
@@ -58,7 +58,7 @@ class MUVERAEncoder:
         self._encoder: MuveraProtocol | None = None
 
         # Validate fastembed is available upfront
-        require_fastembed("MUVERA encoder")
+        _deps.require_fastembed("MUVERA encoder", module_name=_FASTEMBED_MUVERA_MODULE)
 
         # Compute expected output dimension from config
         self._expected_dim: int = int((2**self.config.k_sim) * self.config.dim_proj * self.config.r_reps)
@@ -82,8 +82,12 @@ class MUVERAEncoder:
 
         """
         if self._encoder is None:
+            module = _deps.import_optional_module(
+                _FASTEMBED_MUVERA_MODULE,
+                _deps.LocalDependency.FASTEMBED,
+                "MUVERA encoder",
+            )
             try:
-                module = importlib.import_module("fastembed.postprocess.muvera")
                 encoder_class = _load_muvera_class(module, "Muvera")
                 self._encoder = encoder_class(
                     dim=self.config.dim,

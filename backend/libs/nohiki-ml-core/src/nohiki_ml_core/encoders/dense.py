@@ -9,8 +9,11 @@ import numpy as np
 from nohiki_ml_manifest import InferenceBackend, SemanticRepresentationManifest
 from nohiki_observability import get_logger
 
+from nohiki_ml_core import _deps
+
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
+
 
 logger = get_logger(__name__)
 
@@ -27,8 +30,15 @@ def _create_sentence_transformer(
     model_kwargs: dict[str, str | bool | None] | None,
     device: str,
 ) -> SentenceTransformer:
-    from sentence_transformers import SentenceTransformer  # noqa: PLC0415 -- Keep inference off the import-only path.
-
+    try:
+        from sentence_transformers import (  # noqa: PLC0415 -- Keep inference off the import-only path.
+            SentenceTransformer,
+        )
+    except ImportError as exc:
+        raise _deps.MissingLocalDependencyError(
+            _deps.LocalDependency.SENTENCE_TRANSFORMERS,
+            "Dense encoder",
+        ) from exc
     return SentenceTransformer(
         model_id,
         backend=backend,
@@ -132,6 +142,8 @@ class DenseEncoder:
                     backend=backend,
                     device=self._config.device,
                 )
+            except _deps.MissingLocalDependencyError:
+                raise
             except Exception as e:
                 logger.exception("Failed to load dense model", model_id=self.model_id)
                 msg = f"Failed to load dense model '{self.model_id}': {e}"
