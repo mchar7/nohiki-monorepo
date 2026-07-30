@@ -153,9 +153,11 @@ def _scrub_git_discovery_env() -> Iterator[None]:
     patch.undo()
 
 
-@pytest.fixture(autouse=True)
-def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Prevent unmarked tests from resolving or contacting network peers."""
+def _install_outbound_network_guard(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prevent an unmarked test from resolving or contacting network peers."""
     if any(request.node.get_closest_marker(marker) is not None for marker in _NETWORK_ALLOWED_MARKERS):
         return
 
@@ -188,6 +190,12 @@ def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
     monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
     monkeypatch.setattr(socket.socket, "sendto", guarded_sendto)
     monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
+
+
+@pytest.fixture(autouse=True)
+def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Install the outbound network guard for an unmarked test."""
+    _install_outbound_network_guard(request, monkeypatch)
 
 
 @pytest.hookimpl(tryfirst=True)

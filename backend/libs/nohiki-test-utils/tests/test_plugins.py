@@ -137,7 +137,7 @@ class TestOutboundNetworkIsolation:
         request.node.get_closest_marker.side_effect = lambda candidate: object() if candidate == marker else None
         monkeypatch = MagicMock(spec=pytest.MonkeyPatch)
 
-        plugins._no_outbound_network.__wrapped__(request, monkeypatch)
+        plugins._install_outbound_network_guard(request, monkeypatch)
 
         monkeypatch.setattr.assert_not_called()
 
