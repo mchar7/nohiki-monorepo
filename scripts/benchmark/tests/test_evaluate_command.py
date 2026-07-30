@@ -290,9 +290,23 @@ class TestResumeChargedSeed:
 
         captured: dict[str, float] = {}
 
-        def _spy(**kwargs: float) -> _RealBudgetScheduler:
-            captured.update(kwargs)
-            return _RealBudgetScheduler(**kwargs)
+        def _spy(
+            *,
+            cap_usd: float,
+            max_concurrency: int,
+            initial_charged_usd: float = 0.0,
+            initial_actual_usd: float = 0.0,
+        ) -> _RealBudgetScheduler:
+            captured.update(
+                initial_charged_usd=initial_charged_usd,
+                initial_actual_usd=initial_actual_usd,
+            )
+            return _RealBudgetScheduler(
+                cap_usd=cap_usd,
+                max_concurrency=max_concurrency,
+                initial_charged_usd=initial_charged_usd,
+                initial_actual_usd=initial_actual_usd,
+            )
 
         with (
             patch("llm_benchmark.cli.commands.evaluate.BudgetScheduler", side_effect=_spy),
@@ -352,7 +366,9 @@ class TestCustomOpenAiEndpointKeyLoading:
         opt.assert_called_once()
         # Pre-fix behavior returned an empty registry here; the canonical key now flows through.
         assert api_keys is optional
-        assert api_keys.model_extra["openai"].get_secret_value() == "credential-value"
+        key = api_keys.get("openai")
+        assert key is not None
+        assert key.get_secret_value() == "credential-value"
         # The judge itself stays keyless-by-config: no explicit key, base_url override intact.
         assert judges[0].api_key is None
         assert judges[0].base_url == self._PROXY

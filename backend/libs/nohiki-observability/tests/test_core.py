@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import importlib
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from unittest.mock import MagicMock, patch
 
 import opentelemetry.sdk.trace.sampling as otel_sampling
@@ -31,7 +32,17 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 
-type _LoggerState = tuple[list[logging.Handler], list[logging.Filter], int, bool, bool]
+class _SupportsFilter(Protocol):
+    def filter(self, record: logging.LogRecord, /) -> bool | logging.LogRecord: ...
+
+
+@runtime_checkable
+class _ShutdownProvider(Protocol):
+    def shutdown(self) -> None: ...
+
+
+type _LoggerFilter = _SupportsFilter | Callable[[logging.LogRecord], bool | logging.LogRecord]
+type _LoggerState = tuple[list[logging.Handler], list[_LoggerFilter], int, bool, bool]
 
 _MUTATED_LOGGERS = (
     "",
@@ -90,7 +101,7 @@ def restore_process_observability_state(
         otel_metrics_internal._METER_PROVIDER,
         otel_logs_internal._LOGGER_PROVIDER,
     ):
-        if provider is not None:
+        if isinstance(provider, _ShutdownProvider):
             provider.shutdown()
 
     structlog.configure(**structlog_config)

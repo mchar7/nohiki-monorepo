@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
 
@@ -210,13 +211,16 @@ def test_loader_rejects_invalid_inventories(checkout: Path, overrides: dict[str,
         pytest.param(lambda data: data["images"][0].update(clazz="product"), "record keys", id="renamed-image-key"),
     ],
 )
-def test_loader_rejects_key_drift(checkout: Path, mutate: object, expected: str) -> None:
+def test_loader_rejects_key_drift(
+    checkout: Path,
+    mutate: Callable[[dict[str, object]], object],
+    expected: str,
+) -> None:
     payload: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "no_image_ownership": [],
         "images": [_record()],
     }
-    assert callable(mutate)
     mutate(payload)
     path = checkout / "scripts" / "ci" / "image_inventory.json"
     path.write_text(json.dumps(payload), encoding="utf-8")

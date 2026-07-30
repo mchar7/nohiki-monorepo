@@ -8,6 +8,88 @@ from dataclasses import dataclass
 from hashlib import sha256
 from math import isfinite, log2
 from pathlib import Path
+from typing import TypedDict
+
+from pydantic import TypeAdapter, ValidationError
+
+
+class _Judgment(TypedDict):
+    adjudication_status: str
+    grade: int
+    rationale: str
+    reviewer_a: int
+    reviewer_b: int
+
+
+class _Candidate(TypedDict):
+    compensation: dict[str, object] | None
+    description: str
+    fixture_id: str
+    judgment: _Judgment
+    legacy_document_mode_semantic_score: float
+    location: dict[str, object]
+    max_experience_years: int | None
+    min_experience_years: int | None
+    posted_at: str | None
+    required_skills: list[str]
+    semantic_score: float | None
+    seniority_level: str
+    title: str
+    work_arrangement: str
+
+
+class _Profile(TypedDict):
+    experience_years: int
+    feature_importance: object | None
+    open_to_relocation: bool
+    physical_locations: list[dict[str, object]]
+    remote_locations: list[dict[str, object]]
+    salary_preference: object | None
+    search_keywords: list[str]
+    seniority_levels: list[str]
+    target_role: str
+    user_skills_data: object | None
+    work_arrangements: list[str]
+
+
+class _Provenance(TypedDict):
+    adjudicator: str
+    capture_date: str
+    collection_version: str
+    quality_status: str
+    ranker_at_capture: str
+    ranking_inputs_sha256: str
+    reviewers: list[str]
+    semantic_collection: str
+    semantic_collection_version: str
+    semantic_document_encoding_mode: str
+    semantic_encoding_mode: str
+    semantic_inputs_status: str
+    semantic_model_cache: str
+    semantic_model_id: str
+    semantic_normalization: dict[str, float]
+    semantic_profile_query_text: str
+    semantic_query_content_hash: str
+    semantic_reproducibility_sha256: str
+    semantic_representation: str
+    semantic_runtime_image_id: str
+    semantic_score_formula: str
+    source: str
+    source_candidate_count: int
+    training_use_prohibited: bool
+
+
+class _QualityFixture(TypedDict):
+    candidates: list[_Candidate]
+    profile: _Profile
+    provenance: _Provenance
+    rubric: dict[str, str]
+    rubric_version: str
+    schema_version: int
+
+
+_FIXTURE_ADAPTER = TypeAdapter(_QualityFixture)
+
 
 EXPECTED_COUNT = 48
 MIN_RELEVANT = 5
@@ -27,27 +109,31 @@ class RankedItem:
     ranking_index: float
 
 
-def load_fixture(path: Path) -> dict[str, object]:
-    fixture = json.loads(path.read_text())
-    candidates = fixture.get("candidates")
+def load_fixture(path: Path) -> _QualityFixture:
+    try:
+        fixture = _FIXTURE_ADAPTER.validate_json(path.read_text())
+    except ValidationError as exc:
+        error_message = "fixture structure is invalid"
+        raise QualityFixtureError(error_message) from exc
+    candidates = fixture["candidates"]
     if not isinstance(candidates, list) or len(candidates) != EXPECTED_COUNT:
         error_message = f"fixture must contain exactly {EXPECTED_COUNT} candidates"
         raise QualityFixtureError(error_message)
-    ids = [candidate.get("fixture_id") for candidate in candidates]
+    ids = [candidate["fixture_id"] for candidate in candidates]
     if len(set(ids)) != EXPECTED_COUNT or any(not isinstance(value, str) for value in ids):
         error_message = "fixture candidate IDs must be unique strings"
         raise QualityFixtureError(error_message)
-    grades = [candidate.get("judgment", {}).get("grade") for candidate in candidates]
+    grades = [candidate["judgment"]["grade"] for candidate in candidates]
     if any(type(grade) is not int or not 0 <= grade <= 3 for grade in grades):
         error_message = "every candidate must have an integer grade in 0..3"
         raise QualityFixtureError(error_message)
     if sum(grade >= 2 for grade in grades) < MIN_RELEVANT or grades.count(0) < MIN_NEGATIVE:
         error_message = "fixture lacks required positive or negative grade support"
         raise QualityFixtureError(error_message)
-    semantic = [candidate.get("semantic_score") for candidate in candidates]
-    semantic_status = fixture.get("provenance", {}).get("semantic_inputs_status")
+    semantic = [candidate["semantic_score"] for candidate in candidates]
+    semantic_status = fixture["provenance"]["semantic_inputs_status"]
     if semantic_status == "ready":
-        if any(type(value) not in (int, float) or not isfinite(value) for value in semantic):
+        if any(value is None or not isfinite(value) for value in semantic):
             error_message = "ready semantic inputs must all be finite"
             raise QualityFixtureError(error_message)
     elif any(value is not None for value in semantic):
@@ -63,7 +149,7 @@ def load_fixture(path: Path) -> dict[str, object]:
     actual = sha256(
         json.dumps(ranking_inputs, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
-    expected = fixture.get("provenance", {}).get("ranking_inputs_sha256")
+    expected = fixture["provenance"]["ranking_inputs_sha256"]
     if actual != expected:
         error_message = f"ranking input checksum mismatch: expected {expected}, got {actual}"
         raise QualityFixtureError(error_message)

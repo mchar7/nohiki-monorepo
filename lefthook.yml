@@ -240,7 +240,7 @@ pre-push:
               - "pyproject.toml"
               - "uv.lock"
               - ".python-version"
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init infra/k8s/gitops scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init infra/k8s/gitops scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
 
           - name: frontend-typecheck
             glob:

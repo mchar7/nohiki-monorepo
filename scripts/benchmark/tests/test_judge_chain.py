@@ -22,6 +22,7 @@ real model calls are made.
 
 import json
 from pathlib import Path
+from typing import NotRequired, TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -56,6 +57,11 @@ _CHAIN = "benchmark_residual_judges"
 _REGISTRY = ApiKeyRegistry.model_validate({"openrouter": "synthetic-or-key", "openai": "synthetic-oa-key"})
 
 
+class _ProviderModelPayload(TypedDict):
+    model: str
+    base_url: NotRequired[str]
+
+
 class RunResult(_RunResult):
     """Run result with synthetic fingerprints so fixtures stay terse."""
 
@@ -73,7 +79,7 @@ def _write_settings(
     path: Path,
     chains: dict[str, object],
     *,
-    provider_models: list[dict[str, object]] | None = None,
+    provider_models: list[_ProviderModelPayload] | None = None,
 ) -> Path:
     """Write an LLMSettings JSON document with the given chains and return its path.
 
@@ -889,7 +895,7 @@ class TestChainOptionalRegistry:
     _PROXY = "https://provider.example.test/v1"
 
     def _proxy_settings(self, tmp_path: Path) -> Path:
-        model = {"model": "openai:custom-model", "base_url": self._PROXY}
+        model: _ProviderModelPayload = {"model": "openai:custom-model", "base_url": self._PROXY}
         return _write_settings(
             tmp_path / "s.json",
             {_CHAIN: {"models": [model]}},
@@ -912,7 +918,9 @@ class TestChainOptionalRegistry:
         opt.assert_called_once()
         # Pre-fix behavior left the registry empty here; the canonical key now flows through.
         assert api_keys is optional
-        assert api_keys.model_extra["openai"].get_secret_value() == "credential-value"
+        model_extra = api_keys.model_extra
+        assert model_extra is not None
+        assert model_extra["openai"].get_secret_value() == "credential-value"
         assert [j.model for j in judges] == ["openai:custom-model"]
         assert judges[0].base_url == self._PROXY
         assert judges[0].api_key is None

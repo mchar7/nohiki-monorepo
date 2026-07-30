@@ -237,8 +237,9 @@ class TestCachedSyncBypassCache:
         call_count = 0
 
         @cached_sync(key_prefix="test", cache_factory=lambda: mock_cache)
-        def test_func(x: int) -> int:
+        def test_func(x: int, *, bypass_cache: bool = False) -> int:
             nonlocal call_count
+            _ = bypass_cache
             call_count += 1
             return x * 2
 

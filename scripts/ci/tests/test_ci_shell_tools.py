@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from _documents import WorkflowJob, load_mapping, load_workflow
+from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, string_at
 from ci_checks.app import app
 from ci_checks.core.change_gate import GateDecision, render_outputs
 from ci_checks.core.packages import PackageType, Scope, _scope_filter
@@ -33,8 +33,8 @@ _CI_PACKAGE_TOKENS = (
 )
 
 
-def _steps(job: WorkflowJob) -> list[Mapping[str, object]]:
-    steps: list[Mapping[str, object]] = []
+def _steps(job: WorkflowJob) -> list[WorkflowStep]:
+    steps: list[WorkflowStep] = []
     for step in job.get("steps", []):
         steps.extend(step.get("parallel", [step]))
     return steps
@@ -153,7 +153,7 @@ def test_workflow_validators_are_pinned_in_hosted_and_local_paths() -> None:
     assert "--builtin-schema vendor.github-workflows .github/workflows/*.yml" in command
 
     lefthook = load_mapping(_LEFTHOOK)
-    local = str(lefthook["pre-commit"]["commands"]["actions-lint"]["run"])
+    local = string_at(lefthook, "pre-commit", "commands", "actions-lint", "run")
     assert "rhysd/actionlint#694 and #695" in local
     assert 'ignore=\'^step must run script with "run" section or run action with "uses" section$\'' in local
     assert "--builtin-schema vendor.github-workflows" in local

@@ -39,7 +39,8 @@ from llm_benchmark.cli import app
 from llm_benchmark.cli._helpers import find_latest_result
 from llm_benchmark.cli.commands.run import _save_incremental
 from llm_benchmark.config.constants import DEFAULT_OLLAMA_BASE_URL
-from llm_benchmark.engine.runner import experiment_fingerprint, treatment_ids
+from llm_benchmark.config.models import BenchmarkConfig
+from llm_benchmark.engine.runner import RunProgressCallback, experiment_fingerprint, treatment_ids
 from llm_benchmark.fixtures import compute_fixture_checksum
 from llm_benchmark.schemas.metrics import BenchmarkResult, ModelResult, RunResult
 
@@ -343,7 +344,7 @@ class TestOllamaBaseUrlResolution:
     even construct.
     """
 
-    def _capture_config(self, cli_runner: CliRunner, output: Path, ollama_url: str | None) -> object:
+    def _capture_config(self, cli_runner: CliRunner, output: Path, ollama_url: str | None) -> BenchmarkConfig:
         async_mock = AsyncMock(return_value=_session_stub())
         args = [
             "run",
@@ -364,7 +365,9 @@ class TestOllamaBaseUrlResolution:
             result = cli_runner.invoke(app, args)
         assert result.exit_code == 0, result.output
         async_mock.assert_called_once()
-        return async_mock.call_args.args[0]
+        config = async_mock.call_args.args[0]
+        assert isinstance(config, BenchmarkConfig)
+        return config
 
     def test_flag_reaches_treatment_and_config(self, cli_runner: CliRunner, tmp_path: Path) -> None:
         url = "https://model.example.test/v1"
@@ -413,7 +416,7 @@ class TestNamedChainSecretRequirements:
     def _write_settings(self, path: Path, payload: dict[str, object]) -> None:
         path.write_text(json.dumps(payload))
 
-    def _capture_config(self, cli_runner: CliRunner, settings: Path, chain: str, output: Path) -> object:
+    def _capture_config(self, cli_runner: CliRunner, settings: Path, chain: str, output: Path) -> BenchmarkConfig:
         async_mock = AsyncMock(return_value=_session_stub())
         with patch(_ASYNC, async_mock):
             result = cli_runner.invoke(
@@ -433,7 +436,9 @@ class TestNamedChainSecretRequirements:
             )
         assert result.exit_code == 0, result.output
         async_mock.assert_called_once()
-        return async_mock.call_args.args[0]
+        config = async_mock.call_args.args[0]
+        assert isinstance(config, BenchmarkConfig)
+        return config
 
     def test_local_default_cloud_chain_loads_canonical_registry(self, cli_runner: CliRunner, tmp_path: Path) -> None:
         """Guard: a cloud-model chain must load keys even when the default is local."""
@@ -521,17 +526,18 @@ class TestInterruptedStaleResumeDurability:
         )
         existing.save(output)
 
-        captured: dict[str, object] = {}
+        captured: dict[str, BenchmarkConfig] = {}
 
-        def make_runner(config: object) -> MagicMock:
+        def make_runner(config: BenchmarkConfig) -> MagicMock:
             captured["config"] = config
             runner = MagicMock()
 
             async def fake_run(
-                progress_callback: object = None,
+                progress_callback: RunProgressCallback | None = None,
                 *,
-                existing_result: object = None,  # noqa: ARG001 -- must match run()'s kwarg call
-            ) -> object:
+                existing_result: BenchmarkResult | None = None,
+            ) -> BenchmarkResult:
+                _ = existing_result
                 # Re-execute and persist exactly ONE stale cell, then interrupt.
                 key = treatment_ids(captured["config"])[0]
                 fresh = RunResult(
@@ -544,7 +550,8 @@ class TestInterruptedStaleResumeDurability:
                     output_json={"marker": "fresh"},
                     actual_cost_usd=0.01,
                 )
-                progress_callback(key, "senior_python_remote", 1, run_result=fresh)  # type: ignore[operator]
+                assert progress_callback is not None
+                progress_callback(key, "senior_python_remote", 1, run_result=fresh)
                 msg = "interrupted mid-run"
                 raise RuntimeError(msg)
 

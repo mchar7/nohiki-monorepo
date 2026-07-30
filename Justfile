@@ -107,9 +107,9 @@ lint-md:
     {{ env_lock }} shared node_modules -- {{ pnpm }} exec markdownlint-cli2 --fix "**/*.md"
 # Type checking
 
-# Run ty across every workspace package dir (same surface as the CI typecheck lane)
+# Run ty across every workspace package dir (same surface as the pre-push typecheck lane)
 typecheck-all:
-    {{ env_lock }} shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init scripts/ci scripts/util scripts/benchmark --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+    {{ env_lock }} shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init infra/k8s/gitops scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
 
 # Run ty on a specific backend service
 typecheck service:

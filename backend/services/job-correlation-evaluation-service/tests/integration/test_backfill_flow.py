@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from nohiki.common.v1 import CallbackHeader, EntityTimestamps
 from nohiki.job.listing.v1 import BackfillCallback, BackfillResult, ListingSnapshot
+from nohiki.ml.v1 import DenseData, EmbeddingType, EmbeddingVector
 from nohiki.user.pref.v1 import PrefCreated, SearchPrefSnapshot
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import MessageContext
@@ -297,6 +298,10 @@ class TestMatchListingsToProfileFlow:
                 title=f"Python Developer {i}",
                 company_name=f"Company {i}",
                 description="Python backend developer needed",
+                skills_embedding=EmbeddingVector(
+                    embedding_type=EmbeddingType.DENSE,
+                    dense=DenseData(values=[0.1, 0.2, 0.3]),
+                ),
                 posted_at=datetime.now(UTC),
             )
             for i in range(5)
@@ -313,14 +318,12 @@ class TestMatchListingsToProfileFlow:
         mock_ml_results = [
             MLScoringResult(
                 score=50,
-                confidence=0.8,
                 is_disqualified=False,
                 disqualification_reason=None,
-                feature_importances=None,
-                explanation=None,
                 feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
+                listing_id=str(listing.id),
             )
-            for _ in sample_listings
+            for listing in sample_listings
         ]
 
         mock_ml_service = MagicMock()
@@ -331,7 +334,8 @@ class TestMatchListingsToProfileFlow:
 
         mock_repo = MagicMock()
         mock_repo.get_existing_listing_ids = AsyncMock(return_value=set())
-        mock_repo.record_matches_batch_no_commit = AsyncMock(return_value=5)
+        mock_repo.record_matches_batch_no_commit = AsyncMock()
+        mock_repo.last_inserted_listing_ids = {str(listing.id) for listing in sample_listings}
 
         with (
             patch(

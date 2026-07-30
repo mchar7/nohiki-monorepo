@@ -27,13 +27,7 @@ from llm_benchmark.schemas.aggregation import (
 )
 from llm_benchmark.schemas.judge import Disqualification
 from llm_benchmark.schemas.metrics import BenchmarkResult as _BenchmarkResult
-from llm_benchmark.schemas.metrics import ModelResult
-from llm_benchmark.schemas.metrics import RunResult as _RunResult
-
-
-class RunResult(_RunResult):
-    treatment_fingerprint: str = "test-treatment"
-    cell_fingerprint: str = "test-cell"
+from llm_benchmark.schemas.metrics import ModelResult, RunResult
 
 
 class BenchmarkResult(_BenchmarkResult):
@@ -134,6 +128,8 @@ class TestDisplayBenchmarkResults:
                     runs=[
                         RunResult(
                             fixture_id="f1",
+                            treatment_fingerprint="test-treatment",
+                            cell_fingerprint="test-cell",
                             run_number=1,
                             success=True,
                             latency_ms=1000.0,
@@ -160,6 +156,8 @@ class TestDisplayBenchmarkResults:
                     runs=[
                         RunResult(
                             fixture_id="f1",
+                            treatment_fingerprint="test-treatment",
+                            cell_fingerprint="test-cell",
                             run_number=1,
                             success=False,
                             latency_ms=1000.0,
@@ -184,6 +182,8 @@ class TestDisplayBenchmarkResults:
                     runs=[
                         RunResult(
                             fixture_id="f1",
+                            treatment_fingerprint="test-treatment",
+                            cell_fingerprint="test-cell",
                             run_number=1,
                             success=True,
                             latency_ms=1000.0,
@@ -273,6 +273,8 @@ class TestDisplayBenchmarkResultsPassRates:
         runs = [
             RunResult(
                 fixture_id="f1",
+                treatment_fingerprint="test-treatment",
+                cell_fingerprint="test-cell",
                 run_number=i + 1,
                 success=(i < successes),
                 latency_ms=100.0,

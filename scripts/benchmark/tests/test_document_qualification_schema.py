@@ -181,7 +181,9 @@ def test_status_is_computed_and_cannot_be_forged() -> None:
 
 
 def test_only_complete_approved_three_route_corpus_is_qualified() -> None:
-    routes = {f"treatment-{alias}": _route(alias, cases=[_case(alias)]) for alias in ("sol", "opus", "kimi")}
+    routes: dict[str, RouteQualification] = {
+        f"treatment-{alias}": _route(alias, cases=[_case(alias)]) for alias in ("sol", "opus", "kimi")
+    }
     result = _result(expected_routes=("sol", "opus", "kimi"), routes=routes)
     assert result.status == "qualified"
 
@@ -193,7 +195,9 @@ def test_only_complete_approved_three_route_corpus_is_qualified() -> None:
 
 
 def test_mock_evidence_can_never_compute_a_qualified_status() -> None:
-    routes = {f"treatment-{alias}": _route(alias, cases=[_case(alias)]) for alias in ("sol", "opus", "kimi")}
+    routes: dict[str, RouteQualification] = {
+        f"treatment-{alias}": _route(alias, cases=[_case(alias)]) for alias in ("sol", "opus", "kimi")
+    }
     result = _result(
         expected_routes=("sol", "opus", "kimi"),
         routes=routes,

@@ -77,6 +77,7 @@ WorkflowStep = TypedDict(
         "env": NotRequired[ReadOnly[WorkflowEnvironment]],
         "if": NotRequired[ReadOnly[str]],
         "id": NotRequired[ReadOnly[str]],
+        "parallel": NotRequired[ReadOnly[list["WorkflowStep"]]],
     },
 )
 
@@ -85,6 +86,7 @@ class WorkflowMatrix(TypedDict):
     """The statically named portion of a GitHub Actions matrix."""
 
     include: NotRequired[ReadOnly[list[dict[str, WorkflowInputValue]]]]
+    unit: NotRequired[ReadOnly[str]]
     exclude: NotRequired[ReadOnly[list[dict[str, WorkflowInputValue]]]]
 
 

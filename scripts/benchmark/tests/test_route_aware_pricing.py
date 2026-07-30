@@ -19,6 +19,7 @@ and the LLM client are always mocked.
 """
 
 from io import StringIO
+from typing import TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -117,25 +118,44 @@ def _mock_client() -> MagicMock:
     return client
 
 
-def _config(*, models: tuple[LLMModelConfig, ...], **extra: object) -> BenchmarkConfig:
+def _config(
+    *,
+    models: tuple[LLMModelConfig, ...],
+    fixture_ids: list[str] | None = None,
+    runs_per_fixture: int = 1,
+    pricing_snapshots: tuple[PricingSnapshot, ...] = (),
+) -> BenchmarkConfig:
     """Benchmark config with a finite reservation bound and generous cap."""
-    values: dict[str, object] = {
-        "models": models,
-        "fixture_ids": ["senior_python_remote"],
-        "runs_per_fixture": 1,
-        "api_keys": ApiKeyRegistry.model_validate({"openrouter": "test-key"}),
-        "max_tokens": 256,
-        "cost_cap_usd": 1000.0,
-        "unknown_price_max_usd": 0.1,
-    }
-    values.update(extra)
-    return BenchmarkConfig(**values)
+    return BenchmarkConfig(
+        models=models,
+        fixture_ids=["senior_python_remote"] if fixture_ids is None else fixture_ids,
+        runs_per_fixture=runs_per_fixture,
+        api_keys=ApiKeyRegistry.model_validate({"openrouter": "test-key"}),
+        max_tokens=256,
+        cost_cap_usd=1000.0,
+        unknown_price_max_usd=0.1,
+        pricing_snapshots=pricing_snapshots,
+    )
+
+
+class _EndpointPricing(TypedDict):
+    """OpenRouter endpoint pricing payload used by response fixtures."""
+
+    prompt: str | None
+    completion: str | None
+
+
+class _EndpointPayload(TypedDict):
+    """OpenRouter endpoint payload used by response fixtures."""
+
+    provider_name: str
+    pricing: _EndpointPricing
 
 
 class TestFetchOpenrouterEndpoints:
     """The endpoint metadata fetch keeps the author/model slash and scales pricing."""
 
-    def _response(self, endpoints: list[dict[str, object]]) -> MagicMock:
+    def _response(self, endpoints: list[_EndpointPayload]) -> MagicMock:
         response = MagicMock()
         response.raise_for_status.return_value = None
         response.json.return_value = {"data": {"endpoints": endpoints}}
@@ -162,7 +182,7 @@ class TestFetchOpenrouterEndpoints:
         assert get_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer secret-token"}
 
     def test_endpoints_without_pricing_are_skipped(self) -> None:
-        endpoints = [
+        endpoints: list[_EndpointPayload] = [
             {"provider_name": "NoPrice", "pricing": {"prompt": None, "completion": "0.0000034"}},
             {"provider_name": "SiliconFlow", "pricing": {"prompt": "0.00000077", "completion": "0.0000034"}},
         ]
@@ -272,7 +292,13 @@ class TestSingleFetchPerRun:
             "mimo/mimo-7b": (EndpointRate("Xiaomi", 0.50, 1.00),),
         }
 
-        def _fetch(model_slug: str, **_kwargs: object) -> tuple[EndpointRate, ...]:
+        def _fetch(
+            model_slug: str,
+            *,
+            api_key: str | None = None,
+            base_url: str | None = None,
+        ) -> tuple[EndpointRate, ...]:
+            _ = api_key, base_url
             return endpoints_by_slug[model_slug]
 
         config = _config(
@@ -326,6 +352,7 @@ class TestKimiSiliconFlowParity:
         # whatever the client happened to report.
         act_in, act_out = 3_200, 480
         recorded = snap.recorded_cost(client_cost=999.0, input_tokens=act_in, output_tokens=act_out)
+        assert recorded is not None
         assert recorded == pytest.approx(expected(act_in, act_out))
         assert recorded != pytest.approx(999.0)
 
@@ -486,7 +513,7 @@ class TestEstimateDisplayRouteAware:
 
     def _render(
         self,
-        models: list[object],
+        models: list[str | LLMModelConfig],
         fixtures: int,
         runs: int,
         snapshots: list[PricingSnapshot] | None,

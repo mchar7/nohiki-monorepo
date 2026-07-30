@@ -22,8 +22,11 @@ def _load_authoritative_normalizer() -> Callable[[str], str] | None:
     if not _AUTHORITATIVE_PATH.exists():
         return None
     spec = importlib.util.spec_from_file_location("skill_graph_normalizer", _AUTHORITATIVE_PATH)
-    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    if spec is None or spec.loader is None:
+        message = f"Unable to load authoritative normalizer from {_AUTHORITATIVE_PATH}"
+        raise ImportError(message)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
     return mod.normalize_skill_text
 
 
@@ -85,5 +88,6 @@ class TestNormalizerParity:
     def test_parity(self, raw: str, expected: str) -> None:
         """Both normalizers must produce identical output for all test cases."""
         local = normalize_skill_text(raw)
+        assert authoritative_normalize is not None
         prod = authoritative_normalize(raw)
         assert local == prod == expected, f"Mismatch for {raw!r}: local={local!r}, prod={prod!r}"

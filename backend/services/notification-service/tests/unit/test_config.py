@@ -24,30 +24,18 @@ def test_redis_settings_defaults() -> None:
     assert settings.redis.max_connections == 10
 
 
-def test_redis_url_computed_with_password() -> None:
+def test_redis_url_computed_with_password(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test redis DSN with password and SSL."""
-    from nohiki_redis_utils import RedisSettings
-    from pydantic import RedisDsn
-
-    settings = Settings(
-        redis=RedisSettings(
-            dsn=RedisDsn("rediss://:secret@myredis.example.com:6380/5"),
-        ),
-    )
+    monkeypatch.setenv("NOTIFICATION_REDIS__DSN", "rediss://:secret@myredis.example.com:6380/5")
+    settings = Settings()
     assert "myredis.example.com" in str(settings.redis.dsn)
     assert "6380" in str(settings.redis.dsn)
 
 
-def test_redis_url_computed_no_password() -> None:
+def test_redis_url_computed_no_password(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test redis DSN without password."""
-    from nohiki_redis_utils import RedisSettings
-    from pydantic import RedisDsn
-
-    settings = Settings(
-        redis=RedisSettings(
-            dsn=RedisDsn("redis://localhost:6379/0"),
-        ),
-    )
+    monkeypatch.setenv("NOTIFICATION_REDIS__DSN", "redis://localhost:6379/0")
+    settings = Settings()
     assert "localhost" in str(settings.redis.dsn)
     assert "6379" in str(settings.redis.dsn)
 

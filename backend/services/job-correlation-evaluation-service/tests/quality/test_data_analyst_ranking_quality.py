@@ -84,6 +84,8 @@ def test_data_analyst_ranking_quality() -> None:
     judgments: dict[str, tuple[str, int]] = {}
     for data in fixture["candidates"]:
         fixture_id = data["fixture_id"]
+        semantic_score = data["semantic_score"]
+        assert semantic_score is not None
         listings[fixture_id] = ListingSnapshot(
             id=fixture_id,
             listing_url=f"https://quality.invalid/{fixture_id}",
@@ -103,7 +105,7 @@ def test_data_analyst_ranking_quality() -> None:
         candidates.append(
             RerankCandidate(
                 entity_id=fixture_id,
-                maxsim_score=data["semantic_score"],
+                maxsim_score=semantic_score,
                 rerank_score=0.0,
                 payload={},
             )
