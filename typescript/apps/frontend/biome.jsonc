@@ -9,6 +9,7 @@
       "!src/routeTree.gen.ts",
       "!src/shared/api/types.gen.ts",
       "scripts/**/*",
+      "public/theme-init.js",
       "e2e/**/*",
       "!e2e/.output",
       "!e2e/.auth"
