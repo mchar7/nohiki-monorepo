@@ -2,12 +2,49 @@
 
 import uuid
 from collections.abc import Iterator
+from typing import TypedDict
 
 import pytest
 import structlog
 from structlog.testing import LogCapture
 
 from tests._helpers import TEST_USER_ID
+
+
+class _ErrorScenario(TypedDict):
+    service: str
+    error_type: str
+    error_message: str
+    context: dict[str, str | int | list[str]]
+
+
+class _UserActivity(TypedDict):
+    service: str
+    activity: str
+    user_id: str
+    metadata: dict[str, str | list[str]]
+
+
+class _SecurityEvent(TypedDict):
+    service: str
+    event_type: str
+    severity: str
+    log_level: str
+    details: dict[str, str | int]
+
+
+class _BusinessMetric(TypedDict):
+    service: str
+    metric: str
+    value: int
+    dimensions: dict[str, str]
+
+
+class _AggregationScenario(TypedDict):
+    service: str
+    message: str
+    level: str
+    structured_data: dict[str, str | int | float]
 
 
 @pytest.fixture
@@ -100,7 +137,7 @@ class TestObservabilityContracts:
 
     def test_error_logging_and_tracking(self, log_output: LogCapture) -> None:
         """Test error event fields emitted by each service."""
-        error_scenarios = [
+        error_scenarios: list[_ErrorScenario] = [
             {
                 "service": "job-scraper-service",
                 "error_type": "ScrapingError",
@@ -175,7 +212,7 @@ class TestObservabilityContracts:
 
     def test_user_activity_tracking(self, log_output: LogCapture) -> None:
         """Test user activity event fields emitted by each service."""
-        user_activities = [
+        user_activities: list[_UserActivity] = [
             {
                 "service": "user-service",
                 "activity": "user_login",
@@ -219,7 +256,7 @@ class TestObservabilityContracts:
 
     def test_security_event_logging(self, log_output: LogCapture) -> None:
         """Test security event fields and severity-dependent log levels."""
-        security_events = [
+        security_events: list[_SecurityEvent] = [
             {
                 "service": "user-service",
                 "event_type": "authentication_failure",
@@ -275,7 +312,7 @@ class TestObservabilityContracts:
 
     def test_business_metrics_tracking(self, log_output: LogCapture) -> None:
         """Test business metric event fields emitted by each service."""
-        business_metrics = [
+        business_metrics: list[_BusinessMetric] = [
             {
                 "service": "job-scraper-service",
                 "metric": "jobs_scraped_daily",
@@ -354,7 +391,7 @@ class TestObservabilityContracts:
 
     def test_log_aggregation_compatibility(self, log_output: LogCapture) -> None:
         """Test aggregation events retain their event names, levels, and structured fields."""
-        scenarios = [
+        scenarios: list[_AggregationScenario] = [
             {
                 "service": "job-scraper-service",
                 "message": "Listing scraping completed successfully",

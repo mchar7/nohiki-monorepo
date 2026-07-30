@@ -411,6 +411,7 @@ convention = "google"
 python-version = "3.14"
 # Configure all source roots for workspace package discovery
 root = [
+    ".",
     # Shared libraries (src layout)
     "backend/libs/nohiki-common-exceptions/src",
     "backend/libs/nohiki-core-settings/src",
@@ -474,13 +475,18 @@ extra-paths = [
 ]
 
 [tool.ty.src]
-include = ["backend", "scripts", "infra/shared/qdrant-init"]
+include = [
+    "backend",
+    "scripts",
+    "infra/shared/qdrant-init",
+    "infra/k8s/gitops",
+    "tests",
+]
 exclude = [
-    ".venv/",
-    "__pycache__/",
-    "**/alembic/",
-    # Generated betterproto2 code - auto-generated, not user-maintained
-    "backend/libs/nohiki-domain-models/",
+    ".venv/**",
+    "**/__pycache__/**",
+    "**/alembic/**",
+    "**/nohiki-domain-models/**",
 ]
 
 [tool.ty.terminal]

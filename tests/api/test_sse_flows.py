@@ -122,7 +122,12 @@ def _owned_gateway_clients(
 
 
 def _resolved_addresses(host: str, port: int) -> set[str]:
-    return {item[4][0] for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+    addresses: set[str] = set()
+    for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        address = item[4][0]
+        assert isinstance(address, str)
+        addresses.add(address)
+    return addresses
 
 
 def _require_gateway_address(gateway: dict, gateway_url: str) -> None:
@@ -609,7 +614,9 @@ class TestSSEEndpointBasics:
                     assert response.status_code == 200
 
                 first_stream = streams[0]
-                assert "access_token=" in first_stream.request.headers.get("Cookie", "")
+                cookie = first_stream.request.headers.get("Cookie", "")
+                assert isinstance(cookie, str)
+                assert "access_token=" in cookie
                 assert first_stream.headers["Content-Type"].startswith("text/event-stream")
                 assert first_stream.headers["Cache-Control"] == "no-store"
                 assert first_stream.headers["X-Accel-Buffering"] == "no"
@@ -625,7 +632,7 @@ class TestSSEEndpointBasics:
                 heartbeat = next(
                     line
                     for line in first_stream.iter_lines(chunk_size=1, decode_unicode=True)
-                    if line is not None and line.startswith(":")
+                    if isinstance(line, str) and line.startswith(":")
                 )
                 assert heartbeat.strip() == ": ping"
                 assert time.monotonic() - started_at < 20, "Gateway buffered the first SSE heartbeat"

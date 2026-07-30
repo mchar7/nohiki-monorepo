@@ -84,7 +84,7 @@ check-all: lint fe-check lint-md
 
 # Run ruff check with auto-fix repo-wide (same surface as the CI lint lane)
 lint:
-    {{ env_lock }} shared venv -- uv run --no-sync ruff check --config pyproject.toml --fix --output-format=concise --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+    {{ env_lock }} shared venv -- uv run --no-sync ruff check --config pyproject.toml --fix --output-format=concise .
 
 # Run ruff check on a specific service
 lint-service service:
@@ -96,7 +96,7 @@ lint-libs:
 
 # Format all Python files (same surface as the CI lint lane)
 format:
-    {{ env_lock }} shared venv -- uv run --no-sync ruff format --config pyproject.toml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+    {{ env_lock }} shared venv -- uv run --no-sync ruff format --config pyproject.toml .
 
 # Format a specific service
 format-service service:
@@ -107,9 +107,9 @@ lint-md:
     {{ env_lock }} shared node_modules -- {{ pnpm }} exec markdownlint-cli2 --fix "**/*.md"
 # Type checking
 
-# Run ty across every workspace package dir (same surface as the pre-push typecheck lane)
+# Run ty across the canonical native source surface
 typecheck-all:
-    {{ env_lock }} shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init infra/k8s/gitops scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
+    {{ env_lock }} shared venv -- uv run --no-sync ty check
 
 # Run ty on a specific backend service
 typecheck service:

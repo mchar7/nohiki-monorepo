@@ -295,8 +295,11 @@ class TestSearchPrefSnapshotEmbeddings:
             user_skills_embedding=skills_ev,
         )
 
-        assert pref.user_skills_embedding.embedding_type == EmbeddingType.DENSE
-        assert len(pref.user_skills_embedding.dense.values) == 1024
+        skills_embedding = pref.user_skills_embedding
+        assert skills_embedding is not None
+        assert skills_embedding.embedding_type == EmbeddingType.DENSE
+        assert skills_embedding.dense is not None
+        assert len(skills_embedding.dense.values) == 1024
 
     def test_search_pref_with_retrieval_embeddings(self) -> None:
         """SearchPrefSnapshot carries query_retrieval_embeddings for multi-stage search."""

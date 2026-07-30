@@ -43,11 +43,8 @@ pre-commit:
     # pyprojects extend it, so a single `uv run ruff` from repo root works.
     python-check-format:
       glob: "*.py"
-      exclude:
-        - "**/alembic/**"
-        - "**/nohiki-domain-models/**"
       run: |
-        set -eu
+        set -euo pipefail
         paths=$(mktemp "${TMPDIR:-/tmp}/nohiki-python-staged.XXXXXX")
         cleanup() {
           rm -f -- "$paths"
@@ -58,11 +55,9 @@ pre-commit:
         trap 'exit 143' TERM
         git diff --cached --name-only --diff-filter=ACMR -z -- \
           ':(glob)*.py' \
-          ':(glob)**/*.py' \
-          ':(exclude,glob)**/alembic/**' \
-          ':(exclude,glob)**/nohiki-domain-models/**' > "$paths"
-        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff check --fix -- < "$paths"
-        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff format -- < "$paths"
+          ':(glob)**/*.py' > "$paths"
+        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff check --fix --force-exclude -- < "$paths"
+        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff format --force-exclude -- < "$paths"
       stage_fixed: true
 
     # Frontend: Biome lint/format with auto-fix
@@ -240,7 +235,7 @@ pre-push:
               - "pyproject.toml"
               - "uv.lock"
               - ".python-version"
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init infra/k8s/gitops scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check
 
           - name: frontend-typecheck
             glob:

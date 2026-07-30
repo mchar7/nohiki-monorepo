@@ -403,13 +403,11 @@ jobs:
         run: |
           export UV_PROJECT_ENVIRONMENT=.venv
           if [[ "$RUFF_SCOPE" == ALL ]]; then
-            nix develop .#ci --command uv run --no-sync ruff check --output-format=github \
-              --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+            nix develop .#ci --command uv run --no-sync ruff check --output-format=github .
           else
-            mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- \
-              '*.py' ':(exclude)**/alembic/**' ':(exclude)**/nohiki-domain-models/**')
+            mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.py')
             ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
-              ruff check --output-format=github "${files[@]}"
+              ruff check --output-format=github --force-exclude "${files[@]}"
           fi
 
       - name: Check Python formatting
@@ -422,13 +420,11 @@ jobs:
         run: |
           export UV_PROJECT_ENVIRONMENT=.venv
           if [[ "$RUFF_SCOPE" == ALL ]]; then
-            nix develop .#ci --command uv run --no-sync ruff format --check \
-              --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+            nix develop .#ci --command uv run --no-sync ruff format --check .
           else
-            mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- \
-              '*.py' ':(exclude)**/alembic/**' ':(exclude)**/nohiki-domain-models/**')
+            mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.py')
             ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
-              ruff format --check "${files[@]}"
+              ruff format --check --force-exclude "${files[@]}"
           fi
 
       - name: Lint Markdown
@@ -494,20 +490,7 @@ jobs:
 
       - name: Typecheck backend
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.typecheck_backend == 'true')
-        env:
-          PACKAGE_SCOPE: ${{ needs.changes.outputs.broad == 'true' && 'ALL' || needs.changes.outputs.affected_packages }}
-        run: |
-          mapfile -t paths < <(nix develop .#ci --command uv run --no-sync python -c '
-          import sys, tomllib
-          selection = sys.argv[1]
-          names = None if selection == "ALL" else set(selection.split(","))
-          lock = tomllib.load(open("uv.lock", "rb"))
-          print(*(p["source"]["editable"] for p in lock["package"]
-                  if "editable" in p.get("source", {}) and (names is None or p["name"] in names)), sep="\n")
-          ' "$PACKAGE_SCOPE")
-          test "${#paths[@]}" -gt 0
-          nix develop .#ci --command uv run --no-sync ty check "${paths[@]}" \
-            --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
+        run: nix develop .#ci --command uv run --no-sync ty check
 
       - name: Check selected dead code
         if: env.DEADCODE_SELECTED == 'true'

@@ -15,7 +15,7 @@ import subprocess
 import tomllib
 from collections.abc import Iterator, Mapping
 from functools import cache
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import yaml
 from ci_checks.core.change_rules import (
@@ -36,7 +36,8 @@ from ci_checks.core.packages import (
 _ROOT = Path(__file__).resolve().parents[3]
 _LEFTHOOK = _ROOT / "lefthook.yml"
 _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
-_UV_LOCK = _ROOT / "uv.lock"
+_JUSTFILE = _ROOT / "Justfile"
+_PYPROJECT = _ROOT / "pyproject.toml"
 
 # Every Python file, manifest and toolchain pin a workspace push lane must react to.
 # `.python-version`, `pyproject.toml` and `uv.lock` reach the hosted broad Python
@@ -679,26 +680,6 @@ def test_directory_globs_carry_a_shallow_sibling() -> None:
     assert not missing, "nested globs hide the files directly inside their root:\n" + "\n".join(sorted(missing))
 
 
-def _editable_package_dirs() -> tuple[PurePosixPath, ...]:
-    """Editable source directories uv.lock declares, as the hosted ALL scope derives them.
-
-    Mirrors the inline reader in the hosted Typecheck backend step, which selects
-    every package whose source table carries an `editable` path.
-    """
-    lock = tomllib.loads(_UV_LOCK.read_text(encoding="utf-8"))
-    packages = lock["package"]
-    assert isinstance(packages, list)
-    return tuple(
-        PurePosixPath(str(package["source"]["editable"]))
-        for package in packages
-        if isinstance(package, dict) and "editable" in package.get("source", {})
-    )
-
-
-def _ty_excludes(command: str) -> tuple[str, ...]:
-    return tuple(re.findall(r"--exclude\s+'([^']+)'", command))
-
-
 def _hosted_typecheck_step_run() -> str:
     steps = yaml.safe_load(_CHECKS.read_text(encoding="utf-8"))["jobs"]["worker"]["steps"]
     matches = [step["run"] for step in steps if step.get("name") == "Typecheck backend"]
@@ -706,22 +687,28 @@ def _hosted_typecheck_step_run() -> str:
     return str(matches[0])
 
 
-def test_local_ty_surface_matches_the_hosted_editable_package_closure() -> None:
-    """Local ty must scan every editable workspace package with the hosted exclude set."""
-    local_run = _run_command("python-typecheck")
-    tokens = local_run.split()
-    start = tokens.index("check", tokens.index("ty")) + 1
-    scanned = tuple(PurePosixPath(token) for token in tokens[start:] if not token.startswith("-"))
-    assert scanned, "python-typecheck must hand at least one path to ty check"
+def _just_typecheck_recipe_run() -> str:
+    match = re.search(r"(?m)^typecheck-all:\n(?P<body>(?:    .*\n)+)", _JUSTFILE.read_text(encoding="utf-8"))
+    assert match is not None, "Justfile must declare typecheck-all"
+    return " ".join(line.strip() for line in match["body"].splitlines())
 
-    editable = _editable_package_dirs()
-    assert editable, "uv.lock declares no editable workspace package"
-    unscanned = sorted(
-        str(directory) for directory in editable if not any(directory.is_relative_to(root) for root in scanned)
-    )
-    assert not unscanned, f"local ty check skips editable packages the hosted lane covers: {unscanned}"
 
-    assert _ty_excludes(local_run) == _ty_excludes(_hosted_typecheck_step_run())
+def test_typecheck_entry_points_use_the_native_surface() -> None:
+    """Every typecheck entry point must delegate its complete scope to ty."""
+    commands = {
+        "Justfile": _just_typecheck_recipe_run(),
+        "lefthook.yml": _run_command("python-typecheck"),
+        "checks.yml": _hosted_typecheck_step_run(),
+    }
+    for name, command in commands.items():
+        assert command.split()[-2:] == ["ty", "check"], (
+            f"{name} diverges from the native ty surface: expected a bare 'ty check', got {command!r}"
+        )
+
+    config = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    ty_src = config["tool"]["ty"]["src"]
+    assert {"infra/k8s/gitops", "tests"} <= set(ty_src["include"])
+    assert {"**/alembic/**", "**/nohiki-domain-models/**"} <= set(ty_src["exclude"])
 
 
 def test_api_schema_hook_glob_tracks_the_exporter_dependency_closure() -> None:
