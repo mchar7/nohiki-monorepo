@@ -23,11 +23,14 @@ def _make_settings(
     max_locations: PositiveInt | int | None = None,
 ) -> Settings:
     """Create Settings with test defaults for testing."""
-    return Settings(
-        database=database or DatabaseSettings(dsn=TEST_DSN, schema_name="test_schema"),
-        kafka=kafka or KafkaSettings(),
-        max_keywords=50 if max_keywords is None else max_keywords,
-        max_locations=20 if max_locations is None else max_locations,
+    return Settings.model_validate(
+        {
+            "database": database or DatabaseSettings(dsn=TEST_DSN, schema_name="test_schema"),
+            "kafka": kafka or KafkaSettings(),
+            "manifest_path": get_test_manifest_path(),
+            "max_keywords": 50 if max_keywords is None else max_keywords,
+            "max_locations": 20 if max_locations is None else max_locations,
+        }
     )
 
 

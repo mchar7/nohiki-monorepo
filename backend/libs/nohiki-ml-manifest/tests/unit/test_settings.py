@@ -24,14 +24,14 @@ class TestManifestMixin:
         manifest_file = tmp_path / "manifest.json"
         manifest_file.write_text(json.dumps(sample_manifest_data))
 
-        settings = ConcreteSettings(manifest_path=manifest_file)
+        settings = ConcreteSettings.model_validate({"manifest_path": manifest_file})
 
         assert settings.manifest_path == manifest_file
 
     def test_missing_manifest_path_raises(self, tmp_path: Path) -> None:
         """Test that a non-existent manifest path raises ValueError."""
         with pytest.raises(ValueError, match="Manifest file not found"):
-            ConcreteSettings(manifest_path=tmp_path / "nonexistent.json")
+            ConcreteSettings.model_validate({"manifest_path": tmp_path / "nonexistent.json"})
 
     def test_default_manifest_path_value(self) -> None:
         """Test that default manifest path is the expected constant."""

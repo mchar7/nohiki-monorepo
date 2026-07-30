@@ -101,8 +101,9 @@ async def test_cached_decorator_bypass() -> None:
     cache = SimpleMemoryCache()
 
     @cached(key_prefix=prefix, ttl=60, cache_factory=lambda: cache)
-    async def expensive_function(arg1: str) -> str:
+    async def expensive_function(arg1: str, *, bypass_cache: bool = False) -> str:
         nonlocal call_count
+        _ = bypass_cache
         call_count += 1
         return f"result-{arg1}"
 
