@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, mapping_sequence_at
+from ci_checks.checks.deadcode import STATIC_RESULT_OUTPUT
 from ci_checks.core.change_gate import (
     CommitClass,
     GateDecision,
@@ -1025,7 +1026,11 @@ def test_deadcode_runs_once_with_split_static_cache_save() -> None:
     assert names.index("Lint Python") < names.index("Check selected dead code")
 
     save = next(step for step in steps if step.get("name") == "Save Skylos static analysis cache")
-    assert str(save["if"]).startswith("always() &&")
+    assert save["if"] == (
+        "always() && (steps.deadcode.conclusion == 'success' || steps.deadcode.conclusion == 'failure') && "
+        f"steps.deadcode.outputs.{STATIC_RESULT_OUTPUT} == 'true' && "
+        "steps.setup-ci.outputs.skylos-cache-hit != 'true'"
+    )
     assert save["with"]["path"] == "${{ github.workspace }}/.skylos"
     assert save["with"]["key"] == ("${{ steps.setup-ci.outputs.skylos-cache-primary-key }}")
 
