@@ -552,6 +552,15 @@ include = ["backend/*/tests/", "backend/*/*/tests/"]
 unresolved-import = "ignore"
 unknown-argument = "ignore"
 
+# skylos is private and excluded from the shared closure; only the dead-code lane installs it.
+[[tool.ty.overrides]]
+include = [
+    "scripts/ci/src/ci_checks/checks/skylos_cache.py",
+    "scripts/ci/tests/test_skylos_cache.py",
+]
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 pythonpath = ["."]

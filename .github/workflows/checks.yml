@@ -507,7 +507,7 @@ jobs:
           ' "$PACKAGE_SCOPE")
           test "${#paths[@]}" -gt 0
           nix develop .#ci --command uv run --no-sync ty check "${paths[@]}" \
-            --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' --exclude '**/tests/**'
+            --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
 
       - name: Check selected dead code
         if: env.DEADCODE_SELECTED == 'true'
