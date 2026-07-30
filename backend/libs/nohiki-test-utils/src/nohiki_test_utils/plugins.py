@@ -195,6 +195,7 @@ def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
     """Apply the outbound-network boundary to each test."""
     _enforce_no_outbound_network(request, monkeypatch)
 
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Enforce and apply Docker test collection policy."""
