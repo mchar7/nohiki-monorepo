@@ -356,6 +356,14 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
         # from "this leg never reported", and S-90 makes the second case cold.
         "ready_cache_missed": ("${{ steps.setup-ci.outputs.ready-cache-hit != 'true' && 'true' || '' }}"),
         "ready_cache_hit": ("${{ steps.setup-ci.outputs.ready-cache-hit == 'true' && 'true' || '' }}"),
+        "deadcode_cache_missed": (
+            "${{ env.DEADCODE_SELECTED == 'true' && steps.setup-ci.outputs.skylos-cache-hit != 'true' "
+            "&& 'true' || '' }}"
+        ),
+        "deadcode_cache_hit": (
+            "${{ env.DEADCODE_SELECTED == 'true' && steps.setup-ci.outputs.skylos-cache-hit == 'true' "
+            "&& 'true' || '' }}"
+        ),
     }
 
 
@@ -795,31 +803,43 @@ def test_runtime_accounting_falls_back_to_run_start_for_an_unusable_first_job_st
     assert basis == "run_started_at fallback: first non-skipped job start unavailable or invalid"
 
 
-def test_fan_in_consumes_the_worker_ready_cache_signal() -> None:
+def test_fan_in_consumes_the_worker_cache_signals() -> None:
     report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
     assert report["env"]["WORKER_READY_CACHE_MISSED"] == "${{ needs.worker.outputs.ready_cache_missed }}"
     assert report["env"]["WORKER_READY_CACHE_HIT"] == "${{ needs.worker.outputs.ready_cache_hit }}"
+    assert report["env"]["WORKER_DEADCODE_CACHE_MISSED"] == "${{ needs.worker.outputs.deadcode_cache_missed }}"
+    assert report["env"]["WORKER_DEADCODE_CACHE_HIT"] == "${{ needs.worker.outputs.deadcode_cache_hit }}"
     assert "worker" in _jobs()["checks"]["needs"]
 
-    # The worker publishes what the composite action reports, so the output the legs read must exist.
     action_outputs = cast(dict[str, object], load_mapping(_SETUP_CI)["outputs"])
-    assert "ready-cache-hit" in action_outputs
+    assert {"ready-cache-hit", "skylos-cache-hit"} <= action_outputs.keys()
     setup = next(step for step in _steps(_jobs()["worker"]) if step.get("uses") == "./.github/actions/setup-ci")
     assert setup["id"] == "setup-ci"
 
 
-def _wall_verdict(controllable_wall_seconds: int, missed: str = "", hit: str = "") -> subprocess.CompletedProcess[str]:
+def _wall_verdict(
+    controllable_wall_seconds: int,
+    missed: str = "",
+    hit: str = "",
+    deadcode_missed: str | None = "",
+    deadcode_hit: str | None = "",
+) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("bash is not available")
+    environment = {
+        "COMMIT_CLASS": "broad",
+        "WORKER_READY_CACHE_MISSED": missed,
+        "WORKER_READY_CACHE_HIT": hit,
+        "controllable_wall_seconds": str(controllable_wall_seconds),
+    }
+    if deadcode_missed is not None:
+        environment["WORKER_DEADCODE_CACHE_MISSED"] = deadcode_missed
+    if deadcode_hit is not None:
+        environment["WORKER_DEADCODE_CACHE_HIT"] = deadcode_hit
     return subprocess.run(
         [bash, "-uo", "pipefail", "-c", _wall_verdict_script()],
-        env={
-            "COMMIT_CLASS": "broad",
-            "WORKER_READY_CACHE_MISSED": missed,
-            "WORKER_READY_CACHE_HIT": hit,
-            "controllable_wall_seconds": str(controllable_wall_seconds),
-        },
+        env=environment,
         capture_output=True,
         text=True,
         check=False,
@@ -829,12 +849,15 @@ def _wall_verdict(controllable_wall_seconds: int, missed: str = "", hit: str = "
 def test_a_cold_run_is_measured_against_the_cold_budget() -> None:
     cold = _wall_budgets()["cold"]
 
-    inside = _wall_verdict(cold - 1, missed="true")
+    inside = _wall_verdict(cold - 1, missed="true", deadcode_hit="true")
     assert inside.returncode == 0, inside.stderr
     assert "| Wall budget class | cold |" in inside.stdout
-    assert "| Wall budget basis | a worker leg missed the ready-cache primary key |" in inside.stdout
+    assert (
+        "| Wall budget basis | ready-cache primary key missed by at least one worker leg; "
+        "dead-code static cache primary key restored |"
+    ) in inside.stdout
 
-    beyond = _wall_verdict(cold, missed="true")
+    beyond = _wall_verdict(cold, missed="true", deadcode_hit="true")
     assert beyond.returncode == 1
     assert f"class=cold observed_controllable={cold}s budget<{cold}s" in beyond.stderr
 
@@ -842,15 +865,59 @@ def test_a_cold_run_is_measured_against_the_cold_budget() -> None:
 def test_a_warm_run_keeps_the_ten_minute_target() -> None:
     warm = _wall_budgets()["warm"]
 
-    inside = _wall_verdict(warm - 1, hit="true")
+    inside = _wall_verdict(warm - 1, hit="true", deadcode_hit="true")
     assert inside.returncode == 0, inside.stderr
     assert "| Wall budget class | warm |" in inside.stdout
+    assert (
+        "| Wall budget basis | ready-cache primary key restored by every reporting worker leg; "
+        "dead-code static cache primary key restored |"
+    ) in inside.stdout
 
     # The cold budget is the wider one, so a warm run beyond 10 minutes must still fail: taking the
     # cold allowance without having paid cold setup is exactly what the split must not permit.
-    beyond = _wall_verdict(warm, hit="true")
+    beyond = _wall_verdict(warm, hit="true", deadcode_hit="true")
     assert beyond.returncode == 1
     assert f"class=warm observed_controllable={warm}s budget<{warm}s" in beyond.stderr
+
+
+def test_a_warm_ready_cache_with_a_missed_deadcode_cache_takes_the_cold_budget() -> None:
+    budgets = _wall_budgets()
+    result = _wall_verdict(budgets["warm"], hit="true", deadcode_missed="true")
+
+    assert result.returncode == 0, result.stderr
+    assert "| Wall budget class | cold |" in result.stdout
+    assert (
+        "| Wall budget basis | ready-cache primary key restored by every reporting worker leg; "
+        "dead-code static cache primary key not restored |"
+    ) in result.stdout
+    assert _wall_verdict(budgets["cold"], hit="true", deadcode_missed="true").returncode == 1
+
+
+def test_a_missing_deadcode_cache_signal_takes_the_cold_budget() -> None:
+    budgets = _wall_budgets()
+    result = _wall_verdict(budgets["warm"], hit="true", deadcode_missed=None, deadcode_hit=None)
+
+    assert result.returncode == 0, result.stderr
+    assert "| Wall budget class | cold |" in result.stdout
+    assert "dead-code static cache hit unreported" in result.stdout
+
+
+def test_an_empty_deadcode_cache_signal_takes_the_cold_budget() -> None:
+    budgets = _wall_budgets()
+    result = _wall_verdict(budgets["warm"], hit="true", deadcode_missed="", deadcode_hit="")
+
+    assert result.returncode == 0, result.stderr
+    assert "| Wall budget class | cold |" in result.stdout
+    assert "dead-code static cache hit unreported" in result.stdout
+
+
+def test_an_unparseable_deadcode_cache_signal_takes_the_cold_budget() -> None:
+    budgets = _wall_budgets()
+    result = _wall_verdict(budgets["warm"], hit="true", deadcode_hit="not-a-cache-result")
+
+    assert result.returncode == 0, result.stderr
+    assert "| Wall budget class | cold |" in result.stdout
+    assert "dead-code static cache signal invalid" in result.stdout
 
 
 def test_an_absent_or_mixed_warmth_signal_takes_the_cold_budget() -> None:
@@ -859,17 +926,17 @@ def test_an_absent_or_mixed_warmth_signal_takes_the_cold_budget() -> None:
 
     # A skipped worker, a protected-main smoke run and a leg that died before setup all publish
     # nothing. Warm would then enforce a target the run never had a chance to meet.
-    absent = _wall_verdict(warm, missed="", hit="")
+    absent = _wall_verdict(warm, missed="", hit="", deadcode_hit="true")
     assert absent.returncode == 0, absent.stderr
     assert "| Wall budget class | cold |" in absent.stdout
-    assert "| Wall budget basis | no worker leg reported ready-cache warmth |" in absent.stdout
-    assert _wall_verdict(cold, missed="", hit="").returncode == 1
+    assert "ready-cache primary key hit unreported" in absent.stdout
+    assert _wall_verdict(cold, missed="", hit="", deadcode_hit="true").returncode == 1
 
     # The wall is the span across every leg, so one missed leg means the run paid cold setup even
     # where a sibling leg restored. Today both legs share one primary key and so always agree, but
     # the rule must not depend on that: only the frontend leg writes the entry, and a second writer
     # or a third leg would make the two predicates differ.
-    mixed = _wall_verdict(warm, missed="true", hit="true")
+    mixed = _wall_verdict(warm, missed="true", hit="true", deadcode_hit="true")
     assert mixed.returncode == 0, mixed.stderr
     assert "| Wall budget class | cold |" in mixed.stdout
 

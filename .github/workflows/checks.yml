@@ -306,6 +306,8 @@ jobs:
       # take the cold budget. A miss on any leg publishes the miss; a hit publishes only the hit.
       ready_cache_missed: ${{ steps.setup-ci.outputs.ready-cache-hit != 'true' && 'true' || '' }}
       ready_cache_hit: ${{ steps.setup-ci.outputs.ready-cache-hit == 'true' && 'true' || '' }}
+      deadcode_cache_missed: ${{ env.DEADCODE_SELECTED == 'true' && steps.setup-ci.outputs.skylos-cache-hit != 'true' && 'true' || '' }}
+      deadcode_cache_hit: ${{ env.DEADCODE_SELECTED == 'true' && steps.setup-ci.outputs.skylos-cache-hit == 'true' && 'true' || '' }}
     steps:
       - name: Start worker timing
         id: timing
@@ -1226,10 +1228,11 @@ jobs:
           CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
           PLAYWRIGHT_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true') }}
           TITLE_POLICY_EXPECTED: ${{ needs.changes.outputs.title_only == 'true' }}
-          # First consumer of the worker's ready-cache signal. Both legs share one outputs map, so
-          # each name is written by the single leg whose expression is non-empty.
+          # Single-writer cache signals preserve hits and misses across the worker matrix.
           WORKER_READY_CACHE_MISSED: ${{ needs.worker.outputs.ready_cache_missed }}
           WORKER_READY_CACHE_HIT: ${{ needs.worker.outputs.ready_cache_hit }}
+          WORKER_DEADCODE_CACHE_MISSED: ${{ needs.worker.outputs.deadcode_cache_missed }}
+          WORKER_DEADCODE_CACHE_HIT: ${{ needs.worker.outputs.deadcode_cache_hit }}
         run: |
           now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           run="$(gh api "repos/$REPO/actions/runs/$RUN_ID")"
@@ -1266,8 +1269,7 @@ jobs:
           ' <<< "$jobs")"
           case '${{ needs.changes.outputs.commit_class }}' in
             standard|broad)
-              # S-90 replaced one budget with two, selected by ready-cache warmth. Warm keeps the
-              # owner's under-10-minutes target; cold carries the measured cold-run surcharge.
+              # S-90's warm budget requires exact cache-hit evidence from every material cache.
               warm_wall_budget_seconds=600
               cold_wall_budget_seconds=844
               ;;
@@ -1276,22 +1278,54 @@ jobs:
               exit 1
               ;;
           esac
-          # One missed leg makes the whole run cold: the wall is the span across every leg, so the
-          # run paid cold setup even where a sibling leg restored. An absent or empty signal is cold
-          # too, because the warm budget would bind a run that never reported a chance of meeting it.
-          if [ "${WORKER_READY_CACHE_MISSED:-}" = true ]; then
-            wall_budget_seconds=$cold_wall_budget_seconds
-            wall_budget_class=cold
-            wall_budget_basis="a worker leg missed the ready-cache primary key"
-          elif [ "${WORKER_READY_CACHE_HIT:-}" = true ]; then
+          case "${WORKER_READY_CACHE_MISSED:-}:${WORKER_READY_CACHE_HIT:-}" in
+            true:)
+              ready_cache_state=missed
+              ready_cache_basis="ready-cache primary key missed by at least one worker leg"
+              ;;
+            :true)
+              ready_cache_state=restored
+              ready_cache_basis="ready-cache primary key restored by every reporting worker leg"
+              ;;
+            true:true)
+              ready_cache_state=mixed
+              ready_cache_basis="ready-cache primary key hit on one worker leg and missed on another"
+              ;;
+            :)
+              ready_cache_state=unreported
+              ready_cache_basis="ready-cache primary key hit unreported"
+              ;;
+            *)
+              ready_cache_state=invalid
+              ready_cache_basis="ready-cache signal invalid"
+              ;;
+          esac
+          case "${WORKER_DEADCODE_CACHE_MISSED:-}:${WORKER_DEADCODE_CACHE_HIT:-}" in
+            true:)
+              deadcode_cache_state=missed
+              deadcode_cache_basis="dead-code static cache primary key not restored"
+              ;;
+            :true)
+              deadcode_cache_state=restored
+              deadcode_cache_basis="dead-code static cache primary key restored"
+              ;;
+            :)
+              deadcode_cache_state=unreported
+              deadcode_cache_basis="dead-code static cache hit unreported"
+              ;;
+            *)
+              deadcode_cache_state=invalid
+              deadcode_cache_basis="dead-code static cache signal invalid"
+              ;;
+          esac
+          if [ "$ready_cache_state" = restored ] && [ "$deadcode_cache_state" = restored ]; then
             wall_budget_seconds=$warm_wall_budget_seconds
             wall_budget_class=warm
-            wall_budget_basis="every reporting worker leg restored the ready-cache primary key"
           else
             wall_budget_seconds=$cold_wall_budget_seconds
             wall_budget_class=cold
-            wall_budget_basis="no worker leg reported ready-cache warmth"
           fi
+          wall_budget_basis="$ready_cache_basis; $deadcode_cache_basis"
           # $0.006/min, Linux x64 2-vCPU, verified against this account's own July billing.
           estimated_cost_usd="$(printf '%d.%03d' \
             "$((billable_minutes * 6 / 1000))" "$((billable_minutes * 6 % 1000))")"
