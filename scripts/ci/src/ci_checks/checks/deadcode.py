@@ -194,67 +194,54 @@ def _relative_path(path: Path, *, repo_root: Path = REPO_ROOT) -> str:
     return str(path.relative_to(repo_root) if path.is_absolute() and path.is_relative_to(repo_root) else path)
 
 
-def _collect_scan_paths(
-    packages: list[Package],
-    *,
-    include_tests: bool,
-    repo_root: Path = REPO_ROOT,
-) -> list[str]:
-    """Collect tracked Python inputs for a deterministic Skylos scan.
+def _collect_scan_paths(*, repo_root: Path = REPO_ROOT) -> list[str]:
+    """Collect the tracked Python closure for a deterministic Skylos scan.
 
     The repository index is the source-of-truth input contract. This includes
     staged additions while excluding ignored caches, virtual environments, and
-    generated outputs regardless of what happens to exist in a worktree.
+    generated protobuf packages.
 
     Args:
-        packages: Packages selected by scope.
-        include_tests: Whether to include package tests directories.
         repo_root: Repository root whose index defines tracked inputs.
 
     Returns:
         Sorted unique repository-relative Python file paths.
     """
-    roots: set[str] = set()
-    domain_models_src = repo_root / "backend" / "libs" / "nohiki-domain-models" / "src"
-    domain_models_root = Path(_relative_path(domain_models_src, repo_root=repo_root))
-    for pkg in packages:
-        roots.add(_relative_path(pkg.src_dir, repo_root=repo_root))
-        if include_tests and pkg.has_tests:
-            roots.add(_relative_path(pkg.tests_dir, repo_root=repo_root))
-
-    if not roots:
-        return []
-
-    generated_roots: set[Path] = set()
-    if str(domain_models_root) in roots:
-        generated = subprocess.run(
-            [
-                "git",
-                "grep",
-                "--cached",
-                "-l",
-                "-z",
-                "-F",
-                "-e",
-                _GENERATED_PROTO_HEADER,
-                "--",
-                str(domain_models_root),
-            ],
-            cwd=repo_root,
-            check=False,
-            capture_output=True,
-            text=True,
+    domain_models_root = Path(
+        _relative_path(
+            repo_root / "backend" / "libs" / "nohiki-domain-models" / "src",
+            repo_root=repo_root,
         )
-        if generated.returncode not in (0, 1):
-            generated.check_returncode()
-        for generated_path in generated.stdout.split("\0"):
-            if not generated_path:
-                continue
-            relative = Path(generated_path).relative_to(domain_models_root)
-            generated_roots.add(domain_models_root / relative.parts[0])
+    )
+    generated_roots: set[Path] = set()
+    generated = subprocess.run(
+        [
+            "git",
+            "grep",
+            "--cached",
+            "-l",
+            "-z",
+            "-F",
+            "-e",
+            _GENERATED_PROTO_HEADER,
+            "--",
+            str(domain_models_root),
+        ],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if generated.returncode not in (0, 1):
+        generated.check_returncode()
+    for generated_path in generated.stdout.split("\0"):
+        if not generated_path:
+            continue
+        relative = Path(generated_path).relative_to(domain_models_root)
+        generated_roots.add(domain_models_root / relative.parts[0])
 
     completed = subprocess.run(
-        ["git", "ls-files", "--cached", "-z", "--", *sorted(roots)],
+        ["git", "ls-files", "--cached", "-z"],
         cwd=repo_root,
         check=True,
         capture_output=True,
@@ -468,7 +455,7 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
         _write_markdown_summary(results, packages, options)
         return results
 
-    scan_paths = _collect_scan_paths(packages, include_tests=options.include_tests)
+    scan_paths = _collect_scan_paths(repo_root=REPO_ROOT)
     cmd = _build_skylos_cmd(scan_paths, options)
     start = asyncio.get_event_loop().time()
     proc = await asyncio.create_subprocess_exec(
@@ -521,12 +508,16 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
         return results
 
     findings_by_package: dict[str, list[DeadCodeFinding]] = {pkg.name: [] for pkg in packages}
-    unmapped: list[DeadCodeFinding] = []
+    packages_by_name = {pkg.name: pkg for pkg in packages}
     for finding in findings:
-        if pkg_name := _package_for_file(finding.file, packages):
+        if (pkg_name := _package_for_file(finding.file, packages)) is None:
+            continue
+        finding_path = Path(finding.file)
+        if not finding_path.is_absolute():
+            finding_path = REPO_ROOT / finding_path
+        package = packages_by_name[pkg_name]
+        if options.include_tests or not finding_path.is_relative_to(package.tests_dir):
             findings_by_package[pkg_name].append(finding)
-        else:
-            unmapped.append(finding)
 
     results = [
         DeadCodeResult(
@@ -537,16 +528,6 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
         )
         for pkg in packages
     ]
-    if unmapped:
-        results.append(
-            DeadCodeResult(
-                name="unmapped-findings",
-                passed=False,
-                duration_ms=duration_ms,
-                findings=unmapped,
-            )
-        )
-
     _write_markdown_summary(results, packages, options)
     return results
 
