@@ -1,16 +1,11 @@
-import type { Control } from 'react-hook-form';
-import type { JSONSchemaProperty } from '@/shared/model/index.ts';
-import type { FormErrors, FormRegisterFunction } from '../../model/index.ts';
+import type { SensorDescriptor, SensorOptions } from '@dnd-kit/core';
+import type { ReactNode } from 'react';
 
 interface SortableDragListProps {
   readonly fields: { id: string }[];
-  readonly name: string;
-  readonly itemSchema: JSONSchemaProperty;
-  readonly register: FormRegisterFunction;
-  readonly control: Control<Record<string, unknown>>;
-  readonly errors: FormErrors;
+  readonly items: ReactNode[];
   readonly onRemove: (index: number) => void;
-  readonly sensors: ReturnType<typeof import('@dnd-kit/core').useSensors>;
+  readonly sensors: SensorDescriptor<SensorOptions>[];
   readonly onMove: (from: number, to: number) => void;
 }
 

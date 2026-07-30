@@ -2,32 +2,20 @@ import { Button } from '@shared/ui/button.tsx';
 import { Label } from '@shared/ui/label.tsx';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@shared/ui/tooltip.tsx';
 import { HelpCircle, Plus } from 'lucide-react';
-import type React from 'react';
-import type { JSX } from 'react';
-import { type Control, useFieldArray } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
-import type { JSONSchemaProperty } from '@/shared/model/index.ts';
-import { getPropertyDefault } from '../../lib/schema-defaults.ts';
-import { getUIHints, shouldRenderAsFields } from '../../lib/template.ts';
-import type { FormErrors, FormRegisterFunction } from '../../model/index.ts';
+import type { JSX, ReactNode } from 'react';
 import { useArrayFieldSensors } from './array-field-sensors.ts';
 import { SortableDragList } from './array-field-sortable.tsx';
-import { setArrayFieldComponent } from './ObjectFieldRenderer.tsx';
-import { renderTupleFields } from './TupleFieldRenderer.tsx';
 
 interface ArrayFieldProps {
-  name: string;
-  label: string;
-  description?: string | undefined;
-  schema: JSONSchemaProperty;
-  register: FormRegisterFunction;
-  control: Control<Record<string, unknown>>;
-  errors: FormErrors;
-}
-
-function resolveItemSchema(schema: JSONSchemaProperty): JSONSchemaProperty {
-  const raw = schema.items;
-  return Array.isArray(raw) ? (raw[0] ?? { type: 'string' }) : (raw ?? { type: 'string' });
+  readonly label: string;
+  readonly description: string | undefined;
+  readonly addLabel: string;
+  readonly emptyMessage: string;
+  readonly fields: { id: string }[];
+  readonly items: ReactNode[];
+  readonly onAdd: () => void;
+  readonly onRemove: (index: number) => void;
+  readonly onMove: (from: number, to: number) => void;
 }
 
 function ArrayFieldEmptyState({ message }: { readonly message: string }): JSX.Element {
@@ -75,64 +63,34 @@ function ArrayFieldHeader({
 }
 
 function ArrayField({
-  name,
   label,
   description,
-  schema,
-  register,
-  control,
-  errors,
-}: Readonly<ArrayFieldProps>): React.ReactElement {
-  const { t } = useTranslation('omakase.editor');
-  const { fields, append, remove, move } = useFieldArray({ control, name: name as never });
-  const itemSchema = resolveItemSchema(schema);
-  const defaultItem = getPropertyDefault(itemSchema as Record<string, unknown>);
-  const uiHints = getUIHints(schema);
+  addLabel,
+  emptyMessage,
+  fields,
+  items,
+  onAdd,
+  onRemove,
+  onMove,
+}: ArrayFieldProps): JSX.Element {
   const sensors = useArrayFieldSensors();
-
-  if (shouldRenderAsFields(schema)) {
-    return (
-      renderTupleFields({
-        name,
-        label,
-        description,
-        schema,
-        register,
-        errors,
-        uiHints,
-        defaultFieldLabel: (index: number): string => t('fields.defaultFieldLabel', { index }),
-      }) ?? <div />
-    );
-  }
 
   return (
     <div className="space-y-4">
-      <ArrayFieldHeader
-        label={label}
-        description={description}
-        addLabel={t('fields.addItem')}
-        onAdd={() => append(defaultItem)}
-      />
+      <ArrayFieldHeader label={label} description={description} addLabel={addLabel} onAdd={onAdd} />
       {fields.length === 0 ? (
-        <ArrayFieldEmptyState message={t('fields.noItemsYet')} />
+        <ArrayFieldEmptyState message={emptyMessage} />
       ) : (
         <SortableDragList
           fields={fields}
-          name={name}
-          itemSchema={itemSchema}
-          register={register}
-          control={control}
-          errors={errors}
-          onRemove={remove}
+          items={items}
+          onRemove={onRemove}
           sensors={sensors}
-          onMove={move}
+          onMove={onMove}
         />
       )}
     </div>
   );
 }
-
-// Register this component with ObjectFieldRenderer to break circular import
-setArrayFieldComponent(ArrayField);
 
 export { ArrayField };
