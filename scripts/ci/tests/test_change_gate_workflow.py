@@ -1136,7 +1136,7 @@ def test_cache_summaries_use_observed_action_outputs() -> None:
         # One table row per cache, not one machine-readable log line.
         assert "| Cache | Outcome | Key |" in str(report["run"])
         # Keys are truncated to a readable prefix; the full value stays in the job log.
-        assert "s/([0-9a-f]{8})[0-9a-f]{24,}/\\1.../g" in str(report["run"])
+        assert "s/([0-9a-f]{8})[0-9a-f]{24,}/\\1\u2026/g" in str(report["run"])
 
     router_steps = {step.get("name"): step for step in _steps(jobs["changes"])}
     router_setup = router_steps["Set up uv and Python"]

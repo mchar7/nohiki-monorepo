@@ -246,10 +246,10 @@ jobs:
               key="${value#*:}"
               state="${value%%:*}"
               if [ "$key" = none ]; then
-                key="-"
+                key="—"
               else
                 # A 64-character hash tells a human nothing; the full key is in the job log.
-                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1.../g')\`"
+                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1…/g')\`"
               fi
               printf '| %s | %s | %s |\n' "$name" "${state//-/ }" "$key"
             done
@@ -720,10 +720,10 @@ jobs:
               key="${value#*:}"
               state="${value%%:*}"
               if [ "$key" = none ]; then
-                key="-"
+                key="—"
               else
                 # A 64-character hash tells a human nothing; the full key is in the job log.
-                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1.../g')\`"
+                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1…/g')\`"
               fi
               printf '| %s | %s | %s |\n' "$name" "${state//-/ }" "$key"
             done
@@ -863,10 +863,10 @@ jobs:
               key="${value#*:}"
               state="${value%%:*}"
               if [ "$key" = none ]; then
-                key="-"
+                key="—"
               else
                 # A 64-character hash tells a human nothing; the full key is in the job log.
-                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1.../g')\`"
+                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1…/g')\`"
               fi
               printf '| %s | %s | %s |\n' "$name" "${state//-/ }" "$key"
             done
@@ -1067,10 +1067,10 @@ jobs:
               key="${value#*:}"
               state="${value%%:*}"
               if [ "$key" = none ]; then
-                key="-"
+                key="—"
               else
                 # A 64-character hash tells a human nothing; the full key is in the job log.
-                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1.../g')\`"
+                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1…/g')\`"
               fi
               printf '| %s | %s | %s |\n' "$name" "${state//-/ }" "$key"
             done
