@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -58,7 +59,7 @@ def _wall_verdict_script() -> str:
     command = _accounting_command()
     selection = command.index("case '${{ needs.changes.outputs.commit_class }}' in")
     cost = command.index("# $0.006/min", selection)
-    enforcement = command.index("if ((wall_seconds >= wall_budget_seconds)); then")
+    enforcement = command.index("if ((controllable_wall_seconds >= wall_budget_seconds)); then")
     rows = [line.strip() for line in command.splitlines() if line.strip().startswith('echo "| Wall budget')]
     return "\n".join(
         [
@@ -66,6 +67,36 @@ def _wall_verdict_script() -> str:
             *rows,
             command[enforcement:],
         ]
+    )
+
+
+def _accounting_span(
+    jobs: list[dict[str, object]],
+    *,
+    run_started: str = "2026-07-23T00:00:00Z",
+    now_iso: str = "2026-07-23T00:02:00Z",
+) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash")
+    jq = shutil.which("jq")
+    if bash is None or jq is None:
+        pytest.skip("bash and jq are required")
+    command = _accounting_command()
+    start = command.index('accounting_epoch="$(date')
+    end = command.index('jobs="$(jq -c', start)
+    program = command[start:end] + (
+        '\nprintf "%s\\n" "$run_wall_seconds|$controllable_wall_seconds|$dispatch_seconds|$accounting_start_basis"\n'
+    )
+    return subprocess.run(
+        [bash, "-euo", "pipefail", "-c", program],
+        env=os.environ
+        | {
+            "now_iso": now_iso,
+            "pages": json.dumps([{"jobs": jobs}]),
+            "run_started": run_started,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
@@ -325,6 +356,14 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
         # from "this leg never reported", and S-90 makes the second case cold.
         "ready_cache_missed": ("${{ steps.setup-ci.outputs.ready-cache-hit != 'true' && 'true' || '' }}"),
         "ready_cache_hit": ("${{ steps.setup-ci.outputs.ready-cache-hit == 'true' && 'true' || '' }}"),
+        "deadcode_cache_missed": (
+            "${{ env.DEADCODE_SELECTED == 'true' && steps.setup-ci.outputs.skylos-cache-hit != 'true' "
+            "&& 'true' || '' }}"
+        ),
+        "deadcode_cache_hit": (
+            "${{ env.DEADCODE_SELECTED == 'true' && steps.setup-ci.outputs.skylos-cache-hit == 'true' "
+            "&& 'true' || '' }}"
+        ),
     }
 
 
@@ -670,11 +709,12 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
     assert "checks-attestation/checks-attestation.json" in validate_command
 
 
-def test_runtime_accounting_reads_run_level_metadata() -> None:
+def test_runtime_accounting_reads_run_and_jobs_metadata() -> None:
     report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
     command = report["run"]
 
     assert 'gh api "repos/$REPO/actions/runs/$RUN_ID"' in command
+    assert 'gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100"' in command
 
 
 def test_runtime_accounting_enforces_the_two_wall_targets_and_no_billable_ceiling() -> None:
@@ -682,7 +722,7 @@ def test_runtime_accounting_enforces_the_two_wall_targets_and_no_billable_ceilin
     command = report["run"]
     env = report["env"]
 
-    assert "if ((wall_seconds >= wall_budget_seconds)); then" in command
+    assert "if ((controllable_wall_seconds >= wall_budget_seconds)); then" in command
     assert "exit 1" in command
 
     # S-90: two wall targets, warm at the owner's 10 minutes and cold 244s above it, that being the
@@ -694,6 +734,10 @@ def test_runtime_accounting_enforces_the_two_wall_targets_and_no_billable_ceilin
     assert "billable_budget_minutes" not in command
     assert "| Reconstructed billable minutes | $billable_minutes |" in command
     assert "| Estimated cost USD | $estimated_cost_usd |" in command
+    assert "| Run wall seconds (includes GitHub dispatch) | $run_wall_seconds |" in command
+    assert "| Controllable wall seconds (budgeted) | $controllable_wall_seconds |" in command
+    assert "| GitHub dispatch seconds (not budgeted) | $dispatch_seconds |" in command
+    assert "| Accounting start | $accounting_start_basis |" in command
     assert "budget_failure" not in command
     # R was retired: R <= 3 rearranges to W >= 20B, a lower bound on wall time, so it could only fire
     # on runs that already passed both real ceilings. It punished intra-job speedups.
@@ -709,31 +753,92 @@ def test_runtime_accounting_enforces_the_two_wall_targets_and_no_billable_ceilin
     assert jobs["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
 
 
-def test_fan_in_consumes_the_worker_ready_cache_signal() -> None:
+def test_runtime_accounting_starts_at_the_first_non_skipped_job() -> None:
+    result = _accounting_span(
+        [
+            {
+                "name": "Skipped before dispatch",
+                "started_at": "2026-07-23T00:00:05Z",
+                "conclusion": "skipped",
+            },
+            {
+                "name": "Router",
+                "started_at": "2026-07-23T00:00:30Z",
+                "conclusion": "success",
+            },
+            {
+                "name": "Checks",
+                "started_at": "2026-07-23T00:00:40Z",
+                "conclusion": None,
+            },
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().split("|", maxsplit=3) == [
+        "120",
+        "90",
+        "30",
+        "first non-skipped job start from the Actions jobs API",
+    ]
+
+
+@pytest.mark.parametrize("started_at", [None, "not-a-timestamp"])
+def test_runtime_accounting_falls_back_to_run_start_for_an_unusable_first_job_start(started_at: object) -> None:
+    result = _accounting_span(
+        [
+            {
+                "name": "Router",
+                "started_at": started_at,
+                "conclusion": "success",
+            }
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    run_wall, controllable_wall, dispatch, basis = result.stdout.strip().split("|", maxsplit=3)
+    assert controllable_wall == run_wall
+    assert dispatch == "0"
+    assert basis == "run_started_at fallback: first non-skipped job start unavailable or invalid"
+
+
+def test_fan_in_consumes_the_worker_cache_signals() -> None:
     report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
     assert report["env"]["WORKER_READY_CACHE_MISSED"] == "${{ needs.worker.outputs.ready_cache_missed }}"
     assert report["env"]["WORKER_READY_CACHE_HIT"] == "${{ needs.worker.outputs.ready_cache_hit }}"
+    assert report["env"]["WORKER_DEADCODE_CACHE_MISSED"] == "${{ needs.worker.outputs.deadcode_cache_missed }}"
+    assert report["env"]["WORKER_DEADCODE_CACHE_HIT"] == "${{ needs.worker.outputs.deadcode_cache_hit }}"
     assert "worker" in _jobs()["checks"]["needs"]
 
-    # The worker publishes what the composite action reports, so the output the legs read must exist.
     action_outputs = cast(dict[str, object], load_mapping(_SETUP_CI)["outputs"])
-    assert "ready-cache-hit" in action_outputs
+    assert {"ready-cache-hit", "skylos-cache-hit"} <= action_outputs.keys()
     setup = next(step for step in _steps(_jobs()["worker"]) if step.get("uses") == "./.github/actions/setup-ci")
     assert setup["id"] == "setup-ci"
 
 
-def _wall_verdict(wall_seconds: int, missed: str = "", hit: str = "") -> subprocess.CompletedProcess[str]:
+def _wall_verdict(
+    controllable_wall_seconds: int,
+    missed: str = "",
+    hit: str = "",
+    deadcode_missed: str | None = "",
+    deadcode_hit: str | None = "",
+) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("bash is not available")
+    environment = {
+        "COMMIT_CLASS": "broad",
+        "WORKER_READY_CACHE_MISSED": missed,
+        "WORKER_READY_CACHE_HIT": hit,
+        "controllable_wall_seconds": str(controllable_wall_seconds),
+    }
+    if deadcode_missed is not None:
+        environment["WORKER_DEADCODE_CACHE_MISSED"] = deadcode_missed
+    if deadcode_hit is not None:
+        environment["WORKER_DEADCODE_CACHE_HIT"] = deadcode_hit
     return subprocess.run(
         [bash, "-uo", "pipefail", "-c", _wall_verdict_script()],
-        env={
-            "COMMIT_CLASS": "broad",
-            "WORKER_READY_CACHE_MISSED": missed,
-            "WORKER_READY_CACHE_HIT": hit,
-            "wall_seconds": str(wall_seconds),
-        },
+        env=environment,
         capture_output=True,
         text=True,
         check=False,
@@ -743,28 +848,75 @@ def _wall_verdict(wall_seconds: int, missed: str = "", hit: str = "") -> subproc
 def test_a_cold_run_is_measured_against_the_cold_budget() -> None:
     cold = _wall_budgets()["cold"]
 
-    inside = _wall_verdict(cold - 1, missed="true")
+    inside = _wall_verdict(cold - 1, missed="true", deadcode_hit="true")
     assert inside.returncode == 0, inside.stderr
     assert "| Wall budget class | cold |" in inside.stdout
-    assert "| Wall budget basis | a worker leg missed the ready-cache primary key |" in inside.stdout
+    assert (
+        "| Wall budget basis | ready-cache primary key missed by at least one worker leg; "
+        "dead-code static cache primary key restored |"
+    ) in inside.stdout
 
-    beyond = _wall_verdict(cold, missed="true")
+    beyond = _wall_verdict(cold, missed="true", deadcode_hit="true")
     assert beyond.returncode == 1
-    assert f"class=cold observed={cold}s budget<{cold}s" in beyond.stderr
+    assert f"class=cold observed_controllable={cold}s budget<{cold}s" in beyond.stderr
 
 
 def test_a_warm_run_keeps_the_ten_minute_target() -> None:
     warm = _wall_budgets()["warm"]
 
-    inside = _wall_verdict(warm - 1, hit="true")
+    inside = _wall_verdict(warm - 1, hit="true", deadcode_hit="true")
     assert inside.returncode == 0, inside.stderr
     assert "| Wall budget class | warm |" in inside.stdout
+    assert (
+        "| Wall budget basis | ready-cache primary key restored by every reporting worker leg; "
+        "dead-code static cache primary key restored |"
+    ) in inside.stdout
 
     # The cold budget is the wider one, so a warm run beyond 10 minutes must still fail: taking the
     # cold allowance without having paid cold setup is exactly what the split must not permit.
-    beyond = _wall_verdict(warm, hit="true")
+    beyond = _wall_verdict(warm, hit="true", deadcode_hit="true")
     assert beyond.returncode == 1
-    assert f"class=warm observed={warm}s budget<{warm}s" in beyond.stderr
+    assert f"class=warm observed_controllable={warm}s budget<{warm}s" in beyond.stderr
+
+
+def test_a_warm_ready_cache_with_a_missed_deadcode_cache_takes_the_cold_budget() -> None:
+    budgets = _wall_budgets()
+    result = _wall_verdict(budgets["warm"], hit="true", deadcode_missed="true")
+
+    assert result.returncode == 0, result.stderr
+    assert "| Wall budget class | cold |" in result.stdout
+    assert (
+        "| Wall budget basis | ready-cache primary key restored by every reporting worker leg; "
+        "dead-code static cache primary key not restored |"
+    ) in result.stdout
+    assert _wall_verdict(budgets["cold"], hit="true", deadcode_missed="true").returncode == 1
+
+
+def test_a_missing_deadcode_cache_signal_takes_the_cold_budget() -> None:
+    budgets = _wall_budgets()
+    result = _wall_verdict(budgets["warm"], hit="true", deadcode_missed=None, deadcode_hit=None)
+
+    assert result.returncode == 0, result.stderr
+    assert "| Wall budget class | cold |" in result.stdout
+    assert "dead-code static cache hit unreported" in result.stdout
+
+
+def test_an_empty_deadcode_cache_signal_takes_the_cold_budget() -> None:
+    budgets = _wall_budgets()
+    result = _wall_verdict(budgets["warm"], hit="true", deadcode_missed="", deadcode_hit="")
+
+    assert result.returncode == 0, result.stderr
+    assert "| Wall budget class | cold |" in result.stdout
+    assert "dead-code static cache hit unreported" in result.stdout
+
+
+def test_an_unparseable_deadcode_cache_signal_takes_the_cold_budget() -> None:
+    budgets = _wall_budgets()
+    result = _wall_verdict(budgets["warm"], hit="true", deadcode_hit="not-a-cache-result")
+
+    assert result.returncode == 0, result.stderr
+    assert "| Wall budget class | cold |" in result.stdout
+    assert "dead-code static cache signal invalid" in result.stdout
 
 
 def test_an_absent_or_mixed_warmth_signal_takes_the_cold_budget() -> None:
@@ -773,17 +925,17 @@ def test_an_absent_or_mixed_warmth_signal_takes_the_cold_budget() -> None:
 
     # A skipped worker, a protected-main smoke run and a leg that died before setup all publish
     # nothing. Warm would then enforce a target the run never had a chance to meet.
-    absent = _wall_verdict(warm, missed="", hit="")
+    absent = _wall_verdict(warm, missed="", hit="", deadcode_hit="true")
     assert absent.returncode == 0, absent.stderr
     assert "| Wall budget class | cold |" in absent.stdout
-    assert "| Wall budget basis | no worker leg reported ready-cache warmth |" in absent.stdout
-    assert _wall_verdict(cold, missed="", hit="").returncode == 1
+    assert "ready-cache primary key hit unreported" in absent.stdout
+    assert _wall_verdict(cold, missed="", hit="", deadcode_hit="true").returncode == 1
 
     # The wall is the span across every leg, so one missed leg means the run paid cold setup even
     # where a sibling leg restored. Today both legs share one primary key and so always agree, but
     # the rule must not depend on that: only the frontend leg writes the entry, and a second writer
     # or a third leg would make the two predicates differ.
-    mixed = _wall_verdict(warm, missed="true", hit="true")
+    mixed = _wall_verdict(warm, missed="true", hit="true", deadcode_hit="true")
     assert mixed.returncode == 0, mixed.stderr
     assert "| Wall budget class | cold |" in mixed.stdout
 
@@ -1045,7 +1197,7 @@ def test_cache_summaries_use_observed_action_outputs() -> None:
         # One table row per cache, not one machine-readable log line.
         assert "| Cache | Outcome | Key |" in str(report["run"])
         # Keys are truncated to a readable prefix; the full value stays in the job log.
-        assert "s/([0-9a-f]{8})[0-9a-f]{24,}/\\1…/g" in str(report["run"])
+        assert "s/([0-9a-f]{8})[0-9a-f]{24,}/\\1\u2026/g" in str(report["run"])
 
     router_steps = {step.get("name"): step for step in _steps(jobs["changes"])}
     router_setup = router_steps["Set up uv and Python"]

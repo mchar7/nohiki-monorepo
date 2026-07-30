@@ -31,11 +31,6 @@ vi.mock('../../lib/template.ts', () => ({
     (Boolean(schema.maxItems) && (schema.maxItems ?? 0) <= INLINE_FIELDS_MAX_ITEMS_TEST),
 }));
 
-vi.mock('./ObjectFieldRenderer.tsx', () => ({
-  renderObjectFields: () => <div data-testid="object-fields">Object Fields</div>,
-  setArrayFieldComponent: vi.fn(),
-}));
-
 const stringArraySchema: JSONSchemaProperty = {
   type: 'array',
   items: { type: 'string' },
@@ -162,6 +157,7 @@ describe('ArrayField - object array', () => {
       defaultValues: { items: [{ title: 'Engineer', company: 'Acme' }] },
     });
 
-    expect(screen.getByTestId('object-fields')).toBeInTheDocument();
+    expect(screen.getByText('Title')).toBeInTheDocument();
+    expect(screen.getByText('Company')).toBeInTheDocument();
   });
 });

@@ -11,6 +11,11 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from nohiki_ml_core._deps import (
+    LocalDependency,
+    MissingLocalDependencyError,
+    check_pylate_available,
+)
 from nohiki_ml_core.batch.plaid_index import (
     _MIN_DOCS_FOR_CLUSTER_METRICS,
     _MIN_TOKENS_FOR_KMEANS,
@@ -24,8 +29,8 @@ from nohiki_ml_core.batch.plaid_index import (
 
 @pytest.fixture
 def mock_require_pylate() -> Generator[None]:
-    """Mock require_pylate to allow PLAIDIndex operations without pylate installed."""
-    with patch("nohiki_ml_core.batch.plaid_index.require_pylate"):
+    """Allow PLAID operations through the owned availability seam."""
+    with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
         yield
 
 
@@ -149,13 +154,13 @@ class TestPLAIDIndex:
 
         mock_indexes_module = SimpleNamespace(PLAID=MagicMock(return_value=mock_plaid_index))
         with patch(
-            "nohiki_ml_core.batch.plaid_index.importlib.import_module",
+            "nohiki_ml_core._deps.import_optional_module",
             return_value=mock_indexes_module,
         ) as mock_import:
             result = index.ensure_index()
 
             assert result is mock_plaid_index
-            mock_import.assert_called_once_with("pylate.indexes")
+            mock_import.assert_called_once_with("pylate.indexes", LocalDependency.PYLATE, "PLAID index")
             mock_indexes_module.PLAID.assert_called_once_with(
                 index_folder=config.index_folder,
                 index_name=config.index_name,
@@ -178,24 +183,22 @@ class TestPLAIDIndex:
 
         mock_indexes_module = SimpleNamespace(PLAID=MagicMock(return_value=mock_plaid_index))
         with patch(
-            "nohiki_ml_core.batch.plaid_index.importlib.import_module",
+            "nohiki_ml_core._deps.import_optional_module",
             return_value=mock_indexes_module,
         ) as mock_import:
             first_result = index.ensure_index()
             second_result = index.ensure_index()
 
             assert first_result is second_result
-            mock_import.assert_called_once_with("pylate.indexes")
+            mock_import.assert_called_once_with("pylate.indexes", LocalDependency.PYLATE, "PLAID index")
             mock_indexes_module.PLAID.assert_called_once()
 
     def test_ensure_index_missing_pylate(self, config: PLAIDIndexConfig) -> None:
         """Test ensure_index() raises MissingLocalDependencyError when pylate not installed."""
-        from nohiki_ml_core._deps import MissingLocalDependencyError
-
         index = PLAIDIndex(config=config)
 
         with (
-            patch("nohiki_ml_core._deps.check_pylate_available", return_value=False),
+            patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False),
             pytest.raises(MissingLocalDependencyError, match="PLAID index"),
         ):
             index.ensure_index()
@@ -286,13 +289,13 @@ class TestPLAIDIndex:
             mock_indexes_module = SimpleNamespace(PLAID=mock_plaid_class)
 
             with patch(
-                "nohiki_ml_core.batch.plaid_index.importlib.import_module",
+                "nohiki_ml_core._deps.import_optional_module",
                 return_value=mock_indexes_module,
             ) as mock_import:
                 loaded = PLAIDIndex.load(config)
 
                 assert loaded.config.override is False
-                mock_import.assert_called_once_with("pylate.indexes")
+                mock_import.assert_called_once_with("pylate.indexes", LocalDependency.PYLATE, "PLAID index")
                 mock_plaid_class.assert_called_once()
 
     def test_load_nonexistent_index(self) -> None:
@@ -327,7 +330,7 @@ class TestPLAIDIndex:
             mock_indexes_module = SimpleNamespace(PLAID=mock_plaid_class)
 
             with patch(
-                "nohiki_ml_core.batch.plaid_index.importlib.import_module",
+                "nohiki_ml_core._deps.import_optional_module",
                 return_value=mock_indexes_module,
             ):
                 loaded = PLAIDIndex.load(config)
@@ -355,7 +358,7 @@ class TestPLAIDIndex:
             mock_indexes_module = SimpleNamespace(PLAID=mock_plaid_class)
 
             with patch(
-                "nohiki_ml_core.batch.plaid_index.importlib.import_module",
+                "nohiki_ml_core._deps.import_optional_module",
                 return_value=mock_indexes_module,
             ):
                 loaded = PLAIDIndex.load(config)
@@ -412,13 +415,13 @@ class TestPLAIDRetriever:
 
         mock_colbert_class = MagicMock(return_value=mock_retriever)
         with patch(
-            "nohiki_ml_core.batch.plaid_index.importlib.import_module",
+            "nohiki_ml_core._deps.import_optional_module",
             return_value=SimpleNamespace(ColBERT=mock_colbert_class),
         ) as mock_import:
             result = retriever._ensure_retriever()
 
             assert result is mock_retriever
-            mock_import.assert_called_once_with("pylate.retrieve")
+            mock_import.assert_called_once_with("pylate.retrieve", LocalDependency.PYLATE, "PLAID retriever")
             mock_colbert_class.assert_called_once()
 
     def test_ensure_retriever_caches_result(
@@ -432,24 +435,22 @@ class TestPLAIDRetriever:
 
         mock_colbert_class = MagicMock(return_value=mock_retriever)
         with patch(
-            "nohiki_ml_core.batch.plaid_index.importlib.import_module",
+            "nohiki_ml_core._deps.import_optional_module",
             return_value=SimpleNamespace(ColBERT=mock_colbert_class),
         ) as mock_import:
             first_result = retriever._ensure_retriever()
             second_result = retriever._ensure_retriever()
 
             assert first_result is second_result
-            mock_import.assert_called_once_with("pylate.retrieve")
+            mock_import.assert_called_once_with("pylate.retrieve", LocalDependency.PYLATE, "PLAID retriever")
             mock_colbert_class.assert_called_once()
 
     def test_ensure_retriever_missing_pylate(self, mock_index_wrapper: PLAIDIndex) -> None:
         """Test _ensure_retriever() raises MissingLocalDependencyError when pylate not installed."""
-        from nohiki_ml_core._deps import MissingLocalDependencyError
-
         retriever = PLAIDRetriever(index=mock_index_wrapper)
 
         with (
-            patch("nohiki_ml_core._deps.check_pylate_available", return_value=False),
+            patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False),
             pytest.raises(MissingLocalDependencyError, match="PLAID retriever"),
         ):
             retriever._ensure_retriever()
@@ -651,7 +652,7 @@ class TestComputeClusterThreshold:
 
         token_arrays = [np.random.default_rng(42).random((10, 8)).astype(np.float32) for _ in range(3)]
         with patch(
-            "nohiki_ml_core.batch.plaid_index.get_minibatch_kmeans",
+            "nohiki_ml_core._deps.get_minibatch_kmeans",
             return_value=MiniBatchKMeans,
         ):
             result = PLAIDIndex.compute_cluster_threshold(token_arrays)
@@ -667,7 +668,7 @@ class TestComputeClusterThreshold:
         mock_km_class.return_value = mock_km_instance
 
         with patch(
-            "nohiki_ml_core.batch.plaid_index.get_minibatch_kmeans",
+            "nohiki_ml_core._deps.get_minibatch_kmeans",
             return_value=mock_km_class,
         ) as mock_get_kmeans:
             PLAIDIndex.compute_cluster_threshold([np.zeros((3, 1))])
@@ -678,7 +679,7 @@ class TestComputeClusterThreshold:
         from sklearn.cluster import MiniBatchKMeans
 
         with patch(
-            "nohiki_ml_core.batch.plaid_index.get_minibatch_kmeans",
+            "nohiki_ml_core._deps.get_minibatch_kmeans",
             return_value=MiniBatchKMeans,
         ):
             result = PLAIDIndex.compute_cluster_threshold([np.zeros((1, 8))])
@@ -686,13 +687,19 @@ class TestComputeClusterThreshold:
 
     def test_raises_when_sklearn_missing(self) -> None:
         """Test raises MissingLocalDependencyError when sklearn not available."""
-        from nohiki_ml_core._deps import MissingLocalDependencyError
-
         with (
-            patch("nohiki_ml_core._deps.check_sklearn_available", return_value=False),
+            patch(
+                "nohiki_ml_core._deps.get_minibatch_kmeans",
+                side_effect=MissingLocalDependencyError(
+                    LocalDependency.SKLEARN,
+                    "PLAID cluster threshold computation",
+                ),
+            ) as mock_get_kmeans,
             pytest.raises(MissingLocalDependencyError),
         ):
             PLAIDIndex.compute_cluster_threshold([np.zeros((10, 8))])
+
+        mock_get_kmeans.assert_called_once_with("PLAID cluster threshold computation")
 
     def test_sampling_path_executes_for_large_corpus(self) -> None:
         """Test sampling branch is taken when total_tokens exceeds sample_size."""
@@ -701,7 +708,7 @@ class TestComputeClusterThreshold:
         # 110 tokens per array x 10 arrays = 1100 tokens; sample_size=100 forces sampling
         token_arrays = [np.random.default_rng(i).random((110, 8)).astype(np.float32) for i in range(10)]
         with patch(
-            "nohiki_ml_core.batch.plaid_index.get_minibatch_kmeans",
+            "nohiki_ml_core._deps.get_minibatch_kmeans",
             return_value=MiniBatchKMeans,
         ):
             result = PLAIDIndex.compute_cluster_threshold(token_arrays, sample_size=100)
@@ -724,7 +731,7 @@ class TestComputeClusterThreshold:
         token_arrays = [np.random.default_rng(i).random((20, 8)).astype(np.float32) for i in range(10)]
         with (
             patch(
-                "nohiki_ml_core.batch.plaid_index.get_minibatch_kmeans",
+                "nohiki_ml_core._deps.get_minibatch_kmeans",
                 return_value=MiniBatchKMeans,
             ),
             patch(
@@ -990,9 +997,7 @@ class TestPLAIDIntegration:
     @pytest.fixture
     def skip_if_no_pylate(self) -> None:
         """Skip test if pylate is not installed."""
-        import importlib.util
-
-        if importlib.util.find_spec("pylate") is None:
+        if not check_pylate_available():
             pytest.skip("pylate not installed")
 
     def test_full_pipeline(self, skip_if_no_pylate: None) -> None:

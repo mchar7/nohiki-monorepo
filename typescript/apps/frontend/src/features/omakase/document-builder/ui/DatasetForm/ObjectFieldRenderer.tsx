@@ -1,26 +1,16 @@
-import type { Control } from 'react-hook-form';
+import { Input } from '@shared/ui/input.tsx';
+import { Textarea } from '@shared/ui/textarea.tsx';
+import type { JSX } from 'react';
+import { type Control, useFieldArray } from 'react-hook-form';
+import { useTranslation } from 'react-i18next';
 import type { JSONSchemaProperty } from '@/shared/model/index.ts';
+import { getPropertyDefault } from '../../lib/schema-defaults.ts';
+import { getUIHints, shouldRenderAsFields } from '../../lib/template.ts';
 import type { FormErrors, FormRegisterFunction } from '../../model/index.ts';
+import { ArrayField } from './ArrayField.tsx';
 import { FormField } from './FormField.tsx';
 import { getFieldTitle, getFieldWidget, getInputType, renderFieldLabel } from './shared.tsx';
-
-// Forward declaration to avoid circular import
-type ArrayFieldComponent = (props: {
-  name: string;
-  label: string;
-  description?: string | undefined;
-  schema: JSONSchemaProperty;
-  register: FormRegisterFunction;
-  control: Control<Record<string, unknown>>;
-  errors: FormErrors;
-}) => React.ReactElement;
-
-// This will be set by ArrayField to avoid circular import
-let ArrayFieldComponent: ArrayFieldComponent | null = null;
-
-function setArrayFieldComponent(component: ArrayFieldComponent): void {
-  ArrayFieldComponent = component;
-}
+import { renderTupleFields } from './TupleFieldRenderer.tsx';
 
 interface BaseFieldParams {
   key: string;
@@ -30,58 +20,6 @@ interface BaseFieldParams {
   fieldSchema: JSONSchemaProperty;
   register: FormRegisterFunction;
   errors: FormErrors;
-}
-
-interface DateRangeFieldParams extends BaseFieldParams {
-  isRequired: boolean;
-}
-
-function renderDateRangeField({
-  key,
-  fieldName,
-  fieldTitle,
-  fieldDescription,
-  fieldSchema,
-  isRequired,
-  register,
-  errors,
-}: DateRangeFieldParams): React.ReactNode {
-  if (fieldSchema.prefixItems?.length !== 2) {
-    return null;
-  }
-
-  const [startSchema, endSchema] = fieldSchema.prefixItems;
-  if (!(startSchema && endSchema)) {
-    return null;
-  }
-
-  return (
-    <div key={key} className="space-y-3">
-      {renderFieldLabel(fieldTitle, fieldDescription)}
-      <div className="grid grid-cols-2 gap-2">
-        <FormField
-          name={`${fieldName}.0`}
-          label={startSchema.title || 'Start'}
-          type={startSchema.format === 'date' ? 'date' : 'string'}
-          required={isRequired}
-          description={startSchema.description}
-          register={register}
-          errors={errors}
-          placeholder={String(startSchema.examples?.[0] || 'Start date')}
-        />
-        <FormField
-          name={`${fieldName}.1`}
-          label={endSchema.title || 'End'}
-          type={endSchema.format === 'date' ? 'date' : 'string'}
-          required={isRequired}
-          description={endSchema.description}
-          register={register}
-          errors={errors}
-          placeholder={String(endSchema.examples?.[0] || 'End date')}
-        />
-      </div>
-    </div>
-  );
 }
 
 interface ObjectFieldParams extends BaseFieldParams {
@@ -122,6 +60,162 @@ interface ObjectFieldsParams {
   errors: FormErrors;
 }
 
+interface ArraySchemaFieldProps {
+  name: string;
+  label: string;
+  description: string | undefined;
+  required?: boolean | undefined;
+  schema: JSONSchemaProperty;
+  register: FormRegisterFunction;
+  control: Control<Record<string, unknown>>;
+  errors: FormErrors;
+}
+
+interface ArrayItemSchemaFieldProps {
+  itemSchema: JSONSchemaProperty;
+  name: string;
+  index: number;
+  itemLabel: string;
+  placeholderFallback: string;
+  register: FormRegisterFunction;
+  control: Control<Record<string, unknown>>;
+  errors: FormErrors;
+}
+
+function getItemPlaceholder(itemSchema: JSONSchemaProperty, fallback: string): string {
+  const placeholder = itemSchema['x-placeholder'];
+  if (typeof placeholder === 'string') {
+    return placeholder;
+  }
+  const example = itemSchema.examples?.[0];
+  return typeof example === 'string' ? example : fallback;
+}
+
+function ArrayItemSchemaField({
+  itemSchema,
+  name,
+  index,
+  itemLabel,
+  placeholderFallback,
+  register,
+  control,
+  errors,
+}: Readonly<ArrayItemSchemaFieldProps>): JSX.Element {
+  const fieldName = `${name}.${index}`;
+
+  if (itemSchema.type === 'object') {
+    return (
+      <div className="space-y-3">
+        {renderObjectFields({
+          baseName: fieldName,
+          schema: itemSchema,
+          register,
+          control,
+          errors,
+        })}
+      </div>
+    );
+  }
+
+  if (itemSchema.type === 'array') {
+    return (
+      <ArraySchemaField
+        name={fieldName}
+        label={itemSchema.title || itemLabel}
+        description={itemSchema.description}
+        schema={itemSchema}
+        register={register}
+        control={control}
+        errors={errors}
+      />
+    );
+  }
+
+  if (itemSchema['x-widget'] === 'textarea') {
+    return (
+      <Textarea
+        {...register(fieldName)}
+        placeholder={getItemPlaceholder(itemSchema, placeholderFallback)}
+        className="min-h-20 w-full resize-y"
+        rows={3}
+      />
+    );
+  }
+
+  return (
+    <Input
+      {...register(fieldName)}
+      type={itemSchema.type === 'number' || itemSchema.type === 'integer' ? 'number' : 'text'}
+      placeholder={getItemPlaceholder(itemSchema, placeholderFallback)}
+      className="w-full"
+    />
+  );
+}
+
+function ArraySchemaField({
+  name,
+  label,
+  description,
+  required,
+  schema,
+  register,
+  control,
+  errors,
+}: Readonly<ArraySchemaFieldProps>): JSX.Element {
+  const { t } = useTranslation('omakase.editor');
+  const { fields, append, remove, move } = useFieldArray({ control, name: name as never });
+  const rawItemSchema = schema.items;
+  const itemSchema = Array.isArray(rawItemSchema)
+    ? (rawItemSchema[0] ?? { type: 'string' })
+    : (rawItemSchema ?? { type: 'string' });
+  const defaultItem = getPropertyDefault(itemSchema as Record<string, unknown>);
+  const uiHints = getUIHints(schema);
+
+  if (shouldRenderAsFields(schema)) {
+    return (
+      renderTupleFields({
+        name,
+        label,
+        description,
+        schema,
+        required,
+        register,
+        errors,
+        uiHints,
+        defaultFieldLabel: (index: number): string => t('fields.defaultFieldLabel', { index }),
+      }) ?? <div />
+    );
+  }
+
+  const items = fields.map((field, index) => (
+    <ArrayItemSchemaField
+      key={field.id}
+      itemSchema={itemSchema}
+      name={name}
+      index={index}
+      itemLabel={t('fields.defaultFieldLabel', { index: index + 1 })}
+      placeholderFallback={t('fields.itemPlaceholder')}
+      register={register}
+      control={control}
+      errors={errors}
+    />
+  ));
+
+  return (
+    <ArrayField
+      label={label}
+      description={description}
+      addLabel={t('fields.addItem')}
+      emptyMessage={t('fields.noItemsYet')}
+      fields={fields}
+      items={items}
+      onAdd={() => append(defaultItem)}
+      onRemove={remove}
+      onMove={move}
+    />
+  );
+}
+
 function renderObjectFields({
   baseName,
   schema,
@@ -148,26 +242,28 @@ interface SingleObjectFieldParams {
   errors: FormErrors;
 }
 
+interface ArrayFieldParams extends ObjectFieldParams {
+  isRequired: boolean | undefined;
+}
+
 function renderArrayField({
   key,
   fieldName,
   fieldTitle,
   fieldDescription,
   fieldSchema,
+  isRequired,
   register,
   control,
   errors,
-}: ObjectFieldParams): React.ReactNode {
-  if (!ArrayFieldComponent) {
-    return null;
-  }
-
+}: ArrayFieldParams): React.ReactNode {
   return (
-    <ArrayFieldComponent
+    <ArraySchemaField
       key={key}
       name={fieldName}
       label={fieldTitle}
       description={fieldDescription}
+      required={isRequired}
       schema={fieldSchema}
       register={register}
       control={control}
@@ -239,23 +335,6 @@ function renderSingleObjectField({
   const { fieldName, fieldTitle, fieldDescription } = buildFieldContext(key, baseName, fieldSchema);
   const isRequired = schema.required?.includes(key);
 
-  if (
-    fieldSchema.type === 'array' &&
-    fieldSchema.prefixItems &&
-    fieldSchema.prefixItems.length === 2
-  ) {
-    return renderDateRangeField({
-      key,
-      fieldName,
-      fieldTitle,
-      fieldDescription,
-      fieldSchema,
-      isRequired: isRequired ?? false,
-      register,
-      errors,
-    });
-  }
-
   if (fieldSchema.type === 'object') {
     return renderObjectField({
       key,
@@ -276,6 +355,7 @@ function renderSingleObjectField({
       fieldTitle,
       fieldDescription,
       fieldSchema,
+      isRequired,
       register,
       control,
       errors,
@@ -294,4 +374,4 @@ function renderSingleObjectField({
   });
 }
 
-export { renderObjectFields, setArrayFieldComponent };
+export { renderObjectFields };

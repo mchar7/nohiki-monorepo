@@ -9,9 +9,11 @@ import socket
 import tempfile
 from collections.abc import Buffer, Callable, Iterator
 from importlib import import_module
-from typing import Protocol, cast
+from typing import cast
 
 import pytest
+
+from nohiki_test_utils.utils.docker import resolve_docker_endpoint
 
 type _SocketAddress = tuple[object, ...] | str | Buffer | int
 
@@ -64,13 +66,11 @@ class _OutboundNetworkProhibited(BaseException):
     """Keep blocked calls visible through dependency exception wrappers."""
 
 
-class _DockerAvailabilityModule(Protocol):
-    def docker_daemon_available(self) -> bool: ...
-
-
-def _docker_daemon_available() -> bool:
-    docker_module = cast("_DockerAvailabilityModule", import_module("nohiki_test_utils.utils.docker"))
-    return docker_module.docker_daemon_available()
+def _configure_docker_host() -> None:
+    if "DOCKER_HOST" in os.environ:
+        return
+    if endpoint := resolve_docker_endpoint():
+        os.environ["DOCKER_HOST"] = endpoint
 
 
 def pytest_load_initial_conftests(early_config: pytest.Config) -> None:
@@ -86,6 +86,7 @@ def pytest_load_initial_conftests(early_config: pytest.Config) -> None:
     Args:
         early_config: Session configuration, carries the directory to the teardown hook.
     """
+    _configure_docker_host()
     secrets_dir = tempfile.mkdtemp(prefix="nohiki-empty-secrets-")
     early_config.stash[_EMPTY_SECRETS_DIR_KEY] = secrets_dir
     os.environ["SECRETS_DIR"] = secrets_dir
@@ -153,11 +154,8 @@ def _scrub_git_discovery_env() -> Iterator[None]:
     patch.undo()
 
 
-def _install_outbound_network_guard(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Prevent an unmarked test from resolving or contacting network peers."""
+def _enforce_no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent unmarked tests from resolving or contacting network peers."""
     if any(request.node.get_closest_marker(marker) is not None for marker in _NETWORK_ALLOWED_MARKERS):
         return
 
@@ -194,8 +192,8 @@ def _install_outbound_network_guard(
 
 @pytest.fixture(autouse=True)
 def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install the outbound network guard for an unmarked test."""
-    _install_outbound_network_guard(request, monkeypatch)
+    """Apply the outbound-network boundary to each test."""
+    _enforce_no_outbound_network(request, monkeypatch)
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -216,7 +214,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         message = f"Container-backed tests must be marked with @pytest.mark.requires_docker:\n{details}"
         raise pytest.UsageError(message)
 
-    if _docker_daemon_available():
+    if resolve_docker_endpoint() is not None:
         return
 
     skip_docker = pytest.mark.skip(reason="Docker daemon not available")

@@ -16,9 +16,8 @@ export default {
   extends: ['@commitlint/config-conventional'],
   // Classic "Merge pull request" subjects must fail, not silently pass.
   defaultIgnores: false,
-  // GitHub's update-branch button creates these inside PR ranges; their form is
-  // not author-controllable.
-  ignores: [(message) => /^Merge branch '.+' into .+/.test(message)],
+  // Integration merge subjects are not author-controllable.
+  ignores: [(message) => /^Merge (remote-tracking )?branch '.+' into .+/.test(message)],
   rules: {
     // Allowed commit types
     'type-enum': [

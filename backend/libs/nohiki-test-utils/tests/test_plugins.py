@@ -22,6 +22,29 @@ class TestPytestConfigure:
         markers = pytestconfig.getini("markers")
         assert any("integration" in str(m) for m in markers)
 
+    def test_configures_resolved_docker_host_when_unset(self) -> None:
+        """Plugin setup exports the same endpoint that resolution selected."""
+        endpoint = "unix:///run/user/1000/podman/podman.sock"
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("nohiki_test_utils.plugins.resolve_docker_endpoint", return_value=endpoint),
+        ):
+            plugins._configure_docker_host()
+
+            assert os.environ["DOCKER_HOST"] == endpoint
+
+    def test_preserves_user_configured_docker_host(self) -> None:
+        """Plugin setup never replaces an explicit Docker endpoint."""
+        endpoint = "tcp://explicit.example:2375"
+        with (
+            patch.dict(os.environ, {"DOCKER_HOST": endpoint}, clear=True),
+            patch("nohiki_test_utils.plugins.resolve_docker_endpoint") as mock_resolve,
+        ):
+            plugins._configure_docker_host()
+
+            assert os.environ["DOCKER_HOST"] == endpoint
+            mock_resolve.assert_not_called()
+
     def test_plugin_and_package_exports_reload_cleanly(self) -> None:
         """Entrypoint and lazy package exports remain valid on a fresh import."""
         with patch.dict(sys.modules):
@@ -47,7 +70,10 @@ class TestCollectionModifyItems:
         mock_item.keywords = {"requires_docker": True}
         mock_item.fixturenames = []
 
-        with patch("nohiki_test_utils.plugins._docker_daemon_available", return_value=True):
+        with patch(
+            "nohiki_test_utils.plugins.resolve_docker_endpoint",
+            return_value="unix:///var/run/docker.sock",
+        ):
             plugins.pytest_collection_modifyitems([mock_item])
 
         mock_item.add_marker.assert_not_called()
@@ -61,7 +87,7 @@ class TestCollectionModifyItems:
         normal_item.keywords = {}
         normal_item.fixturenames = []
 
-        with patch("nohiki_test_utils.plugins._docker_daemon_available", return_value=False):
+        with patch("nohiki_test_utils.plugins.resolve_docker_endpoint", return_value=None):
             plugins.pytest_collection_modifyitems([docker_item, normal_item])
 
         docker_item.add_marker.assert_called_once()
@@ -137,7 +163,7 @@ class TestOutboundNetworkIsolation:
         request.node.get_closest_marker.side_effect = lambda candidate: object() if candidate == marker else None
         monkeypatch = MagicMock(spec=pytest.MonkeyPatch)
 
-        plugins._install_outbound_network_guard(request, monkeypatch)
+        plugins._enforce_no_outbound_network(request, monkeypatch)
 
         monkeypatch.setattr.assert_not_called()
 

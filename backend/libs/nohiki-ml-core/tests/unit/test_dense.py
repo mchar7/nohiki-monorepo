@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from nohiki_ml_core._deps import LocalDependency, MissingLocalDependencyError
 from nohiki_ml_core.encoders.dense import DenseEncoder
 from nohiki_ml_manifest import (
     DenseConfig,
@@ -277,6 +278,29 @@ class TestDenseEncoderEncode:
 
             with pytest.raises(RuntimeError, match="Model load failed"):
                 encoder.encode("test")
+
+    def test_missing_sentence_transformers_raises_typed_error(
+        self,
+        sample_manifest_data: dict[str, object],
+    ) -> None:
+        """A missing local backend remains an import error at the encoder boundary."""
+        manifest = SemanticRepresentationManifest.model_validate(sample_manifest_data)
+        encoder = DenseEncoder(manifest)
+
+        with (
+            patch(
+                "nohiki_ml_core.encoders.dense._create_sentence_transformer",
+                side_effect=MissingLocalDependencyError(
+                    LocalDependency.SENTENCE_TRANSFORMERS,
+                    "Dense encoder",
+                ),
+            ) as mock_create,
+            pytest.raises(MissingLocalDependencyError) as error,
+        ):
+            encoder.encode("test")
+
+        assert error.value.dependency is LocalDependency.SENTENCE_TRANSFORMERS
+        mock_create.assert_called_once()
 
     def test_encode_tei_http_failure(
         self,

@@ -143,7 +143,7 @@ def deadcode_cmd(
         bool,
         typer.Option(
             "--include-tests/--no-include-tests",
-            help="Include tests/ as usage consumers in analysis",
+            help="Report dead code found in tests",
         ),
     ] = True,
     include_parameters: Annotated[
