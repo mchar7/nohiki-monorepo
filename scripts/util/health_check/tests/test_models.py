@@ -153,7 +153,7 @@ class TestRemediationResult:
         record = RemediationResult("check_0", before, action, after)
         assert (record.before, record.action, record.after) == (before, action, after)
         with pytest.raises(dataclasses.FrozenInstanceError):
-            record.before = after  # type: ignore[misc]
+            record.__setattr__("before", after)
 
     def test_suite_remediations_default_empty(self) -> None:
         suite = CheckSuiteResult((), 0.0, PlatformTarget.COMPOSE)
