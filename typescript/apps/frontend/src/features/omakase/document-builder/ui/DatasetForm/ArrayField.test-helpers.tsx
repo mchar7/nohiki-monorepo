@@ -12,7 +12,7 @@ import { useForm } from 'react-hook-form';
 import { I18nextProvider } from 'react-i18next';
 import { i18n } from '@/test/i18n-setup.ts';
 import type { FormErrors, FormRegisterFunction, JSONSchemaProperty } from '../../model/index.ts';
-import { ArrayField } from './ArrayField.tsx';
+import { renderObjectFields } from './ObjectFieldRenderer.tsx';
 
 interface RenderArrayFieldProps {
   name?: string;
@@ -37,18 +37,23 @@ export function renderArrayField(
       defaultValues: defaultValues ?? { [name]: [] },
     });
 
+    const objectSchema: JSONSchemaProperty = {
+      type: 'object',
+      properties: {
+        [name]: { ...schema, title: label, description },
+      },
+    };
+
     return (
       <I18nextProvider i18n={i18n}>
         <form>
-          <ArrayField
-            name={name}
-            label={label}
-            description={description}
-            schema={schema}
-            register={methods.register as FormRegisterFunction}
-            control={methods.control}
-            errors={methods.formState.errors as FormErrors}
-          />
+          {renderObjectFields({
+            baseName: '',
+            schema: objectSchema,
+            register: methods.register as FormRegisterFunction,
+            control: methods.control,
+            errors: methods.formState.errors as FormErrors,
+          })}
         </form>
       </I18nextProvider>
     );

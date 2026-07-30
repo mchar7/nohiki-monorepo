@@ -29,10 +29,9 @@ vi.mock('../../lib/template.ts', () => ({
     (Boolean(schema.maxItems) && (schema.maxItems ?? 0) <= INLINE_FIELDS_MAX_ITEMS_TEST),
 }));
 
-vi.mock('./ObjectFieldRenderer.tsx', () => ({
-  renderObjectFields: () => <div data-testid="object-fields">Object Fields</div>,
-  setArrayFieldComponent: vi.fn(),
-}));
+vi.mock('./ObjectFieldRenderer.tsx', async (importOriginal) =>
+  importOriginal<typeof import('./ObjectFieldRenderer.tsx')>(),
+);
 
 describe('ArrayField - tuple fields (prefixItems)', () => {
   const tupleSchema: JSONSchemaProperty = {
