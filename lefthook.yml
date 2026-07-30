@@ -166,10 +166,16 @@ pre-push:
           scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks internal-refs --range "$range"
         fi
 
-    # Phase 1: Type Checking (parallel)
+    # Phase 1: Static checks (parallel)
     - group:
         parallel: true
         jobs:
+          - name: python-lint
+            run: just lint
+
+          - name: python-format
+            run: just format-check
+
           - name: python-typecheck
             glob: &python_workspace_surface
               - "backend/*.py"

@@ -123,6 +123,8 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
     },
     "pre-push": {
         "internal-refs-range": frozenset(),
+        "python-lint": frozenset(),
+        "python-format": frozenset(),
         "python-typecheck": _PYTHON_WORKSPACE_SURFACE,
         "frontend-typecheck": _NODE_TOOLCHAIN_SURFACE
         | {
@@ -902,6 +904,16 @@ def test_every_entrypoint_resolves_the_complete_check_matrix() -> None:
             f"{entrypoint} effective check matrix drifted: "
             f"missing {sorted(expected - checks)}, unexpected {sorted(checks - expected)}"
         )
+
+
+def test_pre_push_resolves_full_python_static_checks() -> None:
+    commands = _configured_hooks()["pre-push"]
+    resolved = _logical_checks(
+        iter(str(command["run"]) for command in commands.values() if isinstance(command.get("run"), str))
+    )
+    assert {"python-lint", "python-format"} <= resolved
+    assert _run_command("python-lint") == "just lint"
+    assert _run_command("python-format") == "just format-check"
 
 
 def test_entrypoint_exceptions_are_explicit_and_grounded() -> None:

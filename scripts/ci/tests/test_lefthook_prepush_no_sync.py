@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import subprocess
 import tomllib
 from collections.abc import Iterator, Mapping
 from itertools import takewhile
@@ -102,6 +103,36 @@ def test_pre_push_folds_fixture_gate_into_the_single_python_test_job(
     semgrep_command = semgrep_job.get("run")
     assert isinstance(semgrep_command, str)
     assert semgrep_command == "just hygiene-arch"
+
+
+def test_pre_push_rejects_unformatted_python(lefthook_config: Mapping[str, object]) -> None:
+    command = _run_command(_sole_job(lefthook_config, "python-format"))
+    probe = _ROOT / "pre_push_format_regression.py"
+    assert not probe.exists()
+    try:
+        probe.write_text("VALUE=  1\n", encoding="utf-8")
+        failed = subprocess.run(
+            shlex.split(command),
+            cwd=_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert failed.returncode != 0
+        assert "Would reformat" in failed.stdout
+    finally:
+        probe.unlink(missing_ok=True)
+
+    passed = subprocess.run(
+        shlex.split(command),
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert passed.returncode == 0, passed.stdout + passed.stderr
 
 
 def _glob_entries(node: object) -> set[str] | None:
