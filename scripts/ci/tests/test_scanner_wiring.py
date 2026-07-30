@@ -505,11 +505,75 @@ def test_deadcode_inputs_exclude_only_generated_domain_model_packages(
 
 
 @pytest.mark.asyncio
-async def test_deadcode_keeps_selected_definition_used_only_by_unselected_package(
+async def test_deadcode_selection_includes_unselected_caller_and_filters_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A caller outside reporting scope must remain visible to the call graph."""
+    """Selection must preserve the full call graph while limiting reported packages."""
+    _run_git(tmp_path, "init", "--quiet")
+    selected_root = tmp_path / "selected"
+    definition = selected_root / "src" / "selected_pkg" / "api.py"
+    definition.parent.mkdir(parents=True)
+    definition.write_text(
+        "def used_across_package_boundary() -> int:\n    return 1\n",
+        encoding="utf-8",
+    )
+    caller = tmp_path / "unselected" / "src" / "unselected_pkg" / "consumer.py"
+    caller.parent.mkdir(parents=True)
+    caller.write_text(
+        "from selected_pkg.api import used_across_package_boundary\n\nRESULT = used_across_package_boundary()\n",
+        encoding="utf-8",
+    )
+    _run_git(tmp_path, "add", ".")
+
+    findings: list[object] = [
+        {
+            "name": "selected_dead",
+            "file": "selected/src/selected_pkg/api.py",
+            "line": 1,
+            "confidence": 100,
+            "message": "unused",
+        },
+        {
+            "name": "unselected_dead",
+            "file": "unselected/src/unselected_pkg/consumer.py",
+            "line": 1,
+            "confidence": 100,
+            "message": "unused",
+        },
+    ]
+    process = _SkylosProcess(1, _valid_skylos_result(findings=findings))
+    command: tuple[object, ...] = ()
+
+    async def spawn(*args: object, **_kwargs: object) -> _SkylosProcess:
+        nonlocal command
+        command = args
+        return process
+
+    monkeypatch.setattr(deadcode_check, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(deadcode_check.shutil, "which", lambda *_args, **_kwargs: "/bin/rg")
+    monkeypatch.setattr(deadcode_check.asyncio, "create_subprocess_exec", spawn)
+
+    results = await deadcode_check.scan_scope(
+        [Package(name="selected", path=selected_root, pkg_type=PackageType.OTHER)],
+        _options(),
+    )
+
+    assert list(command[3 : command.index("--json")]) == [
+        "selected/src/selected_pkg/api.py",
+        "unselected/src/unselected_pkg/consumer.py",
+    ]
+    assert [result.name for result in results] == ["selected"]
+    assert [finding.name for finding in results[0].findings] == ["selected_dead"]
+
+
+@pytest.mark.requires_skylos
+@pytest.mark.asyncio
+async def test_deadcode_skylos_keeps_selected_definition_used_only_by_unselected_package(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller outside reporting scope must remain visible to the real call graph."""
     _run_git(tmp_path, "init", "--quiet")
     selected_root = tmp_path / "selected"
     definition = selected_root / "src" / "selected_pkg" / "api.py"
@@ -540,7 +604,7 @@ async def test_deadcode_keeps_selected_definition_used_only_by_unselected_packag
 
 
 @pytest.mark.asyncio
-async def test_deadcode_reports_only_selected_maintained_sources(
+async def test_deadcode_selection_scans_full_closure_and_reports_only_selected_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -603,6 +667,38 @@ async def test_deadcode_reports_only_selected_maintained_sources(
         "unselected/src/unused.py",
     ]
     assert [result.name for result in results] == ["selected"]
+    assert [finding.name for finding in results[0].findings] == ["selected_dead"]
+
+
+@pytest.mark.requires_skylos
+@pytest.mark.asyncio
+async def test_deadcode_skylos_reports_only_selected_maintained_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real analyzer may report only maintained files in the selected package."""
+    _run_git(tmp_path, "init", "--quiet")
+    selected_root = tmp_path / "selected"
+    sources = {
+        selected_root / "src" / "definition.py": "def selected_dead() -> int:\n    return 1\n",
+        selected_root / "tests" / "test_definition.py": "def selected_test_dead() -> int:\n    return 1\n",
+        tmp_path / "unselected" / "src" / "unused.py": "def unselected_dead() -> int:\n    return 1\n",
+    }
+    for path, source in sources.items():
+        path.parent.mkdir(parents=True)
+        path.write_text(source, encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[tool.skylos.whitelist]\nnames = []\n", encoding="utf-8")
+    _run_git(tmp_path, "add", ".")
+
+    monkeypatch.setattr(deadcode_check, "REPO_ROOT", tmp_path)
+
+    results = await deadcode_check.scan_scope(
+        [Package(name="selected", path=selected_root, pkg_type=PackageType.OTHER)],
+        _options(include_tests=False, no_provenance=True),
+    )
+
+    assert [result.name for result in results] == ["selected"]
+    assert results[0].error == ""
     assert [finding.name for finding in results[0].findings] == ["selected_dead"]
 
 
