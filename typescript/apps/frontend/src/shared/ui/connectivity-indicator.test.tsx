@@ -1,51 +1,38 @@
 import type { RenderResult } from '@testing-library/react';
 import { render, screen } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
-import { describe, expect, vi } from 'vitest';
+import { describe, expect } from 'vitest';
+import {
+  ConnectivityContext,
+  type ConnectivityContextValue,
+} from '@/shared/lib/contexts/ConnectivityContextModel.ts';
 import { i18n } from '@/test/i18n-setup.ts';
 import { ConnectivityIndicator } from './connectivity-indicator.tsx';
 
-interface MockConnectivity {
-  status: 'online';
-  isBackendAvailable: boolean;
-  isOnline: boolean;
-  isOffline: boolean;
-  isChecking: boolean;
-  isDegraded: boolean;
-  lastChecked: Date | null;
-  lastCheckedAt: number | null;
-  failureCount: number;
-  timeSinceDisconnect: number;
-  hasChecked: boolean;
-  forceCheck: () => Promise<boolean>;
-  checkNow: () => Promise<boolean>;
-}
-
-const mockConnectivityContext: MockConnectivity = {
-  status: 'online' as const,
+const LAST_CHECKED_AT = 1_700_000_000_000;
+const defaultConnectivity: ConnectivityContextValue = {
+  status: 'online',
   isBackendAvailable: true,
   isOnline: true,
   isOffline: false,
   isChecking: false,
   isDegraded: false,
-  lastChecked: null as Date | null,
-  lastCheckedAt: null as number | null,
+  lastChecked: new Date(LAST_CHECKED_AT),
+  lastCheckedAt: LAST_CHECKED_AT,
   failureCount: 0,
   timeSinceDisconnect: 0,
   hasChecked: true,
-  forceCheck: vi.fn().mockResolvedValue(true),
-  checkNow: vi.fn().mockResolvedValue(true),
+  forceCheck: () => Promise.resolve(true),
+  checkNow: () => Promise.resolve(true),
 };
 
-vi.mock('@/shared/lib/contexts/ConnectivityContext', () => ({
-  useConnectivitySafe: () => mockConnectivityContext,
-}));
-
-function renderIndicator(): RenderResult {
+function renderIndicator(overrides: Partial<ConnectivityContextValue> = {}): RenderResult {
   return render(
-    <I18nextProvider i18n={i18n}>
-      <ConnectivityIndicator />
-    </I18nextProvider>,
+    <ConnectivityContext.Provider value={{ ...defaultConnectivity, ...overrides }}>
+      <I18nextProvider i18n={i18n}>
+        <ConnectivityIndicator />
+      </I18nextProvider>
+    </ConnectivityContext.Provider>,
   );
 }
 
@@ -56,31 +43,27 @@ describe('ConnectivityIndicator', () => {
   });
 
   test('shows connected status when backend is available', () => {
-    mockConnectivityContext.isBackendAvailable = true;
-    mockConnectivityContext.lastCheckedAt = Date.now();
-    renderIndicator();
-    const button = screen.getByRole('button');
-    expect(button).toHaveAttribute('aria-label');
+    renderIndicator({ isBackendAvailable: true, lastCheckedAt: LAST_CHECKED_AT });
+    expect(screen.getByRole('button', { name: 'Connected' })).toBeInTheDocument();
   });
 
   test('shows unknown status when lastCheckedAt is null', () => {
-    mockConnectivityContext.lastCheckedAt = null;
-    mockConnectivityContext.isChecking = false;
-    renderIndicator();
-    expect(screen.getByRole('button')).toBeInTheDocument();
+    renderIndicator({ isChecking: false, lastChecked: null, lastCheckedAt: null });
+    expect(screen.getByRole('button', { name: 'Connecting...' })).toBeInTheDocument();
   });
 
   test('shows checking status when isChecking is true', () => {
-    mockConnectivityContext.isChecking = true;
-    renderIndicator();
-    expect(screen.getByRole('button')).toBeInTheDocument();
+    renderIndicator({ isChecking: true, status: 'checking' });
+    expect(screen.getByRole('button', { name: 'Checking connection...' })).toBeInTheDocument();
   });
 
   test('shows disconnected status when backend is unavailable', () => {
-    mockConnectivityContext.isBackendAvailable = false;
-    mockConnectivityContext.lastCheckedAt = Date.now();
-    mockConnectivityContext.isChecking = false;
-    renderIndicator();
-    expect(screen.getByRole('button')).toBeInTheDocument();
+    renderIndicator({
+      status: 'offline',
+      isBackendAvailable: false,
+      isOnline: false,
+      isOffline: true,
+    });
+    expect(screen.getByRole('button', { name: 'Disconnected' })).toBeInTheDocument();
   });
 });

@@ -407,7 +407,7 @@ from nohiki_ml_core.encoders.colbert import ColBERTEncoder
 
 @pytest.fixture
 def encoder(manifest):
-    with patch("nohiki_ml_core.encoders.colbert.require_pylate"):
+    with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
         enc = ColBERTEncoder(manifest)
     enc._model = MagicMock()
     enc._model.encode.return_value = [

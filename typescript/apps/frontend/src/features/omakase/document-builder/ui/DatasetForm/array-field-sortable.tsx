@@ -4,12 +4,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@shared/ui/button.tsx';
 import { Card } from '@shared/ui/card.tsx';
 import { GripVertical, Trash2 } from 'lucide-react';
-import type { JSX } from 'react';
-import type { Control } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
-import type { JSONSchemaProperty } from '@/shared/model/index.ts';
-import type { FormErrors, FormRegisterFunction } from '../../model/index.ts';
-import { renderArrayItemField } from './array-field-item.tsx';
+import type { JSX, ReactNode } from 'react';
+import { ArrayFieldItem } from './array-field-item.tsx';
 import type { SortableDragListProps } from './array-field-sortable.types.ts';
 
 /** Opacity applied to an item while being dragged */
@@ -20,25 +16,11 @@ const DEFAULT_OPACITY: number = 1;
 interface SortableItemProps {
   id: string;
   index: number;
-  name: string;
-  itemSchema: JSONSchemaProperty;
-  register: FormRegisterFunction;
-  control: Control<Record<string, unknown>>;
-  errors: FormErrors;
+  children: ReactNode;
   onRemove: (index: number) => void;
 }
 
-function SortableItem({
-  id,
-  index,
-  name,
-  itemSchema,
-  register,
-  control,
-  errors,
-  onRemove,
-}: Readonly<SortableItemProps>): JSX.Element {
-  const { t } = useTranslation('omakase.editor');
+function SortableItem({ id, index, children, onRemove }: Readonly<SortableItemProps>): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
   });
@@ -61,17 +43,7 @@ function SortableItem({
         >
           <GripVertical className="size-3" />
         </Button>
-        <div className="flex-1">
-          {renderArrayItemField({
-            itemSchema,
-            name,
-            index,
-            placeholderFallback: t('fields.itemPlaceholder'),
-            register,
-            control,
-            errors,
-          })}
-        </div>
+        <ArrayFieldItem>{children}</ArrayFieldItem>
         <Button
           type="button"
           variant="ghost"
@@ -89,11 +61,7 @@ function SortableItem({
 /** Renders the DnD-sortable list of array items inside a DndContext. */
 function SortableDragList({
   fields,
-  name,
-  itemSchema,
-  register,
-  control,
-  errors,
+  items,
   onRemove,
   sensors,
   onMove,
@@ -113,17 +81,9 @@ function SortableDragList({
       <SortableContext items={fields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
         <div className="space-y-3">
           {fields.map((field, index) => (
-            <SortableItem
-              key={field.id}
-              id={field.id}
-              index={index}
-              name={name}
-              itemSchema={itemSchema}
-              register={register}
-              control={control}
-              errors={errors}
-              onRemove={onRemove}
-            />
+            <SortableItem key={field.id} id={field.id} index={index} onRemove={onRemove}>
+              {items[index]}
+            </SortableItem>
           ))}
         </div>
       </SortableContext>

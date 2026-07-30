@@ -392,15 +392,39 @@ def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
         "#6c9e3f1d84c1cc312f8e69c91b348a896d61b0b2"
     )
 
-    restore = next(step for step in _setup_steps() if step.get("name") == "Restore Skylos static analysis cache")
-    assert restore["with"] == {
-        "path": "${{ github.workspace }}/.skylos",
-        "key": (
-            "skylos-static-v3-${{ runner.os }}-${{ hashFiles('uv.lock') }}-"
-            "${{ inputs.commit-class }}-${{ inputs.base-sha }}-${{ inputs.head-sha }}"
-        ),
-        "restore-keys": "skylos-static-v3-${{ runner.os }}-${{ hashFiles('uv.lock') }}-\n",
+    setup_steps = _setup_steps()
+    identity = next(step for step in setup_steps if step.get("name") == "Resolve Skylos cache identity")
+    assert identity["env"] == {
+        "BASE_SHA": "${{ inputs.base-sha }}",
+        "HEAD_SHA": "${{ inputs.head-sha }}",
     }
+    identity_command = str(identity["run"])
+    assert 'git rev-parse --verify "${HEAD_SHA}^{tree}"' in identity_command
+    assert 'git diff --name-only --no-renames "${BASE_SHA}..${HEAD_SHA}"' in identity_command
+    assert "git hash-object --stdin" in identity_command
+
+    restore = next(step for step in setup_steps if step.get("name") == "Restore Skylos static analysis cache")
+    cache_inputs = cast(dict[str, object], restore["with"])
+    assert cache_inputs["path"] == "${{ github.workspace }}/.skylos"
+    key = str(cache_inputs["key"])
+    assert key.startswith("skylos-static-v4-")
+    reusability_fields = set(re.findall(r"\$\{\{\s*(.*?)\s*\}\}", key))
+    assert reusability_fields == {
+        "runner.os",
+        "hashFiles('uv.lock')",
+        "inputs.commit-class",
+        "steps.skylos-cache-identity.outputs.scope-paths",
+        "steps.skylos-cache-identity.outputs.head-tree",
+    }
+    per_commit_identifiers = (
+        "github.sha",
+        "github.event.before",
+        "github.event.pull_request.base.sha",
+        "inputs.base-sha",
+        "inputs.head-sha",
+    )
+    assert all(identifier not in key for identifier in per_commit_identifiers)
+    assert "restore-keys" not in cache_inputs
     assert str(restore["uses"]).startswith("actions/cache/restore@")
 
     worker = _workflow_jobs(_CHECKS)["worker"]

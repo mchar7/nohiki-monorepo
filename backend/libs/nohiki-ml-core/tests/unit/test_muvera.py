@@ -5,14 +5,15 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from nohiki_ml_core._deps import LocalDependency, MissingLocalDependencyError
 from nohiki_ml_core.encoders.muvera import MUVERAEncoder
 from nohiki_ml_manifest import SemanticRepresentationManifest
 
 
 @pytest.fixture
 def mock_require_fastembed() -> Generator[None]:
-    """Mock require_fastembed to allow encoder construction without fastembed installed."""
-    with patch("nohiki_ml_core.encoders.muvera.require_fastembed"):
+    """Allow encoder construction through the owned availability seam."""
+    with patch("nohiki_ml_core._deps.optional_dependency_available", return_value=True):
         yield
 
 
@@ -179,10 +180,8 @@ def test_muvera_missing_fastembed_raises_early(
     manifest: SemanticRepresentationManifest,
 ) -> None:
     """Test MissingLocalDependencyError is raised early when fastembed not installed."""
-    from nohiki_ml_core._deps import MissingLocalDependencyError
-
     with (
-        patch("nohiki_ml_core._deps.check_fastembed_available", return_value=False),
+        patch("nohiki_ml_core._deps.optional_dependency_available", return_value=False),
         pytest.raises(MissingLocalDependencyError, match="MUVERA encoder"),
     ):
         MUVERAEncoder(manifest)
@@ -192,19 +191,19 @@ def test_muvera_missing_fastembed_raises_early(
 def test_muvera_lazy_loading_import_error(
     manifest: SemanticRepresentationManifest,
 ) -> None:
-    """Test RuntimeError is raised when fastembed import fails at encoder load time."""
+    """A missing fastembed backend raises the typed import error."""
     encoder = MUVERAEncoder(manifest)
 
     with (
         patch(
-            "nohiki_ml_core.encoders.muvera.importlib.import_module",
-            side_effect=ImportError("No module named 'fastembed'"),
+            "nohiki_ml_core._deps.import_optional_module",
+            side_effect=MissingLocalDependencyError(LocalDependency.FASTEMBED, "MUVERA encoder"),
         ),
-        pytest.raises(RuntimeError, match="Failed to initialize MUVERA encoder") as error,
+        pytest.raises(MissingLocalDependencyError, match="MUVERA encoder") as error,
     ):
         encoder._ensure_encoder()
 
-    assert isinstance(error.value.__cause__, ImportError)
+    assert error.value.dependency is LocalDependency.FASTEMBED
 
 
 @pytest.mark.usefixtures("mock_require_fastembed")
