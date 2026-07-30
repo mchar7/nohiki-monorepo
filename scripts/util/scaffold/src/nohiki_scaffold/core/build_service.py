@@ -322,7 +322,7 @@ def build_service_plan(spec: ServiceSpec, *, repo_root: Path) -> BuildPlan:
         "does not auto-edit these.",
     )
     hints.append(
-        '[yellow]AGENTS.md[/yellow]: add an entry to the "Service Kafka Roles" table '
+        '[yellow]CONTRIBUTING.md[/yellow]: add an entry to the "Service Kafka Roles" table '
         "describing this service's Produces/Consumes/Pattern.",
     )
 

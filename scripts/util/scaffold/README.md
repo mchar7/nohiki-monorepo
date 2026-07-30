@@ -12,7 +12,7 @@ The scaffolder has a **closed feature matrix**. It does NOT support:
 - **Update-in-place.** Create-only; three-way merging is a maintenance sinkhole.
 - **Plugin hooks or user templates.** The template set is curated; archetypes
   extend the codebase, not user config.
-- **Auto-editing CODEOWNERS, docker-compose, Helm charts, or `AGENTS.md`.**
+- **Auto-editing CODEOWNERS, docker-compose, Helm charts, or `CONTRIBUTING.md`.**
   These are emitted as Rich hints at the end of a scaffold run and left for
   human review.
 

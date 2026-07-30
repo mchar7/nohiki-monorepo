@@ -3,7 +3,7 @@
   "no_image_ownership": [
     ".github/workflows/cd_deploy-to-aks_nohiki.yml",
     ".github/workflows/release-helm-charts.yml",
-    "AGENTS.md",
+    "CONTRIBUTING.md",
     "Justfile",
     "README.md",
     "flake.nix",
