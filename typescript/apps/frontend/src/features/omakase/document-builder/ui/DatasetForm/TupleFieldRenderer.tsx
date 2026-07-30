@@ -39,6 +39,7 @@ interface TupleFieldsParams {
   name: string;
   label: string;
   description: string | undefined;
+  required: boolean | undefined;
   schema: JSONSchemaProperty;
   register: FormRegisterFunction;
   errors: FormErrors;
@@ -50,6 +51,7 @@ export function renderTupleFields({
   name,
   label,
   description,
+  required,
   schema,
   register,
   errors,
@@ -73,6 +75,7 @@ export function renderTupleFields({
                 name={fieldName}
                 label={fieldLabel}
                 type={getFormFieldType(itemSchema)}
+                required={required}
                 register={register}
                 errors={errors}
                 placeholder={getFieldPlaceholder(uiHints.placeholder, itemSchema.examples?.[0])}
@@ -105,6 +108,7 @@ export function renderTupleFields({
                 name={fieldName}
                 label={fieldLabel}
                 type={fieldType}
+                required={required}
                 register={register}
                 errors={errors}
                 placeholder={getFieldPlaceholder(uiHints.placeholder, itemSchema?.examples?.[0])}

@@ -13,14 +13,14 @@ clear instructions on how to enable GPU support.
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
 from dataclasses import dataclass
 from enum import Enum
 from functools import cache
 from types import ModuleType
 
 from nohiki_observability import get_logger
+
+from nohiki_ml_core import _deps
 
 logger = get_logger(__name__)
 
@@ -65,10 +65,10 @@ class GpuCapabilities:
 
 
 def _get_torch() -> ModuleType | None:
-    """Lazy import torch - returns None if not installed."""
+    """Lazy import torch, returning None if it is not installed."""
     try:
-        return importlib.import_module("torch")
-    except ImportError:
+        return _deps.import_optional_module("torch", _deps.LocalDependency.TORCH, "CUDA detection")
+    except _deps.MissingLocalDependencyError:
         return None
 
 
@@ -86,7 +86,7 @@ def _check_cuda_deps_installed() -> bool:
 
 def _check_triton_installed() -> bool:
     """Check if triton is installed."""
-    return importlib.util.find_spec("triton") is not None
+    return _deps.optional_dependency_available("triton")
 
 
 def _get_cuda_version() -> str | None:
