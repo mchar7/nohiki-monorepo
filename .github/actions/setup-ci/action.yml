@@ -247,7 +247,7 @@ runs:
         export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/skylos_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/skylos_known_hosts"
         nix develop .#ci --command scripts/dev/sync-ci-deadcode.sh
 
-    # Saving stays after the producer step in each caller so failed scans can still warm the cache.
+    # Callers save after the scan so parseable findings can warm the cache despite failing the lane.
     - name: Restore Skylos static analysis cache
       if: inputs.skylos-cache == 'true'
       id: skylos-cache
