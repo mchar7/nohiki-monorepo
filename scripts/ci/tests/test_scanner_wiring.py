@@ -181,6 +181,7 @@ async def test_deadcode_fails_closed_on_invalid_or_non_finding_scanner_results(
     assert expected in results[0].error
     assert results[0].error.endswith("scanner diagnostic")
     assert not deadcode_check.render_results(results, fail_on_findings=False)
+    assert not deadcode_check.static_result_published(results)
 
 
 @pytest.mark.asyncio
@@ -216,6 +217,84 @@ async def test_deadcode_timeout_is_a_scanner_failure(
     assert not results[0].passed
     assert "timed out" in results[0].error
     assert "timeout diagnostic" in results[0].error
+    assert not deadcode_check.static_result_published(results)
+
+
+@pytest.mark.parametrize(
+    ("returncode", "findings"),
+    [
+        (0, []),
+        (
+            1,
+            [
+                {
+                    "name": "dead_function",
+                    "file": "scripts/ci/src/ci_checks/app.py",
+                    "line": 1,
+                    "confidence": 100,
+                    "message": "unused",
+                }
+            ],
+        ),
+    ],
+    ids=["clean", "findings"],
+)
+@pytest.mark.asyncio
+async def test_static_result_publication_accepts_completed_parseable_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    findings: list[dict[str, object]],
+) -> None:
+    process = _SkylosProcess(returncode, _valid_skylos_result(findings=findings))
+
+    async def spawn(*_args: object, **_kwargs: object) -> _SkylosProcess:
+        return process
+
+    monkeypatch.setattr(deadcode_check.shutil, "which", lambda *_args, **_kwargs: "/bin/rg")
+    monkeypatch.setattr(deadcode_check.asyncio, "create_subprocess_exec", spawn)
+
+    results = await deadcode_check.scan_scope(
+        [Package(name="package", path=_ROOT, pkg_type=PackageType.OTHER)],
+        _options(),
+    )
+
+    assert deadcode_check.static_result_published(results)
+
+
+def test_static_result_output_is_an_appended_workflow_fact(tmp_path: Path) -> None:
+    github_output = tmp_path / "github-output"
+    github_output.write_text("unrelated=value\n", encoding="utf-8")
+    clean = [DeadCodeResult(name="package", passed=True)]
+    aborted = [DeadCodeResult(name="scanner", passed=False, error="invalid or incomplete JSON")]
+
+    deadcode_check.write_static_result_output(clean, github_output)
+    deadcode_check.write_static_result_output(aborted, github_output)
+    deadcode_check.write_static_result_output(clean, None)
+
+    assert github_output.read_text(encoding="utf-8").splitlines() == [
+        "unrelated=value",
+        f"{deadcode_check.STATIC_RESULT_OUTPUT}=true",
+        f"{deadcode_check.STATIC_RESULT_OUTPUT}=false",
+    ]
+    assert not deadcode_check.static_result_published([])
+
+
+def test_deadcode_cli_publishes_the_predicate_to_github_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    github_output = tmp_path / "github-output"
+
+    async def aborted_scan(*_args: object, **_kwargs: object) -> list[DeadCodeResult]:
+        return [DeadCodeResult(name="scanner", passed=False, error="invalid or incomplete JSON")]
+
+    monkeypatch.setattr(deadcode_check, "scan_scope", aborted_scan)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
+
+    result = CliRunner().invoke(app, ["deadcode", "--ci", "--fail"])
+
+    assert result.exit_code == 1
+    assert github_output.read_text(encoding="utf-8") == f"{deadcode_check.STATIC_RESULT_OUTPUT}=false\n"
 
 
 @pytest.mark.parametrize(

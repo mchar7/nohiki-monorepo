@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 from pathlib import Path
 
 _GREP_CACHE_SCHEMA = "v4"
@@ -48,6 +49,9 @@ _EXCLUDED_DIRECTORY_NAMES = frozenset(
     }
 )
 _HASH_CHUNK_BYTES = 1024 * 1024
+_STATIC_CACHE_RELATIVE = Path("cache/runs/v1/static")
+# Two entries cover the current and prior inputs; a measured inner miss costs 196s versus a 9s hit.
+_STATIC_CACHE_KEEP_ENTRIES = 2
 
 
 def _hash_file(path: str | Path) -> str:
@@ -92,12 +96,32 @@ def _configure_grep_cache(project_root: Path) -> str:
     return namespace
 
 
+def _prune_static_cache() -> None:
+    """Keep only the two newest whole-result cache entries."""
+    cache_root = Path(os.environ.get("SKYLOS_CACHE_DIR", Path.cwd() / ".skylos"))
+    static_cache = cache_root / _STATIC_CACHE_RELATIVE
+    entries = sorted(
+        static_cache.glob("*.cache"),
+        key=lambda entry: entry.stat().st_mtime_ns,
+        reverse=True,
+    )
+    for entry in entries[_STATIC_CACHE_KEEP_ENTRIES:]:
+        entry.unlink()
+
+
 def main() -> None:
-    """Configure the grep cache before transferring control to Skylos."""
+    """Configure bounded caches before transferring control to Skylos."""
     _configure_grep_cache(Path.cwd().resolve())
     from skylos import cli
 
-    cli.main()
+    try:
+        cli.main()
+    finally:
+        try:
+            _prune_static_cache()
+        except OSError as exc:
+            sys.stderr.write(f"Skylos static cache pruning failed: {exc}\n")
+            raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":

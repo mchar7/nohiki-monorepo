@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+from ci_checks.checks import skylos_cache as skylos_cache_check
 from ci_checks.checks.skylos_cache import _configure_grep_cache, _hash_file
 
 
@@ -72,3 +74,72 @@ def test_defining_file_hash_covers_bytes_after_first_eight_kibibytes(
     defining_file.write_bytes(b"x" * 8192 + b"dead!")
 
     assert _hash_file(defining_file) != before
+
+
+@pytest.mark.requires_skylos
+def test_static_cache_pruning_bounds_entries_after_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from skylos import cli as skylos_cli
+
+    static_cache = tmp_path / ".skylos" / "cache" / "runs" / "v1" / "static"
+    static_cache.mkdir(parents=True)
+    manifest = static_cache / "stat-manifest.json"
+    manifest.write_text("{}\n", encoding="utf-8")
+    entries = [static_cache / f"head-{index}.cache" for index in range(4)]
+    for index, entry in enumerate(entries):
+        entry.write_text(str(index), encoding="utf-8")
+        os.utime(entry, ns=(index, index))
+
+    def finish_scan() -> None:
+        raise SystemExit(1)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SKYLOS_CACHE_DIR", str(tmp_path / ".skylos"))
+    monkeypatch.setattr(skylos_cache_check, "_configure_grep_cache", lambda _root: "namespace")
+    monkeypatch.setattr(skylos_cli, "main", finish_scan)
+
+    with pytest.raises(SystemExit, match="1"):
+        skylos_cache_check.main()
+
+    assert sorted(path.name for path in static_cache.glob("*.cache")) == [
+        "head-2.cache",
+        "head-3.cache",
+    ]
+    assert manifest.is_file()
+
+
+@pytest.mark.requires_skylos
+def test_static_cache_pruning_failure_blocks_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from skylos import cli as skylos_cli
+
+    static_cache = tmp_path / ".skylos" / "cache" / "runs" / "v1" / "static"
+    static_cache.mkdir(parents=True)
+    entries = [static_cache / f"head-{index}.cache" for index in range(3)]
+    for index, entry in enumerate(entries):
+        entry.write_text(str(index), encoding="utf-8")
+        os.utime(entry, ns=(index, index))
+
+    def finish_scan() -> None:
+        raise SystemExit(1)
+
+    def fail_unlink(_path: Path) -> None:
+        message = "read-only cache"
+        raise OSError(message)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SKYLOS_CACHE_DIR", str(tmp_path / ".skylos"))
+    monkeypatch.setattr(skylos_cache_check, "_configure_grep_cache", lambda _root: "namespace")
+    monkeypatch.setattr(skylos_cli, "main", finish_scan)
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    with pytest.raises(SystemExit) as raised:
+        skylos_cache_check.main()
+
+    assert raised.value.code == 2
+    assert "Skylos static cache pruning failed: read-only cache" in capsys.readouterr().err

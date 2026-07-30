@@ -122,6 +122,10 @@ def deadcode_cmd(
         Path | None,
         typer.Option("--summary", help="Append markdown to $GITHUB_STEP_SUMMARY"),
     ] = None,
+    github_output: Annotated[
+        Path | None,
+        typer.Option("--github-output", envvar="GITHUB_OUTPUT", help="$GITHUB_OUTPUT file"),
+    ] = None,
     severity: Annotated[
         _deadcode.SeverityLevel | None,
         typer.Option("--severity", help="Minimum severity filter: critical|high|medium|low"),
@@ -192,6 +196,7 @@ def deadcode_cmd(
     )
 
     results = asyncio.run(_deadcode.scan_scope(selected, options))
+    _deadcode.write_static_result_output(results, github_output)
 
     if ci:
         for result in results:
