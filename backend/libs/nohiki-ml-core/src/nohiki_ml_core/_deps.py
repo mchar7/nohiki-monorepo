@@ -9,8 +9,10 @@ dependencies for direct in-process PyLate, fastembed, and dense inference.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 from enum import StrEnum
+from types import ModuleType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,76 +26,89 @@ class LocalDependency(StrEnum):
     FASTEMBED = "fastembed"
     ONNXRUNTIME = "onnxruntime"
     SKLEARN = "sklearn"
+    SENTENCE_TRANSFORMERS = "sentence-transformers"
+    TORCH = "torch"
+    TRITON = "triton"
 
 
 class MissingLocalDependencyError(ImportError):
-    """Raised when a local inference dependency is not installed.
-
-    This error is raised early (at encoder construction) rather than lazily
-    (at encode time) to provide clear guidance on how to resolve the issue.
-    """
+    """Raised when a required local inference dependency is not installed."""
 
     def __init__(self, dependency: LocalDependency, feature: str) -> None:
-        """Initialize error with helpful installation instructions.
+        """Initialize a missing-dependency import error.
 
         Args:
-            dependency: The missing dependency name
-            feature: What feature requires this dependency (e.g., "ColBERT DIRECT backend")
-
+            dependency: Missing distribution.
+            feature: Feature that requires the distribution.
         """
+        match dependency:
+            case LocalDependency.TORCH | LocalDependency.TRITON:
+                extra = "gpu"
+            case _:
+                extra = "inference"
         self.dependency = dependency
         self.feature = feature
         super().__init__(
-            f"{feature} requires '{dependency}' which is not installed.\n"
-            f"\n"
-            f"To use local inference, add the [inference] extra to pyproject.toml:\n"
-            f"    nohiki-ml-core[inference]\n"
-            f"\n"
-            f"Alternatively, route via ml-gateway-service to Kubernetes or Modal workers"
+            f"{feature} requires '{dependency}' which is not installed.\n\n"
+            f"Install it with the nohiki-ml-core[{extra}] extra. "
+            "Alternatively, route inference through ml-gateway-service."
         )
+
+
+def optional_dependency_available(module_name: str) -> bool:
+    """Check module availability without importing a heavy backend."""
+    return importlib.util.find_spec(module_name) is not None
+
+
+def import_optional_module(module_name: str, dependency: LocalDependency, feature: str) -> ModuleType:
+    """Import an optional module or raise a typed dependency import error."""
+    try:
+        return importlib.import_module(module_name)
+    except ImportError as exc:
+        raise MissingLocalDependencyError(dependency, feature) from exc
 
 
 def check_pylate_available() -> bool:
     """Check if pylate is installed."""
-    return importlib.util.find_spec("pylate") is not None
+    return optional_dependency_available("pylate")
 
 
 def check_fastembed_available() -> bool:
     """Check if fastembed is installed."""
-    return importlib.util.find_spec("fastembed") is not None
+    return optional_dependency_available("fastembed")
 
 
-def require_pylate(feature: str) -> None:
-    """Require pylate to be installed, raising clear error if not.
+def require_pylate(feature: str, *, module_name: str = "pylate") -> None:
+    """Require a PyLate module to be installed.
 
     Args:
-        feature: Description of feature requiring pylate
+        feature: Description of the feature requiring PyLate.
+        module_name: Exact PyLate module the feature imports.
 
     Raises:
-        MissingLocalDependencyError: If pylate is not installed
-
+        MissingLocalDependencyError: If the module is not installed.
     """
-    if not check_pylate_available():
+    if not optional_dependency_available(module_name):
         raise MissingLocalDependencyError(LocalDependency.PYLATE, feature)
 
 
-def require_fastembed(feature: str) -> None:
-    """Require fastembed to be installed, raising clear error if not.
+def require_fastembed(feature: str, *, module_name: str = "fastembed") -> None:
+    """Require a fastembed module to be installed.
 
     Args:
-        feature: Description of feature requiring fastembed
+        feature: Description of the feature requiring fastembed.
+        module_name: Exact fastembed module the feature imports.
 
     Raises:
-        MissingLocalDependencyError: If fastembed is not installed
-
+        MissingLocalDependencyError: If the module is not installed.
     """
-    if not check_fastembed_available():
+    if not optional_dependency_available(module_name):
         raise MissingLocalDependencyError(LocalDependency.FASTEMBED, feature)
 
 
 def check_sklearn_available() -> bool:
     """Check if scikit-learn is installed."""
-    return importlib.util.find_spec("sklearn") is not None
+    return optional_dependency_available("sklearn.cluster")
 
 
 def require_sklearn(feature: str) -> None:
@@ -106,7 +121,7 @@ def require_sklearn(feature: str) -> None:
         MissingLocalDependencyError: If scikit-learn is not installed
 
     """
-    if not check_sklearn_available():
+    if not optional_dependency_available("sklearn.cluster"):
         raise MissingLocalDependencyError(LocalDependency.SKLEARN, feature)
 
 
@@ -127,7 +142,8 @@ def get_minibatch_kmeans(feature: str) -> type[MiniBatchKMeans]:
         MissingLocalDependencyError: If scikit-learn is not installed
 
     """
-    require_sklearn(feature)
-    from sklearn.cluster import MiniBatchKMeans
-
+    try:
+        from sklearn.cluster import MiniBatchKMeans
+    except ImportError as exc:
+        raise MissingLocalDependencyError(LocalDependency.SKLEARN, feature) from exc
     return MiniBatchKMeans
