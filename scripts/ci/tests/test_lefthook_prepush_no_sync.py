@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import tomllib
 from collections.abc import Iterator, Mapping
 from itertools import takewhile
 from pathlib import Path, PurePosixPath
@@ -100,7 +101,7 @@ def test_pre_push_folds_fixture_gate_into_the_single_python_test_job(
     assert isinstance(semgrep_job, Mapping)
     semgrep_command = semgrep_job.get("run")
     assert isinstance(semgrep_command, str)
-    assert semgrep_command.startswith("env -u LD_LIBRARY_PATH uvx ")
+    assert semgrep_command == "just hygiene-arch"
 
 
 def _glob_entries(node: object) -> set[str] | None:
@@ -148,11 +149,17 @@ def _globs_cover(root: PurePosixPath, patterns: set[str]) -> bool:
 
 
 def _ty_check_roots(command: str) -> tuple[PurePosixPath, ...]:
-    """Positional directories handed to ty check, stopping at the first option."""
+    """Return the native ty source roots reached by the delegated command."""
+    if command.strip() == "just typecheck-all":
+        config = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        return tuple(PurePosixPath(path) for path in config["tool"]["ty"]["src"]["include"])
+
     tokens = shlex.split(command)
     starts = [index + 2 for index in range(len(tokens) - 1) if tokens[index : index + 2] == ["ty", "check"]]
     assert len(starts) == 1, "python-typecheck must invoke ty check exactly once"
-    return tuple(PurePosixPath(token) for token in takewhile(lambda t: not t.startswith("-"), tokens[starts[0] :]))
+    return tuple(
+        PurePosixPath(token) for token in takewhile(lambda token: not token.startswith("-"), tokens[starts[0] :])
+    )
 
 
 def test_python_push_lanes_cover_every_workspace_package(

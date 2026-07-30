@@ -63,7 +63,7 @@ def test_frontend_and_python_tests_split_only_for_broad() -> None:
     assert "needs.changes.outputs.broad == 'true'" in jobs["worker"]["if"]
     assert "matrix.unit == 'frontend'" in str(frontend["if"])
     assert "matrix.unit == 'python'" in str(python["if"])
-    assert "pnpm -C typescript/apps/frontend test --run --maxWorkers=100%" in frontend["run"]
+    assert str(frontend["run"]).endswith("just fe-test")
     assert "ci-checks tests all" in python["run"]
     assert python["env"]["SUMMARY_TITLE"] == ("${{ needs.changes.outputs.commit_class }}")
 

@@ -76,15 +76,19 @@ clean-all: clean
 
 # Linting and formatting
 
-# Run both lint and format
-fix: lint format
+# Apply repository autofixes
+fix: lint-fix format lint-md-fix
 
-# Lint and format entire monorepo
-check-all: lint fe-check lint-md
+# Run the complete repository verification matrix
+check-all: verify
 
-# Run ruff check with auto-fix repo-wide (same surface as the CI lint lane)
+# Check Python lint policy
 lint:
-    {{ env_lock }} shared venv -- uv run --no-sync ruff check --config pyproject.toml --fix --output-format=concise .
+    {{ env_lock }} shared venv -- uv run --no-sync ruff check .
+
+# Apply Python lint fixes
+lint-fix:
+    {{ env_lock }} shared venv -- uv run --no-sync ruff check --fix .
 
 # Run ruff check on a specific service
 lint-service service:
@@ -98,12 +102,20 @@ lint-libs:
 format:
     {{ env_lock }} shared venv -- uv run --no-sync ruff format --config pyproject.toml .
 
+# Check Python formatting
+format-check:
+    {{ env_lock }} shared venv -- uv run --no-sync ruff format --check .
+
 # Format a specific service
 format-service service:
     {{ env_lock }} shared venv -- uv run --no-sync ruff format --config pyproject.toml backend/services/{{ service }}/
 
-# Lint and fix markdown files
+# Check Markdown lint policy
 lint-md:
+    {{ env_lock }} shared node_modules -- {{ pnpm }} exec markdownlint-cli2 "**/*.md"
+
+# Apply Markdown lint fixes
+lint-md-fix:
     {{ env_lock }} shared node_modules -- {{ pnpm }} exec markdownlint-cli2 --fix "**/*.md"
 # Type checking
 
@@ -125,14 +137,14 @@ typecheck-job job:
 
 # Code hygiene
 
-# Run all strict checks (lint + typecheck + hygiene)
-check-strict: lint typecheck-all hygiene
+# Run the complete repository verification matrix
+check-strict: verify
 
-# Run all hygiene checks
-hygiene: hygiene-deps hygiene-arch hygiene-deadcode hygiene-fixtures hygiene-build-backend-strict
+# Run all strict hygiene checks
+hygiene: hygiene-deps hygiene-arch hygiene-deadcode-strict hygiene-fixtures-strict hygiene-build-backend-strict
 
-hygiene-deps:
-    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope all --ci
+hygiene-deps packages="ALL":
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope all --packages '{{ packages }}' --ci
 
 hygiene-deps-backend:
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope services --ci
@@ -141,7 +153,7 @@ hygiene-deps-libs:
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope libs --ci
 
 hygiene-arch:
-    uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --error --no-git-ignore backend/
+    env -u LD_LIBRARY_PATH uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/
 
 hygiene-arch-report:
     uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --no-git-ignore backend/
@@ -149,8 +161,12 @@ hygiene-arch-report:
 hygiene-deadcode:
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks --group deadcode ci-checks deadcode --scope all --ci
 
-hygiene-deadcode-strict:
-    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks --group deadcode ci-checks deadcode --scope all --ci --fail
+hygiene-deadcode-strict packages="ALL":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=(--scope all --packages '{{ packages }}' --ci --fail --no-provenance)
+    [[ -z ${GITHUB_STEP_SUMMARY:-} ]] || args+=(--summary "$GITHUB_STEP_SUMMARY")
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks --group deadcode ci-checks deadcode "${args[@]}"
 
 hygiene-deadcode-llm:
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks --group deadcode ci-checks deadcode --scope all --ci --llm
@@ -172,8 +188,11 @@ hygiene-build-backend:
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --ci
 
 # Require every buildable workspace package to use canonical uv_build settings.
-hygiene-build-backend-strict:
-    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --ci --strict
+hygiene-build-backend-strict packages="ALL":
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --packages '{{ packages }}' --ci --strict
+
+# Run every developer-reproducible CI check
+verify: lint format-check lint-md typecheck-all test-all-packages test-skylos-cache test-node-contracts hygiene fe-check fe-fsd fe-i18n proto-lint proto-breaking workflow-lint docker-lint secrets-scan nix-check api-schema-check image-matrix-check
 
 # Scaffold CLI
 
@@ -202,6 +221,14 @@ test-scaffold:
 # Run package-aware unit tests across uv workspace members
 test-all-packages:
     {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope all --ci
+
+# Run Skylos cache contract tests
+test-skylos-cache:
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync pytest scripts/ci/tests -m requires_skylos
+
+# Run Node workspace contract tests
+test-node-contracts:
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync pytest scripts/ci/tests -m requires_node_modules
 
 # Run package-aware unit tests for backend services only
 test-backend-packages:
@@ -286,9 +313,28 @@ fe-build:
 fe-analyze:
     {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run analyze
 
-# Run all frontend checks (type-check, biome lint, vitest)
-fe-check:
-    {{ test_run }} {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run check:all
+# Run all frontend checks
+fe-check: fe-typecheck fe-lint fe-fsd fe-i18n fe-test
+
+# Type-check the frontend
+fe-typecheck:
+    {{ test_run }} {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run type-check
+
+# Check frontend lint and formatting
+fe-lint:
+    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run check
+
+# Check frontend architecture
+fe-fsd:
+    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run lint:fsd
+
+# Check frontend translations
+fe-i18n:
+    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run i18n:check
+
+# Run frontend unit tests
+fe-test:
+    {{ test_run }} {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run test
 
 # Service development
 
@@ -322,17 +368,42 @@ api-schema-check:
 
 # Lint proto files
 proto-lint:
-    cd proto && buf lint
+    nix develop .#ci --command bash -euc 'cd proto && buf lint'
 
 # Check proto breaking changes
-proto-breaking:
+proto-breaking base_ref="main":
     #!/usr/bin/env bash
     set -euo pipefail
-    if git ls-tree --name-only main proto/ 2>/dev/null | grep -q .; then
-        cd proto && buf breaking --against '../.git#branch=main,subdir=proto'
+    if git cat-file -e '{{ base_ref }}^{commit}' && git ls-tree --name-only '{{ base_ref }}' proto/ | grep -q .; then
+        nix develop .#ci --command bash -euc "cd proto && buf breaking --against '../.git#commit={{ base_ref }},subdir=proto'"
     else
-        echo "Skipping: proto/ not yet committed to main branch"
+        echo "Skipping: proto/ is absent from {{ base_ref }}"
     fi
+
+# Lint GitHub workflows with their native validators
+workflow-lint:
+    nix develop .#ci --command actionlint -ignore '^step must run script with "run" section or run action with "uses" section$'
+    nix develop .#ci --command check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml
+
+# Lint every tracked Dockerfile
+docker-lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git ls-files -z -- '*Dockerfile' '*Dockerfile.*' ':(exclude)*.dockerignore' ':(exclude)*.j2' | xargs -0 -r nix develop .#ci --command hadolint
+
+# Scan the repository or staged changes for secrets
+secrets-scan mode="detect":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case '{{ mode }}' in
+        detect) nix develop .#ci --command gitleaks detect --source . --config .gitleaks.toml --no-banner --redact ;;
+        staged) nix develop .#ci --command gitleaks protect --staged --config .gitleaks.toml --no-banner --redact ;;
+        *) echo "mode must be detect or staged" >&2; exit 2 ;;
+    esac
+
+# Evaluate the native Nix flake checks
+nix-check:
+    nix flake check
 
 # Containers and builds
 
