@@ -30,10 +30,6 @@ vi.mock('@/shared/ui/TagInput.tsx', () => ({
   )),
 }));
 
-vi.mock('@/shared/ui/skill-input/SkillInput.tsx', () => ({
-  SkillInput: vi.fn(() => <div data-testid="skill-input" />),
-}));
-
 // We want to verify that it uses the constant KEYWORDS_MAX_ITEMS.
 // To make it FAIL, we mock KEYWORDS_MAX_ITEMS to something else.
 vi.mock('../schemas/profile.schema', async (importOriginal) => {
