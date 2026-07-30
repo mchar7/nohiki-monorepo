@@ -273,7 +273,7 @@ def test_multi_owner_union_follows_declaration_order(inventory: ImageInventory) 
 
 
 def test_a_diff_of_only_no_image_paths_selects_nothing(inventory: ImageInventory) -> None:
-    assert affected_images({"README.md", "AGENTS.md", "scripts/dev/env-lock.sh"}, inventory) == ()
+    assert affected_images({"README.md", "CONTRIBUTING.md", "scripts/dev/env-lock.sh"}, inventory) == ()
 
 
 def test_a_mixed_diff_returns_the_owner_union_without_the_no_image_paths(inventory: ImageInventory) -> None:
@@ -436,7 +436,7 @@ def test_a_job_change_selects_only_its_own_job_row(inventory: ImageInventory) ->
         "scripts/dev/env-lock.sh",
         "skills-lock.json",
         "Justfile",
-        "AGENTS.md",
+        "CONTRIBUTING.md",
         "README.md",
         "flake.nix",
         "infra/k8s/gitops/platform/prod/kustomization.yaml",
