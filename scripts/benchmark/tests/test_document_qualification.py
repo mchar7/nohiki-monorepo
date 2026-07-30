@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Protocol, TypedDict, TypeIs, Unpack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -296,12 +297,18 @@ def test_pre_dispatch_policy_rejects_unbounded_timeout_or_instrumentation(
         )
 
 
+def _is_string_object_dict(value: object) -> TypeIs[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
 def _set_path(output: dict[str, object], path: str, value: str) -> None:
     current = output
     parts = path.removeprefix("$.").split(".")
     for part in parts[:-1]:
-        child = current.setdefault(part, {})
-        assert isinstance(child, dict)
+        if part not in current:
+            current[part] = {}
+        child = current[part]
+        assert _is_string_object_dict(child)
         current = child
     current[parts[-1]] = value
 
@@ -368,6 +375,21 @@ def test_source_fidelity_rejects_unsupported_contact_number_and_url() -> None:
     assert outcome.evidence.unsupported_count >= 4
 
 
+class _ContractPatchOptions(TypedDict, total=False):
+    valid: bool
+    content_issues: list[object] | None
+    layout_issues: list[object] | None
+    pdf: bytes
+    page_count: int
+    text: str | None
+
+
+class _Patcher(Protocol):
+    def start(self) -> object: ...
+
+    def stop(self) -> object: ...
+
+
 def _contract_patches(
     *,
     valid: bool = True,
@@ -376,7 +398,7 @@ def _contract_patches(
     pdf: bytes = b"%PDF-synthetic",
     page_count: int = 1,
     text: str | None = None,
-) -> tuple[patch, ...]:
+) -> tuple[_Patcher, ...]:
     report = SimpleNamespace(valid=valid, issues=[] if valid else [object()])
     lint_config = SimpleNamespace(layout=SimpleNamespace(rules=[]))
     extracted_text = text or "\n".join(_FIXTURE.ledger.rendered_literals)
@@ -422,7 +444,9 @@ def _contract_patches(
     )
 
 
-async def _evaluate_with_patches(**kwargs: object) -> DocumentContractEvaluation:
+async def _evaluate_with_patches(
+    **kwargs: Unpack[_ContractPatchOptions],
+) -> DocumentContractEvaluation:
     patches = _contract_patches(**kwargs)
     for active_patch in patches:
         active_patch.start()
@@ -552,10 +576,13 @@ class _FakeClient:
         self.error = error
         self.calls = 0
 
-    def create_dynamic_schema_agent(self, config: object) -> object:
-        return config
-
-    async def run(self, _agent: object, _prompt: str, **_kwargs: object) -> LLMResult[dict[str, object]]:
+    async def generate_document(
+        self,
+        _config: object,
+        _prompt: str,
+        /,
+        **_kwargs: object,
+    ) -> LLMResult[dict[str, object]]:
         self.calls += 1
         if self.error is not None:
             raise self.error
@@ -713,7 +740,13 @@ async def test_cap_rejection_is_not_dispatched_or_persisted(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_generation_timeout_is_persisted_as_safe_timeout(tmp_path: Path) -> None:
     class SlowClient(_FakeClient):
-        async def run(self, _agent: object, _prompt: str, **_kwargs: object) -> LLMResult[dict[str, object]]:
+        async def generate_document(
+            self,
+            _config: object,
+            _prompt: str,
+            /,
+            **_kwargs: object,
+        ) -> LLMResult[dict[str, object]]:
             import asyncio
 
             self.calls += 1

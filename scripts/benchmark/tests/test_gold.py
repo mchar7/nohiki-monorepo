@@ -261,7 +261,7 @@ def test_normalization_matches_equivalents_without_substring_collision() -> None
         status = score_extraction(gold, _french_candidate(city=wrong)).fields["location.city"].status
         assert status == "incorrect", wrong
 
-    skills = [
+    skills: list[dict[str, object]] = [
         {"raw_skill": "Python"},
         {"raw_skill": "Numerique"},
         {"raw_skill": "Numeri"},

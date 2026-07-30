@@ -6,9 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from click.testing import Result
 from nohiki_llm_client import ApiKeyRegistry
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from llm_benchmark.cli import app
 from llm_benchmark.schemas.document_qualification import GateName
@@ -73,7 +72,7 @@ def _args(settings: Path, output: Path, *extra: str) -> list[str]:
 
 
 def _result(status: str, route_statuses: dict[str, str] | None = None) -> SimpleNamespace:
-    routes = {}
+    routes: dict[str, SimpleNamespace] = {}
     for alias, route_status in (route_statuses or {}).items():
         cases = []
         if route_status == "route_qualified":
@@ -214,8 +213,10 @@ def test_preflight_stays_non_qualified_and_passes_preflight_to_engine(
     assert "status=preflight" in result.output
     assert "status=qualified" not in result.output
     assert run_qualification.await_count == 1
-    assert run_qualification.await_args.kwargs["preflight"] is True
-    assert run_qualification.await_args.kwargs["existing"] is None
+    await_args = run_qualification.await_args
+    assert await_args is not None
+    assert await_args.kwargs["preflight"] is True
+    assert await_args.kwargs["existing"] is None
 
 
 @pytest.mark.parametrize(
@@ -243,7 +244,9 @@ def test_route_subset_status_controls_exit_code(
     assert f"route=sol status={route_status}" in result.output
     assert "route=opus" not in result.output
     assert "route=kimi" not in result.output
-    assert run_qualification.await_args.kwargs["selected_routes"] == ("sol",)
+    await_args = run_qualification.await_args
+    assert await_args is not None
+    assert await_args.kwargs["selected_routes"] == ("sol",)
 
 
 def test_missing_requested_route_is_incomplete_and_nonzero(tmp_path: Path) -> None:

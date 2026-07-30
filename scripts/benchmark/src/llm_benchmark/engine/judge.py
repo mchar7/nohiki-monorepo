@@ -13,7 +13,7 @@ import inspect
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import yaml
 from job_ingest_enrichment_service.extraction_contract import DEFAULT_EXTRACTION_SPEC
@@ -321,7 +321,7 @@ async def _execute_pointwise_task(
                 unknown_price_max_usd=unknown_price_max_usd,
             )
 
-        async def _dispatch() -> tuple[LLMResult[Any], float | None]:
+        async def _dispatch() -> tuple[LLMResult[PointwiseJudgment], float | None]:
             call_result = await client.run(agent, prompt, deps=None)
             return call_result, call_result.cost_usd
 

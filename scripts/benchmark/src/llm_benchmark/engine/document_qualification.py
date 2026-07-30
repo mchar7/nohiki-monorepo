@@ -127,10 +127,25 @@ class DocumentContractEvaluation:
     output_sha256: str
 
 
-class ClientFactory(Protocol):
-    """Construct an isolated client for one-model settings."""
+class DocumentClient(Protocol):
+    """Generate one schema-constrained document through an isolated client."""
 
-    def __call__(self, settings: LLMSettings) -> LLMClient:
+    async def generate_document(
+        self,
+        config: DynamicAgentConfig[DocumentContentContext],
+        prompt: str,
+        /,
+        *,
+        deps: DocumentContentContext,
+    ) -> LLMResult[dict[str, object]]:
+        """Generate a document with the supplied schema and prompt context."""
+        ...
+
+
+class ClientFactory(Protocol):
+    """Construct an isolated document client for one-model settings."""
+
+    def __call__(self, settings: LLMSettings, /) -> DocumentClient:
         """Return a client bound to exactly one model."""
         ...
 
@@ -143,6 +158,7 @@ class DocumentRenderer(Protocol):
         output: dict[str, object],
         fixture: DocumentQualificationFixture,
         gotenberg_url: str,
+        /,
     ) -> DocumentContractEvaluation:
         """Return safe contract evidence."""
         ...
@@ -654,8 +670,21 @@ def redact_for_evidence(value: object, fixture: DocumentQualificationFixture) ->
             return value
 
 
-def _default_client_factory(settings: LLMSettings) -> LLMClient:
-    return LLMClient(settings)
+class _DefaultDocumentClient(LLMClient):
+    async def generate_document(
+        self,
+        config: DynamicAgentConfig[DocumentContentContext],
+        prompt: str,
+        /,
+        *,
+        deps: DocumentContentContext,
+    ) -> LLMResult[dict[str, object]]:
+        agent = self.create_dynamic_schema_agent(config)
+        return await self.run(agent, prompt, deps=deps)
+
+
+def _default_client_factory(settings: LLMSettings) -> DocumentClient:
+    return _DefaultDocumentClient(settings)
 
 
 def _pricing_source(
@@ -1225,20 +1254,18 @@ class DocumentQualificationRunner:
         started = self._monotonic()
         context = fixture.build_context()
         client = self._client_factory(self._single_model_settings(route))
-        agent = client.create_dynamic_schema_agent(
-            DynamicAgentConfig(
-                deps_type=DocumentContentContext,
-                json_schema=context.schema_definition,
-                schema_name=context.schema_name,
-                schema_description=f"Generated document matching {context.schema_name} schema",
-                system_prompt_fn=lambda run_context: build_system_prompt(run_context.deps),
-            )
+        config = DynamicAgentConfig(
+            deps_type=DocumentContentContext,
+            json_schema=context.schema_definition,
+            schema_name=context.schema_name,
+            schema_description=f"Generated document matching {context.schema_name} schema",
+            system_prompt_fn=lambda run_context: build_system_prompt(run_context.deps),
         )
         async with asyncio.timeout(CELL_TIMEOUT_SECONDS):
             generation_started = self._monotonic()
             async with asyncio.timeout(GENERATION_TIMEOUT_SECONDS):
-                llm_result: LLMResult[dict[str, object]] = await client.run(
-                    agent,
+                llm_result = await client.generate_document(
+                    config,
                     build_user_prompt(context),
                     deps=context,
                 )

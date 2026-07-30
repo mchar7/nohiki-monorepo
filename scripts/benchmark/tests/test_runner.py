@@ -699,9 +699,23 @@ class TestBenchmarkRunnerResumeCostGating:
         captured: dict[str, float] = {}
         real_scheduler = runner_module.BudgetScheduler
 
-        def spy(**kwargs: float) -> runner_module.BudgetScheduler:
-            captured.update(kwargs)
-            return real_scheduler(**kwargs)
+        def spy(
+            *,
+            cap_usd: float,
+            max_concurrency: int,
+            initial_charged_usd: float = 0.0,
+            initial_actual_usd: float = 0.0,
+        ) -> runner_module.BudgetScheduler:
+            captured.update(
+                initial_charged_usd=initial_charged_usd,
+                initial_actual_usd=initial_actual_usd,
+            )
+            return real_scheduler(
+                cap_usd=cap_usd,
+                max_concurrency=max_concurrency,
+                initial_charged_usd=initial_charged_usd,
+                initial_actual_usd=initial_actual_usd,
+            )
 
         with (
             patch(
