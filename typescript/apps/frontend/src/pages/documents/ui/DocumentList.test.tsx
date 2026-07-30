@@ -55,10 +55,6 @@ vi.mock('./DocumentTabContent.tsx', () => ({
   PAGE_SIZE: 10,
 }));
 
-vi.mock('./DocumentTableSkeleton.tsx', () => ({
-  DocumentTableSkeleton: () => <div data-testid="doc-skeleton" />,
-}));
-
 // Mock usePullToRefresh
 
 const mockUsePullToRefresh = vi.fn<(...args: unknown[]) => unknown>().mockReturnValue({
