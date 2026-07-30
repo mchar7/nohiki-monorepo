@@ -93,7 +93,7 @@ class TestCheckGrafanaDashboards:
         assert "cannot parse" in result[0]
 
     async def test_handles_non_dict_items_in_list(self) -> None:
-        boards = [{"uid": uid} for uid in GRAFANA_EXPECTED_DASHBOARD_UIDS]
+        boards: list[object] = [{"uid": uid} for uid in GRAFANA_EXPECTED_DASHBOARD_UIDS]
         boards.append(None)
         platform = MockPlatform(_curl_result=(0, json.dumps(boards), ""))
         result = await _check_grafana_dashboards(platform)
