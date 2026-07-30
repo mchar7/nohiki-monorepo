@@ -466,6 +466,9 @@ root = [
     "scripts",
 ]
 extra-paths = [
+    "backend/services/bff-service/tests",
+    "backend/services/job-correlation-evaluation-service/tests",
+    "backend/services/skill-graph-service",
     "backend/libs/nohiki-domain-models/src",
     ".venv/lib/python3.14/site-packages",
 ]
@@ -542,15 +545,15 @@ invalid-return-type = "ignore"
 invalid-type-arguments = "ignore"
 missing-argument = "ignore"
 
-# Test helper imports use pytest's pythonpath config which ty cannot replicate.
-# Tests use cross-package imports (conftest, test utils) resolved by pytest at
-# runtime but invisible to static analysis. Pydantic model __init__ kwargs are
-# not recognized by ty (unknown-argument).
+
+# skylos is private and excluded from the shared closure; only the dead-code lane installs it.
 [[tool.ty.overrides]]
-include = ["backend/*/tests/", "backend/*/*/tests/"]
+include = [
+    "scripts/ci/src/ci_checks/checks/skylos_cache.py",
+    "scripts/ci/tests/test_skylos_cache.py",
+]
 [tool.ty.overrides.rules]
 unresolved-import = "ignore"
-unknown-argument = "ignore"
 
 [tool.pytest.ini_options]
 minversion = "7.0"

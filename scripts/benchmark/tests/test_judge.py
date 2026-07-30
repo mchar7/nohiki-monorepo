@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from typing import TypedDict, Unpack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +14,9 @@ from nohiki_llm_client import (
     ApiKeyRegistry,
     CachePoint,
     LLMAuthenticationError,
+    LLMModelConfig,
     LLMProviderResponseError,
+    LLMSettings,
     LLMTransientError,
     LLMValidationError,
 )
@@ -53,6 +56,15 @@ class BenchmarkResult(_BenchmarkResult):
     experiment_fingerprint: str = "test-experiment"
 
 
+class _JudgeClientOptions(TypedDict, total=False):
+    provider_allow_fallbacks: bool
+    provider_zdr: bool
+    base_url: str | None
+    api_key: str | None
+    timeout_seconds: float | None
+    max_retries: int | None
+
+
 def _valid_judgment(score: int = 80) -> PointwiseJudgment:
     category = CategoryScore(score=score, reasoning="Residual quality is coherent and source grounded")
     return PointwiseJudgment(
@@ -79,7 +91,7 @@ def _make_benchmark(
     all_fixtures: set[str] = set()
 
     for model_name, runs in models.items():
-        run_results = []
+        run_results: list[_RunResult] = []
         for fixture_id, run_number, success, output_json in runs:
             all_fixtures.add(fixture_id)
             run_results.append(
@@ -536,7 +548,7 @@ class TestExecutePointwiseTask:
         judgment = MagicMock()
         mock_client = self._make_mock_client(return_judgment=judgment, cost_usd=0.0025)
         semaphore = asyncio.Semaphore(1)
-        calls: list[tuple[str, str, int, object, float | None]] = []
+        calls: list[tuple[str, str, int, object, float | None, float]] = []
 
         def capture(
             model: str,
@@ -608,7 +620,7 @@ class TestExecutePointwiseTask:
         cancel = asyncio.Event()
         cancel.set()
 
-        calls: list[tuple[str, str, int, object, float | None]] = []
+        calls: list[tuple[str, str, int, object, float | None, float]] = []
 
         def capture(
             model: str,
@@ -645,7 +657,7 @@ class TestExecutePointwiseTask:
         await semaphore.acquire()
         asyncio.get_event_loop().call_soon(lambda: asyncio.ensure_future(set_cancel_and_release()))
 
-        calls: list[tuple[str, str, int, object, float | None]] = []
+        calls: list[tuple[str, str, int, object, float | None, float]] = []
 
         def capture(
             model: str,
@@ -674,7 +686,7 @@ class TestExecutePointwiseTask:
         mock_client = MagicMock()
         mock_client.run = AsyncMock(side_effect=LLMProviderResponseError("500"))
         semaphore = asyncio.Semaphore(1)
-        calls: list[tuple[str, str, int, object, float | None]] = []
+        calls: list[tuple[str, str, int, object, float | None, float]] = []
 
         def capture(
             model: str,
@@ -1052,9 +1064,15 @@ class TestEvaluateMultiJudge:
 class TestCreateJudgeClientRouting:
     """Route/fallback/ZDR settings must survive into the dispatched client config."""
 
-    def _model_config(self, **kwargs: object) -> object:
+    def _model_config(self, **kwargs: Unpack[_JudgeClientOptions]) -> LLMModelConfig:
         registry = ApiKeyRegistry.model_validate({"openrouter": "k"})
-        with patch("nohiki_llm_client.LLMClient") as mock_client:
+        captured_settings: list[LLMSettings] = []
+
+        def capture_settings(settings: LLMSettings) -> MagicMock:
+            captured_settings.append(settings)
+            return MagicMock()
+
+        with patch("nohiki_llm_client.LLMClient", new=capture_settings):
             _create_judge_client(
                 "openrouter:qwen/qwen3.5-35b-a3b",
                 registry,
@@ -1062,8 +1080,7 @@ class TestCreateJudgeClientRouting:
                 ("atlas-cloud/fp8",),
                 **kwargs,
             )
-        settings = mock_client.call_args.args[0]
-        return settings.provider.models[0]
+        return captured_settings[0].provider.models[0]
 
     def test_propagates_provider_order(self) -> None:
         assert self._model_config().provider_order == ("atlas-cloud/fp8",)

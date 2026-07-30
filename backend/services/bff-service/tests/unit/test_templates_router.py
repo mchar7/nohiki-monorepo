@@ -591,13 +591,22 @@ class TestTemplateHandlers:
 
     def test_version_to_response_converts_projection(self) -> None:
         from bff_service.api.routers.templates import _version_to_response
+        from bff_service.db.models import TemplateProjection
+        from nohiki.common.v1 import AccessScope
 
         version_id = uuid.uuid4()
-        version = make_template_version_projection(
+        version = TemplateProjection(
             id=version_id,
+            namespace="default",
+            name="test-template",
+            display_name="Test Template",
             version="1.2.3",
             template_content="<html>Test</html>",
             content_schema={"test": "data"},
+            description=None,
+            access_scope=AccessScope.PUBLIC,
+            owner_id=None,
+            is_active=True,
         )
 
         response = _version_to_response(version)

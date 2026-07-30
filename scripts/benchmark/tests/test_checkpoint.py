@@ -35,6 +35,13 @@ def _make_judgment(*, score: int = 80) -> PointwiseJudgment:
     )
 
 
+def _judgment_score(record: JudgmentRecord) -> int:
+    """Return the score from a record expected to contain a successful judgment."""
+    judgment = record.judgment
+    assert judgment is not None
+    return judgment.inference_reasonableness.score
+
+
 class TestJudgmentRecord:
     """Tests for JudgmentRecord model."""
 
@@ -60,7 +67,7 @@ class TestJudgmentRecord:
         restored = JudgmentRecord.model_validate_json(json_str)
         assert restored.task_key == record.task_key
         assert restored.cost_usd == pytest.approx(0.0025)
-        assert restored.judgment.inference_reasonableness.score == 90
+        assert _judgment_score(restored) == 90
 
 
 class TestJudgeCheckpoint:
@@ -395,7 +402,7 @@ class TestCheckpointManager:
 
         assert manager.completed_count_for_judge("judge-a") == 1
         assert manager.existing_cost_for_judge("judge-a") == pytest.approx(0.02)
-        assert manager.existing_records_for_judge("judge-a")[0].judgment.inference_reasonableness.score == 70
+        assert _judgment_score(manager.existing_records_for_judge("judge-a")[0]) == 70
 
         recovered = CheckpointManager(result_file, "identity-v1")
         recovered.record_judgment("judge-a", "high", "treatment-a", "fixture-a", 1, _make_judgment(score=90), 0.03)
@@ -403,7 +410,7 @@ class TestCheckpointManager:
         assert recovered.completed_keys_for_judge("judge-a") == frozenset({"treatment-a::fixture-a::1"})
         assert recovered.completed_count_for_judge("judge-a") == 1
         assert recovered.existing_cost_for_judge("judge-a") == pytest.approx(0.03)
-        assert recovered.existing_records_for_judge("judge-a")[0].judgment.inference_reasonableness.score == 90
+        assert _judgment_score(recovered.existing_records_for_judge("judge-a")[0]) == 90
 
     def test_resume_summary_no_progress(self, tmp_path: Path) -> None:
         mgr = self._make_manager(tmp_path)
@@ -491,7 +498,7 @@ def test_checkpoint_resume_preserves_exact_judgment_units(tmp_path: Path) -> Non
             record.model_name,
             record.fixture_id,
             record.run_number,
-            record.judgment.inference_reasonableness.score,
+            _judgment_score(record),
             record.cost_usd,
         )
         for record in records
@@ -547,7 +554,7 @@ def test_corrupt_checkpoint_is_replaced_by_next_valid_record(tmp_path: Path) -> 
     recovered = CheckpointManager(result_file, "recovery")
 
     assert recovered.completed_keys_for_judge("judge-a") == frozenset({"candidate-a::fixture-1::1"})
-    assert recovered.existing_records_for_judge("judge-a")[0].judgment.inference_reasonableness.score == 84
+    assert _judgment_score(recovered.existing_records_for_judge("judge-a")[0]) == 84
 
 
 def test_duplicate_identity_lookup_does_not_scan_persisted_records(

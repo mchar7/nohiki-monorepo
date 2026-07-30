@@ -256,10 +256,11 @@ class TestSchemaHandlers:
 
     def test_version_to_response_converts_projection(self) -> None:
         from bff_service.api.routers.schemas import _version_to_response
+        from bff_service.db.models import SchemaVersionProjection
 
         version_id = uuid.uuid4()
         family_id = uuid.uuid4()
-        version = make_schema_version_projection(
+        version = SchemaVersionProjection(
             id=version_id,
             family_id=family_id,
             version=5,

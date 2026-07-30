@@ -64,7 +64,7 @@ class TestRunResult:
         assert run.retry_count is None
 
     def test_run_with_output_json(self) -> None:
-        output = {"cleaned_title": "Software Engineer", "cleaned_company": "Acme"}
+        output: dict[str, object] = {"cleaned_title": "Software Engineer", "cleaned_company": "Acme"}
         run = RunResult(
             fixture_id="fix1",
             run_number=1,
@@ -213,7 +213,9 @@ class TestModelResult:
                 ),
             ],
         )
-        assert model.retry_count_stdev > 0
+        retry_count_stdev = model.retry_count_stdev
+        assert retry_count_stdev is not None
+        assert retry_count_stdev > 0
 
     def test_retry_count_stdev_single_run(self) -> None:
         model = ModelResult(
@@ -1081,9 +1083,9 @@ class TestSaveDurability:
         events: list[str] = []
         real_replace = os.replace
 
-        def record_replace(src: object, dst: object) -> None:
+        def record_replace(src: Path, dst: Path) -> None:
             events.append("replace")
-            real_replace(src, dst)  # type: ignore[arg-type]
+            real_replace(src, dst)
 
         def record_fsync(_fd: object) -> None:
             events.append("fsync")

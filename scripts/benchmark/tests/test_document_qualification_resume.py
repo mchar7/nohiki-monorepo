@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -125,7 +126,7 @@ def _route(alias: str, cases: list[DocumentCaseResult]) -> RouteQualification:
 def _result(
     routes: dict[str, RouteQualification] | None = None,
     *,
-    evidence_environment: str = "test",
+    evidence_environment: Literal["production", "test"] = "test",
 ) -> DocumentQualificationResult:
     return DocumentQualificationResult(
         contract_version="document-contract-v1",
@@ -272,7 +273,7 @@ def test_separate_routes_append_and_only_full_production_chain_qualifies() -> No
 
 
 def test_test_double_evidence_can_never_become_production_qualified() -> None:
-    routes = {
+    routes: dict[str, RouteQualification] = {
         f"treatment-{alias}": _route(alias, [_case(alias, fixture_id) for fixture_id in _FIXTURES])
         for alias in ("sol", "opus", "kimi")
     }

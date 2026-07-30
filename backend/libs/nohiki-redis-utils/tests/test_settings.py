@@ -161,24 +161,18 @@ class TestRedisMixinProductionValidation:
         """Test that plaintext Redis DSN raises error in production."""
         monkeypatch.setenv("ENVIRONMENT", "production")
         with pytest.raises(ValidationError, match="Redis must use rediss:// \\(SSL\\) in production"):
-            _TestRedisSettings(
-                redis=RedisSettings.model_validate({"dsn": "redis://localhost:6379/0"}),
-            )
+            _TestRedisSettings.model_validate({"redis": {"dsn": "redis://localhost:6379/0"}})
 
     def test_ssl_in_production_succeeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that SSL Redis DSN succeeds in production."""
         monkeypatch.setenv("ENVIRONMENT", "production")
-        settings = _TestRedisSettings(
-            redis=RedisSettings.model_validate({"dsn": "rediss://secure-host:6379/0"}),
-        )
+        settings = _TestRedisSettings.model_validate({"redis": {"dsn": "rediss://secure-host:6379/0"}})
         assert settings.redis.connection_string.startswith("rediss://")
 
     def test_development_allows_plaintext(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that development mode allows plaintext Redis."""
         monkeypatch.setenv("ENVIRONMENT", "development")
-        settings = _TestRedisSettings(
-            redis=RedisSettings.model_validate({"dsn": "redis://localhost:6379/0"}),
-        )
+        settings = _TestRedisSettings.model_validate({"redis": {"dsn": "redis://localhost:6379/0"}})
         assert settings.redis.connection_string.startswith("redis://")
 
     def test_instrument_redis_property(self) -> None:
@@ -188,7 +182,5 @@ class TestRedisMixinProductionValidation:
 
     def test_redis_url_property(self) -> None:
         """Test redis_url convenience property."""
-        settings = _TestRedisSettings(
-            redis=RedisSettings.model_validate({"dsn": "redis://myhost:6379/0"}),
-        )
+        settings = _TestRedisSettings.model_validate({"redis": {"dsn": "redis://myhost:6379/0"}})
         assert settings.redis_url == "redis://myhost:6379/0"

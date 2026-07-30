@@ -8,7 +8,7 @@ import json
 import subprocess
 import sys
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -127,9 +127,9 @@ async def test_deadcode_fails_closed_without_ripgrep(
     ]
 
 
-def _valid_skylos_result(*, findings: list[object] | None = None) -> bytes:
+def _valid_skylos_result(*, findings: Sequence[object] | None = None) -> bytes:
     payload = {
-        "unused_functions": findings or [],
+        "unused_functions": list(findings) if findings is not None else [],
         "unused_imports": [],
         "unused_classes": [],
         "unused_variables": [],

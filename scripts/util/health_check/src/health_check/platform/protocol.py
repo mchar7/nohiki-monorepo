@@ -98,18 +98,6 @@ class Platform(Protocol):
         """Restart failed connector/tasks for one canonical connector only."""
         ...
 
-    def check_oom_killed(self) -> list[str]:
-        """Return workload names whose last termination was OOMKilled."""
-        ...
-
-    def check_pending_pods(self) -> list[tuple[str, str]]:
-        """Return pending workload names and aggregate reasons."""
-        ...
-
-    def get_resource_usage(self) -> dict[str, dict[str, str]]:
-        """Return aggregate CPU and memory usage by workload."""
-        ...
-
     def is_infra_managed(self) -> bool:
         """Return True if this platform manages infrastructure (postgres, redis, kafka).
 

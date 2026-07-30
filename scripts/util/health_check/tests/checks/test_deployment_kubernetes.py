@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from health_check.checks.kubernetes._resources import JsonObject
 from health_check.checks.kubernetes.flux_convergence import K8sFluxConvergenceCheck
 from health_check.checks.kubernetes.gateway_api_readiness import K8sGatewayApiReadinessCheck
 from health_check.checks.kubernetes.image_pull_failures import K8sImagePullFailuresCheck
@@ -107,7 +108,7 @@ def _assert_no_topology(details: tuple[str, ...]) -> None:
 
 class TestK8sImagePullFailuresCheck:
     async def test_passes_when_pods_have_no_pull_failures(self) -> None:
-        pod = {
+        pod: JsonObject = {
             "metadata": {"name": "bff"},
             "status": {"containerStatuses": [{"name": "api", "state": {"running": {}}}]},
         }
@@ -117,7 +118,7 @@ class TestK8sImagePullFailuresCheck:
 
     @pytest.mark.parametrize("reason", ["ErrImagePull", "ImagePullBackOff", "ErrImageNeverPull"])
     async def test_fails_for_each_image_pull_reason_without_registry_coordinates(self, reason: str) -> None:
-        pod = {
+        pod: JsonObject = {
             "metadata": {"name": "doc-content"},
             "status": {
                 "containerStatuses": [
@@ -264,11 +265,11 @@ class TestK8sGatewayApiReadinessCheck:
         _assert_no_topology(result.details)
 
     async def test_fails_when_gateway_or_route_is_not_accepted(self) -> None:
-        gateway = {
+        gateway: JsonObject = {
             "metadata": {"name": "public"},
             "status": {"conditions": [_condition("Accepted", "False", "Invalid"), _condition("Programmed")]},
         }
-        route = {
+        route: JsonObject = {
             "metadata": {"name": "api"},
             "status": {
                 "parents": [
@@ -289,7 +290,7 @@ class TestK8sGatewayApiReadinessCheck:
         assert any("HTTPRoute/api parent 1: Accepted=False" in detail for detail in result.details)
 
     async def test_fails_when_route_has_no_parent_conditions(self) -> None:
-        route = {"metadata": {"name": "orphaned"}, "status": {"parents": []}}
+        route: JsonObject = {"metadata": {"name": "orphaned"}, "status": {"parents": []}}
 
         result = await K8sGatewayApiReadinessCheck().execute(
             self._platform(_response(_gateway("public")), _response(route))

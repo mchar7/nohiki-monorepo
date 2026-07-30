@@ -17,6 +17,7 @@ from health_check.core.models import (
 )
 from health_check.core.runner import CheckRunner
 from health_check.platform.models import PlatformTarget
+from health_check.platform.protocol import Platform
 
 from ._helpers import MockPlatform, make_metadata
 
@@ -28,7 +29,6 @@ def _make_check(
     category: CheckCategory = CheckCategory.INFRASTRUCTURE,
 ) -> HealthCheck:
     """Build a simple check stub that returns the given status."""
-    from health_check.platform.protocol import Platform
 
     class _Stub(HealthCheck):
         @property
@@ -48,7 +48,6 @@ def _make_check(
 
 def _make_crashing_check(check_id: str) -> HealthCheck:
     """Build a check stub that raises an unexpected exception."""
-    from health_check.platform.protocol import Platform
 
     class _CrashingStub(HealthCheck):
         @property
@@ -62,44 +61,52 @@ def _make_crashing_check(check_id: str) -> HealthCheck:
     return _CrashingStub()
 
 
+class _RepairableCheck(HealthCheck):
+    def __init__(
+        self,
+        states: list[CheckStatus],
+        action: FixResult | BaseException | None,
+        fix_delay: float,
+    ) -> None:
+        self._states = states
+        self._action = action
+        self._fix_delay = fix_delay
+        self.executions = 0
+        self.fixes = 0
+
+    @property
+    def metadata(self) -> CheckMetadata:
+        return make_metadata(check_id="repairable", platforms=frozenset({PlatformTarget.COMPOSE}))
+
+    @property
+    def supports_fix(self) -> bool:
+        return True
+
+    @property
+    def fix_timeout(self) -> float:
+        return 0.01
+
+    async def execute(self, platform: Platform) -> CheckResult:
+        status = self._states[min(self.executions, len(self._states) - 1)]
+        self.executions += 1
+        return self._make_result(status, f"execution {self.executions}")
+
+    async def fix(self, _platform: Platform, _check_result: CheckResult) -> FixResult:
+        self.fixes += 1
+        if self._fix_delay:
+            await asyncio.sleep(self._fix_delay)
+        if isinstance(self._action, BaseException):
+            raise self._action
+        return self._action or FixResult("repairable", FixStatus.SUCCESS, "repaired", action_id="typed.repair")
+
+
 def _make_repairable_check(
     states: list[CheckStatus],
     *,
     action: FixResult | BaseException | None = None,
     fix_delay: float = 0.0,
-) -> HealthCheck:
-    from health_check.platform.protocol import Platform
-
-    class _Repairable(HealthCheck):
-        executions = 0
-        fixes = 0
-
-        @property
-        def metadata(self) -> CheckMetadata:
-            return make_metadata(check_id="repairable", platforms=frozenset({PlatformTarget.COMPOSE}))
-
-        @property
-        def supports_fix(self) -> bool:
-            return True
-
-        @property
-        def fix_timeout(self) -> float:
-            return 0.01
-
-        async def execute(self, platform: Platform) -> CheckResult:
-            status = states[min(self.executions, len(states) - 1)]
-            self.executions += 1
-            return self._make_result(status, f"execution {self.executions}")
-
-        async def fix(self, platform: Platform, check_result: CheckResult) -> FixResult:
-            self.fixes += 1
-            if fix_delay:
-                await asyncio.sleep(fix_delay)
-            if isinstance(action, BaseException):
-                raise action
-            return action or FixResult("repairable", FixStatus.SUCCESS, "repaired", action_id="typed.repair")
-
-    return _Repairable()
+) -> _RepairableCheck:
+    return _RepairableCheck(states, action, fix_delay)
 
 
 class TestCheckRunner:
@@ -151,7 +158,6 @@ class TestCheckRunner:
         assert "Unexpected internal failure" in (suite.results[0].error or "")
 
     async def test_timeout_produces_error_status(self) -> None:
-        from health_check.platform.protocol import Platform
 
         class _SlowCheck(HealthCheck):
             @property
@@ -202,7 +208,6 @@ class TestCheckRunner:
     async def test_multi_tier_ordering(self) -> None:
         """Checks in tier 1 wait for tier 0 to complete."""
         execution_order: list[str] = []
-        from health_check.platform.protocol import Platform
 
         class _OrderedCheck(HealthCheck):
             def __init__(self, check_id: str, depends_on: frozenset[str]) -> None:
