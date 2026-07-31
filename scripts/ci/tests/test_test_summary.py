@@ -634,7 +634,7 @@ async def test_nonzero_pytest_exit_has_explicit_controller_result(
 
 @pytest.mark.asyncio
 async def test_package_pytest_uv_command_does_not_sync(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """The package primitive must preserve orchestrator-supplied pytest arguments."""
+    """The package primitive must preserve caller-supplied pytest arguments."""
     commands: list[tuple[str, ...]] = []
 
     async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> _SuccessfulPytestProcess:
@@ -772,7 +772,7 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
 
     docker_smoke = next(
         step
-        for step in workflow["jobs"]["container-contracts"]["steps"]
+        for step in workflow["jobs"]["worker"]["steps"]
         if step.get("name") == "Smoke production frontend container"
     )
     assert (

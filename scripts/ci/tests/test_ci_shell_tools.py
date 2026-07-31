@@ -58,7 +58,6 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     assert set(jobs) == {
         "changes",
         "worker",
-        "container-contracts",
         "playwright-image",
         "title-policy",
         "checks",
@@ -72,13 +71,9 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
         for step in _steps(jobs["worker"])
         if "run" in step and not str(step.get("name", "")).startswith(("Open ", "Report "))
     )
-    container_contracts = "\n".join(_commands(jobs["container-contracts"]))
     playwright_image = "\n".join(_commands(jobs["playwright-image"]))
-    assert "test_frontend_delivery.py::test_frontend_container_build_and_hardened_runtime_smoke" in container_contracts
-    assert (
-        "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary"
-        in container_contracts
-    )
+    assert "test_frontend_delivery.py::test_frontend_container_build_and_hardened_runtime_smoke" in work
+    assert "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary" in work
     assert "typescript/apps/frontend/node_modules/.bin/playwright" in playwright_image
 
     commands = (

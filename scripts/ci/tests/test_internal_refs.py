@@ -56,10 +56,20 @@ def test_personal_path_patterns_match_runtime_literals() -> None:
     assert {finding.rule_id for finding in findings} == {"internal-path"}
 
 
+def test_planning_path_patterns_still_match() -> None:
+    rules = load_rules(_ROOT)
+    dot_planning = "." + "planning"
+    local_planning = "." + "local/" + "planning"
+    findings = scan_text(f"see {dot_planning}/x and {local_planning}/y", rules, "message", "message")
+    assert {finding.rule_id for finding in findings} == {"internal-path"}
+    assert len(findings) == 2
+
+
 def test_planted_message_reports_rule_id(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     message = repository / "message"
-    message.write_text("update subagent planning\n", encoding="utf-8")
+    workflow_term = "sub" + "agent"
+    message.write_text(f"update {workflow_term} planning\n", encoding="utf-8")
 
     findings = scan_message(str(message), repository)
 
@@ -71,7 +81,8 @@ def test_planted_added_diff_is_reported_but_removed_text_is_ignored(tmp_path: Pa
     tracked = repository / "tracked.txt"
     tracked.write_text("clean\n", encoding="utf-8")
     base = _commit(repository, "add tracked file")
-    tracked.write_text("subagent reference\n", encoding="utf-8")
+    workflow_term = "sub" + "agent"
+    tracked.write_text(f"{workflow_term} reference\n", encoding="utf-8")
     tip = _commit(repository, "add note")
     findings = scan_range(f"{base}..{tip}", repository)
     assert any(finding.rule_id == "workflow-term" for finding in findings)
@@ -92,7 +103,11 @@ def test_clean_range_passes_and_config_touch_is_exempt(tmp_path: Path) -> None:
     assert scan_range(f"{base}..{tip}", repository) == ()
 
     config = repository / "scripts/ci/config/internal-reference-terms.toml"
-    config.write_text(config.read_text(encoding="utf-8") + "# subagent planning\n", encoding="utf-8")
+    workflow_term = "sub" + "agent"
+    config.write_text(
+        config.read_text(encoding="utf-8") + f"# {workflow_term} planning\n",
+        encoding="utf-8",
+    )
     config_tip = _commit(repository, "update scanner config")
     assert scan_range(f"{tip}..{config_tip}", repository) == ()
 

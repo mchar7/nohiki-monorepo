@@ -422,25 +422,35 @@ def test_canonical_release_and_local_image_specs_are_equal() -> None:
     assert release_specs == normalized_inventory_specs
 
 
-def test_checks_workflow_container_contracts_split_by_artifact_budget() -> None:
+def test_checks_workflow_consolidates_container_contracts_without_playwright() -> None:
     workflow = yaml.safe_load(_CHECKS_WORKFLOW.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
 
-    assert jobs["container-contracts"]["timeout-minutes"] == 13
+    assert "container-contracts" not in jobs
     assert jobs["playwright-image"]["timeout-minutes"] == 9
     assert jobs["playwright-image"]["permissions"] == {"contents": "read"}
-    # The container maxima are job-inclusive. The explicit transition
-    # and reserve keep the accepted union within each timeout. If hosted timings
-    # show imbalance, update these budgets through a normal commit.
-    container_budget = 6.9 + 2.6 + 1.5
     playwright_budget = 7.6 + 1.4
-    assert container_budget == pytest.approx(11.0)
-    assert container_budget <= jobs["container-contracts"]["timeout-minutes"]
-    assert jobs["container-contracts"]["timeout-minutes"] - container_budget == pytest.approx(2.0)
     assert playwright_budget == pytest.approx(jobs["playwright-image"]["timeout-minutes"])
-    frontend_steps = jobs["container-contracts"]["steps"]
+
+    worker = jobs["worker"]
+    frontend_steps = worker["steps"]
+    assert worker["env"]["CONTAINER_CONTRACTS_SELECTED"] == (
+        "${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' "
+        "&& needs.changes.outputs.title_only != 'true' && "
+        "(needs.changes.outputs.broad_unbounded == 'true' || "
+        "needs.changes.outputs.frontend_smoke == 'true' || "
+        "needs.changes.outputs.otel_collector == 'true') }}"
+    )
+    buildx = next(step for step in frontend_steps if step.get("name") == "Set up Docker Buildx")
+    assert buildx["id"] == "container-buildx"
+    assert buildx["if"] == (
+        "env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"
+    )
+    assert buildx["uses"] == ("docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c")
     frontend_build = next(step for step in frontend_steps if step.get("name") == "Build production frontend image")
-    assert frontend_build["if"] == "needs.changes.outputs.frontend_smoke == 'true'"
+    assert frontend_build["if"] == (
+        "env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"
+    )
     assert frontend_build["with"] == {
         "context": ".",
         "file": "typescript/apps/frontend/Dockerfile",
@@ -451,7 +461,7 @@ def test_checks_workflow_container_contracts_split_by_artifact_budget() -> None:
     }
     frontend_smoke = next(step for step in frontend_steps if step.get("name") == "Smoke production frontend container")
     assert frontend_smoke == {
-        "if": "needs.changes.outputs.frontend_smoke == 'true'",
+        "if": ("env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"),
         "name": "Smoke production frontend container",
         "id": "frontend-smoke",
         "run": (
@@ -480,16 +490,34 @@ def test_checks_workflow_container_contracts_split_by_artifact_budget() -> None:
         for step in frontend_steps
         if step.get("name") == "Validate OpenTelemetry collector image and configs"
     )
-    assert (
-        next(
-            step["if"]
-            for step in frontend_steps
-            if step.get("name") == "Validate OpenTelemetry collector image and configs"
-        )
-        == "needs.changes.outputs.otel_collector == 'true'"
-    )
+    assert next(
+        step["if"]
+        for step in frontend_steps
+        if step.get("name") == "Validate OpenTelemetry collector image and configs"
+    ) == ("env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.otel_collector == 'true'")
     assert collector_run.endswith(
         "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary\n"
+    )
+
+    attestation = next(step for step in frontend_steps if step.get("name") == "Attest container contract execution")
+    assert attestation["if"] == "always() && env.CONTAINER_CONTRACTS_SELECTED == 'true'"
+    assert attestation["env"] == {
+        "BUILDX_OUTCOME": "${{ steps.container-buildx.outcome }}",
+        "IMAGE_OUTCOME": "${{ steps.frontend-image.outcome }}",
+        "SMOKE_OUTCOME": "${{ steps.frontend-smoke.outcome }}",
+        "OTEL_OUTCOME": "${{ steps.otel-collector.outcome }}",
+        "FRONTEND_SMOKE_EXPECTED": "${{ needs.changes.outputs.frontend_smoke }}",
+        "OTEL_EXPECTED": "${{ needs.changes.outputs.otel_collector }}",
+    }
+    for invocation in (
+        'require "$BUILDX_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" container-buildx',
+        'require "$IMAGE_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" frontend-image',
+        'require "$SMOKE_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" frontend-smoke',
+        'require "$OTEL_OUTCOME" "$OTEL_EXPECTED" otel-collector',
+    ):
+        assert invocation in attestation["run"]
+    assert worker["outputs"]["container_contracts_executed"] == (
+        "${{ steps.container-contracts.outputs.executed == 'true' && 'true' || '' }}"
     )
 
 
