@@ -9,7 +9,7 @@ The flow is deterministic and side-effect free until `apply_plan` is called:
    temp-file + `os.replace`, applies the TOML edits via `tomlkit`, validates
    the mutated root TOML with `tomllib` before committing it, and prints Rich
    hints for work the scaffolder deliberately does not automate (Kafka topics,
-   compose/k8s entries, AGENTS.md role table).
+   compose/k8s entries, CONTRIBUTING.md role table).
 
 Atomicity guarantees:
   - Each individual file write is atomic (temp + fsync + rename).
