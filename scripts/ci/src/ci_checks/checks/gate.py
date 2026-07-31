@@ -326,7 +326,7 @@ def _extract_gate_evidence(repository: str, head_sha: str) -> _GateEvidence:
             attestation = _download_attestation(repository, candidate.run_id)
         except _AttestationUnavailableError:
             continue
-        if attestation.event_action == "edited" or attestation.commit_class != "broad":
+        if attestation.event_action == "edited" or attestation.base_sha != identity.first_parent_sha:
             continue
         return _GateEvidence(
             associated_pr_merged=True,
@@ -335,7 +335,7 @@ def _extract_gate_evidence(repository: str, head_sha: str) -> _GateEvidence:
             tested_tree_sha=attestation.tested_tree_sha,
             pushed_tree_sha=identity.tree_sha,
         )
-    msg = "no successful non-edited broad Checks attestation found"
+    msg = "no successful non-edited Checks attestation matches the pushed base"
     raise _EvidenceError(msg)
 
 

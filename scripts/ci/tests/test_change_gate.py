@@ -239,7 +239,7 @@ def _valid_protected_evidence(head_sha: str = "head") -> ProtectedMainEvidence:
     )
 
 
-def test_protected_main_broad_green_same_tree_selects_standard_smoke() -> None:
+def test_protected_main_validated_same_tree_selects_standard_smoke() -> None:
     decision = evaluate(
         {"uv.lock"},
         _synthetic_packages(),
@@ -842,10 +842,10 @@ def test_pnpm_manifest_breach_emits_both_payload_legs() -> None:
     assert json.loads(outputs["worker_units"]) == ["python", "frontend"]
 
 
-def test_protected_main_smoke_emits_only_the_python_payload_leg() -> None:
+def test_protected_main_smoke_emits_only_the_cache_writing_payload_leg() -> None:
     decision = GateDecision(protected_main_smoke=True)
 
-    assert json.loads(render_outputs(decision, (), "push")["worker_units"]) == ["python"]
+    assert json.loads(render_outputs(decision, (), "push")["worker_units"]) == ["frontend"]
 
 
 def _policy_reason(path: str) -> BroadReason:
@@ -1334,7 +1334,7 @@ def _run_gate_evidence(
     return values, calls, result.output
 
 
-def test_gate_evidence_extracts_success_through_fake_gh_subprocess(
+def test_gate_evidence_accepts_standard_validation_through_fake_gh_subprocess(
     tmp_path: Path,
     gate_evidence_harness: tuple[dict[str, str], Path],
 ) -> None:
@@ -1348,6 +1348,52 @@ def test_gate_evidence_extracts_success_through_fake_gh_subprocess(
         "CI_PUSHED_TREE_SHA": "tree-merge",
     }
     assert any(call[:3] == ["run", "download", "101"] for call in calls)
+
+
+def test_gate_evidence_rejects_attested_base_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    api_payloads: list[object] = [
+        [
+            {
+                "number": 17,
+                "merged_at": "2026-07-21T12:00:00Z",
+                "merge_commit_sha": "merge-sha",
+                "head": {"sha": "pr-head"},
+                "base": {"sha": "base-sha"},
+            }
+        ],
+        {
+            "sha": "merge-sha",
+            "commit": {"tree": {"sha": "tree-merge"}},
+            "parents": [{"sha": "base-sha"}, {"sha": "pr-head"}],
+        },
+        {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "name": "Checks",
+                    "event": "pull_request",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "head_sha": "pr-head",
+                }
+            ]
+        },
+    ]
+    monkeypatch.setattr(checks_gate, "_gh_json", lambda _args: api_payloads.pop(0))
+    monkeypatch.setattr(
+        checks_gate,
+        "_download_attestation",
+        lambda _repository, _run_id: checks_gate._Attestation(
+            "tree-merge",
+            "synchronize",
+            "standard",
+            101,
+            "other-base",
+        ),
+    )
+
+    with pytest.raises(checks_gate._EvidenceError, match="matches the pushed base"):
+        checks_gate._extract_gate_evidence("mchar7/nohiki-monorepo", "merge-sha")
 
 
 def test_gate_evidence_exposes_merge_ref_tree_mismatch_for_fail_closed_gate(
@@ -1365,7 +1411,7 @@ def test_gate_evidence_exposes_merge_ref_tree_mismatch_for_fail_closed_gate(
 
     assert values["CI_TESTED_TREE_SHA"] == "tree-merge-ref"
     assert values["CI_PUSHED_TREE_SHA"] == "tree-pushed"
-    assert not evidence.proves_broad_tree("merge-sha")
+    assert not evidence.proves_validated_tree("merge-sha")
 
 
 def test_gate_evidence_missing_latest_artifact_falls_back_to_older_attested_run(

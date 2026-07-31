@@ -69,7 +69,7 @@ class BroadReason:
 
 @dataclass(frozen=True, slots=True)
 class ProtectedMainEvidence:
-    """Repository and pull-request evidence for a protected-main smoke."""
+    """Repository and pull-request evidence for a protected-main validation reuse."""
 
     associated_pr_merged: bool
     merge_commit_sha: str
@@ -77,7 +77,7 @@ class ProtectedMainEvidence:
     tested_tree_sha: str
     pushed_tree_sha: str
 
-    def proves_broad_tree(self, head_sha: str) -> bool:
+    def proves_validated_tree(self, head_sha: str) -> bool:
         """Return whether the successful Checks run tested the pushed tree."""
         return (
             self.associated_pr_merged
@@ -172,7 +172,7 @@ def _apply_event_context(decision: GateDecision, context: EventContext) -> None:
             return
         case "push":
             evidence = context.protected_main
-            if context.ref_name == "main" and evidence is not None and evidence.proves_broad_tree(context.head_sha):
+            if context.ref_name == "main" and evidence is not None and evidence.proves_validated_tree(context.head_sha):
                 decision.full = False
                 decision.protected_main_smoke = True
                 decision.reasons.clear()
@@ -281,7 +281,7 @@ _WORKER_UNIT_ORDER = ("python", "frontend")
 def _worker_units(decision: GateDecision, outputs: dict[str, str]) -> tuple[str, ...]:
     """Return the named worker legs needed for this decision."""
     if decision.protected_main_smoke:
-        return ("python",)
+        return ("frontend",)
     if decision.full:
         return _WORKER_UNIT_ORDER
 

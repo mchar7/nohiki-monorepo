@@ -70,6 +70,46 @@ def _wall_verdict_script() -> str:
     )
 
 
+def _protected_main_fan_in(worker_result: str) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is required")
+    step = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Require every selected check")
+    command = str(step["run"])
+    values = {
+        "needs.changes.result": "success",
+        "needs.changes.outputs.full": "false",
+        "needs.changes.outputs.broad": "false",
+        "needs.changes.outputs.commit_class": "standard",
+        "needs.changes.outputs.standard": "true",
+        "needs.worker.result": worker_result,
+        "needs.container-contracts.result": "skipped",
+        "needs.playwright-image.result": "skipped",
+        "needs.title-policy.result": "skipped",
+    }
+    for expression, value in values.items():
+        command = command.replace(f"${{{{ {expression} }}}}", value)
+    assert "${{" not in command
+    return subprocess.run(
+        [bash, "-euo", "pipefail", "-c", command],
+        env=os.environ
+        | {
+            "CONTAINER_EXPECTED": "false",
+            "NODE_GROUP_EXPECTED": "false",
+            "PLAYWRIGHT_EXPECTED": "false",
+            "TITLE_POLICY_EXPECTED": "false",
+            "WORKER_COMMITLINT": "",
+            "WORKER_COMMITLINT_EXPECTED": "false",
+            "WORKER_CONTAINER_CONTRACTS": "",
+            "WORKER_NODE_GROUP": "",
+            "WORK_EXPECTED": "true",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def _accounting_span(
     jobs: list[dict[str, object]],
     *,
@@ -663,6 +703,27 @@ def test_hadolint_enumerates_canonical_and_suffixed_dockerfiles() -> None:
 
     command = hadolint["run"]
     assert "just docker-lint" in command
+
+
+def test_protected_main_reuse_preserves_cache_publication_and_checks_verdict() -> None:
+    outputs = render_outputs(GateDecision(protected_main_smoke=True), (), "push")
+    assert json.loads(outputs["worker_units"]) == ["frontend"]
+
+    jobs = _jobs()
+    worker_setup = next(step for step in _steps(jobs["worker"]) if step.get("uses") == "./.github/actions/setup-ci")
+    assert worker_setup["with"]["payload"] == "${{ matrix.unit == 'python' && 'python' || 'full' }}"
+    assert worker_setup["with"]["save-ready-cache"] == (
+        "${{ matrix.unit == 'frontend' && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
+    )
+
+    checks = jobs["checks"]
+    assert checks["name"] == "Checks"
+    assert checks["if"] == "always()"
+    assert "worker" in checks["needs"]
+    assert _protected_main_fan_in("success").returncode == 0
+    rejected = _protected_main_fan_in("skipped")
+    assert rejected.returncode != 0
+    assert "worker was selected but concluded skipped" in rejected.stderr
 
 
 def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
@@ -1312,3 +1373,14 @@ def test_router_publishes_the_image_selection_as_an_artifact_not_a_job_output() 
     outputs = {name: value for name, value in jobs["changes"]["outputs"].items() if name not in FLAG_NAMES}
     assert not [name for name in outputs if "matrix" in name or "image" in name]
     assert not [name for name, value in outputs.items() if "matrix" in str(value) or "image" in str(value)]
+
+
+def test_fan_in_container_verdict_reads_the_worker_not_a_retired_job() -> None:
+    workflow = (_ROOT / ".github/workflows/checks.yml").read_text(encoding="utf-8")
+
+    assert "needs.container-contracts" not in workflow, "fan-in still references the retired job"
+
+    checks = _jobs()["checks"]
+    step = next(s for s in _steps(checks) if s.get("name") == "Require every selected check")
+    assert step["env"]["WORKER_CONTAINER_CONTRACTS"] == "${{ needs.worker.outputs.container_contracts_executed }}"
+    assert "container-contracts" not in checks["needs"]
