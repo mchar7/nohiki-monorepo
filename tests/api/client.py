@@ -29,9 +29,6 @@ HEALTH_PROBE_INTERVAL = 0.25
 MAX_POLL_INTERVAL = 1.0
 type JSONValue = None | bool | int | float | str | list[JSONValue] | dict[str, JSONValue]
 type QueryValue = str | int
-type RequestValue = (
-    None | bool | int | float | str | bytes | list[RequestValue] | tuple[RequestValue, ...] | dict[str, RequestValue]
-)
 
 ACCOUNT_ENDPOINT = "/api/v1/account"
 TEMPLATE_FAMILIES_ENDPOINT = "/api/v1/template-families"
@@ -94,15 +91,15 @@ class NohikiClient:
         self,
         method: str,
         url: str,
-        **kwargs: RequestValue,
+        *,
+        params: dict[str, QueryValue] | None = None,
     ) -> requests.Response:
         """Execute request with automatic token refresh on 401.
 
         If request returns 401 Unauthorized, attempts to refresh the access token
         using the refresh token cookie, then retries the original request once.
         """
-        kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
-        resp = self.session.request(method, url, **kwargs)
+        resp = self.session.request(method, url, params=params, timeout=DEFAULT_TIMEOUT)
 
         if resp.status_code == HTTP_UNAUTHORIZED and self.is_authenticated:
             logger.debug("Got 401, refreshing token...")
@@ -111,7 +108,7 @@ class NohikiClient:
                 refresh_resp = self.session.post(refresh_url, timeout=DEFAULT_TIMEOUT)
                 refresh_resp.raise_for_status()
                 logger.debug("Token refreshed, retrying request")
-                resp = self.session.request(method, url, **kwargs)
+                resp = self.session.request(method, url, params=params, timeout=DEFAULT_TIMEOUT)
             except HTTPError:
                 logger.warning("Token refresh failed, returning original 401 response")
 
@@ -926,7 +923,8 @@ class NohikiClient:
                         break
                     if line is None:
                         continue
-                    current, event = self._parse_sse_line(line, current)
+                    decoded_line = line.decode() if isinstance(line, bytes) else line
+                    current, event = self._parse_sse_line(decoded_line, current)
                     if event is None:
                         continue
                     events.append(event)

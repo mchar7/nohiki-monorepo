@@ -346,7 +346,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
 
     full_scan = steps["Scan repository for secrets"]
     assert full_scan["if"].endswith("env.DOCS_ONLY != 'true'")
-    assert "detect --source . --config .gitleaks.toml --no-banner --redact" in full_scan["run"]
+    assert "just secrets-scan" in full_scan["run"]
     # Matrix units share one outputs map. The runner skips an output whose expression is the
     # empty string and never sends it (actions/runner src/Runner.Worker/JobExtension.cs:789-805),
     # so spelling the negative case as '' makes the unit that ran the step the only writer.
@@ -494,7 +494,7 @@ def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> No
     worker = _jobs()["worker"]
     steps = {step.get("name"): step for step in _steps(worker)}
     node_lane = steps["Run Node workspace contract tests"]
-    assert f"{_CI_TESTS} -m {_NODE_WORKSPACE_MARKER}" in str(node_lane["run"])
+    assert "just test-node-contracts" in str(node_lane["run"])
 
     # The Python payload restores no node_modules, so a marked test cannot pass in that unit.
     setup = next(step for step in _steps(worker) if step.get("uses") == "./.github/actions/setup-ci")
@@ -523,7 +523,7 @@ def test_skylos_cache_tests_run_only_where_the_private_analyzer_is_installed() -
     worker = _jobs()["worker"]
     steps = {step.get("name"): step for step in _steps(worker)}
     lane = steps["Run Skylos cache contract tests"]
-    assert f"{_CI_TESTS} -m {_SKYLOS_MARKER}" in str(lane["run"])
+    assert "just test-skylos-cache" in str(lane["run"])
 
     # One value decides both the lane and the install. Restating either condition in terms of the
     # units or the router flags it expands to is what would let the two drift, and the lane would
@@ -662,8 +662,7 @@ def test_hadolint_enumerates_canonical_and_suffixed_dockerfiles() -> None:
     hadolint = next(step for step in lint_steps if step.get("name") == "Lint Dockerfiles (hadolint)")
 
     command = hadolint["run"]
-    assert "'*Dockerfile'" in command
-    assert "'*Dockerfile.*'" in command
+    assert "just docker-lint" in command
 
 
 def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
@@ -1094,14 +1093,11 @@ def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
 
 def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> None:
     steps = {step.get("name"): step for step in _steps(_jobs()["worker"])}
-    assert steps["Lint frontend"]["run"] == ("pnpm --filter nohiki-frontend exec biome ci --reporter=github .")
-    assert steps["Lint frontend architecture (Steiger)"]["run"] == ("pnpm --filter nohiki-frontend run lint:fsd")
-    assert "biome ci --reporter=github src/" in steps["Lint edge worker"]["run"]
+    assert steps["Lint frontend"]["run"] == "nix develop .#ci --command just fe-lint"
+    assert steps["Lint frontend architecture (Steiger)"]["run"] == "nix develop .#ci --command just fe-fsd"
     assert "exec tsc --noEmit" in steps["Typecheck edge worker"]["run"]
     assert "exec vitest run" in steps["Test edge worker"]["run"]
-    # A summary label is prepended to the step; the work command must stay the final line, verbatim.
-    frontend_run = str(steps["Test frontend"]["run"]).strip().splitlines()
-    assert frontend_run[-1] == "pnpm -C typescript/apps/frontend test --run --maxWorkers=100%"
+    assert str(steps["Test frontend"]["run"]).endswith("just fe-test")
 
 
 def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> None:
@@ -1135,10 +1131,9 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> Non
         assert ".venv-lint" not in lint_step["run"]
         # Broad lints the whole tree from the same definition that lints the diff on standard.
         assert lint_step["env"]["RUFF_SCOPE"] == ("${{ needs.changes.outputs.broad == 'true' && 'ALL' || 'CHANGED' }}")
-        assert "--exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' ." in lint_step["run"]
-        assert '"$BASE_SHA..$HEAD_SHA"' in lint_step["run"]
-
-    # NODE_GROUP_EXPECTED is asserted against NODE_SETUP_SELECTED in
+    assert "just lint" in str(steps["Lint Python"]["run"])
+    assert "just format-check" in str(steps["Check Python formatting"]["run"])
+    assert "--exclude" not in lint_step["run"]
     # test_execution_attestations_are_not_scoped_to_one_commit_class.
 
     changed = steps["Scan changed content for secrets"]
@@ -1148,7 +1143,7 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> Non
 
     full = steps["Scan repository for secrets"]
     assert full["if"].endswith("env.DOCS_ONLY != 'true'")
-    assert "detect --source . --config .gitleaks.toml --no-banner --redact" in full["run"]
+    assert "just secrets-scan" in full["run"]
 
 
 def test_native_overlap_is_memory_bounded_to_measured_low_rss_pairs() -> None:
@@ -1186,8 +1181,7 @@ def test_deadcode_runs_once_with_split_static_cache_save() -> None:
     assert job["env"]["SKYLOS_CACHE_STATIC_TIER"] == "content"
     assert deadcode["env"]["SKYLOS_JOBS"] == "2"
     assert "--with" not in deadcode["run"]
-    assert "ci-checks deadcode" in deadcode["run"]
-    assert "--ci --fail --no-provenance" in deadcode["run"]
+    assert "just hygiene-deadcode-strict" in deadcode["run"]
 
     # Ruff and Skylos share a runner again, so the ordering the 196s rationale describes is
     # load-bearing here: ruff must not leave a .ruff_cache in the fingerprinted workspace.

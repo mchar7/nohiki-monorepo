@@ -35,6 +35,7 @@ from __future__ import annotations
 import functools
 import subprocess
 from pathlib import Path
+from typing import TypeIs
 
 import pytest
 import yaml
@@ -155,9 +156,13 @@ def helmrelease(relative: str, name: str) -> dict:
     pytest.fail(f"{relative} rendered no HelmRelease {name!r}")
 
 
+def _is_object_dict(value: object) -> TypeIs[dict[object, object]]:
+    return isinstance(value, dict)
+
+
 def _dig(value: object, path: tuple[str, ...]) -> object:
     for key in path:
-        assert isinstance(value, dict), f"expected a mapping at {key!r}, got {type(value).__name__}"
+        assert _is_object_dict(value), f"expected a mapping at {key!r}, got {type(value).__name__}"
         assert key in value, f"missing key {key!r}; have {sorted(value)}"
         value = value[key]
     return value

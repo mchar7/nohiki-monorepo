@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 import jwt
 
 TEST_JWT_SECRET = "test-jwt-secret-for-testing"  # noqa: S105 - public test-only signing key
@@ -14,7 +12,7 @@ TEST_USER_ID = "00000000-0000-0000-0000-000000000001"
 class TestJWTHandler:
     """Encode and decode JWTs with the shared test secret."""
 
-    def encode_jwt(self, payload: Mapping[str, object]) -> str:
+    def encode_jwt(self, payload: dict[str, object]) -> str:
         """Encode ``payload`` with the shared test secret."""
         return jwt.encode(payload, TEST_JWT_SECRET, algorithm=JWT_ALGORITHM)
 

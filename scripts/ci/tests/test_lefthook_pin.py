@@ -52,7 +52,6 @@ def _python_mutator_run() -> str:
     command = python_mutators[0]
     assert command["glob"] == "*.py"
     assert command["stage_fixed"] is True
-    assert command["exclude"] == ["**/alembic/**", "**/nohiki-domain-models/**"]
     run = command["run"]
     assert isinstance(run, str)
     return run
@@ -68,11 +67,9 @@ def test_lefthook_serializes_scalable_staged_python_mutator() -> None:
     assert "--diff-filter=ACMR" in run
     assert "mktemp" in run
     assert "trap" in run
-    assert "alembic" in run
-    assert "nohiki-domain-models" in run
 
-    check = "uv run --no-sync ruff check --fix --"
-    format_command = "uv run --no-sync ruff format --"
+    check = "uv run --no-sync ruff check --fix --force-exclude"
+    format_command = "uv run --no-sync ruff format --force-exclude"
     assert check in run
     assert format_command in run
     assert run.count("xargs -0 -r") == 2
@@ -161,8 +158,8 @@ def _run_python_mutator(
 
 def _recorded_paths(record: Path) -> dict[str, list[str]]:
     expected_prefixes = {
-        "check": ["run", "--no-sync", "ruff", "check", "--fix", "--"],
-        "format": ["run", "--no-sync", "ruff", "format", "--"],
+        "check": ["run", "--no-sync", "ruff", "check", "--fix", "--force-exclude", "--"],
+        "format": ["run", "--no-sync", "ruff", "format", "--force-exclude", "--"],
     }
     paths = {phase: [] for phase in expected_prefixes}
     for line in record.read_text(encoding="utf-8").splitlines():
@@ -216,16 +213,16 @@ def test_lefthook_python_mutator_handles_large_nul_safe_inventory(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("x = 1\n", encoding="utf-8")
         eligible.add(relative)
-    excluded = {
+    native_excluded = {
         "src/alembic/generated.py",
         "src/nohiki-domain-models/model.py",
-        "src/not-python.txt",
-        "deleted.py",
     }
-    for relative in excluded - {"deleted.py"}:
+    not_forwarded = {"src/not-python.txt", "deleted.py"}
+    for relative in (native_excluded | not_forwarded) - {"deleted.py"}:
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("x = 1\n", encoding="utf-8")
+    eligible.update(native_excluded)
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
 
     record = repo / "uv-record.jsonl"
@@ -236,7 +233,7 @@ def test_lefthook_python_mutator_handles_large_nul_safe_inventory(
     expected = Counter(eligible)
     assert Counter(recorded["check"]) == expected
     assert Counter(recorded["format"]) == expected
-    assert set(recorded["check"]).isdisjoint(excluded)
+    assert set(recorded["check"]).isdisjoint(not_forwarded)
 
     record.write_text("", encoding="utf-8")
     failed = _run_python_mutator(repo, run, record, fail_check=True)

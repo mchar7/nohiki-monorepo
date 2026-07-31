@@ -126,6 +126,7 @@ class TestStoredListingProto:
         """Test StoredListing with compensation using correct currency enum."""
         from nohiki.common.v1 import (
             Compensation,
+            CompensationBound,
             MonetaryAmount,
             PaymentFrequency,
         )
@@ -137,8 +138,8 @@ class TestStoredListingProto:
             company_name="RichCorp",
             description="Competitive salary",
             compensation=Compensation(
-                min_amount=MonetaryAmount(minor_units=12000000, currency=CurrencyCode.USD),
-                max_amount=MonetaryAmount(minor_units=15000000, currency=CurrencyCode.USD),
+                min_amount=CompensationBound(amount=MonetaryAmount(minor_units=12000000, currency=CurrencyCode.USD)),
+                max_amount=CompensationBound(amount=MonetaryAmount(minor_units=15000000, currency=CurrencyCode.USD)),
                 frequency=PaymentFrequency.ANNUALLY,
             ),
             discovered_timestamp=datetime.now(UTC),
@@ -147,9 +148,13 @@ class TestStoredListingProto:
             version=1,
         )
 
-        assert stored.compensation.min_amount.minor_units == 12000000
-        assert stored.compensation.min_amount.currency == CurrencyCode.USD
-        assert stored.compensation.frequency == PaymentFrequency.ANNUALLY
+        compensation = stored.compensation
+        assert compensation is not None
+        minimum = compensation.min_amount
+        assert minimum is not None
+        assert minimum.amount.minor_units == 12000000
+        assert minimum.amount.currency == CurrencyCode.USD
+        assert compensation.frequency == PaymentFrequency.ANNUALLY
 
 
 class TestEventMetadataProto:

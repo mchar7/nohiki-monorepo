@@ -152,6 +152,8 @@ class TestCorrelationEvaluatedEvent:
 
         assert event.correlation_id == correlation_id
         assert event.fit_score == 82
+        assert event.listing_snapshot is not None
+        assert event.pref_snapshot is not None
         assert event.listing_snapshot.title == "Senior Python Developer"
         assert event.pref_snapshot.search_keywords == ["Python", "Django"]
 

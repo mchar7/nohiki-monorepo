@@ -202,6 +202,7 @@ def _render(values_path: Path, contract: LocalContractSnapshot) -> list[dict[str
         if not isinstance(data, dict):
             message = f"rendered Secret {name} has no stringData"
             raise ProvisionError(message)
+        data = cast(dict[str, object], data)
         document.pop("metadata")
         document["metadata"] = (
             {
@@ -217,7 +218,16 @@ def _render(values_path: Path, contract: LocalContractSnapshot) -> list[dict[str
             host = data.get("host")
             port = data.get("port")
             database = data.get("database")
-            if not all(isinstance(value, str) and value for value in (username, host, port, database)):
+            if (
+                not isinstance(username, str)
+                or not username
+                or not isinstance(host, str)
+                or not host
+                or not isinstance(port, str)
+                or not port
+                or not isinstance(database, str)
+                or not database
+            ):
                 message = f"rendered database Secret {name} is incomplete"
                 raise ProvisionError(message)
             password = secrets.token_urlsafe(36)
@@ -244,6 +254,7 @@ def _render(values_path: Path, contract: LocalContractSnapshot) -> list[dict[str
     if not isinstance(redis_data, dict):
         message = "rendered Redis Secret is malformed"
         raise ProvisionError(message)
+    redis_data = cast(dict[str, object], redis_data)
     # Valkey is auth-disabled locally; retain the exact consumer key without putting
     # a credential into the in-cluster DSN. A non-empty unused value remains SOPS-encrypted.
     if not redis_data.get("password"):
@@ -257,6 +268,7 @@ def _render(values_path: Path, contract: LocalContractSnapshot) -> list[dict[str
     if not isinstance(s3_data, dict):
         message = "rendered S3 Secret is malformed"
         raise ProvisionError(message)
+    s3_data = cast(dict[str, object], s3_data)
     selected.append(
         {
             "apiVersion": "v1",
@@ -286,6 +298,7 @@ def _verify_plain_inventory(documents: list[dict[str, object]], contract: LocalC
         if not isinstance(metadata, dict) or not isinstance(data, dict):
             message = "rendered Secret inventory is malformed"
             raise ProvisionError(message)
+        data = cast(dict[str, object], data)
         name = metadata.get("name")
         if not isinstance(name, str):
             message = "rendered Secret name is malformed"

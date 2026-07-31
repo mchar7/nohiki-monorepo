@@ -68,6 +68,7 @@ ignore = [
 "test_*.py" = ["S105", "S106"]  # hardcoded passwords acceptable in tests
 "conftest.py" = ["S105", "S106"]  # hardcoded passwords acceptable in test fixtures
 "run_tests.py" = ["S105", "S106"]  # hardcoded passwords acceptable in test runners
+"api/run_k8s_verification.py" = ["A002"]  # stdlib override requires the parameter name `format`
 
 [tool.coverage.run]
 source = ["integration", "api"]

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import TypeIs
 
 import pytest
 
@@ -10,10 +11,14 @@ OPENAPI_PATH = REPOSITORY_ROOT / "docs" / "api" / "nohiki.openapi.json"
 SSE_PATH = "/api/documents/{request_id}/events"
 
 
+def _is_string_object_mapping(value: object) -> TypeIs[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
 @pytest.fixture(scope="module")
 def openapi_contract() -> dict[str, object]:
     contract = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
-    assert isinstance(contract, dict)
+    assert _is_string_object_mapping(contract)
     return contract
 
 
@@ -22,16 +27,16 @@ def test_document_sse_contract_is_exact_request_scoped(
     openapi_contract: dict[str, object],
 ) -> None:
     paths = openapi_contract["paths"]
-    assert isinstance(paths, dict)
+    assert _is_string_object_mapping(paths)
 
     assert SSE_PATH in paths
     assert "/api/v1/documents/events" not in paths
     assert "/api/documents/events" not in paths
 
     operation_path = paths[SSE_PATH]
-    assert isinstance(operation_path, dict)
+    assert _is_string_object_mapping(operation_path)
     operation = operation_path["get"]
-    assert isinstance(operation, dict)
+    assert _is_string_object_mapping(operation)
     parameters = operation["parameters"]
     assert isinstance(parameters, list)
 
@@ -52,18 +57,18 @@ def test_document_sse_contract_accepts_cursor_only_in_last_event_id_header(
     openapi_contract: dict[str, object],
 ) -> None:
     paths = openapi_contract["paths"]
-    assert isinstance(paths, dict)
+    assert _is_string_object_mapping(paths)
     operation_path = paths[SSE_PATH]
-    assert isinstance(operation_path, dict)
+    assert _is_string_object_mapping(operation_path)
     operation = operation_path["get"]
-    assert isinstance(operation, dict)
+    assert _is_string_object_mapping(operation)
     parameters = operation["parameters"]
     assert isinstance(parameters, list)
 
     cursor_parameters = [
         parameter
         for parameter in parameters
-        if isinstance(parameter, dict) and parameter.get("name") == "Last-Event-ID"
+        if _is_string_object_mapping(parameter) and parameter.get("name") == "Last-Event-ID"
     ]
     assert len(cursor_parameters) == 1
     assert cursor_parameters[0]["in"] == "header"
