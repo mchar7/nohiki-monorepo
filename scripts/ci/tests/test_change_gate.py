@@ -1124,6 +1124,52 @@ def test_get_changed_files_push_raises_and_uses_three_dot(
     assert calls[-1] == ["git", "diff", "--name-only", "--no-renames", "abc123...HEAD"]
 
 
+def test_get_changed_files_push_prefers_main_over_an_already_pushed_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second push must still diff the whole branch, not just the increment.
+
+    Preferring `origin/<branch>` let a re-push select nothing and report success
+    having run no tests.
+    """
+    resolved: list[str] = []
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return subprocess.CompletedProcess(args, 0, "feature\n", "")
+        if args[:2] == ["git", "rev-parse"]:
+            resolved.append(args[2])
+            return subprocess.CompletedProcess(args, 0, f"sha-for-{args[2]}\n", "")
+        return subprocess.CompletedProcess(args, 0, "a.py\n", "")
+
+    monkeypatch.setattr(checks_tests.subprocess, "run", run)
+    checks_tests.get_changed_files(checks_tests.GitMode.PUSH)
+
+    assert resolved[0] == "origin/main", resolved
+    assert "origin/feature" not in resolved, "an already-pushed branch must not become the base"
+
+
+def test_get_changed_files_push_falls_back_when_main_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved: list[str] = []
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return subprocess.CompletedProcess(args, 0, "feature\n", "")
+        if args[:2] == ["git", "rev-parse"]:
+            resolved.append(args[2])
+            if args[2] == "origin/main":
+                return subprocess.CompletedProcess(args, 1, "", "unknown revision")
+            return subprocess.CompletedProcess(args, 0, "sha-for-feature\n", "")
+        return subprocess.CompletedProcess(args, 0, "a.py\n", "")
+
+    monkeypatch.setattr(checks_tests.subprocess, "run", run)
+    checks_tests.get_changed_files(checks_tests.GitMode.PUSH)
+
+    assert resolved == ["origin/main", "origin/feature"], resolved
+
+
 def _successful_runner(captured: list[str]) -> Callable[..., object]:
     async def run(
         packages: list[Package],
