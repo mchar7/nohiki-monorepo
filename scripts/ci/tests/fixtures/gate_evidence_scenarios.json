@@ -30,8 +30,9 @@
       "101": {
         "tested_tree_sha": "tree-merge",
         "event_action": "synchronize",
-        "commit_class": "broad",
-        "run_id": 101
+        "commit_class": "standard",
+        "run_id": 101,
+        "base_sha": "base-sha"
       }
     }
   },
@@ -66,8 +67,9 @@
       "101": {
         "tested_tree_sha": "tree-merge-ref",
         "event_action": "synchronize",
-        "commit_class": "broad",
-        "run_id": 101
+        "commit_class": "standard",
+        "run_id": 101,
+        "base_sha": "base-sha"
       }
     }
   },
@@ -111,7 +113,8 @@
         "tested_tree_sha": "tree-merge",
         "event_action": "synchronize",
         "commit_class": "broad",
-        "run_id": 101
+        "run_id": 101,
+        "base_sha": "base-sha"
       }
     }
   },
@@ -155,7 +158,8 @@
         "tested_tree_sha": "tree-merge",
         "event_action": "opened",
         "commit_class": "broad",
-        "run_id": 101
+        "run_id": 101,
+        "base_sha": "base-sha"
       }
     }
   },
@@ -217,13 +221,15 @@
         "tested_tree_sha": "tree-latest",
         "event_action": "reopened",
         "commit_class": "broad",
-        "run_id": 104
+        "run_id": 104,
+        "base_sha": "base-sha"
       },
       "101": {
         "tested_tree_sha": "tree-old",
         "event_action": "opened",
         "commit_class": "broad",
-        "run_id": 101
+        "run_id": 101,
+        "base_sha": "base-sha"
       }
     }
   },
