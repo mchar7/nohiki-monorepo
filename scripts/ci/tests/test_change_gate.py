@@ -540,7 +540,7 @@ def test_flake_broad_change_selects_every_devshell_sourced_lane() -> None:
         "proto_breaking",
         "image_matrix_parity",
         "api_schema_freshness",
-        # container-contracts has no broad disjunct, so only these two can select it.
+        # These select the container contract steps now carried by the frontend worker.
         "frontend_smoke",
         "otel_collector",
     } <= decision.flags
@@ -1046,8 +1046,8 @@ def test_gate_cli_selects_every_lane_when_the_diff_cannot_be_resolved(
     assert result.exit_code == 0, result.output
     parsed = dict(line.split("=", maxsplit=1) for line in output.read_text().splitlines())
     assert parsed["full"] == "true"
-    # Container contracts and the Playwright image dispatch on their flag alone, so a broad
-    # class does not reach them; every lane must be selected when the router knows nothing.
+    # Container checks and the Playwright image still dispatch on their flags, so every lane
+    # must be selected when the router cannot resolve the diff.
     assert [flag for flag in FLAG_NAMES if parsed[flag] != "true"] == []
 
 

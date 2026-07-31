@@ -295,6 +295,9 @@ jobs:
       SKYLOS_CACHE_STATIC_TIER: content
       # One selector for the deploy key, the static cache and the scan, so the three cannot drift.
       DEADCODE_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.affected_packages != '') && github.event.pull_request.head.repo.fork != true }}
+      # Mirrors the removed container job gate. The matrix selector keeps the work on the
+      # frontend leg while preserving every original router condition.
+      CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
     outputs:
       # Single-writer: the runner skips an output whose expression is the empty string
       # (actions/runner JobExtension.cs:789-805), so a unit that did not run contributes
@@ -308,6 +311,7 @@ jobs:
       ready_cache_hit: ${{ steps.setup-ci.outputs.ready-cache-hit == 'true' && 'true' || '' }}
       deadcode_cache_missed: ${{ env.DEADCODE_SELECTED == 'true' && steps.setup-ci.outputs.skylos-cache-hit != 'true' && 'true' || '' }}
       deadcode_cache_hit: ${{ env.DEADCODE_SELECTED == 'true' && steps.setup-ci.outputs.skylos-cache-hit == 'true' && 'true' || '' }}
+      container_contracts_executed: ${{ steps.container-contracts.outputs.executed == 'true' && 'true' || '' }}
     steps:
       - name: Start worker timing
         id: timing
@@ -606,6 +610,76 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: nix develop .#ci --command just proto-breaking "$BASE_SHA"
 
+      - name: Set up Docker Buildx
+        id: container-buildx
+        if: env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build production frontend image
+        id: frontend-image
+        if: env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        env:
+          # The action's own job summary is vendor advertising in a report we own.
+          DOCKER_BUILD_SUMMARY: false
+        with:
+          context: .
+          file: typescript/apps/frontend/Dockerfile
+          load: true
+          tags: nohiki-frontend-smoke:ci
+          cache-from: type=gha,scope=frontend-smoke
+          cache-to: type=gha,scope=frontend-smoke,mode=max
+
+      - name: Smoke production frontend container
+        id: frontend-smoke
+        if: env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'
+        run: >
+          nix develop .#ci --command uv run --no-sync pytest
+          scripts/ci/tests/test_frontend_delivery.py::test_frontend_container_build_and_hardened_runtime_smoke
+        env:
+          CONTAINER_RUNTIME: docker
+          FRONTEND_SMOKE_IMAGE: nohiki-frontend-smoke:ci
+
+      - name: Validate OpenTelemetry collector image and configs
+        id: otel-collector
+        if: env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.otel_collector == 'true'
+        run: >
+          nix develop .#ci --command uv run --no-sync pytest
+          scripts/ci/tests/test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary
+
+      - name: Attest container contract execution
+        id: container-contracts
+        if: always() && env.CONTAINER_CONTRACTS_SELECTED == 'true'
+        env:
+          BUILDX_OUTCOME: ${{ steps.container-buildx.outcome }}
+          IMAGE_OUTCOME: ${{ steps.frontend-image.outcome }}
+          SMOKE_OUTCOME: ${{ steps.frontend-smoke.outcome }}
+          OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
+          FRONTEND_SMOKE_EXPECTED: ${{ needs.changes.outputs.frontend_smoke }}
+          OTEL_EXPECTED: ${{ needs.changes.outputs.otel_collector }}
+        run: |
+          require() {
+            outcome="$1"
+            expected="$2"
+            name="$3"
+            if [ "$expected" = true ]; then
+              test "$outcome" = success || {
+                echo "$name was selected but concluded $outcome" >&2
+                return 1
+              }
+            else
+              test "$outcome" = skipped || {
+                echo "$name was not selected but concluded $outcome" >&2
+                return 1
+              }
+            fi
+          }
+          require "$BUILDX_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" container-buildx
+          require "$IMAGE_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" frontend-image
+          require "$SMOKE_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" frontend-smoke
+          require "$OTEL_OUTCOME" "$OTEL_EXPECTED" otel-collector
+          echo "executed=true" >> "$GITHUB_OUTPUT"
+
       - name: Report worker cost
         if: always()
         env:
@@ -614,6 +688,10 @@ jobs:
           UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
           UNIT: ${{ matrix.unit }}
           SMOKE: ${{ needs.changes.outputs.protected_main_smoke }}
+          CONTAINER_SELECTED: ${{ env.CONTAINER_CONTRACTS_SELECTED }}
+          IMAGE_OUTCOME: ${{ steps.frontend-image.outcome }}
+          SMOKE_OUTCOME: ${{ steps.frontend-smoke.outcome }}
+          OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
         run: |
           now="$(date +%s)"
           # A unit reports only what it actually ran. `all` runs everything; a broad unit runs
@@ -644,6 +722,8 @@ jobs:
           record "${{ needs.changes.outputs.image_matrix_parity }}" frontend 'just image-matrix-check'
           record "${{ needs.changes.outputs.proto_breaking }}" frontend 'buf breaking'
           record "${{ needs.changes.outputs.commitlint_expected }}" frontend 'commitlint PR range; commitlint PR title'
+          record "${{ needs.changes.outputs.frontend_smoke }}" frontend 'Buildx production frontend image; hardened-runtime container smoke'
+          record "${{ needs.changes.outputs.otel_collector }}" frontend 'OpenTelemetry collector image and rendered config validation'
           {
             # Results is filled by the tools that emit their own block. A bounded broad run
             # routinely selects none of them, so an empty section is the normal outcome and has to
@@ -657,6 +737,14 @@ jobs:
               echo "nothing to report here. The secret scan below is the only work this unit did."
             fi
             echo
+            if [ "$CONTAINER_SELECTED" = true ]; then
+              echo
+              echo "| Container check | Outcome |"
+              echo "|---|---|"
+              echo "| Production frontend image build | $IMAGE_OUTCOME |"
+              echo "| Frontend container hardened-runtime smoke | $SMOKE_OUTCOME |"
+              echo "| OpenTelemetry collector image and rendered configs | $OTEL_OUTCOME |"
+            fi
             echo "### Cost"
             echo
             echo "| Phase | Seconds |"
@@ -694,145 +782,6 @@ jobs:
             echo '- changed-content or repository-wide `gitleaks` scan'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  container-contracts:
-    name: Container contracts
-    needs: [changes]
-    if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true')
-    runs-on: ubuntu-latest
-    timeout-minutes: 13
-    permissions:
-      # This job saves no cache, so it purges none either. Its BuildKit `type=gha` layer cache
-      # goes through the runtime cache service on ACTIONS_RUNTIME_TOKEN, not the job token,
-      # exactly as `playwright-image` below already demonstrates on `contents: read` alone.
-      contents: read
-    steps:
-      - name: Start worker timing
-        id: timing
-        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Open container contracts summary
-        run: |
-          {
-            echo "## Container contracts"
-            echo
-            echo "Builds the production frontend image and validates the OpenTelemetry collector"
-            echo "image against its rendered configs."
-            echo
-            echo "| Context | Value |"
-            echo "|---|---|"
-            echo "| Run | \`$GITHUB_RUN_ID\` |"
-            echo "| Tested SHA | \`${GITHUB_SHA:0:7}\` |"
-            echo
-            echo "### Results"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Set up Docker Buildx
-        if: needs.changes.outputs.frontend_smoke == 'true'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Set up container contract environment
-        id: setup-ci
-        uses: ./.github/actions/setup-ci
-        with:
-          ready-cache: "true"
-          # No `skylos-deploy-key`: this job runs no dead-code scan, so it needs no private fork.
-
-      - name: Mark unique work start
-        id: unique
-        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
-
-      - name: Build production frontend image
-        id: frontend-image
-        if: needs.changes.outputs.frontend_smoke == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        env:
-          # The action's own job summary is vendor advertising in a report we own.
-          DOCKER_BUILD_SUMMARY: false
-        with:
-          context: .
-          file: typescript/apps/frontend/Dockerfile
-          load: true
-          tags: nohiki-frontend-smoke:ci
-          cache-from: type=gha,scope=frontend-smoke
-          cache-to: type=gha,scope=frontend-smoke,mode=max
-
-      - name: Smoke production frontend container
-        id: frontend-smoke
-        if: needs.changes.outputs.frontend_smoke == 'true'
-        run: >
-          nix develop .#ci --command uv run --no-sync pytest
-          scripts/ci/tests/test_frontend_delivery.py::test_frontend_container_build_and_hardened_runtime_smoke
-        env:
-          CONTAINER_RUNTIME: docker
-          FRONTEND_SMOKE_IMAGE: nohiki-frontend-smoke:ci
-
-      - name: Validate OpenTelemetry collector image and configs
-        id: otel-collector
-        if: needs.changes.outputs.otel_collector == 'true'
-        run: >
-          nix develop .#ci --command uv run --no-sync pytest
-          scripts/ci/tests/test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary
-
-      - name: Report container contracts cost
-        if: always()
-        env:
-          CACHE_OUTCOMES: ${{ steps.setup-ci.outputs.cache-telemetry }}
-          JOB_STARTED: ${{ steps.timing.outputs.started }}
-          UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
-          IMAGE_OUTCOME: ${{ steps.frontend-image.outcome }}
-          SMOKE_OUTCOME: ${{ steps.frontend-smoke.outcome }}
-          OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
-        run: |
-          now="$(date +%s)"
-          # `skipped` is the runner's word for a step whose gate was false, which is a different
-          # statement from a check that ran and passed. Both are reported, neither is inferred.
-          outcome() { [ "$1" = skipped ] && echo "not selected" || echo "$1"; }
-          # shellcheck disable=SC2016 # Markdown code spans are literal.
-          {
-            echo
-            echo "| Check | Outcome |"
-            echo "|---|---|"
-            echo "| Production frontend image build | $(outcome "$IMAGE_OUTCOME") |"
-            echo "| Frontend container hardened-runtime smoke | $(outcome "$SMOKE_OUTCOME") |"
-            echo "| OpenTelemetry collector image and rendered configs | $(outcome "$OTEL_OUTCOME") |"
-            echo
-            echo "### Cost"
-            echo
-            echo "| Phase | Seconds |"
-            echo "|---|---:|"
-            echo "| Setup | $((UNIQUE_STARTED - JOB_STARTED)) |"
-            echo "| Unique work | $((now - UNIQUE_STARTED)) |"
-            echo
-            echo "| Cache | Outcome | Key |"
-            echo "|---|---|---|"
-            read -ra entries <<< "${CACHE_OUTCOMES:-}"
-            for entry in "${entries[@]}"; do
-              name="${entry%%=*}"
-              value="${entry#*=}"
-              key="${value#*:}"
-              state="${value%%:*}"
-              if [ "$key" = none ]; then
-                key="—"
-              else
-                # A 64-character hash tells a human nothing; the full key is in the job log.
-                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1…/g')\`"
-              fi
-              printf '| %s | %s | %s |\n' "$name" "${state//-/ }" "$key"
-            done
-            echo
-            echo "Image layers come from the BuildKit \`type=gha\` cache, which is not an"
-            echo "\`actions/cache\` entry and reports its hit rate in the build step log."
-            echo
-            echo "### Commands"
-            echo
-            echo '- Buildx build of `typescript/apps/frontend/Dockerfile`'
-            echo '- `pytest test_frontend_delivery.py::test_frontend_container_build_and_hardened_runtime_smoke`'
-            echo '- `pytest test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary`'
-          } >> "$GITHUB_STEP_SUMMARY"
 
   playwright-image:
     name: Playwright runner image
@@ -970,13 +919,15 @@ jobs:
             echo "### Results"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # commitlint is a root devDependency, so the lightweight Node-only path is enough and the
-      # full pnpm workspace is never installed.
+      # commitlint is a root devDependency, so the Node payload restores the shared node_modules
+      # cache and skips Nix.
       - name: Set up commit policy environment
         id: setup-ci
         uses: ./.github/actions/setup-ci
         with:
           node: "true"
+          ready-cache: "true"
+          payload: node
 
       - name: Mark unique work start
         id: unique
@@ -1039,7 +990,6 @@ jobs:
     needs:
       - changes
       - worker
-      - container-contracts
       - playwright-image
       - title-policy
     runs-on: ubuntu-latest
@@ -1091,6 +1041,7 @@ jobs:
           NODE_GROUP_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.edge_worker == 'true') }}
           WORKER_NODE_GROUP: ${{ needs.worker.outputs.node_group_executed }}
           CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
+          WORKER_CONTAINER_CONTRACTS: ${{ needs.worker.outputs.container_contracts_executed }}
           PLAYWRIGHT_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true') }}
         run: |
           test '${{ needs.changes.result }}' = success
@@ -1141,7 +1092,14 @@ jobs:
           else
             test "$WORKER_NODE_GROUP" != true
           fi
-          require '${{ needs.container-contracts.result }}' "$CONTAINER_EXPECTED" container-contracts
+          if [ "$CONTAINER_EXPECTED" = true ]; then
+            test "$WORKER_CONTAINER_CONTRACTS" = true || {
+              echo "the selected worker did not complete every container contract" >&2
+              exit 1
+            }
+          else
+            test "$WORKER_CONTAINER_CONTRACTS" != true
+          fi
           require '${{ needs.playwright-image.result }}' "$PLAYWRIGHT_EXPECTED" playwright-image
           require '${{ needs.title-policy.result }}' "$TITLE_POLICY_EXPECTED" title-policy
 
@@ -1176,7 +1134,6 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           REUSED_RUN_ID: ${{ needs.changes.outputs.reused_run_id }}
           WORK_EXPECTED: ${{ (needs.changes.outputs.standard == 'true' || needs.changes.outputs.broad == 'true') && needs.changes.outputs.title_only != 'true' }}
-          CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
           PLAYWRIGHT_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true') }}
           TITLE_POLICY_EXPECTED: ${{ needs.changes.outputs.title_only == 'true' }}
           # Single-writer cache signals preserve hits and misses across the worker matrix.
@@ -1284,12 +1241,10 @@ jobs:
           # asserting a prior run already proved this tree. The expectation bits separate them.
           expected="$(jq -n \
             --argjson worker "$WORK_EXPECTED" \
-            --argjson container "$CONTAINER_EXPECTED" \
             --argjson playwright "$PLAYWRIGHT_EXPECTED" \
             --argjson title "$TITLE_POLICY_EXPECTED" \
-            '{worker: $worker, "Container contracts": $container,
-              "Playwright runner image": $playwright, "Title policy": $title,
-              "Router": true, "Checks": true}')"
+            '{worker: $worker, "Playwright runner image": $playwright,
+              "Title policy": $title, "Router": true, "Checks": true}')"
           {
             echo
             echo "| Job | Exact seconds | Rounded billable minutes | Conclusion |"

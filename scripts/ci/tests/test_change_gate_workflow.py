@@ -101,9 +101,9 @@ def _accounting_span(
 
 
 _CONTAINER_EXECUTORS = {
-    "frontend_smoke": "container-contracts",
+    "frontend_smoke": "worker",
     "frontend_e2e": "playwright-image",
-    "otel_collector": "container-contracts",
+    "otel_collector": "worker",
 }
 # One job definition owns every lane in both classes. The gate emits only the payload legs
 # selected by the decision, and never emits a third hygiene runner.
@@ -247,7 +247,7 @@ def test_real_multisurface_decisions_keep_the_consolidated_executor_topology() -
     assert selected_tests
     assert {"lint_markdown", "api_schema_freshness"} <= flake.flags
     # schema.d.ts is a build-context input of the frontend image, not of the Playwright runner.
-    assert _decision_executors(jobs, flake) == {"worker", "container-contracts"}
+    assert _decision_executors(jobs, flake) == {"worker"}
 
     container_union = evaluate(
         {
@@ -261,7 +261,6 @@ def test_real_multisurface_decisions_keep_the_consolidated_executor_topology() -
     assert {"frontend_smoke", "frontend_e2e", "otel_collector"} <= container_union.flags
     assert _decision_executors(jobs, container_union) == {
         "worker",
-        "container-contracts",
         "playwright-image",
     }
 
@@ -309,6 +308,9 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Test edge worker",
             "Validate PR commit messages",
             "Validate PR title (merge commit subject)",
+            "Build production frontend image",
+            "Smoke production frontend container",
+            "Validate OpenTelemetry collector image and configs",
         },
         "python": {"Run selected Python tests"},
     }
@@ -364,6 +366,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "${{ env.DEADCODE_SELECTED == 'true' && steps.setup-ci.outputs.skylos-cache-hit == 'true' "
             "&& 'true' || '' }}"
         ),
+        "container_contracts_executed": ("${{ steps.container-contracts.outputs.executed == 'true' && 'true' || '' }}"),
     }
 
 
@@ -383,6 +386,7 @@ def test_execution_attestations_are_not_scoped_to_one_commit_class() -> None:
     assert {name for name in worker_outputs if name.endswith("_executed")} == {
         "node_group_executed",
         "commitlint_executed",
+        "container_contracts_executed",
     }
     for name, value in worker_outputs.items():
         # A per-unit claim may read steps and matrix state; a commit class is not per-unit.
@@ -395,6 +399,10 @@ def test_execution_attestations_are_not_scoped_to_one_commit_class() -> None:
         assert "needs.changes.outputs.standard" not in str(env[name]), name
         assert "needs.changes.outputs.broad" not in str(env[name]), name
 
+    container_expectation = str(env["CONTAINER_EXPECTED"])
+    assert "needs.changes.outputs.standard == 'true'" not in container_expectation
+    assert "needs.changes.outputs.broad == 'true'" not in container_expectation
+
     # The Node expectation must track the same router flags the worker uses to request the
     # group. Compared as sets: disjunct order carries no meaning and is not a contract.
     def referenced_flags(expression: str) -> set[str]:
@@ -403,6 +411,10 @@ def test_execution_attestations_are_not_scoped_to_one_commit_class() -> None:
     assert referenced_flags(str(env["NODE_GROUP_EXPECTED"])) == referenced_flags(
         str(_jobs()["worker"]["env"]["NODE_SETUP_SELECTED"])
     )
+
+    container_selector = str(_jobs()["worker"]["env"]["CONTAINER_CONTRACTS_SELECTED"])
+    assert "matrix.unit == 'frontend'" in container_selector
+    assert referenced_flags(str(env["CONTAINER_EXPECTED"])) == referenced_flags(container_selector)
 
 
 def _unreachable_class_expressions(job: WorkflowJob) -> list[str]:
@@ -615,6 +627,10 @@ def test_title_edits_have_independent_concurrency_and_check_identities() -> None
     assert "needs.changes.outputs.commitlint_expected == 'true'" in str(title_policy["worker"]["if"])
     assert "needs.changes.outputs.title_only != 'true'" in str(jobs["worker"]["if"])
     assert jobs["title-policy"]["if"] == "needs.changes.outputs.title_only == 'true'"
+    title_setup = next(
+        step for step in _steps(jobs["title-policy"]) if step.get("name") == "Set up commit policy environment"
+    )
+    assert title_setup["with"] == {"node": "true", "ready-cache": "true", "payload": "node"}
     assert substantive["name"] == "Checks"
     # Checks is a required context on protected main, so suppressing it on an edited event would
     # leave the head without its required conclusion and let a title-only pass stand for validation.
@@ -748,7 +764,6 @@ def test_runtime_accounting_enforces_the_two_wall_targets_and_no_billable_ceilin
     assert "artifact_worker" not in command
 
     jobs = _jobs()
-    assert jobs["container-contracts"]["timeout-minutes"] == 13
     assert jobs["playwright-image"]["timeout-minutes"] == 9
     assert jobs["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
 
@@ -978,7 +993,6 @@ def test_runtime_accounting_jq_distinguishes_running_completed_and_both_skips() 
     ]
     expected = {
         "worker": True,
-        "Container contracts": False,
         "Playwright runner image": False,
         "Title policy": True,
         "Router": True,
@@ -1054,7 +1068,8 @@ def test_gated_jobs_depend_on_change_outputs() -> None:
 
 def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
     checks = _jobs()["checks"]
-    command = next(step for step in _steps(checks) if step.get("name") == "Require every selected check")["run"]
+    fan_in = next(step for step in _steps(checks) if step.get("name") == "Require every selected check")
+    command = fan_in["run"]
     assert "case '${{ needs.changes.outputs.commit_class }}' in" in command
     assert "standard)" in command
     assert "broad)" in command
@@ -1063,7 +1078,6 @@ def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
     # require rather than one per shard; a failing unit fails the job it belongs to.
     required = {
         "worker": "$WORK_EXPECTED",
-        "container-contracts": "$CONTAINER_EXPECTED",
         "playwright-image": "$PLAYWRIGHT_EXPECTED",
         "title-policy": "$TITLE_POLICY_EXPECTED",
     }
@@ -1071,6 +1085,9 @@ def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
     for job_id, expectation in required.items():
         assert f"require '${{{{ needs.{job_id}.result }}}}' \"{expectation}\" {job_id}" in command
     assert "$BROAD_EXPECTED" not in command
+    assert "WORKER_CONTAINER_CONTRACTS" in fan_in["env"]
+    assert 'test "$WORKER_CONTAINER_CONTRACTS" = true' in command
+    assert "needs.container-contracts" not in command
     assert "broad-environment" not in command
 
 
@@ -1183,11 +1200,10 @@ def test_deadcode_runs_once_with_split_static_cache_save() -> None:
 
 def test_cache_summaries_use_observed_action_outputs() -> None:
     jobs = _jobs()
-    setup_owners = (
+    setup_owners = {
         "worker",
-        "container-contracts",
         "title-policy",
-    )
+    }
     for owner in setup_owners:
         steps = {step.get("name"): step for step in _steps(jobs[owner])}
         setup = next(step for step in steps.values() if step.get("uses") == "./.github/actions/setup-ci")
@@ -1290,7 +1306,7 @@ def test_push_and_pull_request_runs_each_upload_exactly_one_router_artifact() ->
 
 def test_router_publishes_the_image_selection_as_an_artifact_not_a_job_output() -> None:
     jobs = _jobs()
-    assert set(jobs) == {"changes", "worker", "container-contracts", "playwright-image", "title-policy", "checks"}
+    assert set(jobs) == {"changes", "worker", "playwright-image", "title-policy", "checks"}
 
     # `image_matrix_parity` is a lane flag, not a build matrix; no other output may carry one.
     outputs = {name: value for name, value in jobs["changes"]["outputs"].items() if name not in FLAG_NAMES}
