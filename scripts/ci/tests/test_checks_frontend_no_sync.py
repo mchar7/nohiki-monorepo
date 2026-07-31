@@ -26,16 +26,15 @@ def test_smoke_production_frontend_container_uses_complete_ci_environment() -> N
     ]
     assert len(matching_steps) == 1, matching_steps
     job_id, smoke_step = matching_steps[0]
-    assert job_id == "container-contracts"
-    container_steps = jobs["container-contracts"]["steps"]
+    assert job_id == "worker"
+    worker_steps = jobs["worker"]["steps"]
     setup = next(
-        step
-        for step in container_steps
-        if isinstance(step, dict) and step.get("name") == "Set up container contract environment"
+        step for step in worker_steps if isinstance(step, dict) and step.get("name") == "Set up selected environments"
     )
     assert setup["uses"] == "./.github/actions/setup-ci"
-    assert setup["with"]["ready-cache"] == "true"
-    commands = [step["run"] for step in container_steps if isinstance(step, dict) and isinstance(step.get("run"), str)]
+    assert setup["with"]["ready-cache"] == "${{ env.NIX_SETUP_SELECTED }}"
+    assert setup["with"]["payload"] == "${{ matrix.unit == 'python' && 'python' || 'full' }}"
+    commands = [step["run"] for step in worker_steps if isinstance(step, dict) and isinstance(step.get("run"), str)]
     assert all("uv sync" not in command for command in commands)
 
     command = smoke_step.get("run")
@@ -71,7 +70,7 @@ def test_frontend_and_python_tests_split_only_for_broad() -> None:
 def test_container_builds_use_stable_per_image_buildkit_cache_scopes() -> None:
     jobs = _WORKFLOW["jobs"]
     cases = (
-        ("container-contracts", "Build production frontend image", "frontend-smoke"),
+        ("worker", "Build production frontend image", "frontend-smoke"),
         (
             "playwright-image",
             "Build Playwright runner image",
