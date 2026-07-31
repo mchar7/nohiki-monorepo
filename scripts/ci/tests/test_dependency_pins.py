@@ -10,7 +10,7 @@ from functools import cache
 from pathlib import Path
 from typing import cast
 
-from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow
+from _documents import WorkflowJob, WorkflowStep, load_jsonc, load_mapping, load_workflow
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RENOVATE = _ROOT / ".github" / "renovate.json5"
@@ -125,7 +125,104 @@ def _images(path: Path, repository: str) -> list[re.Match[str]]:
 
 
 def _renovate_config() -> dict[str, object]:
-    return load_mapping(_RENOVATE)
+    return load_jsonc(_RENOVATE)
+
+
+def _workspace_member_names() -> set[str]:
+    with _ROOT_PROJECT.open("rb") as project_file:
+        root_project = tomllib.load(project_file)
+
+    member_patterns = root_project["tool"]["uv"]["workspace"]["members"]
+    assert isinstance(member_patterns, list)
+    assert all(isinstance(pattern, str) for pattern in member_patterns)
+    member_projects = {
+        member / "pyproject.toml" for pattern in member_patterns for member in _ROOT.glob(cast(str, pattern))
+    }
+    assert all(project.is_file() for project in member_projects)
+
+    names: set[str] = set()
+    for member_project in member_projects:
+        with member_project.open("rb") as project_file:
+            name = tomllib.load(project_file)["project"]["name"]
+        assert isinstance(name, str)
+        names.add(name)
+
+    assert len(names) == len(member_projects), "uv workspace package names must be unique"
+    return names
+
+
+def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
+    rules = _renovate_config()["packageRules"]
+    assert isinstance(rules, list)
+    typed_rules = [rule for rule in rules if isinstance(rule, dict)]
+    assert len(typed_rules) == len(rules)
+
+    pypi_rules = [
+        rule for rule in typed_rules if rule.get("enabled") is False and rule.get("matchDatasources") == ["pypi"]
+    ]
+    assert len(pypi_rules) == 1
+    package_names = pypi_rules[0].get("matchPackageNames")
+    assert isinstance(package_names, list)
+    assert all(isinstance(name, str) for name in package_names)
+
+    workspace_names = _workspace_member_names()
+    configured_names = set(cast(list[str], package_names))
+    assert configured_names == workspace_names, (
+        f"workspace PyPI lookup rule is missing {sorted(workspace_names - configured_names)} "
+        f"and has stale names {sorted(configured_names - workspace_names)}"
+    )
+
+    assert any(
+        rule.get("enabled") is False
+        and rule.get("matchDatasources") == ["git-refs"]
+        and rule.get("matchPackageNames") == ["ssh://git@github.com/mchar7/skylos"]
+        for rule in typed_rules
+    )
+
+
+def test_renovate_abandonment_suppression_is_limited_to_verified_false_positives() -> None:
+    rules = _renovate_config()["packageRules"]
+    assert isinstance(rules, list)
+    threshold_rules = [rule for rule in rules if isinstance(rule, dict) and "abandonmentThreshold" in rule]
+    assert len(threshold_rules) == 2
+
+    finished_rules = [rule for rule in threshold_rules if rule.get("abandonmentThreshold") is None]
+    finite_rules = [rule for rule in threshold_rules if rule.get("abandonmentThreshold") == "4 years"]
+    assert len(finished_rules) == 1
+    assert len(finite_rules) == 1
+
+    finished_package_names = finished_rules[0].get("matchPackageNames")
+    finite_package_names = finite_rules[0].get("matchPackageNames")
+    assert isinstance(finished_package_names, list)
+    assert isinstance(finite_package_names, list)
+    assert all(isinstance(name, str) for name in [*finished_package_names, *finite_package_names])
+
+    configured_finished_names = set(cast(list[str], finished_package_names))
+    configured_finite_names = set(cast(list[str], finite_package_names))
+    assert len(configured_finished_names) == len(finished_package_names)
+    assert len(configured_finite_names) == len(finite_package_names)
+    assert configured_finished_names == {
+        "@codemirror/theme-one-dark",
+        "clsx",
+    }
+    assert configured_finite_names == {
+        "@dnd-kit/core",
+        "@dnd-kit/sortable",
+        "@dnd-kit/utilities",
+        "@testing-library/user-event",
+        "argon2-cffi",
+        "class-variance-authority",
+        "cmdk",
+        "html2text",
+        "jinja2",
+        "pytest-timeout",
+        "pytest-xdist",
+        "python-jobspy",
+        "semver",
+        "vitest-axe",
+    }
+    suppressed_names = configured_finished_names | configured_finite_names
+    assert suppressed_names.isdisjoint({"@microlabs/otel-cf-workers", "file-saver"})
 
 
 def _assert_cpu_development_sync(command: str) -> None:
