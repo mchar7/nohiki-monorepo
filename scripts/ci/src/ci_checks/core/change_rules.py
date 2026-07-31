@@ -396,7 +396,6 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
             "commitlint.config.*",
             ".vscode/**",
             ".agents/**",
-            ".windsurf/**",
             "docs/*",
             "docs/**/*",
         ),
