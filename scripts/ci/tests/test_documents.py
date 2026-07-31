@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,7 @@ from _documents import (
     Manifest,
     containers_of,
     load_compose,
+    load_jsonc,
     load_manifests,
     load_mapping,
     load_workflow,
@@ -32,6 +34,108 @@ def test_mapping_loaders_reject_non_mapping_documents(tmp_path: Path) -> None:
         load_workflow(path)
     with pytest.raises(TypeError, match=r"compose file .* must contain a mapping, got list"):
         load_compose(path)
+
+
+def test_jsonc_loader_preserves_double_slashes_inside_string(tmp_path: Path) -> None:
+    path = tmp_path / "config.json5"
+    path.write_text(r'{"url": "ssh://git@github.com/mchar7/skylos"}', encoding="utf-8")
+
+    assert load_jsonc(path) == {"url": "ssh://git@github.com/mchar7/skylos"}
+
+
+def test_jsonc_loader_honors_escaped_quotes_inside_string(tmp_path: Path) -> None:
+    path = tmp_path / "config.json5"
+    path.write_text(r'{"value": "escaped \" quote, then // text"}', encoding="utf-8")
+
+    assert load_jsonc(path) == {"value": 'escaped " quote, then // text'}
+
+
+def test_jsonc_loader_removes_line_comment(tmp_path: Path) -> None:
+    path = tmp_path / "config.json5"
+    path.write_text('{"value": 1, // removed\n"other": 2}', encoding="utf-8")
+
+    assert load_jsonc(path) == {"value": 1, "other": 2}
+
+
+def test_jsonc_loader_removes_block_comment(tmp_path: Path) -> None:
+    path = tmp_path / "config.json5"
+    path.write_text('{"value": /* removed */ 1}', encoding="utf-8")
+
+    assert load_jsonc(path) == {"value": 1}
+
+
+def test_jsonc_loader_preserves_block_comment_marker_inside_string(tmp_path: Path) -> None:
+    path = tmp_path / "config.json5"
+    path.write_text('{"value": "looks /* like a comment */"}', encoding="utf-8")
+
+    assert load_jsonc(path) == {"value": "looks /* like a comment */"}
+
+
+def test_jsonc_loader_removes_trailing_commas_from_mapping_and_sequence(tmp_path: Path) -> None:
+    path = tmp_path / "config.json5"
+    path.write_text('{"items": [1, 2,],}', encoding="utf-8")
+
+    assert load_jsonc(path) == {"items": [1, 2]}
+
+
+def test_jsonc_loader_rejects_non_mapping_root(tmp_path: Path) -> None:
+    path = tmp_path / "config.json5"
+    path.write_text("[1, 2]", encoding="utf-8")
+
+    with pytest.raises(TypeError, match=r"document .* must contain a mapping, got list"):
+        load_jsonc(path)
+
+
+def test_jsonc_loader_rejects_single_quoted_string_after_removing_comments(tmp_path: Path) -> None:
+    path = tmp_path / "config.json5"
+    path.write_text(
+        """{
+  "enabled": true, // scanner removes this
+  "value": 'single quoted'
+}""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(json.JSONDecodeError) as error:
+        load_jsonc(path)
+    assert "// scanner removes this" not in error.value.doc
+    assert "'single quoted'" in error.value.doc
+
+
+def test_jsonc_loader_rejects_unquoted_key_after_removing_comments(tmp_path: Path) -> None:
+    path = tmp_path / "config.json5"
+    path.write_text(
+        """{
+  /* scanner removes this */
+  unquoted: true
+}""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(json.JSONDecodeError) as error:
+        load_jsonc(path)
+    assert "/* scanner removes this */" not in error.value.doc
+    assert "unquoted" in error.value.doc
+
+
+def test_jsonc_loader_reads_real_renovate_config_without_comment_keys() -> None:
+    config = load_jsonc(_ROOT / ".github" / "renovate.json5")
+    rules = config["packageRules"]
+    assert isinstance(rules, list)
+
+    pending: list[object] = [rules]
+    comment_keys: list[str] = []
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if isinstance(key, str) and key.startswith("//"):
+                    comment_keys.append(key)
+                pending.append(nested)
+        elif isinstance(value, list):
+            pending.extend(value)
+
+    assert comment_keys == []
 
 
 def test_manifest_loader_skips_empty_documents_and_rejects_non_mappings() -> None:

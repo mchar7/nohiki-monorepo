@@ -61,6 +61,100 @@
       "dependencyDashboardApproval": true
     },
     {
+      // why: workspace members are never published to PyPI, so a lookup can only fail.
+      "description": "Disable PyPI lookups for uv workspace members",
+      "matchDatasources": ["pypi"],
+      "matchPackageNames": [
+        "ast-explorer",
+        "bff-service",
+        "calibrate-skill-thresholds",
+        "ci-checks",
+        "doc-content-service",
+        "doc-process-service",
+        "doc-template-service",
+        "gitops-contract-tests",
+        "health-check",
+        "job-correlation-evaluation-service",
+        "job-embedding-finetuning",
+        "job-ingest-discovery-service",
+        "job-ingest-enrichment-service",
+        "job-ingest-schedule-service",
+        "job-query-composition-service",
+        "job-storage-service",
+        "llm-benchmark",
+        "ml-compute-service",
+        "ml-gateway-service",
+        "nohiki-common-exceptions",
+        "nohiki-core-settings",
+        "nohiki-db-utils",
+        "nohiki-domain-models",
+        "nohiki-embedding-client",
+        "nohiki-fastapi-utils",
+        "nohiki-finance",
+        "nohiki-geo-utils",
+        "nohiki-integration-tests",
+        "nohiki-kafka-client",
+        "nohiki-llm-client",
+        "nohiki-ml-core",
+        "nohiki-ml-manifest",
+        "nohiki-observability",
+        "nohiki-qdrant-client",
+        "nohiki-redis-utils",
+        "nohiki-s3-client",
+        "nohiki-scaffold",
+        "nohiki-test-utils",
+        "notification-service",
+        "qdrant-init",
+        "skill-graph-service",
+        "skill-semantic-analysis",
+        "snapshot-refresh-job",
+        "sys-tick-job",
+        "tailor",
+        "user-auth-service",
+        "user-entitlement-service",
+        "user-pref-service",
+        "user-upload-service"
+      ],
+      "enabled": false
+    },
+    {
+      // why: the Skylos pin must not be bumped, so its git-refs lookup is intentionally disabled.
+      "description": "Disable lookups for the fixed Skylos pin",
+      "matchDatasources": ["git-refs"],
+      "matchPackageNames": ["ssh://git@github.com/mchar7/skylos"],
+      "enabled": false
+    },
+    {
+      // why: release inactivity cannot distinguish a finished package from an abandoned one.
+      "description": "Disable abandonment detection for intentionally finished packages",
+      "matchPackageNames": [
+        "@codemirror/theme-one-dark",
+        "clsx"
+      ],
+      "abandonmentThreshold": null
+    },
+    {
+      // why: active upstream development makes the default release-inactivity window a false positive.
+      "description": "Extend abandonment detection for actively developed infrequent-release packages",
+      "matchPackageNames": [
+        "@dnd-kit/core",
+        "@dnd-kit/sortable",
+        "@dnd-kit/utilities",
+        "@testing-library/user-event",
+        "argon2-cffi",
+        "class-variance-authority",
+        "cmdk",
+        "html2text",
+        "jinja2",
+        "pytest-timeout",
+        "pytest-xdist",
+        "python-jobspy",
+        "semver",
+        "vitest-axe"
+      ],
+      "abandonmentThreshold": "4 years"
+    },
+    {
       "description": "Group pnpm minor and patch updates",
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
