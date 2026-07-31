@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/sha
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/shared/ui/form.tsx';
 import { Input } from '@/shared/ui/input.tsx';
 import { SectionIcon } from '@/shared/ui/section-icon.tsx';
-import type { ProfileFormValues } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
 
 interface ProfileNameCardProps {
   readonly control: Control<ProfileFormValues>;
