@@ -10,12 +10,13 @@ list rather than restating any pattern.
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import subprocess
 import tomllib
 from collections.abc import Iterator, Mapping
 from functools import cache
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import yaml
 from ci_checks.core.change_rules import (
@@ -36,7 +37,8 @@ from ci_checks.core.packages import (
 _ROOT = Path(__file__).resolve().parents[3]
 _LEFTHOOK = _ROOT / "lefthook.yml"
 _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
-_UV_LOCK = _ROOT / "uv.lock"
+_JUSTFILE = _ROOT / "Justfile"
+_PYPROJECT = _ROOT / "pyproject.toml"
 
 # Every Python file, manifest and toolchain pin a workspace push lane must react to.
 # `.python-version`, `pyproject.toml` and `uv.lock` reach the hosted broad Python
@@ -121,6 +123,8 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
     },
     "pre-push": {
         "internal-refs-range": frozenset(),
+        "python-lint": frozenset(),
+        "python-format": frozenset(),
         "python-typecheck": _PYTHON_WORKSPACE_SURFACE,
         "frontend-typecheck": _NODE_TOOLCHAIN_SURFACE
         | {
@@ -133,6 +137,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
             "typescript/apps/frontend/vitest.config.*",
             "typescript/libs/**",
         },
+        "nix-check": frozenset({"flake.nix", "flake.lock"}),
         # No glob: the affected-test runner owns the selection policy. Asserted by
         # test_affected_test_selection_is_delegated_to_the_runner.
         "python-tests": frozenset(),
@@ -142,6 +147,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
                 "scripts/ci/tests/test_skylos_cache.py",
             }
         ),
+        "node-workspace-contract-tests": frozenset(),
         "frontend-tests": _NODE_TOOLCHAIN_SURFACE
         | _FRONTEND_LOCALE_SURFACE
         | {
@@ -221,6 +227,7 @@ _HOSTED_LANE_MIRRORS: dict[str, tuple[tuple[str, ...], ...]] = {
     "api_schema_freshness": (("api-schema-freshness",),),
     "image_matrix_parity": (("image-matrix-parity",),),
     "proto_breaking": (("proto-breaking",),),
+    "nix": (("nix-check",),),
 }
 
 # The change gate's own sources and the devshell that runs every lane. Hosted fails
@@ -251,10 +258,6 @@ _NOT_EXERCISED_LOCALLY: dict[tuple[str, str], str] = {
     ): "the staged formatter reads Python files; toolchain pins are pre-push work",
     ("python-check-format", "pyproject.toml"): "a ruff config change is applied to the *.py surface of the same commit",
     ("python-check-format", "uv.lock"): "a lock entry carries no Python source for ruff to format",
-    ("python-check-format", "**/alembic/**"): "ruff excludes alembic through its own config (pyproject.toml:261)",
-    ("python-check-format", "backend/libs/nohiki-domain-models/src/**"): (
-        "ruff excludes the generated dataclasses through its own config (pyproject.toml:262)"
-    ),
     ("frontend-lint", "biome.json"): "a root biome config change applies to the staged surface",
     ("frontend-lint", "biome.jsonc"): "a root biome config change applies to the staged surface",
     ("frontend-lint", ".npmrc"): "biome resolves from the shared node_modules lock, not from registry config",
@@ -323,11 +326,6 @@ _NOT_EXERCISED_LOCALLY: dict[tuple[str, str], str] = {
         "docker-lint",
         "**/*.dockerignore",
     ): "a dockerignore is not a Dockerfile; the hosted step excludes it too (checks.yml:453)",
-    ("python-check-format", "**/nohiki-domain-models/**"): (
-        "the generated-model package is excluded by both hosted branches, so no local gap exists: broad "
-        "passes `--exclude '**/nohiki-domain-models/**'` (checks.yml:387) and standard filters the package "
-        "out of the file list with a git pathspec before ruff is invoked (checks.yml:390)"
-    ),
     ("python-typecheck", "proto/*"): (
         "a proto edit moves no Python source until `just proto-gen` regenerates the dataclasses"
     ),
@@ -679,26 +677,6 @@ def test_directory_globs_carry_a_shallow_sibling() -> None:
     assert not missing, "nested globs hide the files directly inside their root:\n" + "\n".join(sorted(missing))
 
 
-def _editable_package_dirs() -> tuple[PurePosixPath, ...]:
-    """Editable source directories uv.lock declares, as the hosted ALL scope derives them.
-
-    Mirrors the inline reader in the hosted Typecheck backend step, which selects
-    every package whose source table carries an `editable` path.
-    """
-    lock = tomllib.loads(_UV_LOCK.read_text(encoding="utf-8"))
-    packages = lock["package"]
-    assert isinstance(packages, list)
-    return tuple(
-        PurePosixPath(str(package["source"]["editable"]))
-        for package in packages
-        if isinstance(package, dict) and "editable" in package.get("source", {})
-    )
-
-
-def _ty_excludes(command: str) -> tuple[str, ...]:
-    return tuple(re.findall(r"--exclude\s+'([^']+)'", command))
-
-
 def _hosted_typecheck_step_run() -> str:
     steps = yaml.safe_load(_CHECKS.read_text(encoding="utf-8"))["jobs"]["worker"]["steps"]
     matches = [step["run"] for step in steps if step.get("name") == "Typecheck backend"]
@@ -706,22 +684,30 @@ def _hosted_typecheck_step_run() -> str:
     return str(matches[0])
 
 
-def test_local_ty_surface_matches_the_hosted_editable_package_closure() -> None:
-    """Local ty must scan every editable workspace package with the hosted exclude set."""
-    local_run = _run_command("python-typecheck")
-    tokens = local_run.split()
-    start = tokens.index("check", tokens.index("ty")) + 1
-    scanned = tuple(PurePosixPath(token) for token in tokens[start:] if not token.startswith("-"))
-    assert scanned, "python-typecheck must hand at least one path to ty check"
+def _just_typecheck_recipe_run() -> str:
+    match = re.search(r"(?m)^typecheck-all:\n(?P<body>(?:    .*\n)+)", _JUSTFILE.read_text(encoding="utf-8"))
+    assert match is not None, "Justfile must declare typecheck-all"
+    return " ".join(line.strip() for line in match["body"].splitlines())
 
-    editable = _editable_package_dirs()
-    assert editable, "uv.lock declares no editable workspace package"
-    unscanned = sorted(
-        str(directory) for directory in editable if not any(directory.is_relative_to(root) for root in scanned)
-    )
-    assert not unscanned, f"local ty check skips editable packages the hosted lane covers: {unscanned}"
 
-    assert _ty_excludes(local_run) == _ty_excludes(_hosted_typecheck_step_run())
+def test_typecheck_entry_points_use_the_native_surface() -> None:
+    """Every typecheck entry point must delegate its complete scope to ty."""
+    commands = {
+        "Justfile": _just_typecheck_recipe_run(),
+        "lefthook.yml": _run_command("python-typecheck"),
+        "checks.yml": _hosted_typecheck_step_run(),
+    }
+    for name, command in commands.items():
+        effective = _expand_entrypoint(command)
+        assert re.search(r"(?:^|\s)ty check(?:\s|$)", effective), (
+            f"{name} diverges from the native ty surface: expected a delegated bare 'ty check', got {command!r}"
+        )
+        assert "--exclude" not in command
+
+    config = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    ty_src = config["tool"]["ty"]["src"]
+    assert {"infra/k8s/gitops", "tests"} <= set(ty_src["include"])
+    assert {"**/alembic/**", "**/nohiki-domain-models/**"} <= set(ty_src["exclude"])
 
 
 def test_api_schema_hook_glob_tracks_the_exporter_dependency_closure() -> None:
@@ -743,3 +729,195 @@ def test_api_schema_hook_glob_tracks_the_exporter_dependency_closure() -> None:
         f"missing {sorted(closure - declared)}, stale {sorted(declared - closure)}"
     )
     assert "backend/libs/**/*.py" not in configured, "the enumerated closure replaces the overbroad library glob"
+
+
+_CHECK_PATTERNS: dict[str, str] = {
+    "actionlint": r"\bactionlint\b",
+    "api-schema": r"\bexport-openapi\.py\b",
+    "build-backend": r"\bci-checks build-backend\b",
+    "deadcode": r"\bci-checks deadcode\b",
+    "deptry": r"\bci-checks deptry\b",
+    "docker-lint": r"\bhadolint\b",
+    "fixtures": r"\bci-checks (?:fixtures|tests)\b",
+    "frontend-architecture": r"\bsteiger\b",
+    "frontend-lint": r"\bbiome (?:check|ci)\b",
+    "frontend-test": r"\bvitest\b",
+    "frontend-typecheck": r"\btsc\b",
+    "i18n": r"\bi18n-check\.mjs\b",
+    "image-matrix": r"\bimage_matrix\.py\b",
+    "markdown-lint": r"\bmarkdownlint-cli2\b",
+    "nix": r"\bnix flake check\b",
+    "node-contracts": r"\brequires_node_modules\b",
+    "proto-breaking": r"\bbuf breaking\b",
+    "proto-lint": r"\bbuf lint\b",
+    "python-lint": r"\bruff check\b",
+    "python-format": r"\bruff format\b",
+    "python-test": r"\b(?:ci-checks tests|pytest)\b",
+    "python-typecheck": r"\buv run --no-sync ty check(?:\s|$)",
+    "secrets": r"\bgitleaks\b",
+    "semgrep": r"\bsemgrep scan\b",
+    "skylos-contracts": r"\brequires_skylos\b",
+    "workflow-schema": r"\bcheck-jsonschema\b",
+}
+
+_ENTRYPOINT_EXCEPTIONS: dict[str, dict[str, str]] = {
+    "Justfile": {
+        "commit-policy": "requires a commit or pull-request title as input",
+        "container-contracts": "requires hosted images built by upstream workflow jobs",
+    },
+    "lefthook.yml": {
+        "container-contracts": "requires hosted images built by upstream workflow jobs",
+        "protected-main-evidence": "requires GitHub artifacts and API state",
+    },
+    "checks.yml": {
+        "autofix": "hosted checks must not mutate the checkout",
+    },
+}
+
+
+@cache
+def _just_recipes() -> dict[str, tuple[tuple[str, ...], str]]:
+    declarations: dict[str, tuple[str, list[str]]] = {}
+    current = ""
+    for line in _JUSTFILE.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^(?P<name>[a-z][a-z0-9-]*)(?: [^:]*)?:(?P<dependencies>.*)$", line)
+        if match is not None:
+            current = match["name"]
+            declarations[current] = (match["dependencies"], [])
+        elif current and (line.startswith(" ") or not line):
+            declarations[current][1].append(line.strip())
+        else:
+            current = ""
+
+    names = declarations.keys()
+    return {
+        name: (
+            tuple(token for token in dependencies.split() if token in names),
+            "\n".join(body),
+        )
+        for name, (dependencies, body) in declarations.items()
+    }
+
+
+def _just_recipe_text(name: str) -> str:
+    recipes = _just_recipes()
+    assert name in recipes, f"Justfile command delegates to missing recipe {name!r}"
+    seen: set[str] = set()
+    bodies: list[str] = []
+
+    def visit(recipe: str) -> None:
+        if recipe in seen:
+            return
+        seen.add(recipe)
+        dependencies, body = recipes[recipe]
+        for dependency in dependencies:
+            visit(dependency)
+        bodies.append(body)
+
+    visit(name)
+    return "\n".join(bodies)
+
+
+@cache
+def _package_scripts() -> dict[str, tuple[str, ...]]:
+    scripts: dict[str, list[str]] = {}
+    for relative in _tracked_files():
+        if not relative.endswith("package.json"):
+            continue
+        config = json.loads((_ROOT / relative).read_text(encoding="utf-8"))
+        declared = config.get("scripts", {})
+        if not isinstance(declared, dict):
+            continue
+        for name, command in declared.items():
+            if isinstance(name, str) and isinstance(command, str):
+                scripts.setdefault(name, []).append(command)
+    return {name: tuple(commands) for name, commands in scripts.items()}
+
+
+def _expand_package_scripts(command: str) -> str:
+    expanded = command
+    included: set[tuple[str, str]] = set()
+    while True:
+        additions: list[str] = []
+        for name, implementations in _package_scripts().items():
+            invocation = re.compile(rf"\bpnpm\b[^\n]*(?:\brun\s+)?{re.escape(name)}(?=\s|$)")
+            if invocation.search(expanded) is None:
+                continue
+            for implementation in implementations:
+                key = (name, implementation)
+                if key not in included:
+                    included.add(key)
+                    additions.append(implementation)
+        if not additions:
+            return expanded
+        expanded = "\n".join((expanded, *additions))
+
+
+def _expand_entrypoint(command: str) -> str:
+    expanded = command
+    for recipe in re.findall(
+        r"(?m)^\s*(?:nix develop \S+ --command )?just\s+(?P<recipe>[a-z][a-z0-9-]*)",
+        command,
+    ):
+        expanded = f"{expanded}\n{_just_recipe_text(recipe)}"
+    return _expand_package_scripts(expanded)
+
+
+def _workflow_run_commands() -> Iterator[str]:
+    workflow = yaml.safe_load(_CHECKS.read_text(encoding="utf-8"))
+
+    def walk(value: object) -> Iterator[str]:
+        if isinstance(value, Mapping):
+            run = value.get("run")
+            if isinstance(run, str):
+                yield run
+            for nested in value.values():
+                yield from walk(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from walk(nested)
+
+    yield from walk(workflow)
+
+
+def _logical_checks(commands: Iterator[str]) -> set[str]:
+    effective = "\n".join(_expand_entrypoint(command) for command in commands)
+    return {name for name, pattern in _CHECK_PATTERNS.items() if re.search(pattern, effective)}
+
+
+def test_every_entrypoint_resolves_the_complete_check_matrix() -> None:
+    """Just, hooks and hosted CI must execute the same developer-reproducible checks."""
+    hook_commands = (
+        str(command["run"])
+        for hooks in _configured_hooks().values()
+        for command in hooks.values()
+        if isinstance(command.get("run"), str)
+    )
+    resolved = {
+        "Justfile": _logical_checks(iter(("just verify",))),
+        "lefthook.yml": _logical_checks(hook_commands),
+        "checks.yml": _logical_checks(_workflow_run_commands()),
+    }
+    expected = set(_CHECK_PATTERNS)
+    for entrypoint, checks in resolved.items():
+        assert checks == expected, (
+            f"{entrypoint} effective check matrix drifted: "
+            f"missing {sorted(expected - checks)}, unexpected {sorted(checks - expected)}"
+        )
+
+
+def test_pre_push_resolves_full_python_static_checks() -> None:
+    commands = _configured_hooks()["pre-push"]
+    resolved = _logical_checks(
+        iter(str(command["run"]) for command in commands.values() if isinstance(command.get("run"), str))
+    )
+    assert {"python-lint", "python-format"} <= resolved
+    assert _run_command("python-lint") == "just lint"
+    assert _run_command("python-format") == "just format-check"
+
+
+def test_entrypoint_exceptions_are_explicit_and_grounded() -> None:
+    assert set(_ENTRYPOINT_EXCEPTIONS) == {"Justfile", "lefthook.yml", "checks.yml"}
+    for exceptions in _ENTRYPOINT_EXCEPTIONS.values():
+        assert exceptions
+        assert all(reason.strip() for reason in exceptions.values())

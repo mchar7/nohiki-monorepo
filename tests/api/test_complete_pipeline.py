@@ -373,8 +373,14 @@ class TestDocumentGenerationFlow:
         except Exception as exc:
             pytest.fail(f"System resume template not found: {exc}")
 
-        assert template.get("id"), "Template must have ID"
-        template_version_id = template.get("latest_version_id") or template.get("id")
+        assert template is not None
+        template_id = template.get("id")
+        assert isinstance(template_id, str)
+        assert template_id, "Template must have ID"
+        latest_version_id = template.get("latest_version_id")
+        template_version_id = (
+            latest_version_id if isinstance(latest_version_id, str) and latest_version_id else template_id
+        )
 
         # Generate document with valid data matching seed schema
         sample_data = {

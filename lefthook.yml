@@ -43,11 +43,8 @@ pre-commit:
     # pyprojects extend it, so a single `uv run ruff` from repo root works.
     python-check-format:
       glob: "*.py"
-      exclude:
-        - "**/alembic/**"
-        - "**/nohiki-domain-models/**"
       run: |
-        set -eu
+        set -euo pipefail
         paths=$(mktemp "${TMPDIR:-/tmp}/nohiki-python-staged.XXXXXX")
         cleanup() {
           rm -f -- "$paths"
@@ -58,11 +55,9 @@ pre-commit:
         trap 'exit 143' TERM
         git diff --cached --name-only --diff-filter=ACMR -z -- \
           ':(glob)*.py' \
-          ':(glob)**/*.py' \
-          ':(exclude,glob)**/alembic/**' \
-          ':(exclude,glob)**/nohiki-domain-models/**' > "$paths"
-        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff check --fix -- < "$paths"
-        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff format -- < "$paths"
+          ':(glob)**/*.py' > "$paths"
+        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff check --fix --force-exclude -- < "$paths"
+        xargs -0 -r scripts/dev/env-lock.sh shared venv -- uv run --no-sync ruff format --force-exclude -- < "$paths"
       stage_fixed: true
 
     # Frontend: Biome lint/format with auto-fix
@@ -90,15 +85,7 @@ pre-commit:
         - "proto/buf.yaml"
         - "proto/buf.lock"
       root: proto/
-      run: |
-        if command -v buf &>/dev/null; then
-          buf lint
-        elif command -v nix &>/dev/null; then
-          nix run nixpkgs#buf -- lint
-        else
-          echo "ERROR: buf not found. Install it or activate the dev shell (direnv allow)."
-          exit 1
-        fi
+      run: just proto-lint
 
     # Markdown: markdownlint with auto-fix
     # Rules and ignores configured in .markdownlint-cli2.jsonc
@@ -126,48 +113,20 @@ pre-commit:
         - "typescript/apps/frontend/scripts/i18n/*"
         - "typescript/apps/frontend/scripts/i18n/**/*"
       root: typescript/apps/frontend/
-      run: ../../../scripts/dev/env-lock.sh shared node_modules -- pnpm run i18n:check
+      run: just fe-i18n
 
     # Secrets: gitleaks - detect secrets in staged files
     # https://github.com/gitleaks/gitleaks
     # Config in .gitleaks.toml
     secrets-check:
-      run: |
-        if command -v gitleaks &>/dev/null; then
-          gitleaks protect --staged --no-banner --redact
-        elif command -v nix &>/dev/null; then
-          nix run nixpkgs#gitleaks -- protect --staged --no-banner --redact
-        else
-          echo "ERROR: gitleaks not found. Install it (https://github.com/gitleaks/gitleaks) or activate the dev shell (direnv allow)."
-          exit 1
-        fi
+      run: just secrets-scan staged
 
     # Workflows: actionlint plus the pinned SchemaStore workflow schema.
     actions-lint:
       glob:
         - ".github/workflows/*.{yml,yaml}"
         - ".github/actions/**"
-      run: |
-        # Remove when rhysd/actionlint#694 and #695 reach pinned nixpkgs.
-        ignore='^step must run script with "run" section or run action with "uses" section$'
-        if command -v actionlint &>/dev/null; then
-          actionlint -ignore "$ignore"
-        elif command -v nix &>/dev/null; then
-          nix run nixpkgs#actionlint -- -ignore "$ignore"
-        else
-          echo "ERROR: actionlint not found. Install it or activate the dev shell (direnv allow)."
-          exit 1
-        fi
-        if command -v check-jsonschema &>/dev/null; then
-          git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' \
-            | xargs -0 -r check-jsonschema --builtin-schema vendor.github-workflows
-        elif command -v nix &>/dev/null; then
-          git ls-files -z -- '.github/workflows/*.yml' '.github/workflows/*.yaml' \
-            | xargs -0 -r nix run nixpkgs#check-jsonschema -- --builtin-schema vendor.github-workflows
-        else
-          echo "ERROR: check-jsonschema not found. Install it or activate the dev shell (direnv allow)."
-          exit 1
-        fi
+      run: just workflow-lint
 
     # Dockerfiles: hadolint (rules in .hadolint.yaml)
     docker-lint:
@@ -178,15 +137,7 @@ pre-commit:
       exclude:
         - "**/*.dockerignore"
         - "**/*.j2"
-      run: |
-        if command -v hadolint &>/dev/null; then
-          git ls-files -z -- '*Dockerfile' '*Dockerfile.*' ':(exclude)*.dockerignore' ':(exclude)*.j2' | xargs -0 -r hadolint
-        elif command -v nix &>/dev/null; then
-          git ls-files -z -- '*Dockerfile' '*Dockerfile.*' ':(exclude)*.dockerignore' ':(exclude)*.j2' | xargs -0 -r nix run nixpkgs#hadolint --
-        else
-          echo "ERROR: hadolint not found. Install it or activate the dev shell (direnv allow)."
-          exit 1
-        fi
+      run: just docker-lint
 
 # PRE-PUSH: Thorough checks before pushing (~30-60s)
 # Phased execution: typecheck -> tests -> hygiene
@@ -215,10 +166,16 @@ pre-push:
           scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks internal-refs --range "$range"
         fi
 
-    # Phase 1: Type Checking (parallel)
+    # Phase 1: Static checks (parallel)
     - group:
         parallel: true
         jobs:
+          - name: python-lint
+            run: just lint
+
+          - name: python-format
+            run: just format-check
+
           - name: python-typecheck
             glob: &python_workspace_surface
               - "backend/*.py"
@@ -240,7 +197,7 @@ pre-push:
               - "pyproject.toml"
               - "uv.lock"
               - ".python-version"
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ty check backend/ infra/shared/qdrant-init infra/k8s/gitops scripts/ci scripts/util scripts/benchmark scripts/ml --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
+            run: just typecheck-all
 
           - name: frontend-typecheck
             glob:
@@ -256,7 +213,13 @@ pre-push:
               - "pnpm-lock.yaml"
               - "pnpm-workspace.yaml"
               - ".npmrc"
-            run: scripts/dev/env-lock.sh shared node_modules -- sh -c 'cd typescript/apps/frontend && pnpm type-check'
+            run: just fe-typecheck
+
+          - name: nix-check
+            glob:
+              - "flake.nix"
+              - "flake.lock"
+            run: just nix-check
 
     # Phase 2: Unit Tests (parallel, runs after typecheck)
     # Uses package-aware runner to avoid pytest plugin collisions
@@ -280,7 +243,10 @@ pre-push:
             glob:
               - "scripts/ci/src/ci_checks/checks/skylos_cache.py"
               - "scripts/ci/tests/test_skylos_cache.py"
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync pytest scripts/ci/tests -m requires_skylos
+            run: just test-skylos-cache
+
+          - name: node-workspace-contract-tests
+            run: just test-node-contracts
 
           - name: frontend-tests
             glob:
@@ -300,7 +266,7 @@ pre-push:
               - "pnpm-lock.yaml"
               - "pnpm-workspace.yaml"
               - ".npmrc"
-            run: scripts/dev/env-lock.sh shared node_modules -- sh -c 'cd typescript/apps/frontend && pnpm test --run --maxWorkers=25%'
+            run: just fe-test
 
     # Phase 3: Code Hygiene (parallel, runs after tests)
     - group:
@@ -308,22 +274,22 @@ pre-push:
         jobs:
           - name: deadcode
             glob: *python_workspace_surface
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deadcode --scope all --ci --fail --no-provenance
+            run: just hygiene-deadcode-strict
 
           - name: deptry
             glob: *python_workspace_surface
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks deptry --scope all --ci
+            run: just hygiene-deps
 
           - name: semgrep
             glob:
               - "backend/**/*.py"
               - "semgrep.yml"
               - "semgrep-overrides.txt"
-            run: env -u LD_LIBRARY_PATH uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/
+            run: just hygiene-arch
 
           - name: build-backend
             glob: *python_workspace_surface
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks build-backend --scope all --ci --strict
+            run: just hygiene-build-backend-strict
 
           - name: frontend-fsd
             glob:
@@ -337,7 +303,7 @@ pre-push:
               - "pnpm-workspace.yaml"
               - ".npmrc"
               - "typescript/libs/**"
-            run: scripts/dev/env-lock.sh shared node_modules -- pnpm --filter nohiki-frontend run lint:fsd
+            run: just fe-fsd
 
     # Phase 4: Generated API artifacts
     - name: api-schema-freshness
@@ -387,16 +353,4 @@ pre-push:
         - "scripts/proto_gen/*.py"
         - "scripts/proto_gen/**/*.py"
         - "scripts/proto_gen/pyproject.toml"
-      run: |
-        if git ls-tree --name-only main proto/ 2>/dev/null | grep -q .; then
-          if command -v buf &>/dev/null; then
-            cd proto && buf breaking --against '../.git#branch=main,subdir=proto'
-          elif command -v nix &>/dev/null; then
-            cd proto && nix run nixpkgs#buf -- breaking --against '../.git#branch=main,subdir=proto'
-          else
-            echo "ERROR: buf not found. Install it or activate the dev shell (direnv allow)."
-            exit 1
-          fi
-        else
-          echo "Skipping: proto/ not yet committed to main branch"
-        fi
+      run: just proto-breaking

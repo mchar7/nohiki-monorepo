@@ -841,7 +841,7 @@ def test_deadcode_gate_disables_history_provenance() -> None:
                 deadcode_commands.append(command)
 
     assert len(deadcode_commands) == 1
-    assert deadcode_commands[0].endswith("--no-provenance")
+    assert deadcode_commands[0] == "just hygiene-deadcode-strict"
 
 
 def test_semgrep_uses_pinned_sovereign_host_runtime() -> None:
@@ -864,10 +864,6 @@ def test_semgrep_uses_pinned_sovereign_host_runtime() -> None:
                 command = job.get("run")
                 assert isinstance(command, str)
                 semgrep_commands.append(command)
-    overrides = _SEMGREP_OVERRIDES
     assert len(semgrep_commands) == 1
-    command = semgrep_commands[0]
-    assert command.startswith("env -u LD_LIBRARY_PATH uvx --override ")
-    assert "--metrics=off" in command
-    assert "--disable-version-check" in command
-    assert overrides == ["semgrep==1.170.0", "ruamel-yaml-clib>=0.2.15"]
+    assert semgrep_commands[0] == "just hygiene-arch"
+    assert _SEMGREP_OVERRIDES == ["semgrep==1.170.0", "ruamel-yaml-clib>=0.2.15"]

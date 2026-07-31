@@ -66,8 +66,16 @@ def _junit_counts(path: Path) -> dict[str, int]:
     """Count outcomes in trusted pytest-generated JUnit XML."""
     parser = ET.XMLPullParser(events=("start", "end"))
     parser.feed(path.read_text(encoding="utf-8"))
-    _, root = next(parser.read_events())
+    event = next(parser.read_events(), None)
     parser.close()
+    if event is None or not isinstance(event, tuple) or len(event) != 2:
+        msg = "JUnit XML does not contain a document element"
+        raise ValueError(msg)
+    event_name = event[0]
+    root = event[1]
+    if event_name != "start" or not isinstance(root, ET.Element):
+        msg = "JUnit XML does not start with a document element"
+        raise ValueError(msg)
     suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
     totals = dict.fromkeys(("tests", "failures", "errors", "skipped"), 0)
     for suite in suites:
@@ -196,10 +204,14 @@ class _GatewayProxy(http.server.BaseHTTPRequestHandler):
             self.send_error(400, str(exc))
             return
         upstream = urlsplit(os.environ["NOHIKI_GATEWAY_UPSTREAM"])
+        upstream_hostname = upstream.hostname
+        if upstream_hostname is None:
+            msg = "NOHIKI_GATEWAY_UPSTREAM must include a hostname"
+            raise ValueError(msg)
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         headers = {key: value for key, value in self.headers.items() if key.lower() not in {"host", "connection"}}
         headers["Host"] = public_host
-        connection = http.client.HTTPConnection(upstream.hostname, upstream.port or 80, timeout=300)
+        connection = http.client.HTTPConnection(upstream_hostname, upstream.port or 80, timeout=300)
         connection.request(self.command, self.path, body=body or None, headers=headers)
         response = connection.getresponse()
         self.send_response(response.status)
@@ -215,8 +227,8 @@ class _GatewayProxy(http.server.BaseHTTPRequestHandler):
         self.close_connection = True
         connection.close()
 
-    def log_message(self, fmt: str, *args: object) -> None:
-        sys.stderr.write(f"gateway-proxy: {fmt % args}\n")
+    def log_message(self, format: str, *args: object) -> None:
+        sys.stderr.write(f"gateway-proxy: {format % args}\n")
 
 
 for method in ("DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"):

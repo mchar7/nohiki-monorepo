@@ -379,7 +379,7 @@ jobs:
       - parallel:
           - name: Check flake
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.nix == 'true')
-            run: nix flake check
+            run: nix develop .#ci --command just nix-check
 
           - name: Check Lefthook version
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.nix == 'true')
@@ -409,13 +409,11 @@ jobs:
         run: |
           export UV_PROJECT_ENVIRONMENT=.venv
           if [[ "$RUFF_SCOPE" == ALL ]]; then
-            nix develop .#ci --command uv run --no-sync ruff check --output-format=github \
-              --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+            nix develop .#ci --command just lint
           else
-            mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- \
-              '*.py' ':(exclude)**/alembic/**' ':(exclude)**/nohiki-domain-models/**')
+            mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.py')
             ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
-              ruff check --output-format=github "${files[@]}"
+              ruff check --output-format=github --force-exclude "${files[@]}"
           fi
 
       - name: Check Python formatting
@@ -428,13 +426,11 @@ jobs:
         run: |
           export UV_PROJECT_ENVIRONMENT=.venv
           if [[ "$RUFF_SCOPE" == ALL ]]; then
-            nix develop .#ci --command uv run --no-sync ruff format --check \
-              --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**' .
+            nix develop .#ci --command just format-check
           else
-            mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- \
-              '*.py' ':(exclude)**/alembic/**' ':(exclude)**/nohiki-domain-models/**')
+            mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.py')
             ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
-              ruff format --check "${files[@]}"
+              ruff format --check --force-exclude "${files[@]}"
           fi
 
       - name: Lint Markdown
@@ -448,36 +444,28 @@ jobs:
 
       - name: Lint protos
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_proto == 'true')
-        run: nix develop .#ci --command bash -euc 'cd proto && buf lint'
+        run: nix develop .#ci --command just proto-lint
 
       - name: Lint workflows
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_workflows == 'true')
-        run: |
-          # Remove when rhysd/actionlint#694 and #695 reach pinned nixpkgs.
-          nix develop .#ci --command actionlint \
-            -ignore '^step must run script with "run" section or run action with "uses" section$'
-          nix develop .#ci --command check-jsonschema \
-            --builtin-schema vendor.github-workflows .github/workflows/*.yml
+        run: nix develop .#ci --command just workflow-lint
 
       - name: Lint frontend
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_frontend == 'true')
-        run: pnpm --filter nohiki-frontend exec biome ci --reporter=github .
+        run: nix develop .#ci --command just fe-lint
 
       - parallel:
           - name: Lint frontend architecture (Steiger)
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_steiger == 'true')
-            run: pnpm --filter nohiki-frontend run lint:fsd
+            run: nix develop .#ci --command just fe-fsd
 
           - name: Check i18n keys
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_frontend == 'true')
-            run: pnpm --filter nohiki-frontend run i18n:check
+            run: nix develop .#ci --command just fe-i18n
 
       - name: Lint Dockerfiles (hadolint)
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_docker == 'true')
-        run: >
-          git ls-files -z -- '*Dockerfile' '*Dockerfile.*'
-          ':(exclude)*.dockerignore' ':(exclude)*.j2'
-          | xargs -0 -r nix develop .#ci --command hadolint
+        run: nix develop .#ci --command just docker-lint
 
       - name: Scan changed content for secrets
         if: env.DOCS_ONLY == 'true'
@@ -493,27 +481,11 @@ jobs:
 
       - name: Scan repository for secrets
         if: matrix.unit == 'frontend' && env.DOCS_ONLY != 'true'
-        run: |
-          docker run --rm --workdir /repo -v "$PWD:/repo" \
-            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
-            detect --source . --config .gitleaks.toml --no-banner --redact
+        run: nix develop .#ci --command just secrets-scan
 
       - name: Typecheck backend
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.typecheck_backend == 'true')
-        env:
-          PACKAGE_SCOPE: ${{ needs.changes.outputs.broad == 'true' && 'ALL' || needs.changes.outputs.affected_packages }}
-        run: |
-          mapfile -t paths < <(nix develop .#ci --command uv run --no-sync python -c '
-          import sys, tomllib
-          selection = sys.argv[1]
-          names = None if selection == "ALL" else set(selection.split(","))
-          lock = tomllib.load(open("uv.lock", "rb"))
-          print(*(p["source"]["editable"] for p in lock["package"]
-                  if "editable" in p.get("source", {}) and (names is None or p["name"] in names)), sep="\n")
-          ' "$PACKAGE_SCOPE")
-          test "${#paths[@]}" -gt 0
-          nix develop .#ci --command uv run --no-sync ty check "${paths[@]}" \
-            --exclude '**/alembic/**' --exclude '**/nohiki-domain-models/**'
+        run: nix develop .#ci --command just typecheck-all
 
       - name: Check selected dead code
         if: env.DEADCODE_SELECTED == 'true'
@@ -522,10 +494,7 @@ jobs:
           PACKAGE_SCOPE: ${{ needs.changes.outputs.broad == 'true' && 'ALL' || needs.changes.outputs.affected_packages }}
           # Hosted workers expose two cores; pinning jobs keeps the fork's cache identity stable.
           SKYLOS_JOBS: "2"
-        run: |
-          nix develop .#ci --command uv run --no-sync ci-checks deadcode \
-            --scope all --packages "$PACKAGE_SCOPE" --ci --fail --no-provenance \
-            --summary "$GITHUB_STEP_SUMMARY"
+        run: nix develop .#ci --command just hygiene-deadcode-strict "$PACKAGE_SCOPE"
 
       - name: Save Skylos static analysis cache
         if: always() && (steps.deadcode.conclusion == 'success' || steps.deadcode.conclusion == 'failure') && steps.deadcode.outputs.static-result-published == 'true' && steps.setup-ci.outputs.skylos-cache-hit != 'true'
@@ -536,7 +505,7 @@ jobs:
 
       - name: Typecheck frontend
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.typecheck_frontend == 'true')
-        run: pnpm -C typescript/apps/frontend type-check
+        run: nix develop .#ci --command just fe-typecheck
 
       - name: Run selected Python tests
         if: matrix.unit == 'python' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.python_any == 'true')
@@ -560,9 +529,7 @@ jobs:
       # workspace manifests that resolve the Playwright version, and the test module itself.
       - name: Run Node workspace contract tests
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.node_workspace_contracts == 'true')
-        run: >
-          nix develop .#ci --command uv run --no-sync pytest
-          scripts/ci/tests -m requires_node_modules
+        run: nix develop .#ci --command just test-node-contracts
 
       # The analyzer is a private distribution held out of the shared environment closure, so it
       # exists only on the lanes where `setup-ci` installed it. This gate reads the same value
@@ -570,9 +537,7 @@ jobs:
       # placement exists to prevent.
       - name: Run Skylos cache contract tests
         if: env.DEADCODE_SELECTED == 'true'
-        run: >
-          nix develop .#ci --command uv run --no-sync pytest
-          scripts/ci/tests -m requires_skylos
+        run: nix develop .#ci --command just test-skylos-cache
 
       - name: Test frontend
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_tests == 'true')
@@ -580,11 +545,7 @@ jobs:
         # under `taskset -c 0-1`: 1 worker 294s, 2 workers 260s (2212 tests, identical result).
         # Vitest appends its own `## Vitest Test Report` block, and the edge worker appends an
         # identical one below. The label names which suite the block that follows belongs to.
-        run: |
-          # shellcheck disable=SC2016 # Markdown code spans are literal.
-          printf '#### Frontend app tests (Vitest)\n\n`typescript/apps/frontend`. Report follows.\n' \
-            >> "$GITHUB_STEP_SUMMARY"
-          pnpm -C typescript/apps/frontend test --run --maxWorkers=100%
+        run: nix develop .#ci --command just fe-test
 
       - name: Lint edge worker
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.edge_worker == 'true')
@@ -621,23 +582,18 @@ jobs:
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
         env:
           PACKAGE_SCOPE: ${{ needs.changes.outputs.broad == 'true' && 'ALL' || needs.changes.outputs.affected_packages }}
-        run: nix develop .#ci --command uv run --no-sync ci-checks deptry --packages "$PACKAGE_SCOPE" --ci
+        run: nix develop .#ci --command just hygiene-deps "$PACKAGE_SCOPE"
 
       - parallel:
           - name: Scan architecture
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
-            run: >
-              nix develop .#ci --command env -u LD_LIBRARY_PATH
-              uvx --override semgrep-overrides.txt semgrep scan
-              --config semgrep.yml --error --no-git-ignore --metrics=off --disable-version-check backend/
+            run: nix develop .#ci --command just hygiene-arch
 
           - name: Check build backends
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.build_backend == 'true')
             env:
               AFFECTED_PACKAGES: ${{ needs.changes.outputs.affected_packages }}
-            run: >
-              nix develop .#ci --command uv run --no-sync ci-checks build-backend
-              --packages "$AFFECTED_PACKAGES" --ci --strict
+            run: nix develop .#ci --command just hygiene-build-backend-strict "$AFFECTED_PACKAGES"
 
       - parallel:
           - name: Check API schema freshness
@@ -652,12 +608,7 @@ jobs:
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.proto_breaking == 'true')
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          if git cat-file -e "${BASE_SHA}^{commit}" && git ls-tree --name-only "$BASE_SHA" proto/ | grep -q .; then
-            nix develop .#ci --command bash -euc "cd proto && buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'"
-          else
-            echo "Skipping: proto/ is absent from the checked-out base commit"
-          fi
+        run: nix develop .#ci --command just proto-breaking "$BASE_SHA"
 
       - name: Set up Docker Buildx
         id: container-buildx
@@ -759,7 +710,7 @@ jobs:
           record "${{ needs.changes.outputs.lint_docker }}" frontend 'hadolint (tracked Dockerfiles)'
           record "${{ needs.changes.outputs.lint_frontend }}" frontend 'Biome; i18n:check'
           record "${{ needs.changes.outputs.lint_steiger }}" frontend 'Steiger FSD architecture'
-          record "${{ needs.changes.outputs.typecheck_backend }}" frontend 'ty check affected package closure'
+          record "${{ needs.changes.outputs.typecheck_backend }}" frontend 'ty check native source surface'
           record "${{ needs.changes.outputs.typecheck_frontend }}" frontend 'frontend type-check'
           record "${{ needs.changes.outputs.python_any }}" python 'ci-checks tests affected package closure'
           record "${{ needs.changes.outputs.node_workspace_contracts }}" frontend 'pytest -m requires_node_modules'

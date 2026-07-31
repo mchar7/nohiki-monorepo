@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
@@ -16,6 +19,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 _FLAKE = _ROOT / "flake.nix"
 _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _LEFTHOOK = _ROOT / "lefthook.yml"
+_JUSTFILE = _ROOT / "Justfile"
 _CI_PROJECT = _ROOT / "scripts" / "ci" / "pyproject.toml"
 _CI_PACKAGE_TOKENS = (
     "pnpmPackage",
@@ -80,32 +84,33 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
         "biome ci --reporter=github src/",
         "exec tsc --noEmit",
         "exec vitest run",
-        'ty check "${paths[@]}"',
-        "pnpm -C typescript/apps/frontend type-check",
-        "pnpm -C typescript/apps/frontend test --run --maxWorkers=100%",
-        "ci-checks deptry",
-        "semgrep scan",
-        "ci-checks build-backend",
+        "just typecheck-all",
+        "just fe-typecheck",
+        "just fe-test",
+        "just hygiene-deps",
+        "just hygiene-arch",
+        "just hygiene-build-backend-strict",
         "just api-schema-check",
         "just image-matrix-check",
-        "ci-checks deadcode",
+        "just hygiene-deadcode-strict",
     )
     # Both classes are served by one definition of each command, so one occurrence, not two.
     for command in commands:
         assert work.count(command) == 1
-    # Ruff is the one step carrying both scopes: whole tree on broad, changed files on standard.
-    assert work.count("ruff check --output-format=github") == 2
-    assert work.count("ruff format --check") == 2
+    assert work.count("just lint") == 1
+    assert work.count("ruff check --output-format=github") == 1
+    assert work.count("just format-check") == 1
+    assert work.count("ruff format --check") == 1
 
     owner_commands = "\n".join(_commands(jobs["worker"]))
     proto_step = next(
         step for step in jobs["worker"].get("steps", []) if step.get("name") == "Check proto compatibility"
     )
     assert proto_step["env"]["BASE_SHA"] == ("${{ github.event.pull_request.base.sha || github.event.before }}")
-    assert "buf breaking --against '../.git#commit=${BASE_SHA},subdir=proto'" in owner_commands
+    assert 'just proto-breaking "$BASE_SHA"' in owner_commands
 
     all_commands = "\n".join(command for job in jobs.values() for command in _commands(job))
-    assert all_commands.count("semgrep scan") == 1
+    assert all_commands.count("just hygiene-arch") == 1
     assert "lefthook run pre-push" not in all_commands
 
 
@@ -142,16 +147,16 @@ def test_workflow_validators_are_pinned_in_hosted_and_local_paths() -> None:
     lint = next(step for step in _steps(workflow["jobs"]["worker"]) if step.get("name") == "Lint workflows")
     command = str(lint["run"])
     ignore = '-ignore \'^step must run script with "run" section or run action with "uses" section$\''
+    assert command.endswith("just workflow-lint")
 
-    assert ignore in command
-    assert "check-jsonschema" in command
-    assert "--builtin-schema vendor.github-workflows .github/workflows/*.yml" in command
+    policy = _JUSTFILE.read_text(encoding="utf-8")
+    assert ignore in policy
+    assert "check-jsonschema" in policy
+    assert "--builtin-schema vendor.github-workflows .github/workflows/*.yml" in policy
 
     lefthook = load_mapping(_LEFTHOOK)
     local = string_at(lefthook, "pre-commit", "commands", "actions-lint", "run")
-    assert "rhysd/actionlint#694 and #695" in local
-    assert 'ignore=\'^step must run script with "run" section or run action with "uses" section$\'' in local
-    assert "--builtin-schema vendor.github-workflows" in local
+    assert local == "just workflow-lint"
 
 
 def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -> None:
@@ -234,3 +239,23 @@ def test_empty_package_scope_succeeds_without_falling_back_to_all(
     assert result.exit_code == 0
     assert selected_scopes == [Scope.OTHER]
     assert "No testable packages found" in result.output
+
+
+def test_package_manager_comes_from_the_pinned_toolchain_not_a_fetch() -> None:
+    """Corepack resolves `packageManager` by downloading, which hermetic shells forbid."""
+    root = Path(__file__).resolve().parents[3]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert re.search(r'^pnpm := "pnpm"$', justfile, re.MULTILINE), "pnpm must come from PATH"
+    assert "corepack" not in justfile, "Corepack would fetch a package manager the flake already pins"
+    assert 'COREPACK_ENABLE_NETWORK = "0"' in (root / "flake.nix").read_text(encoding="utf-8")
+
+    declared = json.loads((root / "package.json").read_text(encoding="utf-8"))["packageManager"]
+    name, _, wanted = declared.partition("@")
+    assert name == "pnpm", declared
+
+    resolved = shutil.which("pnpm")
+    if resolved is None:
+        pytest.skip("pnpm is provided by the development shell")
+    provided = subprocess.run([resolved, "--version"], capture_output=True, text=True, check=True).stdout.strip()
+    assert provided == wanted, f"flake provides pnpm {provided} but package.json declares {wanted}"

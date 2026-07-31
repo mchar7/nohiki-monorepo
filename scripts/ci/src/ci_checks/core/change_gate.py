@@ -239,7 +239,7 @@ def evaluate(
             decision.force_full(f"unmatched file: {path}", BroadCause.UNMATCHED_PATH, path)
 
     decision.affected = expand_to_dependents(seeds, build_reverse_dependency_index(packages))
-    _derive_package_flags(decision, packages)
+    _derive_package_flags(decision)
     if context is not None:
         _apply_event_context(decision, context)
     if decision.full:
@@ -247,20 +247,15 @@ def evaluate(
     return decision
 
 
-def _derive_package_flags(decision: GateDecision, packages: dict[str, Package]) -> None:
+def _derive_package_flags(decision: GateDecision) -> None:
     """Set lane flags implied by the affected-package set."""
     if not decision.affected:
         return
     # lint_python stays file-driven (.py suffix in evaluate): dependents of
     # a changed lib have no changed source of their own to lint.
     #
-    # typecheck_backend follows what the step reads, not what a package is called. It resolves
-    # PACKAGE_SCOPE against the uv.lock editables, and the editable set is exactly the packages
-    # carrying a src/ tree, so has_src selects the flag for every type ty reads and withholds it
-    # from the one virtual member, whose empty path list would fail the step's non-empty guard.
-    decision.flags |= {"python_any", "hygiene"}
-    if any(packages[name].has_src for name in decision.affected if name in packages):
-        decision.flags.add("typecheck_backend")
+    # Native ty includes virtual workspace members, so every affected package selects it.
+    decision.flags |= {"python_any", "hygiene", "typecheck_backend"}
     if decision.affected & API_EXPORT_SERVICES:
         decision.flags.add("api_schema_freshness")
 

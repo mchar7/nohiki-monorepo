@@ -333,7 +333,9 @@ class TestAttachments:
                 file_size=len(content),
             )
 
-        assert exc_info.value.response.status_code == 422
+        response = exc_info.value.response
+        assert response is not None
+        assert response.status_code == 422
 
     def test_get_attachment_returns_404_for_nonexistent(self, authenticated_client: NohikiClient) -> None:
         """Test getting a non-existent attachment returns 404."""

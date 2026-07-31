@@ -11,6 +11,7 @@ import yaml
 _ROOT = Path(__file__).resolve().parents[3]
 _GITLEAKS = _ROOT / ".gitleaks.toml"
 _LEFTHOOK = _ROOT / "lefthook.yml"
+_JUSTFILE = _ROOT / "Justfile"
 _PUBLIC_CHECKSUM = "a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d"
 _EXPECTED_RULE_REGEXES = {
     "openrouter-api-key": r"sk-or-v1-[a-zA-Z0-9]{64}",
@@ -84,10 +85,11 @@ def test_lefthook_secrets_check_is_staged_redacted_and_fail_closed() -> None:
 
     run = secrets_check["run"]
     assert isinstance(run, str)
-    assert "gitleaks protect --staged --no-banner --redact" in run
-    assert "nix run nixpkgs#gitleaks -- protect --staged --no-banner --redact" in run
-    assert re.search(r"\bif command -v gitleaks\b", run)
-    assert re.search(r"\belif command -v nix\b", run)
-    assert re.search(r"(?m)^\s*else\s*$", run)
-    assert re.search(r"(?m)^\s*exit 1\s*$", run)
-    assert "|| true" not in run
+    assert run == "just secrets-scan staged"
+
+    match = re.search(r"(?ms)^secrets-scan .*?(?=^#|\Z)", _JUSTFILE.read_text(encoding="utf-8"))
+    assert match is not None
+    recipe = match.group()
+    assert "gitleaks protect --staged" in recipe
+    assert "--no-banner --redact" in recipe
+    assert "|| true" not in recipe

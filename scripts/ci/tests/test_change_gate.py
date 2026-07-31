@@ -2,7 +2,6 @@ import fnmatch
 import json
 import os
 import subprocess
-import tomllib
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -1828,9 +1827,7 @@ def test_lefthook_config_selects_its_contract_test_not_the_nix_lane() -> None:
     assert "ci-checks" in decision.affected
 
 
-# One source file per package family the Typecheck backend step reads but the retired
-# package-type test withheld the flag from: every scripts/** family, plus the one OTHER
-# package that ships a src/ tree.
+# Representative native-ty packages outside the backend service and library families.
 _TYPECHECKED_SOURCES: tuple[tuple[str, str, PackageType], ...] = (
     (
         "skill-semantic-analysis",
@@ -1850,12 +1847,7 @@ def test_source_change_selects_typecheck_for_every_package_the_step_reads(
     source: str,
     pkg_type: PackageType,
 ) -> None:
-    """A source change must select the lane that reads that source, on the standard class.
-
-    The step resolves PACKAGE_SCOPE against the uv.lock editables, so it typechecks these
-    packages whatever their path-derived type. Withholding the flag left them checked only
-    when some unrelated broad trigger happened to run the step anyway.
-    """
+    """A source change selects native ty on the standard class regardless of package type."""
     packages = load_packages_with_deps(Scope.ALL)
     assert packages[package].pkg_type is pkg_type
 
@@ -1870,33 +1862,18 @@ def test_source_change_selects_typecheck_for_every_package_the_step_reads(
     assert decision.flag_value("typecheck_backend")
 
 
-def test_virtual_workspace_member_withholds_typecheck_because_it_resolves_to_no_path() -> None:
-    """The integration-tests member is virtual, so PACKAGE_SCOPE yields nothing to check.
-
-    Selecting the lane for it would send the step an empty path list, which its non-empty
-    guard rejects. This is why the flag follows src/ rather than the package type: the
-    member is classified OTHER, exactly like the qdrant-init package that must be checked.
-    """
+@pytest.mark.parametrize(
+    ("source", "package"),
+    [
+        ("tests/integration/test_smoke.py", "nohiki-integration-tests"),
+        ("infra/k8s/gitops/tests/test_bootstrap.py", "gitops-contract-tests"),
+    ],
+)
+def test_virtual_workspace_members_select_native_typecheck(source: str, package: str) -> None:
     packages = load_packages_with_deps(Scope.ALL)
-    assert packages["nohiki-integration-tests"].pkg_type is PackageType.OTHER
-
-    decision = evaluate({"tests/integration/test_smoke.py"}, packages)
-
-    assert decision.affected == {"nohiki-integration-tests"}
-    assert not decision.flag_value("typecheck_backend")
-
-
-def test_src_bearing_packages_are_exactly_the_editables_the_typecheck_step_resolves() -> None:
-    """has_src is a faithful stand-in for uv.lock editability, which the engine cannot read.
-
-    A new virtual member, or an editable without a src/ tree, breaks that equivalence and
-    would silently mis-gate the lane, so pin it against the lock the step actually parses.
-    """
-    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
-    editables = {entry["name"] for entry in lock["package"] if "editable" in entry.get("source", {})}
-    packages = load_packages_with_deps(Scope.ALL)
-
-    assert {name for name, package in packages.items() if package.has_src} == editables
+    decision = evaluate({source}, packages)
+    assert package in decision.affected
+    assert decision.flag_value("typecheck_backend")
 
 
 _UNBOUNDED_CASES: tuple[tuple[str, set[str], EventContext], ...] = (
