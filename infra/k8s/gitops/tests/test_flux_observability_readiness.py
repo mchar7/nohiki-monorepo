@@ -233,8 +233,19 @@ def test_required_observability_external_secrets_reconcile_continuously(
         assert spec["target"]["creationPolicy"] == "Owner", secret["metadata"]["name"]
 
 
+def _versioned_sops_policies() -> list[Path]:
+    # Use the index so ignored backups cannot masquerade as active policy.
+    listing = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "--cached", "-z"],
+        capture_output=True,
+        check=True,
+    )
+    names = {".sops.yaml", ".sops.yml"}
+    return sorted(ROOT / entry for entry in listing.stdout.decode().split("\0") if entry and Path(entry).name in names)
+
+
 def test_one_active_sops_policy_covers_every_encrypted_gitops_secret_path() -> None:
-    policies = sorted(ROOT.rglob(".sops.y*ml"))
+    policies = _versioned_sops_policies()
     assert policies == [ROOT / ".sops.yaml"], f"expected one active SOPS policy, got {policies!r}"
 
     policy = yaml.safe_load(policies[0].read_text(encoding="utf-8"))
@@ -274,3 +285,30 @@ def test_postbuild_configmap_ownership_matches_environment_activation() -> None:
         "staging-aks": {"gitops-runtime"},
         "prod-aks": set(),
     }
+
+
+def test_sops_policy_discovery_ignores_untracked_copies_but_not_staged_ones(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    (repository / "nested").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    (repository / ".sops.yaml").write_text("creation_rules: []\n", encoding="utf-8")
+    (repository / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+    (repository / "ignored").mkdir()
+    (repository / "ignored" / ".sops.yaml").write_text("creation_rules: []\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".sops.yaml", ".gitignore"], cwd=repository, check=True)
+
+    def discovered() -> list[str]:
+        listing = subprocess.run(
+            ["git", "-C", str(repository), "ls-files", "--cached", "-z"],
+            capture_output=True,
+            check=True,
+        )
+        names = {".sops.yaml", ".sops.yml"}
+        return sorted(e for e in listing.stdout.decode().split("\0") if e and Path(e).name in names)
+
+    assert discovered() == [".sops.yaml"]
+
+    (repository / "nested" / ".sops.yaml").write_text("creation_rules: []\n", encoding="utf-8")
+    subprocess.run(["git", "add", "nested/.sops.yaml"], cwd=repository, check=True)
+
+    assert discovered() == [".sops.yaml", "nested/.sops.yaml"]
