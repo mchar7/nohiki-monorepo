@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.16
+# syntax=docker/dockerfile:1.16@sha256:e2dd261f92e4b763d789984f6eab84be66ab4f5f08052316d8eb8f173593acf7
 FROM docker.io/library/node:26.5.0-alpine@sha256:c9f02360d2bc66e709b300214395588acd2d3603f600db8141117e67c0faf4ff AS build
 
 WORKDIR /workspace
