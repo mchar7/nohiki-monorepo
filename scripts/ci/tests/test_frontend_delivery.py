@@ -306,7 +306,7 @@ def test_frontend_image_is_a_pinned_multistage_non_root_static_build() -> None:
     assert re.search(r"(?m)^RUN\s+.*pnpm\s+(?:--filter\s+nohiki-frontend\s+)?build\b", dockerfile)
     assert re.search(r"(?mi)^COPY\s+--from=(?:build|builder)\s+\S*dist/?\s+\S+", dockerfile)
     assert re.search(
-        r"(?m)^COPY\s+typescript/apps/frontend/Caddyfile\s+/etc/caddy/Caddyfile\s*$",
+        r"(?m)^COPY\s+--chmod=0444\s+typescript/apps/frontend/Caddyfile\s+/etc/caddy/Caddyfile\s*$",
         dockerfile,
     )
     assert re.search(r"(?m)^USER\s+(?!0(?:\D|$))\d+(?::\d+)?\s*$", dockerfile)
