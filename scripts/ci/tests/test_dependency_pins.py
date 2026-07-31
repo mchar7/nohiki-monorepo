@@ -180,6 +180,51 @@ def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
     )
 
 
+def test_renovate_abandonment_suppression_is_limited_to_verified_false_positives() -> None:
+    rules = _renovate_config()["packageRules"]
+    assert isinstance(rules, list)
+    threshold_rules = [rule for rule in rules if isinstance(rule, dict) and "abandonmentThreshold" in rule]
+    assert len(threshold_rules) == 2
+
+    finished_rules = [rule for rule in threshold_rules if rule.get("abandonmentThreshold") is None]
+    finite_rules = [rule for rule in threshold_rules if rule.get("abandonmentThreshold") == "4 years"]
+    assert len(finished_rules) == 1
+    assert len(finite_rules) == 1
+
+    finished_package_names = finished_rules[0].get("matchPackageNames")
+    finite_package_names = finite_rules[0].get("matchPackageNames")
+    assert isinstance(finished_package_names, list)
+    assert isinstance(finite_package_names, list)
+    assert all(isinstance(name, str) for name in [*finished_package_names, *finite_package_names])
+
+    configured_finished_names = set(cast(list[str], finished_package_names))
+    configured_finite_names = set(cast(list[str], finite_package_names))
+    assert len(configured_finished_names) == len(finished_package_names)
+    assert len(configured_finite_names) == len(finite_package_names)
+    assert configured_finished_names == {
+        "@codemirror/theme-one-dark",
+        "clsx",
+    }
+    assert configured_finite_names == {
+        "@dnd-kit/core",
+        "@dnd-kit/sortable",
+        "@dnd-kit/utilities",
+        "@testing-library/user-event",
+        "argon2-cffi",
+        "class-variance-authority",
+        "cmdk",
+        "html2text",
+        "jinja2",
+        "pytest-timeout",
+        "pytest-xdist",
+        "python-jobspy",
+        "semver",
+        "vitest-axe",
+    }
+    suppressed_names = configured_finished_names | configured_finite_names
+    assert suppressed_names.isdisjoint({"@microlabs/otel-cf-workers", "file-saver"})
+
+
 def _assert_cpu_development_sync(command: str) -> None:
     tokens = shlex.split(command)
     assert tokens[:2] == ["uv", "sync"], tokens
