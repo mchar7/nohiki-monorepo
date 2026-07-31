@@ -541,7 +541,7 @@ ast-query kind:
 # Git hooks
 
 hooks-install:
-    {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook install
+    {{ env_lock }} shared node_modules -- scripts/dev/install-hooks.sh {{ pnpm }} exec lefthook install
 
 hooks-uninstall:
     {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook uninstall
