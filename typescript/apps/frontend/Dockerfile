@@ -13,7 +13,7 @@ RUN pnpm --filter nohiki-frontend build
 
 FROM docker.io/library/caddy:2.10.2-alpine@sha256:d8c17a862962def15cde69863a3a463f25a2664942eafd7bdbf050e9c3116b83 AS runtime
 
-COPY typescript/apps/frontend/Caddyfile /etc/caddy/Caddyfile
+COPY --chmod=0444 typescript/apps/frontend/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /workspace/typescript/apps/frontend/dist /srv
 
 USER 999:999
