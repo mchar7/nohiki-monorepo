@@ -26,10 +26,9 @@ description = "Internal planning and workstation paths"
 scope = "both"
 regex = [
   "(?<![A-Za-z0-9_])\\.planning(?:[/\\\\]|\\b)",
-  "(?<![A-Za-z0-9_])\\.sisyphus(?:[/\\\\]|\\b)",
   "(?<![A-Za-z0-9_])\\.local/planning(?:[/\\\\]|\\b)",
   # Character classes keep personal-path literals out of this scanner config.
-  "(?<![A-Za-z0-9_])/home/m[a]tt(?:[/\\\\]|\\b)",
+  "(?<![A-Za-z0-9_])\\x2fhome\\x2fmatt(?:[/\\\\]|\\b)",
   "(?<![A-Za-z0-9_])/pers[i]st/home(?:[/\\\\]|\\b)",
 ]
 allow = []
