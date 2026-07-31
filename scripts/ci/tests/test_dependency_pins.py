@@ -10,7 +10,7 @@ from functools import cache
 from pathlib import Path
 from typing import cast
 
-from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow
+from _documents import WorkflowJob, WorkflowStep, load_jsonc, load_mapping, load_workflow
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RENOVATE = _ROOT / ".github" / "renovate.json5"
@@ -125,7 +125,59 @@ def _images(path: Path, repository: str) -> list[re.Match[str]]:
 
 
 def _renovate_config() -> dict[str, object]:
-    return load_mapping(_RENOVATE)
+    return load_jsonc(_RENOVATE)
+
+
+def _workspace_member_names() -> set[str]:
+    with _ROOT_PROJECT.open("rb") as project_file:
+        root_project = tomllib.load(project_file)
+
+    member_patterns = root_project["tool"]["uv"]["workspace"]["members"]
+    assert isinstance(member_patterns, list)
+    assert all(isinstance(pattern, str) for pattern in member_patterns)
+    member_projects = {
+        member / "pyproject.toml" for pattern in member_patterns for member in _ROOT.glob(cast(str, pattern))
+    }
+    assert all(project.is_file() for project in member_projects)
+
+    names: set[str] = set()
+    for member_project in member_projects:
+        with member_project.open("rb") as project_file:
+            name = tomllib.load(project_file)["project"]["name"]
+        assert isinstance(name, str)
+        names.add(name)
+
+    assert len(names) == len(member_projects), "uv workspace package names must be unique"
+    return names
+
+
+def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
+    rules = _renovate_config()["packageRules"]
+    assert isinstance(rules, list)
+    typed_rules = [rule for rule in rules if isinstance(rule, dict)]
+    assert len(typed_rules) == len(rules)
+
+    pypi_rules = [
+        rule for rule in typed_rules if rule.get("enabled") is False and rule.get("matchDatasources") == ["pypi"]
+    ]
+    assert len(pypi_rules) == 1
+    package_names = pypi_rules[0].get("matchPackageNames")
+    assert isinstance(package_names, list)
+    assert all(isinstance(name, str) for name in package_names)
+
+    workspace_names = _workspace_member_names()
+    configured_names = set(cast(list[str], package_names))
+    assert configured_names == workspace_names, (
+        f"workspace PyPI lookup rule is missing {sorted(workspace_names - configured_names)} "
+        f"and has stale names {sorted(configured_names - workspace_names)}"
+    )
+
+    assert any(
+        rule.get("enabled") is False
+        and rule.get("matchDatasources") == ["git-refs"]
+        and rule.get("matchPackageNames") == ["ssh://git@github.com/mchar7/skylos"]
+        for rule in typed_rules
+    )
 
 
 def _assert_cpu_development_sync(command: str) -> None:

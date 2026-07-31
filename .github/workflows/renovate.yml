@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
+    inputs:
+      log_level:
+        description: Renovate log level; debug exposes dependency-lookup and abandonment detail the dashboard truncates
+        type: choice
+        default: info
+        options: [info, debug]
 
 concurrency:
   group: renovate
@@ -44,4 +50,4 @@ jobs:
           OTEL_NODE_RESOURCE_DETECTORS: "none"
           OTEL_EXPORTER_OTLP_ENDPOINT: ""
           RENOVATE_MERGE_CONFIDENCE_DATASOURCES: "[]"
-          LOG_LEVEL: info
+          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
