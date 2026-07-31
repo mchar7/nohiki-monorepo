@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
-from _documents import load_mapping
+from _documents import load_jsonc, load_mapping
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RENOVATE = _ROOT / ".github" / "renovate.json5"
@@ -170,7 +170,7 @@ def _renovate_package_name(site: _ImageSite) -> str | None:
 
 
 def _renovate_excluded_packages() -> frozenset[str]:
-    config = load_mapping(_RENOVATE)
+    config = load_jsonc(_RENOVATE)
     rules = config.get("packageRules")
     assert isinstance(rules, list), "Renovate packageRules must be a list"
     candidates = []
