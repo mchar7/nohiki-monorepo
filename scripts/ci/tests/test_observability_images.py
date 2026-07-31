@@ -13,8 +13,8 @@ from test_image_digest_gitops import _digest_values
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
-_VERSION_TAG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
-_PINNED_TAG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}@sha256:[0-9a-f]{64}$")
+_VERSION_TAG = re.compile(r"^v?[0-9][A-Za-z0-9_.-]{0,126}$")
+_PINNED_TAG = re.compile(r"^v?[0-9][A-Za-z0-9_.-]{0,126}@sha256:[0-9a-f]{64}$")
 _FIRST_PARTY_IMAGE_NAMES = (
     "user-auth-service",
     "user-pref-service",
@@ -194,6 +194,31 @@ def test_observability_values_use_one_digest_mechanism_per_image() -> None:
     assert _image_pin_is_unambiguous(config_reloader_image)
 
 
+def _opentelemetry_test_framework_image(path: Path) -> Mapping[str, object]:
+    values = load_mapping(path)
+    match values:
+        case {"opentelemetry-operator": {"testFramework": {"image": dict() as image}}}:
+            return {str(key): value for key, value in image.items()}
+        case _:
+            pytest.fail(f"{path.relative_to(_ROOT)} must configure the OpenTelemetry test image")
+
+
+def test_opentelemetry_test_framework_image_has_one_versioned_digest_owner() -> None:
+    application_image = _opentelemetry_test_framework_image(_CHART / "values.yaml")
+    foundation_image = _opentelemetry_test_framework_image(_ROOT / "infra" / "k8s" / "helm-foundation" / "values.yaml")
+
+    assert application_image == foundation_image, (
+        "OpenTelemetry test image pins must match between application and foundation"
+    )
+    image = application_image
+    assert image.get("repository") == "busybox"
+    assert _image_pin_is_unambiguous(image), f"Helm busybox image must be <version>@sha256:<digest>: {image!r}"
+    tag = image["tag"]
+    assert isinstance(tag, str)
+    reference = f"{image['repository']}:{tag}"
+    assert reference.count("@sha256:") == 1, f"Helm busybox reference must contain exactly one digest: {reference}"
+
+
 @pytest.mark.parametrize(
     "image",
     [
@@ -205,9 +230,15 @@ def test_observability_values_use_one_digest_mechanism_per_image() -> None:
             "tag": "v0.81.0@sha256:959d47672fbff2776a04ec62b8afcec89e8c036af84dc5fade50019dab212746",
             "digest": "sha256:959d47672fbff2776a04ec62b8afcec89e8c036af84dc5fade50019dab212746",
         },
+        {
+            "tag": "sha256-" + "a" * 64 + "@sha256:" + "a" * 64,
+        },
+        {
+            "tag": "1.37.0@sha256:" + "a" * 64 + "@sha256:" + "a" * 64,
+        },
     ],
 )
-def test_observability_pin_guard_rejects_tag_and_digest_duplication(image: dict[str, str]) -> None:
+def test_observability_pin_guard_rejects_ambiguous_or_versionless_pins(image: dict[str, str]) -> None:
     assert not _image_pin_is_unambiguous(image)
 
 
