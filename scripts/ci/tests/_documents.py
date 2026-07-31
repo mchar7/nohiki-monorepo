@@ -1,5 +1,6 @@
 """Typed boundaries for YAML and JSON documents used by CI tests."""
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import NotRequired, ReadOnly, TypedDict, TypeIs
@@ -395,6 +396,99 @@ def load_workflow(path: Path) -> Workflow:
     return document
 
 
+def _strip_jsonc_comments(text: str) -> str:
+    output: list[str] = []
+    index = 0
+    in_string = False
+    escaped = False
+
+    while index < len(text):
+        character = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if in_string:
+            output.append(character)
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            index += 1
+            continue
+
+        if character == '"':
+            in_string = True
+            output.append(character)
+            index += 1
+            continue
+        if character == "/" and following == "/":
+            index += 2
+            while index < len(text) and text[index] not in "\r\n":
+                index += 1
+            continue
+        if character == "/" and following == "*":
+            output.append(" ")
+            index += 2
+            while index < len(text):
+                if text[index : index + 2] == "*/":
+                    index += 2
+                    break
+                if text[index] in "\r\n":
+                    output.append(text[index])
+                index += 1
+            else:
+                output.append("/*")
+            continue
+
+        output.append(character)
+        index += 1
+
+    return "".join(output)
+
+
+def _strip_json_trailing_commas(text: str) -> str:
+    output: list[str] = []
+    index = 0
+    in_string = False
+    escaped = False
+
+    while index < len(text):
+        character = text[index]
+        if in_string:
+            output.append(character)
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            index += 1
+            continue
+
+        if character == '"':
+            in_string = True
+            output.append(character)
+            index += 1
+            continue
+        if character == ",":
+            following_index = index + 1
+            while following_index < len(text) and text[following_index].isspace():
+                following_index += 1
+            if following_index < len(text) and text[following_index] in "}]":
+                index += 1
+                continue
+
+        output.append(character)
+        index += 1
+
+    return "".join(output)
+
+
+def _reject_non_json_constant(value: str) -> object:
+    message = f"invalid JSON constant {value}"
+    raise json.JSONDecodeError(message, value, 0)
+
+
 def load_mapping(path: Path) -> dict[str, object]:
     """Load a YAML or JSON file whose root must be a mapping.
 
@@ -411,6 +505,30 @@ def load_mapping(path: Path) -> dict[str, object]:
         path.read_text(encoding="utf-8"),
         Loader=_SAFE_LOADER,  # noqa: S506 -- This always selects a PyYAML safe loader.
     )
+    if not _is_string_mapping(document):
+        message = f"document {path} must contain a mapping, got {type(document).__name__}"
+        raise TypeError(message)
+    return document
+
+
+def load_jsonc(path: Path) -> dict[str, object]:
+    """Load the supported JSONC subset whose root must be a mapping.
+
+    This accepts line comments, block comments, and trailing commas over otherwise strict JSON.
+    Other JSON5 syntax raises instead of being reinterpreted.
+
+    Args:
+        path: Document path.
+
+    Returns:
+        The top-level mapping.
+
+    Raises:
+        json.JSONDecodeError: The document is not valid in the supported JSONC subset.
+        TypeError: The document root is not a mapping.
+    """
+    text = _strip_jsonc_comments(path.read_text(encoding="utf-8"))
+    document: object = json.loads(_strip_json_trailing_commas(text), parse_constant=_reject_non_json_constant)
     if not _is_string_mapping(document):
         message = f"document {path} must contain a mapping, got {type(document).__name__}"
         raise TypeError(message)

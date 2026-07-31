@@ -59,7 +59,7 @@ spec:
       containers:
         - name: registry
           # Official Distribution 3.0.0 OCI index digest, verified against Docker Hub.
-          image: registry@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
+          image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
           imagePullPolicy: IfNotPresent
           ports:
             - name: registry
