@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,13 @@ def _container(lane: str, name: str) -> dict[str, Any]:
 
 def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _parse_playwright_list(output: str) -> tuple[set[str], int]:
+    total = re.search(r"(?:^|\n)Total:\s+([0-9]+) tests? in [0-9]+ files?\n?\Z", output)
+    assert total is not None, f"playwright --list output is incomplete: missing final Total line\n{output}"
+    collected = {match.group(1) for match in re.finditer(r"(?:^|\s)([\w-]+\.spec\.ts):[0-9]+:[0-9]+", output)}
+    return collected, int(total.group(1))
 
 
 def _import_playwright_configs(
@@ -283,33 +291,42 @@ def test_browser_runner_accounts_for_every_outcome_and_retains_artifacts() -> No
     assert "&& cleanupSucceeded" in text
 
 
+def test_playwright_list_parser_rejects_incomplete_capture() -> None:
+    output = "Listing tests:\n  [chromium] > smoke.spec.ts:7:1 > smoke\n"
+    with pytest.raises(AssertionError, match="missing final Total line"):
+        _parse_playwright_list(output)
+
+
 @pytest.mark.requires_node_modules
 def test_playwright_collects_every_authoritative_journey_file() -> None:
-    result = subprocess.run(
-        [
-            "pnpm",
-            "--filter",
-            "nohiki-frontend",
-            "exec",
-            "playwright",
-            "test",
-            "--config=e2e/playwright.k8s.config.ts",
-            "--list",
-            "--reporter=list",
-        ],
-        cwd=_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=os.environ | {"E2E_BASE_URL": _PUBLIC_ORIGIN},
-    )
+    # Playwright force-exits before asynchronous pipe writes drain, while regular-file writes are synchronous.
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout:
+        result = subprocess.run(
+            [
+                "pnpm",
+                "--filter",
+                "nohiki-frontend",
+                "exec",
+                "playwright",
+                "test",
+                "--config=e2e/playwright.k8s.config.ts",
+                "--list",
+                "--reporter=list",
+            ],
+            cwd=_ROOT,
+            check=True,
+            stdout=stdout,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=os.environ | {"E2E_BASE_URL": _PUBLIC_ORIGIN},
+        )
+        stdout.seek(0)
+        output = stdout.read()
     authoritative = {path.name for path in (_FRONTEND / "e2e" / "journeys").glob("*.spec.ts")}
-    collected = {match.group(1) for match in re.finditer(r"(?:^|\s)([\w-]+\.spec\.ts):[0-9]+:[0-9]+", result.stdout)}
+    collected, total = _parse_playwright_list(output)
     assert authoritative
-    assert collected == authoritative, f"playwright --list output:\n{result.stdout}\n{result.stderr}"
-    total = re.search(r"Total:\s+([0-9]+) tests?", result.stdout)
-    assert total, result.stdout
-    assert int(total.group(1)) > len(authoritative)
+    assert collected == authoritative, f"playwright --list output:\n{output}\n{result.stderr}"
+    assert total > len(authoritative)
 
 
 def test_runner_images_are_pinned_nonroot_and_copy_whole_suites() -> None:
