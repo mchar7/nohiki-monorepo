@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import re
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +104,48 @@ def test_otel_collector_manifests_use_pinned_config() -> None:
         assert prometheus == {"host": "0.0.0.0", "port": 8888}, overlay  # noqa: S104 -- OTLP metrics must bind all pod interfaces.
 
 
+def _validate_collector_config(image: str, config_path: Path) -> None:
+    container = subprocess.run(
+        [
+            "docker",
+            "create",
+            image,
+            "validate",
+            "--config=/etc/otelcol-contrib/config.yaml",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    try:
+        config = config_path.read_bytes()
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as stream:
+            member = tarfile.TarInfo("config.yaml")
+            member.mode = 0o444
+            member.size = len(config)
+            stream.addfile(member, io.BytesIO(config))
+        subprocess.run(
+            ["docker", "cp", "-", f"{container}:/etc/otelcol-contrib"],
+            input=archive.getvalue(),
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["docker", "start", "--attach", container],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    finally:
+        subprocess.run(
+            ["docker", "rm", "--force", container],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+
 @pytest.mark.requires_docker
 def test_otel_collector_rendered_configs_validate_with_pinned_binary(
     tmp_path: Path,
@@ -113,37 +157,9 @@ def test_otel_collector_rendered_configs_validate_with_pinned_binary(
         pytest.skip("Docker integration is unavailable")
     image = yaml.safe_load(_COLLECTOR.read_text(encoding="utf-8"))["spec"]["image"]
 
-    subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--volume",
-            f"{_COMPOSE_CONFIG}:/etc/otelcol-contrib/config.yaml:ro",
-            image,
-            "validate",
-            "--config=/etc/otelcol-contrib/config.yaml",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    _validate_collector_config(image, _COMPOSE_CONFIG)
 
     for overlay, _, config in _collector_configs():
         config_path = tmp_path / f"{overlay}.yaml"
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-        subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--volume",
-                f"{config_path}:/etc/otelcol-contrib/config.yaml:ro",
-                image,
-                "validate",
-                "--config=/etc/otelcol-contrib/config.yaml",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        _validate_collector_config(image, config_path)
