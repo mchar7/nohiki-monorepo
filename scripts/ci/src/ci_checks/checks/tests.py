@@ -90,8 +90,11 @@ def get_changed_files(mode: GitMode) -> set[Path]:
             raise RuntimeError(msg)
         branch = branch_result.stdout.strip()
 
+        # origin/main first. Preferring origin/<branch> made a second push to an
+        # already-pushed branch diff only the increment, so a push adding no files
+        # selected nothing and reported success having run no tests.
         base = ""
-        for candidate in (f"origin/{branch}", "origin/main"):
+        for candidate in ("origin/main", f"origin/{branch}"):
             base_result = subprocess.run(
                 ["git", "rev-parse", candidate],
                 capture_output=True,
@@ -103,7 +106,7 @@ def get_changed_files(mode: GitMode) -> set[Path]:
                 base = base_result.stdout.strip()
                 break
         if not base:
-            msg = "no usable diff base: neither origin/<branch> nor origin/main resolves"
+            msg = "no usable diff base: neither origin/main nor origin/<branch> resolves"
             raise RuntimeError(msg)
         # Three-dot: diff against the merge base, so upstream drift on the
         # base branch never counts as a local change.
