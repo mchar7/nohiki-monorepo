@@ -100,6 +100,7 @@ def _protected_main_fan_in(worker_result: str) -> subprocess.CompletedProcess[st
             "TITLE_POLICY_EXPECTED": "false",
             "WORKER_COMMITLINT": "",
             "WORKER_COMMITLINT_EXPECTED": "false",
+            "WORKER_CONTAINER_CONTRACTS": "",
             "WORKER_NODE_GROUP": "",
             "WORK_EXPECTED": "true",
         },
@@ -1378,3 +1379,14 @@ def test_router_publishes_the_image_selection_as_an_artifact_not_a_job_output() 
     outputs = {name: value for name, value in jobs["changes"]["outputs"].items() if name not in FLAG_NAMES}
     assert not [name for name in outputs if "matrix" in name or "image" in name]
     assert not [name for name, value in outputs.items() if "matrix" in str(value) or "image" in str(value)]
+
+
+def test_fan_in_container_verdict_reads_the_worker_not_a_retired_job() -> None:
+    workflow = (_ROOT / ".github/workflows/checks.yml").read_text(encoding="utf-8")
+
+    assert "needs.container-contracts" not in workflow, "fan-in still references the retired job"
+
+    checks = _jobs()["checks"]
+    step = next(s for s in _steps(checks) if s.get("name") == "Require every selected check")
+    assert step["env"]["WORKER_CONTAINER_CONTRACTS"] == "${{ needs.worker.outputs.container_contracts_executed }}"
+    assert "container-contracts" not in checks["needs"]
