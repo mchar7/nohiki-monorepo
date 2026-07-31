@@ -37,6 +37,7 @@
     "helm-values",
     "flux",
     "kubernetes",
+    "custom.regex",
     "nix"
   ],
   "pep621": {
@@ -54,6 +55,33 @@
   "kubernetes": {
     "managerFilePatterns": ["/^infra\\/k8s\\/.+\\.ya?ml$/"]
   },
+  "customManagers": [
+    {
+      // why: pnpm is duplicated across the package manager declaration, container builds, and the Nix toolchain.
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^typescript\\/apps\\/frontend\\/Dockerfile(?:\\.playwright-runner)?$/",
+        "/^flake\\.nix$/"
+      ],
+      "matchStrings": [
+        "npm install --global pnpm@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "pname\\s*=\\s*\"pnpm\";\\s*version\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\";",
+        "registry\\.npmjs\\.org/pnpm/-/pnpm-(?<currentValue>\\d+\\.\\d+\\.\\d+)\\.tgz"
+      ],
+      "depNameTemplate": "pnpm",
+      "datasourceTemplate": "npm"
+    },
+    {
+      // why: the Playwright test package and runner image must use the same browser build.
+      "customType": "regex",
+      "managerFilePatterns": ["/^typescript\\/apps\\/frontend\\/Dockerfile\\.playwright-runner$/"],
+      "matchStrings": [
+        "mcr\\.microsoft\\.com/playwright:v(?<currentValue>\\d+\\.\\d+\\.\\d+)-noble@sha256:[0-9a-f]{64}"
+      ],
+      "depNameTemplate": "@playwright/test",
+      "datasourceTemplate": "npm"
+    }
+  ],
   "packageRules": [
     {
       "description": "Require a human dashboard approval for major updates",
@@ -215,6 +243,18 @@
       "matchManagers": ["nix"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "Nix minor, patch, and digest"
+    },
+    {
+      // why: every pnpm consumer must move in the same Renovate pull request.
+      "description": "Keep duplicate pnpm declarations aligned",
+      "matchPackageNames": ["pnpm"],
+      "groupName": "pnpm version parity"
+    },
+    {
+      // why: the Playwright package and runner image must move in the same Renovate pull request.
+      "description": "Keep duplicate Playwright declarations aligned",
+      "matchPackageNames": ["@playwright/test"],
+      "groupName": "Playwright version parity"
     }
   ],
   "vulnerabilityAlerts": {
