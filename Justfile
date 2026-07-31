@@ -31,7 +31,9 @@ local_image_names := "user-auth-service user-pref-service user-upload-service us
 # Common commands
 env_lock := monorepo_root + "/scripts/dev/env-lock.sh"
 test_run := monorepo_root + "/scripts/dev/test-run.sh"
-pnpm := "corepack pnpm"
+# The flake pins pnpm to the version package.json declares, so Corepack would only
+# fetch a second copy, which hermetic shells forbid.
+pnpm := "pnpm"
 playwright := env_lock + " shared node_modules -- " + pnpm + " --filter nohiki-frontend exec playwright"
 playwright_test := test_run + " " + playwright + " test --config=e2e/playwright.config.ts"
 ast_cmd := "cd scripts/util/ast_explorer && " + env_lock + " shared venv -- uv run --no-sync ast-explorer"

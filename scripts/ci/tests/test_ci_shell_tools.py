@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
@@ -236,3 +239,23 @@ def test_empty_package_scope_succeeds_without_falling_back_to_all(
     assert result.exit_code == 0
     assert selected_scopes == [Scope.OTHER]
     assert "No testable packages found" in result.output
+
+
+def test_package_manager_comes_from_the_pinned_toolchain_not_a_fetch() -> None:
+    """Corepack resolves `packageManager` by downloading, which hermetic shells forbid."""
+    root = Path(__file__).resolve().parents[3]
+    justfile = (root / "Justfile").read_text(encoding="utf-8")
+
+    assert re.search(r'^pnpm := "pnpm"$', justfile, re.MULTILINE), "pnpm must come from PATH"
+    assert "corepack" not in justfile, "Corepack would fetch a package manager the flake already pins"
+    assert 'COREPACK_ENABLE_NETWORK = "0"' in (root / "flake.nix").read_text(encoding="utf-8")
+
+    declared = json.loads((root / "package.json").read_text(encoding="utf-8"))["packageManager"]
+    name, _, wanted = declared.partition("@")
+    assert name == "pnpm", declared
+
+    resolved = shutil.which("pnpm")
+    if resolved is None:
+        pytest.skip("pnpm is provided by the development shell")
+    provided = subprocess.run([resolved, "--version"], capture_output=True, text=True, check=True).stdout.strip()
+    assert provided == wanted, f"flake provides pnpm {provided} but package.json declares {wanted}"
