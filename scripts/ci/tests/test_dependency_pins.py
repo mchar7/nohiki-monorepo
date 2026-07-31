@@ -186,8 +186,8 @@ def test_renovate_abandonment_suppression_is_limited_to_verified_false_positives
     threshold_rules = [rule for rule in rules if isinstance(rule, dict) and "abandonmentThreshold" in rule]
     assert len(threshold_rules) == 2
 
-    finished_rules = [rule for rule in threshold_rules if rule["abandonmentThreshold"] is None]
-    finite_rules = [rule for rule in threshold_rules if rule["abandonmentThreshold"] == "4 years"]
+    finished_rules = [rule for rule in threshold_rules if rule.get("abandonmentThreshold") is None]
+    finite_rules = [rule for rule in threshold_rules if rule.get("abandonmentThreshold") == "4 years"]
     assert len(finished_rules) == 1
     assert len(finite_rules) == 1
 
