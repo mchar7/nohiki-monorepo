@@ -27,6 +27,10 @@ _CI_PROJECT = _ROOT / "scripts" / "ci" / "pyproject.toml"
 _SYNC_CI_ENVIRONMENT = _ROOT / "scripts" / "dev" / "sync-ci-environment.sh"
 _SYNC_CI_DEADCODE = _ROOT / "scripts" / "dev" / "sync-ci-deadcode.sh"
 _PACKAGE = _ROOT / "package.json"
+_FRONTEND = _ROOT / "typescript" / "apps" / "frontend"
+_FRONTEND_PACKAGE = _FRONTEND / "package.json"
+_FRONTEND_DOCKERFILE = _FRONTEND / "Dockerfile"
+_PLAYWRIGHT_RUNNER_DOCKERFILE = _FRONTEND / "Dockerfile.playwright-runner"
 _SCAFFOLD_DOCKERFILE = (
     _ROOT / "scripts" / "util" / "scaffold" / "src" / "nohiki_scaffold" / "templates" / "service" / "Dockerfile.j2"
 )
@@ -126,6 +130,58 @@ def _images(path: Path, repository: str) -> list[re.Match[str]]:
 
 def _renovate_config() -> dict[str, object]:
     return load_jsonc(_RENOVATE)
+
+
+def _version_declarations(
+    sources: tuple[tuple[Path, re.Pattern[str]], ...],
+) -> dict[str, str]:
+    declarations: dict[str, str] = {}
+    for path, pattern in sources:
+        text = _read_text(path)
+        for match in pattern.finditer(text):
+            line_number = text.count("\n", 0, match.start("version")) + 1
+            declarations[f"{path.relative_to(_ROOT)}:{line_number}"] = match["version"]
+    return declarations
+
+
+def _assert_duplicate_versions_aligned(
+    dependency: str,
+    sources: tuple[tuple[Path, re.Pattern[str]], ...],
+) -> None:
+    declarations = _version_declarations(sources)
+    assert declarations, f"no {dependency} declarations discovered"
+    locations_by_version: dict[str, list[str]] = {}
+    for location, version in declarations.items():
+        locations_by_version.setdefault(version, []).append(location)
+    assert len(locations_by_version) == 1, f"duplicate {dependency} pins disagree: {locations_by_version}"
+
+
+def test_duplicate_pnpm_declarations_stay_aligned() -> None:
+    version = r"(?P<version>\d+\.\d+\.\d+)"
+    _assert_duplicate_versions_aligned(
+        "pnpm",
+        (
+            (_PACKAGE, re.compile(rf'"packageManager"\s*:\s*"pnpm@{version}"')),
+            (_FRONTEND_DOCKERFILE, re.compile(rf"\bpnpm@{version}\b")),
+            (_PLAYWRIGHT_RUNNER_DOCKERFILE, re.compile(rf"\bpnpm@{version}\b")),
+            (_FLAKE, re.compile(rf'pname\s*=\s*"pnpm";\s*version\s*=\s*"{version}"')),
+            (_FLAKE, re.compile(rf"registry\.npmjs\.org/pnpm/-/pnpm-{version}\.tgz")),
+        ),
+    )
+
+
+def test_duplicate_playwright_declarations_stay_aligned() -> None:
+    version = r"(?P<version>\d+\.\d+\.\d+)"
+    _assert_duplicate_versions_aligned(
+        "Playwright",
+        (
+            (_FRONTEND_PACKAGE, re.compile(rf'"@playwright/test"\s*:\s*"[~^]?{version}"')),
+            (
+                _PLAYWRIGHT_RUNNER_DOCKERFILE,
+                re.compile(rf"mcr\.microsoft\.com/playwright:v{version}-[^@\s]+@sha256:[0-9a-f]{{64}}"),
+            ),
+        ),
+    )
 
 
 def _workspace_member_names() -> set[str]:
@@ -809,6 +865,7 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         "flux",
         "kubernetes",
         "nix",
+        "custom.regex",
     }
     enabled_managers = config["enabledManagers"]
     assert isinstance(enabled_managers, list)
@@ -841,8 +898,21 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     # A manager block is merged into the dependency config before packageRules run, so pinDigests declared
     # there cannot override docker:pinDigests inherited from config:best-practices.
     assert "pinDigests" not in helm_values_manager
-    assert "custom.regex" not in enabled_managers
-    assert "customManagers" not in config
+    custom_managers = config["customManagers"]
+    assert isinstance(custom_managers, list)
+    assert all(isinstance(manager, dict) for manager in custom_managers)
+    custom_by_dependency = {
+        manager.get("depNameTemplate"): manager for manager in custom_managers if isinstance(manager, dict)
+    }
+    assert set(custom_by_dependency) == {"pnpm", "@playwright/test"}
+    for manager in custom_by_dependency.values():
+        assert manager.get("customType") == "regex"
+        assert manager.get("datasourceTemplate") == "npm"
+        assert isinstance(manager.get("managerFilePatterns"), list)
+        match_strings = manager.get("matchStrings")
+        assert isinstance(match_strings, list)
+        assert match_strings
+        assert all(isinstance(pattern, str) and "(?<currentValue>" in pattern for pattern in match_strings)
 
     rules = config["packageRules"]
     assert isinstance(rules, list)
@@ -853,6 +923,15 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     assert len(pin_rules) == 1
     assert pin_rules[0].get("matchManagers") == ["helm-values"]
     assert pin_rules[0].get("pinDigests") is False
+    parity_groups = {
+        "pnpm": "pnpm version parity",
+        "@playwright/test": "Playwright version parity",
+    }
+    for dependency, group_name in parity_groups.items():
+        parity_rule = next(
+            rule for rule in rules if isinstance(rule, dict) and rule.get("matchPackageNames") == [dependency]
+        )
+        assert parity_rule.get("groupName") == group_name
 
     grouped_ecosystems = (
         {"npm"},
