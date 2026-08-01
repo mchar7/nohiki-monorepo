@@ -123,6 +123,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
     },
     "pre-push": {
         "internal-refs-range": frozenset(),
+        "secrets-scan": frozenset(),
         "python-lint": frozenset(),
         "python-format": frozenset(),
         "python-typecheck": _PYTHON_WORKSPACE_SURFACE,
@@ -136,6 +137,22 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
             "typescript/apps/frontend/vite.config.*",
             "typescript/apps/frontend/vitest.config.*",
             "typescript/libs/**",
+        },
+        "frontend-lint-all": _NODE_TOOLCHAIN_SURFACE
+        | {
+            "typescript/apps/frontend/src/*",
+            "typescript/apps/frontend/src/**/*",
+            "typescript/apps/frontend/scripts/*",
+            "typescript/apps/frontend/scripts/**/*",
+            "typescript/apps/frontend/e2e/*",
+            "typescript/apps/frontend/e2e/**/*",
+            "typescript/apps/frontend/public/theme-init.js",
+            "typescript/apps/frontend/package.json",
+            "typescript/apps/frontend/biome.jsonc",
+            "typescript/apps/frontend/tsconfig*.json",
+            "typescript/libs/**",
+            "typescript/libs/biome-config/biome.json",
+            "typescript/edge/auth-listings-worker/biome.jsonc",
         },
         "nix-check": frozenset({"flake.nix", "flake.lock"}),
         # No glob: the affected-test runner owns the selection policy. Asserted by
@@ -578,7 +595,7 @@ def test_affected_test_selection_is_delegated_to_the_runner() -> None:
 
 def test_unconditional_hooks_declare_no_glob() -> None:
     """Message and patch scanners inspect commits, not a file surface, so they carry no glob."""
-    for name in ("secrets-check", "internal-refs-range"):
+    for name in ("secrets-check", "internal-refs-range", "secrets-scan"):
         assert "glob" not in _job(name), f"{name} must stay unconditional"
     commands = _as_mapping(_as_mapping(_load_config()["commit-msg"])["commands"])
     for name, command in commands.items():
