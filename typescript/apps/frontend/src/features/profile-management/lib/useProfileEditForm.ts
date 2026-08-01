@@ -7,7 +7,7 @@ import type { ProfileResponse } from '@/shared/api';
 import { hydrateSkillIds } from '@/shared/api';
 import { extractErrorReason } from '@/shared/lib/index.ts';
 import { useUpdateProfile } from '../api/index.ts';
-import { createProfileSchema, type ProfileFormValues } from '../schemas/index.ts';
+import { createProfileSchema, type ProfileFormValues } from '../model/index.ts';
 import { formValuesToUpdatePayload, profileToFormValues } from './profile.transforms.ts';
 
 interface UseProfileEditFormOptions {

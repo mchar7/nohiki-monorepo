@@ -13,8 +13,8 @@ import {
 } from '@/shared/ui/form.tsx';
 import { SkillInput } from '@/shared/ui/index.ts';
 import { SectionIcon } from '@/shared/ui/section-icon.tsx';
-import type { ProfileFormValues } from '../schemas/index.ts';
-import { KEYWORDS_MAX_ITEMS } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
+import { KEYWORDS_MAX_ITEMS } from '../model/index.ts';
 import type { SkillsCardProps } from './SkillsCard.types.ts';
 
 function SkillsCard({ control }: SkillsCardProps): JSX.Element {

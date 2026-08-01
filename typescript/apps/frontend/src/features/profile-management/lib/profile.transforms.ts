@@ -6,7 +6,7 @@ import type {
   ProfileUpdate,
   SkillSearchResult,
 } from '@/shared/api';
-import type { ProfileFormValues } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
 
 /** Factor for converting between API 0-1 fraction and UI 0-100 percentage */
 const PERCENTAGE_SCALE: number = 100;

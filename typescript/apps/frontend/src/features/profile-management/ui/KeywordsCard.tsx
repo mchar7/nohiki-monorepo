@@ -14,8 +14,8 @@ import {
 import { OptionalIndicator } from '@/shared/ui/optional-indicator.tsx';
 import { SectionIcon } from '@/shared/ui/section-icon.tsx';
 import { TagInput } from '@/shared/ui/TagInput.tsx';
-import type { ProfileFormValues } from '../schemas/index.ts';
-import { KEYWORDS_MAX_ITEMS } from '../schemas/profile.schema.ts';
+import type { ProfileFormValues } from '../model/index.ts';
+import { KEYWORDS_MAX_ITEMS } from '../model/profile.schema.ts';
 
 interface KeywordsCardProps {
   readonly control: Control<ProfileFormValues>;

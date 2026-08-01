@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { toast } from 'sonner';
 import { beforeEach, describe, expect, vi } from 'vitest';
 import { ApiError } from '@/shared/api';
-import type { ProfileFormValues } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
 import { useProfileCreateForm } from './useProfileCreateForm.ts';
 
 const { mockMutateAsync, mockNavigate } = vi.hoisted(() => ({

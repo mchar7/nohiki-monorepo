@@ -9,7 +9,7 @@ import { FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/shar
 import { Input } from '@/shared/ui/input.tsx';
 import { Label } from '@/shared/ui/label.tsx';
 import { SectionIcon } from '@/shared/ui/section-icon.tsx';
-import type { ProfileFormValues } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
 
 type ExperiencePref = NonNullable<ProfileResponse['experience_preference']>;
 type SeniorityLevelKey = NonNullable<ExperiencePref['seniority_levels']>[number];

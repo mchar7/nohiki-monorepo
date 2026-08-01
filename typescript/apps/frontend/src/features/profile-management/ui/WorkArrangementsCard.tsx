@@ -8,7 +8,7 @@ import { Checkbox } from '@/shared/ui/checkbox.tsx';
 import { FormField, FormItem, FormMessage } from '@/shared/ui/form.tsx';
 import { Label } from '@/shared/ui/label.tsx';
 import { SectionIcon } from '@/shared/ui/section-icon.tsx';
-import type { ProfileFormValues } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
 
 type WorkArrangementKey = ProfileResponse['work_arrangements'][number];
 

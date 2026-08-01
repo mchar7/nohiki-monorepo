@@ -3,8 +3,8 @@ import { render, screen } from '@testing-library/react';
 import type { JSX } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 import { describe, expect, vi } from 'vitest';
-import type { ProfileFormValues } from '../schemas/index.ts';
-import { PROFILE_FORM_DEFAULTS } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
+import { PROFILE_FORM_DEFAULTS } from '../model/index.ts';
 import { SkillsCard } from './SkillsCard.tsx';
 
 // SkillInput uses fetchClient for skill search - mock to prevent network calls in tests
