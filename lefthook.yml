@@ -2,7 +2,7 @@
 # Docs: https://github.com/evilmartians/lefthook
 #
 # Pre-commit: Fast checks on staged files (~5-15s)
-# Pre-push: Thorough checks before pushing (~30-60s)
+# Pre-push: Thorough checks before pushing (~3-7m)
 #
 # Hooks run on every commit and push. Bypass mechanisms are not honored.
 # When a hook fails on a file unrelated to the current change, fix the
@@ -139,7 +139,7 @@ pre-commit:
         - "**/*.j2"
       run: just docker-lint
 
-# PRE-PUSH: Thorough checks before pushing (~30-60s)
+# PRE-PUSH: Thorough checks before pushing (~3-7m)
 # Phased execution: typecheck -> tests -> hygiene
 pre-push:
   jobs:
@@ -164,6 +164,28 @@ pre-push:
             range='origin/main..HEAD'
           fi
           scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks internal-refs --range "$range"
+        fi
+
+    # Scan only the commits being pushed. Whole-history scans include unrelated worktree branches.
+    # No glob: secrets can appear in any file type, so path filtering would create blind spots.
+    - name: secrets-scan
+      run: |
+        set -eu
+        refs=$(cat)
+        if [ -n "$refs" ]; then
+          printf '%s\n' "$refs" | while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+            if [ -z "$local_ref" ] || [ -z "$local_sha" ] || [ -z "$remote_ref" ] || [ -z "$remote_sha" ]; then
+              echo "ERROR: malformed pre-push ref input" >&2
+              exit 1
+            fi
+            just secrets-scan-range "$remote_sha..$local_sha"
+          done
+        else
+          range='@{push}..HEAD'
+          if ! git rev-parse --verify '@{push}' >/dev/null 2>&1; then
+            range='origin/main..HEAD'
+          fi
+          just secrets-scan-range "$range"
         fi
 
     # Phase 1: Static checks (parallel)
@@ -231,7 +253,7 @@ pre-push:
           # push selects, and it reads the push range itself. A glob would be a second copy
           # of that policy, and the copy is what drifts.
           - name: python-tests
-            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks tests affected --mode push --ci
+            run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks tests affected --mode push --ci --workers 2
             env:
               OTEL_SDK_DISABLED: "true"
               UV_NO_SYNC: "1"
@@ -290,6 +312,28 @@ pre-push:
           - name: build-backend
             glob: *python_workspace_surface
             run: just hygiene-build-backend-strict
+
+          - name: frontend-lint-all
+            # why: CI lints the whole project; staged-file pre-commit cannot see violations in untouched files.
+            glob:
+              - "typescript/apps/frontend/src/*"
+              - "typescript/apps/frontend/src/**/*"
+              - "typescript/apps/frontend/scripts/*"
+              - "typescript/apps/frontend/scripts/**/*"
+              - "typescript/apps/frontend/e2e/*"
+              - "typescript/apps/frontend/e2e/**/*"
+              - "typescript/apps/frontend/public/theme-init.js"
+              - "typescript/apps/frontend/package.json"
+              - "typescript/apps/frontend/biome.jsonc"
+              - "typescript/apps/frontend/tsconfig*.json"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - ".npmrc"
+              - "typescript/libs/**"
+              - "typescript/libs/biome-config/biome.json"
+              - "typescript/edge/auth-listings-worker/biome.jsonc"
+            run: just fe-lint
 
           - name: frontend-fsd
             glob:
