@@ -1,0 +1,19 @@
+table inet nohiki_offline {
+  set private_v4 {
+    type ipv4_addr
+    flags interval
+    elements = { 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }
+  }
+  chain output {
+    type filter hook output priority -10; policy accept;
+    ip daddr @private_v4 accept
+    ip6 daddr ::1 accept
+    counter reject
+  }
+  chain forward {
+    type filter hook forward priority -10; policy accept;
+    ip daddr @private_v4 accept
+    ip6 daddr ::1 accept
+    counter reject
+  }
+}
