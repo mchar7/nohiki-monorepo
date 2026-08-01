@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/sha
 import { FormControl, FormDescription, FormField, FormItem, FormLabel } from '@/shared/ui/form.tsx';
 import { SectionIcon } from '@/shared/ui/section-icon.tsx';
 import { Switch } from '@/shared/ui/switch.tsx';
-import type { ProfileFormValues } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
 
 interface RelocationCardProps {
   readonly control: Control<ProfileFormValues>;

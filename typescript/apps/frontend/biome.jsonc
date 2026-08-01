@@ -160,7 +160,7 @@
         "src/shared/api/*.ts",
         "src/features/*/api/*.ts",
         "src/features/*/api/index.ts",
-        "src/features/*/schemas/*.ts",
+        "src/features/*/model/*.schema.ts",
         "src/features/omakase/*/lib/*.ts",
         "src/features/omakase/*/api/*.ts",
         "src/pages/*/api/*.ts"

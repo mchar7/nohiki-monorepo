@@ -220,8 +220,8 @@ importers:
         specifier: 2.5.3
         version: 2.5.3
       '@feature-sliced/steiger-plugin':
-        specifier: 0.6.0
-        version: 0.6.0(@typescript/typescript6@6.0.2)
+        specifier: 0.7.0
+        version: 0.7.0(@typescript/typescript6@6.0.2)
       '@nohiki/biome-config':
         specifier: workspace:*
         version: link:../../libs/biome-config
@@ -286,8 +286,8 @@ importers:
         specifier: 7.0.1
         version: 7.0.1(rolldown@1.1.5)
       steiger:
-        specifier: 0.5.13
-        version: 0.5.13(@typescript/typescript6@6.0.2)
+        specifier: 0.6.0
+        version: 0.6.0(@typescript/typescript6@6.0.2)
       tailwindcss:
         specifier: 4.3.2
         version: 4.3.2
@@ -932,8 +932,8 @@ packages:
   '@feature-sliced/filesystem@3.1.0':
     resolution: {integrity: sha512-kdNcVwJMCiORdi2Aog7epDeQMEREFUvdqqQHmE7D3ZjSdsQzZWMH6Ex7gtGAttTT/oRBFysqCtP5pl0CETEc9Q==}
 
-  '@feature-sliced/steiger-plugin@0.6.0':
-    resolution: {integrity: sha512-TO7DbHYcldgyasVK5iwoou+J0rJonDgH18B+IBQqXedeB2/MURpkbUw9PFPV84pysG5C3uvIDhk+lLMW2MgQ4Q==}
+  '@feature-sliced/steiger-plugin@0.7.0':
+    resolution: {integrity: sha512-jd90OaXYW/6sQbJ9LjRhN4HFLrrqpp436V+6vpJQGpp/CVd+hynaLDtDfsZSxMgfgj8uvcow3zwwKRCnBlLWYQ==}
 
   '@floating-ui/core@1.7.5':
     resolution: {integrity: sha512-1Ih4WTWyw0+lKyFMcBHGbb5U5FtuHJuujoyyr5zTaWS5EYMeT6Jb2AuDeftsCsEuchO+mM2ij5+q9crhydzLhQ==}
@@ -4588,8 +4588,8 @@ packages:
   std-env@4.2.0:
     resolution: {integrity: sha512-oCUKSupKTHX53EyjDtuZQ64pjLJ6yYCtpmEw0goYxtjG9KpbRe8KAsl2tBUGU9DyMcJ0RwJ8GqJAFzMXcXW1Rw==}
 
-  steiger@0.5.13:
-    resolution: {integrity: sha512-Vbgb9tMmxo3wf1jXvn+px3hDEOELdYJdWji6DT++zFcWwVHgjY22DjxYbCjq+dtEE6BWYSyv6OhwbPZPy8ovQQ==}
+  steiger@0.6.0:
+    resolution: {integrity: sha512-XOG11zwU/m0Aq7bK9zCxH+//QemXis2P3pQJ99kYeaKhVr7YuR41cyN2bTQKrW9vTLw3Uykpai7ohfEX3nMN3Q==}
     hasBin: true
 
   strict-event-emitter@0.5.1:
@@ -5710,7 +5710,7 @@ snapshots:
     dependencies:
       typescript: 5.9.3
 
-  '@feature-sliced/steiger-plugin@0.6.0(@typescript/typescript6@6.0.2)':
+  '@feature-sliced/steiger-plugin@0.7.0(@typescript/typescript6@6.0.2)':
     dependencies:
       '@feature-sliced/filesystem': 3.1.0
       fastest-levenshtein: 1.0.16
@@ -9393,10 +9393,10 @@ snapshots:
 
   std-env@4.2.0: {}
 
-  steiger@0.5.13(@typescript/typescript6@6.0.2):
+  steiger@0.6.0(@typescript/typescript6@6.0.2):
     dependencies:
       '@clack/prompts': 0.9.1
-      '@feature-sliced/steiger-plugin': 0.6.0(@typescript/typescript6@6.0.2)
+      '@feature-sliced/steiger-plugin': 0.7.0(@typescript/typescript6@6.0.2)
       chokidar: 4.0.3
       cosmiconfig: 9.0.2(@typescript/typescript6@6.0.2)
       effector: 23.4.4

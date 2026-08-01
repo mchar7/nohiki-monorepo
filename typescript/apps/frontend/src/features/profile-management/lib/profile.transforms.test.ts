@@ -1,6 +1,6 @@
 import { describe, expect } from 'vitest';
 import type { ProfileResponse, SkillSearchResult } from '@/shared/api';
-import type { ProfileFormValues } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
 import {
   formValuesToCreatePayload,
   formValuesToUpdatePayload,

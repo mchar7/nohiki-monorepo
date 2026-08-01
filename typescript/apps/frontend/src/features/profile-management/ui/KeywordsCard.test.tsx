@@ -4,8 +4,8 @@ import type React from 'react';
 import type { JSX } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 import { beforeEach, describe, expect, vi } from 'vitest';
-import type { ProfileFormValues } from '../schemas/index.ts';
-import type * as ProfileSchema from '../schemas/profile.schema.ts';
+import type { ProfileFormValues } from '../model/index.ts';
+import type * as ProfileSchema from '../model/profile.schema.ts';
 import { KeywordsCard } from './KeywordsCard.tsx';
 
 // Mock responsive layout
@@ -32,7 +32,7 @@ vi.mock('@/shared/ui/TagInput.tsx', () => ({
 
 // We want to verify that it uses the constant KEYWORDS_MAX_ITEMS.
 // To make it FAIL, we mock KEYWORDS_MAX_ITEMS to something else.
-vi.mock('../schemas/profile.schema', async (importOriginal) => {
+vi.mock('../model/profile.schema', async (importOriginal) => {
   const actual = await importOriginal<typeof ProfileSchema>();
   return {
     ...actual,

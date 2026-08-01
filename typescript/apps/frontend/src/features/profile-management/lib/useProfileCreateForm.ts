@@ -11,7 +11,7 @@ import {
   createProfileSchema,
   PROFILE_FORM_DEFAULTS,
   type ProfileFormValues,
-} from '../schemas/index.ts';
+} from '../model/index.ts';
 import { formValuesToCreatePayload } from './profile.transforms.ts';
 
 interface UseProfileCreateFormResult {
