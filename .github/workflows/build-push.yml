@@ -11,6 +11,10 @@ on:
         description: 'Push images to container registry? (false = build + scan only)'
         type: boolean
         default: false
+      full_sweep:
+        description: 'Build all 27 images instead of the routine 21 products'
+        type: boolean
+        default: false
       image_tag:
         description: 'Common image tag for all services (e.g., manual-build-v1; only if pushing images)'
         type: string
@@ -90,8 +94,12 @@ jobs:
             [[ "$EVENT_NAME" == "workflow_dispatch" ]]
             [[ "$DISPATCH_SHA" =~ ^[0-9a-f]{40}$ ]]
             source_sha="$DISPATCH_SHA"
-            should_push="$PUSH_TO_REGISTRY"
-            if [[ "$should_push" == "true" ]]; then
+            should_push="false"
+            if [[ "$PUSH_TO_REGISTRY" == "true" ]]; then
+              [[ "$PUBLICATION_ENABLED" == "true" ]] || {
+                echo "Error: Image publication is disabled by IMAGE_PUBLICATION_ENABLED." >&2
+                exit 1
+              }
               [[ -n "$IMAGE_TAG" ]] || {
                 echo "Error: Image tag must be provided when registry publication is enabled." >&2
                 exit 1
@@ -100,10 +108,11 @@ jobs:
                 echo "Error: Image tag must match the OCI tag policy." >&2
                 exit 1
               }
+              should_push="true"
               common_tag="$IMAGE_TAG"
               tags_metadata_string="type=raw,value=${IMAGE_TAG},enable=true"
             else
-              [[ "$should_push" == "false" ]]
+              [[ "$PUSH_TO_REGISTRY" == "false" ]]
             fi
           fi
 
@@ -160,13 +169,22 @@ jobs:
         id: resolve-images
         env:
           EVENT_NAME: ${{ github.event_name }}
+          FULL_SWEEP: ${{ github.event.inputs.full_sweep }}
           RECORD_OUTCOME: ${{ steps.affected-record.outcome }}
           SOURCE_SHA: ${{ steps.validate-event.outputs.source_sha }}
         run: |
           set -euo pipefail
           selection=()
-          if [[ "$EVENT_NAME" == "workflow_run" && "$RECORD_OUTCOME" == "success" ]]; then
-            selection=(--artifact affected-images/affected-images.json --source-sha "$SOURCE_SHA")
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            if [[ "$RECORD_OUTCOME" == "success" ]]; then
+              selection=(--artifact affected-images/affected-images.json --source-sha "$SOURCE_SHA")
+            else
+              selection=(--full)
+            fi
+          elif [[ "$FULL_SWEEP" == "true" ]]; then
+            selection=(--full)
+          else
+            [[ "$FULL_SWEEP" == "false" ]]
           fi
           matrix="$(python3 scripts/ci/image_matrix.py matrix "${selection[@]}")"
           images="$(jq -c '[.include[].name]' <<< "$matrix")"
@@ -182,11 +200,76 @@ jobs:
             echo "has_images=$has_images"
           } >> "$GITHUB_OUTPUT"
 
-  build-push:
+  vendor-base-images:
     needs: [ event-validation ]
+    if: >-
+      ${{
+        needs.event-validation.outputs.authorized == 'true' &&
+        needs.event-validation.outputs.has_images == 'true' &&
+        needs.event-validation.outputs.should_push == 'true'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.event-validation.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Log into GitHub Container Registry
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Skopeo
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes skopeo
+
+      - name: Vendor digest-pinned OCI build inputs
+        env:
+          MIRROR_ROOT: ghcr.io/${{ github.repository }}/base-images
+        run: |
+          set -euo pipefail
+          authfile="$HOME/.docker/config.json"
+          count=0
+          while IFS=$'\t' read -r source mirror_tag digest mirror_reference; do
+            count=$((count + 1))
+            copied_digest=""
+            if inspected="$(skopeo inspect --authfile "$authfile" --format '{{.Digest}}' "docker://${mirror_tag}" 2>/dev/null)"; then
+              copied_digest="$inspected"
+            fi
+            if [[ "$copied_digest" != "$digest" ]]; then
+              skopeo copy --all --preserve-digests --authfile "$authfile" \
+                "docker://${source}" "docker://${mirror_tag}"
+              copied_digest="$(skopeo inspect --authfile "$authfile" --format '{{.Digest}}' "docker://${mirror_tag}")"
+            fi
+            [[ "$copied_digest" == "$digest" ]]
+            [[ "$mirror_reference" == *"@${digest}" ]]
+          done < <(python3 scripts/ci/image_matrix.py bases --mirror-root "${MIRROR_ROOT,,}")
+          [[ "$count" -gt 0 ]]
+
+  build-push:
+    needs: [ event-validation, vendor-base-images ]
     # GitHub applies strategy.matrix only after the job `if`, so an explicit has_images gate keeps
     # a valid empty selection from constructing a job at all.
-    if: needs.event-validation.outputs.authorized == 'true' && needs.event-validation.outputs.has_images == 'true'
+    if: >-
+      ${{
+        always() &&
+        needs.event-validation.outputs.authorized == 'true' &&
+        needs.event-validation.outputs.has_images == 'true' &&
+        (
+          needs.event-validation.outputs.should_push != 'true' ||
+          needs.vendor-base-images.result == 'success'
+        )
+      }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -233,6 +316,30 @@ jobs:
           imageBasePath="ghcr.io/${GITHUB_REPOSITORY,,}"
           echo "image_base_path=$imageBasePath" >> "$GITHUB_OUTPUT"
 
+      - name: Select protected Dockerfile
+        id: protected-dockerfile
+        env:
+          IMAGE_NAME: ${{ matrix.name }}
+          MIRROR_ROOT: ${{ steps.image-base-path.outputs.image_base_path }}/base-images
+          SOURCE_DOCKERFILE: ${{ matrix.dockerfile }}
+          SHOULD_PUSH: ${{ steps.mode.outputs.push }}
+        run: |
+          set -euo pipefail
+          dockerfile="$SOURCE_DOCKERFILE"
+          if [[ "$SHOULD_PUSH" == "true" ]]; then
+            dockerfile="${RUNNER_TEMP}/Dockerfile-${IMAGE_NAME}"
+            python3 scripts/ci/image_matrix.py mirror-dockerfile \
+              --name "$IMAGE_NAME" \
+              --mirror-root "$MIRROR_ROOT" \
+              --output "$dockerfile"
+            if [[ -f "${SOURCE_DOCKERFILE}.dockerignore" ]]; then
+              cp "${SOURCE_DOCKERFILE}.dockerignore" "${dockerfile}.dockerignore"
+            fi
+          else
+            [[ "$SHOULD_PUSH" == "false" ]]
+          fi
+          echo "path=$dockerfile" >> "$GITHUB_OUTPUT"
+
       - name: Log into GitHub Container Registry
         if: steps.mode.outputs.push == 'true' || matrix.name == 'ml-compute-service-gpu'
         uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
@@ -264,7 +371,7 @@ jobs:
         id: build
         with:
           context: ${{ matrix.context || '.' }} # Most images require the monorepo workspace; Kafka Connect is self-contained.
-          file: ./${{ matrix.dockerfile }}
+          file: ${{ steps.protected-dockerfile.outputs.path }}
           build-args: ${{ matrix.build_args }}
           push: ${{ steps.mode.outputs.push == 'true' }}
           load: ${{ steps.mode.outputs.push != 'true' }}
@@ -275,6 +382,7 @@ jobs:
           cache-to: ${{ case(matrix.name == 'ml-compute-service-gpu', case(steps.mode.outputs.push == 'true', format('type=registry,ref={0}/{1}:buildcache,mode=max', steps.image-base-path.outputs.image_base_path, matrix.name), ''), format('type=gha,scope={0},mode=max', matrix.name)) }}
           platforms: linux/amd64
           provenance: ${{ steps.mode.outputs.push == 'true' }}
+          sbom: ${{ steps.mode.outputs.push == 'true' }}
 
       - name: Capture pushed image digest
         id: capture-digest
@@ -335,14 +443,26 @@ jobs:
       DIGESTS_ENABLED: >-
         ${{
           needs.event-validation.outputs.authorized == 'true' &&
-          needs.build-push.result == 'success' &&
-          (github.event_name != 'workflow_dispatch' || github.event.inputs.push_to_registry == 'true')
+          (
+            needs.build-push.result == 'success' ||
+            (
+              needs.event-validation.outputs.has_images == 'false' &&
+              needs.build-push.result == 'skipped'
+            )
+          ) &&
+          (github.event_name != 'workflow_dispatch' || needs.event-validation.outputs.should_push == 'true')
         }}
       PROPOSAL_ENABLED: >-
         ${{
           github.event_name == 'workflow_run' &&
           needs.event-validation.outputs.authorized == 'true' &&
-          needs.build-push.result == 'success'
+          (
+            needs.build-push.result == 'success' ||
+            (
+              needs.event-validation.outputs.has_images == 'false' &&
+              needs.build-push.result == 'skipped'
+            )
+          )
         }}
     steps:
       # GitHub Actions has no workflow timeout; block mutations after pathological delay.
@@ -376,7 +496,7 @@ jobs:
           persist-credentials: false
 
       - name: Download image digest records
-        if: env.DIGESTS_ENABLED == 'true'
+        if: env.DIGESTS_ENABLED == 'true' && needs.event-validation.outputs.has_images == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: image-digest-*

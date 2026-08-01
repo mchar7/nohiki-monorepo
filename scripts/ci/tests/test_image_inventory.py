@@ -9,18 +9,23 @@ from pathlib import Path
 
 import pytest
 from ci_checks.core.image_inventory import (
+    IMAGE_CLASSES,
     IMAGE_KEYS,
     IMAGE_TIMEOUT_MINUTES,
     INVENTORY_PATH,
+    PRODUCT_CLASS,
     SCHEMA_VERSION,
     SELECTION_AUTHORITY_PATHS,
     TOP_LEVEL_KEYS,
+    VERIFICATION_OPS_CLASS,
     ImageInventory,
     InventoryError,
     affected_images,
     load_inventory,
     read_affected_record,
     render_matrix,
+    render_vendored_dockerfile,
+    vendored_base_images,
     write_affected_record,
 )
 
@@ -29,6 +34,15 @@ _CLI = _ROOT / "scripts" / "ci" / "image_matrix.py"
 _IMAGE_COUNT = 27
 _SHA = "a" * 40
 _OTHER_SHA = "b" * 40
+_MIRROR_ROOT = "ghcr.io/mchar7/nohiki-monorepo/base-images"
+_OPS_NAMES = (
+    "api-verification-runner",
+    "playwright-verification-runner",
+    "health-runner",
+    "sys-tick-job",
+    "snapshot-refresh-job",
+    "qdrant-init",
+)
 
 _PYTHON_ROWS = (
     "user-auth-service",
@@ -83,6 +97,7 @@ def _record(**overrides: object) -> dict[str, object]:
         "lockfile": "lock.txt",
         "timeout": IMAGE_TIMEOUT_MINUTES,
         "ownership": ["context/"],
+        "class": PRODUCT_CLASS,
     }
     return base | overrides
 
@@ -112,11 +127,11 @@ def _cli(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_canonical_inventory_has_exactly_three_top_level_keys_at_version_two() -> None:
+def test_canonical_inventory_has_exactly_three_top_level_keys_at_version_three() -> None:
     data = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
     assert set(data) == TOP_LEVEL_KEYS
-    assert data["schema_version"] == SCHEMA_VERSION
-    assert "class" not in {key for image in data["images"] for key in image}
+    assert data["schema_version"] == SCHEMA_VERSION == 3
+    assert {image["class"] for image in data["images"]} == IMAGE_CLASSES
 
 
 def test_canonical_inventory_declares_twenty_seven_unique_ordered_records(inventory: ImageInventory) -> None:
@@ -125,6 +140,14 @@ def test_canonical_inventory_declares_twenty_seven_unique_ordered_records(invent
     assert all(set(image) == IMAGE_KEYS for image in data["images"])
     assert inventory.names == tuple(image["name"] for image in data["images"])
     assert len(set(inventory.names)) == _IMAGE_COUNT
+
+
+def test_canonical_inventory_has_exactly_twenty_one_products_and_six_ops(inventory: ImageInventory) -> None:
+    classes = {record.name: record.image_class for record in inventory.images}
+    assert tuple(name for name in inventory.names if classes[name] == VERIFICATION_OPS_CLASS) == _OPS_NAMES
+    assert inventory.product_names == tuple(name for name in inventory.names if name not in _OPS_NAMES)
+    assert len(inventory.product_names) == 21
+    assert len(_OPS_NAMES) == 6
 
 
 def test_every_canonical_build_path_exists_and_every_timeout_is_sixteen(inventory: ImageInventory) -> None:
@@ -161,10 +184,38 @@ def test_kafka_connect_keeps_its_dedicated_context(inventory: ImageInventory) ->
     assert {record.context for record in inventory.images} == {".", "infra/k8s/kafka-connect"}
 
 
+def test_vendored_base_inventory_covers_every_digest_pinned_oci_input(inventory: ImageInventory) -> None:
+    pins = vendored_base_images(inventory, _ROOT, _MIRROR_ROOT)
+    assert len(pins) == 10
+    assert {pin.source.split("@", maxsplit=1)[0] for pin in pins} == {
+        "docker.io/docker/dockerfile:1.16",
+        "docker.io/library/caddy:2.10.2-alpine",
+        "docker.io/library/golang:1.26.5-bookworm",
+        "docker.io/library/gradle:9.6.1-jdk25-alpine",
+        "docker.io/library/node:26.5.0-alpine",
+        "ghcr.io/astral-sh/uv:0.11.28",
+        "mcr.microsoft.com/playwright:v1.62.0-noble",
+        "public.ecr.aws/docker/library/python:3.14.6-slim",
+        "quay.io/debezium/connect:3.6.0.Final",
+        "registry.k8s.io/kubectl:v1.35.0",
+    }
+    assert all(pin.mirror_repository.startswith(f"{_MIRROR_ROOT}/") for pin in pins)
+    assert all(pin.mirror_tag.endswith(pin.digest.removeprefix("sha256:")) for pin in pins)
+
+
+def test_vendored_dockerfiles_consume_owned_mirrors_at_the_original_digests(
+    inventory: ImageInventory,
+) -> None:
+    rendered = "\n".join(render_vendored_dockerfile(record, _ROOT, _MIRROR_ROOT) for record in inventory.images)
+    for pin in vendored_base_images(inventory, _ROOT, _MIRROR_ROOT):
+        assert pin.mirror_reference in rendered
+        assert f"@{pin.digest}" in pin.mirror_reference
+
+
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
-        pytest.param({"schema_version": 3}, "schema_version", id="wrong-schema-version"),
+        pytest.param({"schema_version": 2}, "schema_version", id="wrong-schema-version"),
         pytest.param({"schema_version": True}, "schema_version", id="boolean-schema-version"),
         pytest.param({"images": []}, "at least one image", id="empty-inventory"),
         pytest.param({"images": [_record(), _record()]}, "duplicate image name", id="duplicate-name"),
@@ -173,6 +224,8 @@ def test_kafka_connect_keeps_its_dedicated_context(inventory: ImageInventory) ->
         pytest.param({"images": [_record(timeout=20)]}, "timeout must be exactly", id="wrong-timeout"),
         pytest.param({"images": [_record(timeout="16")]}, "timeout must be exactly", id="string-timeout"),
         pytest.param({"images": [_record(build_args=None)]}, "build_args must be a string", id="null-build-args"),
+        pytest.param({"images": [_record(**{"class": "runtime"})]}, "class must be", id="unknown-class"),
+        pytest.param({"images": [_record(**{"class": None})]}, "class must be", id="null-class"),
         pytest.param({"images": [_record(context="missing")]}, "not a directory", id="missing-context"),
         pytest.param({"images": [_record(dockerfile="context")]}, "not a file", id="dockerfile-is-directory"),
         pytest.param({"images": [_record(lockfile="absent.txt")]}, "not a file", id="missing-lockfile"),
@@ -207,6 +260,7 @@ def test_loader_rejects_invalid_inventories(checkout: Path, overrides: dict[str,
         pytest.param(lambda data: data.pop("no_image_ownership"), "keys must be exactly", id="missing-top-level-key"),
         pytest.param(lambda data: data.update(extra=1), "keys must be exactly", id="extra-top-level-key"),
         pytest.param(lambda data: data["images"][0].pop("lockfile"), "record keys must be", id="missing-image-key"),
+        pytest.param(lambda data: data["images"][0].pop("class"), "record keys must be", id="missing-class-key"),
         pytest.param(lambda data: data["images"][0].update(extra=1), "record keys must be", id="extra-image-key"),
         pytest.param(lambda data: data["images"][0].update(clazz="product"), "record keys", id="renamed-image-key"),
     ],
@@ -435,6 +489,32 @@ def test_a_job_change_selects_only_its_own_job_row(inventory: ImageInventory) ->
 
 
 @pytest.mark.parametrize(
+    ("path", "expected_ops"),
+    [
+        ("docs/api/nohiki.openapi.json", {"api-verification-runner"}),
+        ("typescript/apps/frontend/e2e/smoke.spec.ts", {"playwright-verification-runner"}),
+        (
+            "scripts/util/health_check/src/health_check/probe.py",
+            {"api-verification-runner", "health-runner"},
+        ),
+        ("backend/jobs/sys-tick-job/src/sys_tick_job/main.py", {"sys-tick-job"}),
+        (
+            "backend/jobs/snapshot-refresh-job/src/snapshot_refresh_job/main.py",
+            {"snapshot-refresh-job"},
+        ),
+        ("infra/shared/qdrant-init/src/qdrant_init/main.py", {"qdrant-init"}),
+    ],
+)
+def test_ops_changes_bypass_the_routine_class_filter(
+    inventory: ImageInventory,
+    path: str,
+    expected_ops: set[str],
+) -> None:
+    selected = set(affected_images({path}, inventory))
+    assert selected & set(_OPS_NAMES) == expected_ops
+
+
+@pytest.mark.parametrize(
     "path",
     [
         "scripts/dev/env-lock.sh",
@@ -583,11 +663,21 @@ def test_reading_requires_a_commit_id_as_the_expected_source(tmp_path: Path, inv
         read_affected_record(path, "HEAD", inventory)
 
 
-def test_cli_matrix_without_an_artifact_emits_the_full_canonical_matrix(inventory: ImageInventory) -> None:
+def test_cli_matrix_without_an_artifact_emits_the_twenty_one_routine_products(
+    inventory: ImageInventory,
+) -> None:
     result = _cli("matrix")
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == render_matrix(inventory)
+    assert json.loads(result.stdout) == render_matrix(inventory, inventory.product_names)
+    assert len(json.loads(result.stdout)["include"]) == 21
     assert result.stdout.count("\n") == 1
+
+
+def test_cli_full_sweep_emits_all_twenty_seven_images(inventory: ImageInventory) -> None:
+    result = _cli("matrix", "--full")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == render_matrix(inventory)
+    assert len(json.loads(result.stdout)["include"]) == _IMAGE_COUNT
 
 
 def test_cli_matrix_emits_the_affected_subset_for_a_valid_artifact(tmp_path: Path, inventory: ImageInventory) -> None:
@@ -596,6 +686,18 @@ def test_cli_matrix_emits_the_affected_subset_for_a_valid_artifact(tmp_path: Pat
     result = _cli("matrix", "--artifact", str(path), "--source-sha", _SHA)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == render_matrix(inventory, ["frontend", "kafka-connect"])
+    assert result.stderr == ""
+
+
+def test_cli_affected_selection_can_emit_all_six_ops_images(
+    tmp_path: Path,
+    inventory: ImageInventory,
+) -> None:
+    path = tmp_path / "affected-images.json"
+    write_affected_record(path, _SHA, list(_OPS_NAMES))
+    result = _cli("matrix", "--artifact", str(path), "--source-sha", _SHA)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == render_matrix(inventory, _OPS_NAMES)
     assert result.stderr == ""
 
 
