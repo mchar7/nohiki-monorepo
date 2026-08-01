@@ -36,7 +36,7 @@ async def test_run_package_tests_drains_large_stdout_and_stderr(
 
     environment = os.environ.copy()
     environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
-    monkeypatch.setattr(test_runner, "sanitized_python_env", lambda: environment)
+    monkeypatch.setattr(test_runner, "sanitized_python_env", lambda *, extra=None, **_k: environment | (extra or {}))
 
     progress: list[int] = []
     result = await test_runner.run_package_tests(
@@ -81,7 +81,7 @@ async def test_run_package_tests_timeout_kills_and_reaps_child(tmp_path: Path, m
     environment = os.environ.copy()
     environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
     environment["CHILD_PID_FILE"] = str(pid_file)
-    monkeypatch.setattr(test_runner, "sanitized_python_env", lambda: environment)
+    monkeypatch.setattr(test_runner, "sanitized_python_env", lambda *, extra=None, **_k: environment | (extra or {}))
     child_started = asyncio.Event()
     watchdog_fired = asyncio.Event()
 

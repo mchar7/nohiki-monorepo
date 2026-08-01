@@ -483,6 +483,48 @@ async def test_consolidated_pytest_uses_one_bounded_workstealing_process(
 
 
 @pytest.mark.asyncio
+async def test_test_subprocesses_pin_project_root_to_their_own_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A poisoned ambient PROJECT_ROOT must not redirect tests into another checkout.
+
+    get_repo_root() prefers PROJECT_ROOT, so an inherited value from a sibling worktree
+    silently resolves every repository-relative path against the wrong tree. The gate
+    then passes or fails on code the runner is not testing.
+    """
+    monkeypatch.setenv("PROJECT_ROOT", "/somewhere/else/entirely")
+    packages = [_package(tmp_path, "first")]
+    captured: list[dict[str, str]] = []
+    first_file = test_checks._repo_relative(packages[0].path / "tests" / "test_one.py")
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> _SuccessfulPytestProcess:
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        captured.append({str(k): str(v) for k, v in env.items()})
+        _write_junit(
+            command,
+            "<testsuites><testsuite>"
+            f'<testcase classname="tests.test_one" file="{first_file}" name="test_one" time="0.1"/>'
+            "</testsuite></testsuites>",
+        )
+        return _SuccessfulPytestProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    await test_checks.run_consolidated_tests(
+        packages,
+        test_checks._UNIT_TEST_MARKERS,
+        (),
+        pytest_workers=1,
+        with_coverage=False,
+    )
+
+    assert captured, "the consolidated runner never spawned a subprocess"
+    assert captured[0]["PROJECT_ROOT"] == str(test_checks.REPO_ROOT)
+    assert captured[0]["PROJECT_ROOT"] != "/somewhere/else/entirely"
+
+
+@pytest.mark.asyncio
 async def test_consolidated_results_attribute_junit_timings_and_package_coverage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -652,6 +694,34 @@ async def test_package_pytest_uv_command_does_not_sync(monkeypatch: pytest.Monke
     assert "-n" not in commands[0]
     assert "--collect-only" not in commands[0]
     assert commands[0].count("pytest") == 1
+
+
+@pytest.mark.asyncio
+async def test_package_subprocess_pins_project_root_to_its_own_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The per-package runner needs the same root pin as the consolidated one.
+
+    It spawns with ``cwd=pkg.path``, so an inherited PROJECT_ROOT from a sibling
+    worktree redirects repository-relative resolution just as silently there.
+    """
+    monkeypatch.setenv("PROJECT_ROOT", "/somewhere/else/entirely")
+    captured: list[dict[str, str]] = []
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> _SuccessfulPytestProcess:
+        del command
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        captured.append({str(k): str(v) for k, v in env.items()})
+        return _SuccessfulPytestProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    await test_checks.run_package_tests(_package(tmp_path), "", (), with_coverage=False)
+
+    assert captured, "the package runner never spawned a subprocess"
+    assert captured[0]["PROJECT_ROOT"] == str(test_checks.REPO_ROOT)
+    assert captured[0]["PROJECT_ROOT"] != "/somewhere/else/entirely"
 
 
 @pytest.mark.asyncio
