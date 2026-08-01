@@ -735,7 +735,7 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     node_floor = package["engines"]["node"].removeprefix(">=")
     assert re.fullmatch(r"\d+\.\d+\.\d+", node_floor), package["engines"]["node"]
     assert f"nodejs = pkgs.nodejs_{node_floor.split('.', 1)[0]};" in _read_text(_FLAKE)
-    assert setup_node["with"] == {"node-version": node_floor.split(".", 1)[0]}
+    assert setup_node["with"] == {"node-version": node_floor}
     setup_steps = _setup_steps()
     names = [step.get("name") for step in setup_steps]
     resolver_index = names.index("Resolve pnpm store path")
@@ -748,7 +748,7 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     assert expected_pnpm_cache["with"]["key"] == (
         "pnpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}"
     )
-    assert setup_node["with"] == {"node-version": node_floor.split(".", 1)[0]}
+    assert setup_node["with"] == {"node-version": node_floor}
 
     worker_setup = next(step for step in _steps(jobs["worker"]) if step.get("name") == "Set up selected environments")
     assert worker_setup["uses"] == "./.github/actions/setup-ci"

@@ -151,7 +151,8 @@ runs:
       if: (inputs.ready-cache == 'true' && inputs.payload == 'node') || (inputs.ready-cache != 'true' && inputs.node == 'true')
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
-        node-version: "26"
+        # why: flake.nix's locked nodejs_26 is authoritative; update both pins together.
+        node-version: "26.5.0"
 
     - name: Resolve pnpm store path
       if: ((inputs.ready-cache == 'true' && inputs.payload == 'node') || (inputs.ready-cache != 'true' && inputs.node == 'true')) && steps.node-modules-cache.outputs.cache-hit != 'true'

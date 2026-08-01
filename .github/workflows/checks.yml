@@ -18,7 +18,7 @@ concurrency:
 jobs:
   changes:
     name: Router
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       actions: read
@@ -271,7 +271,7 @@ jobs:
     name: Scoped worker (${{ matrix.unit }})
     needs: [changes]
     if: (needs.changes.outputs.standard == 'true' || needs.changes.outputs.broad == 'true') && needs.changes.outputs.title_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     strategy:
       # A failing unit must not cancel its siblings: each one is an independent verdict the
@@ -787,7 +787,7 @@ jobs:
     name: Playwright runner image
     needs: [changes]
     if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 9
     permissions:
       contents: read
@@ -887,7 +887,7 @@ jobs:
     name: Title policy
     needs: [changes]
     if: needs.changes.outputs.title_only == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -992,7 +992,7 @@ jobs:
       - worker
       - playwright-image
       - title-policy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       actions: read
