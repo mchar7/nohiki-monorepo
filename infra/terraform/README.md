@@ -186,6 +186,21 @@ operators only; it does not install or upgrade the Nohiki application chart.
 Use one `.tfvars` file and one remote-state key per environment. Keep `.tfvars`
 files containing environment identifiers or sensitive values out of version control.
 
+The default AKS launch envelope uses a three-node `Standard_D2s_v5` system pool
+across availability zones 1, 2, and 3. A separate `Standard_D4s_v5` user pool
+autoscales from four to six nodes. Non-production clusters use the Free control
+plane tier, while production uses Standard. Log Analytics ingestion is capped
+at 10 GB per day.
+
+The envelope is configurable through these inputs:
+
+- `aks_node_count`, `aks_node_vm_size`, and `aks_node_zones` configure the
+  system pool.
+- `aks_user_node_pool_name`, `aks_user_node_vm_size`,
+  `aks_user_node_min_count`, and `aks_user_node_max_count` configure the
+  autoscaling user pool.
+- `log_analytics_daily_quota_gb` sets the workspace ingestion bound.
+
 For `app_environment = "prod"`, the module rejects fewer than 14 days of
 PostgreSQL backup retention, disabled geo-redundant PostgreSQL backups,
 non-geo-redundant blob storage, and the Basic Azure Cache for Redis SKU.

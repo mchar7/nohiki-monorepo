@@ -46,13 +46,14 @@ def test_environment_terraform_owns_no_application_chart_writer() -> None:
         releases.update(_HELM_RELEASE.findall(text))
     assert releases == _CLUSTER_ADDON_RELEASES, releases
     keda = _read(_TERRAFORM / "keda.tf")
+    keda_contract = re.sub(r"\s+", " ", keda)
     assert re.findall(r"(?m)^\s*count\s*=\s*(.+)$", keda) == [
         'var.deployment_type == "aks" ? 1 : 0',
         'var.deployment_type == "aks" ? 1 : 0',
     ]
-    assert 'repository       = "https://kedacore.github.io/charts"' in keda
-    assert 'chart            = "keda"' in keda
-    assert 'version          = "2.20.1"' in keda
+    assert 'repository = "https://kedacore.github.io/charts"' in keda_contract
+    assert 'chart = "keda"' in keda_contract
+    assert 'version = "2.20.1"' in keda_contract
     assert "depends_on = [azurerm_kubernetes_cluster.aks_cluster[0]]" in keda
     assert "depends_on = [helm_release.keda[0]]" in keda
 
@@ -76,6 +77,49 @@ def test_environment_terraform_drops_application_chart_variables() -> None:
     for tf, text in _terraform_sources():
         for token in _APPLICATION_CHART_TOKENS:
             assert token not in text, f"{tf.name} still references {token}"
+
+
+def test_aks_launch_envelope_has_zoned_system_and_autoscaled_user_pools() -> None:
+    aks = _read(_TERRAFORM / "aks.tf")
+    variables = _read(_TERRAFORM / "variables.tf")
+
+    system_count = re.search(r'(?ms)^variable "aks_node_count"\s*\{.*?^\}', variables)
+    system_size = re.search(r'(?ms)^variable "aks_node_vm_size"\s*\{.*?^\}', variables)
+    zones = re.search(r'(?ms)^variable "aks_node_zones"\s*\{.*?^\}', variables)
+    user_size = re.search(r'(?ms)^variable "aks_user_node_vm_size"\s*\{.*?^\}', variables)
+    user_minimum = re.search(r'(?ms)^variable "aks_user_node_min_count"\s*\{.*?^\}', variables)
+    user_maximum = re.search(r'(?ms)^variable "aks_user_node_max_count"\s*\{.*?^\}', variables)
+    user_pool = re.search(
+        r'(?ms)^resource "azurerm_kubernetes_cluster_node_pool" "user"\s*\{.*?^\}',
+        aks,
+    )
+    aks_contract = re.sub(r"\s+", " ", aks)
+
+    assert system_count is not None
+    assert re.search(r"(?m)^\s*default\s*=\s*3\s*$", system_count.group(0))
+    assert system_size is not None
+    assert 'default = "Standard_D2s_v5"' in re.sub(r"\s+", " ", system_size.group(0))
+    assert zones is not None
+    assert 'default = ["1", "2", "3"]' in re.sub(r"\s+", " ", zones.group(0))
+    assert "node_count = var.aks_node_count" in aks_contract
+    assert "vm_size = var.aks_node_vm_size" in aks_contract
+    assert "zones = var.aks_node_zones" in aks_contract
+
+    assert user_size is not None
+    assert 'default = "Standard_D4s_v5"' in re.sub(r"\s+", " ", user_size.group(0))
+    assert user_minimum is not None
+    assert re.search(r"(?m)^\s*default\s*=\s*4\s*$", user_minimum.group(0))
+    assert user_maximum is not None
+    assert re.search(r"(?m)^\s*default\s*=\s*6\s*$", user_maximum.group(0))
+    assert user_pool is not None
+    user_contract = re.sub(r"\s+", " ", user_pool.group(0))
+    assert "vm_size = var.aks_user_node_vm_size" in user_contract
+    assert "zones = var.aks_node_zones" in user_contract
+    assert 'mode = "User"' in user_contract
+    assert "auto_scaling_enabled = true" in user_contract
+    assert "min_count = var.aks_user_node_min_count" in user_contract
+    assert "max_count = var.aks_user_node_max_count" in user_contract
+    assert "node_count = var.aks_user_node_min_count" in user_contract
 
 
 def test_cd_workflows_pass_no_application_chart_variables() -> None:

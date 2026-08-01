@@ -12,10 +12,16 @@ container_registry      = "acrnohikiprod.azurecr.io"
 app_environment = "dev"
 
 # AKS
-aks_node_count           = 1
-aks_node_vm_size         = "Standard_B2s"
-aks_node_os_disk_size_gb = 30
-aks_load_balancer_sku    = "Standard"
+aks_node_count               = 3
+aks_node_vm_size             = "Standard_D2s_v5"
+aks_node_zones               = ["1", "2", "3"]
+aks_user_node_pool_name      = "user"
+aks_user_node_vm_size        = "Standard_D4s_v5"
+aks_user_node_min_count      = 4
+aks_user_node_max_count      = 6
+aks_node_os_disk_size_gb     = 30
+aks_load_balancer_sku        = "Standard"
+log_analytics_daily_quota_gb = 10
 
 # Existing Key Vault
 kv_rg_name = "kv-nohiki-eastus-rg-001"
