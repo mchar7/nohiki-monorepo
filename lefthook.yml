@@ -237,6 +237,19 @@ pre-push:
               - ".npmrc"
             run: just fe-typecheck
 
+          - name: edge-typecheck
+            glob:
+              - "typescript/edge/auth-listings-worker/src/*.ts"
+              - "typescript/edge/auth-listings-worker/src/**/*.ts"
+              - "typescript/edge/auth-listings-worker/package.json"
+              - "typescript/edge/auth-listings-worker/tsconfig.json"
+              - "typescript/libs/**"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - ".npmrc"
+            run: just edge-typecheck
+
           - name: nix-check
             glob:
               - "flake.nix"
@@ -290,6 +303,20 @@ pre-push:
               - ".npmrc"
             run: just fe-test
 
+          - name: edge-tests
+            glob:
+              - "typescript/edge/auth-listings-worker/src/*.ts"
+              - "typescript/edge/auth-listings-worker/src/**/*.ts"
+              - "typescript/edge/auth-listings-worker/package.json"
+              - "typescript/edge/auth-listings-worker/tsconfig.json"
+              - "typescript/edge/auth-listings-worker/vitest.config.*"
+              - "typescript/libs/**"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - ".npmrc"
+            run: just edge-test
+
     # Phase 3: Code Hygiene (parallel, runs after tests)
     - group:
         parallel: true
@@ -332,8 +359,22 @@ pre-push:
               - ".npmrc"
               - "typescript/libs/**"
               - "typescript/libs/biome-config/biome.json"
-              - "typescript/edge/auth-listings-worker/biome.jsonc"
             run: just fe-lint
+
+          - name: edge-lint
+            # why: hosted lints the worker's whole src tree; fe-lint never reads this package.
+            glob:
+              - "typescript/edge/auth-listings-worker/src/*"
+              - "typescript/edge/auth-listings-worker/src/**/*"
+              - "typescript/edge/auth-listings-worker/package.json"
+              - "typescript/edge/auth-listings-worker/biome.jsonc"
+              - "typescript/libs/**"
+              - "typescript/libs/biome-config/biome.json"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - ".npmrc"
+            run: just edge-lint
 
           - name: frontend-fsd
             glob:

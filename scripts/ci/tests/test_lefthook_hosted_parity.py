@@ -15,6 +15,7 @@ import re
 import subprocess
 import tomllib
 from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
@@ -138,6 +139,14 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
             "typescript/apps/frontend/vitest.config.*",
             "typescript/libs/**",
         },
+        "edge-typecheck": _NODE_TOOLCHAIN_SURFACE
+        | {
+            "typescript/edge/auth-listings-worker/src/*.ts",
+            "typescript/edge/auth-listings-worker/src/**/*.ts",
+            "typescript/edge/auth-listings-worker/package.json",
+            "typescript/edge/auth-listings-worker/tsconfig.json",
+            "typescript/libs/**",
+        },
         "frontend-lint-all": _NODE_TOOLCHAIN_SURFACE
         | {
             "typescript/apps/frontend/src/*",
@@ -152,7 +161,15 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
             "typescript/apps/frontend/tsconfig*.json",
             "typescript/libs/**",
             "typescript/libs/biome-config/biome.json",
+        },
+        "edge-lint": _NODE_TOOLCHAIN_SURFACE
+        | {
+            "typescript/edge/auth-listings-worker/src/*",
+            "typescript/edge/auth-listings-worker/src/**/*",
+            "typescript/edge/auth-listings-worker/package.json",
             "typescript/edge/auth-listings-worker/biome.jsonc",
+            "typescript/libs/**",
+            "typescript/libs/biome-config/biome.json",
         },
         "nix-check": frozenset({"flake.nix", "flake.lock"}),
         # No glob: the affected-test runner owns the selection policy. Asserted by
@@ -177,6 +194,15 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
             "typescript/apps/frontend/tsconfig*.json",
             "typescript/apps/frontend/vite.config.*",
             "typescript/apps/frontend/vitest.config.*",
+            "typescript/libs/**",
+        },
+        "edge-tests": _NODE_TOOLCHAIN_SURFACE
+        | {
+            "typescript/edge/auth-listings-worker/src/*.ts",
+            "typescript/edge/auth-listings-worker/src/**/*.ts",
+            "typescript/edge/auth-listings-worker/package.json",
+            "typescript/edge/auth-listings-worker/tsconfig.json",
+            "typescript/edge/auth-listings-worker/vitest.config.*",
             "typescript/libs/**",
         },
         "deadcode": _PYTHON_WORKSPACE_SURFACE,
@@ -938,3 +964,560 @@ def test_entrypoint_exceptions_are_explicit_and_grounded() -> None:
     for exceptions in _ENTRYPOINT_EXCEPTIONS.values():
         assert exceptions
         assert all(reason.strip() for reason in exceptions.values())
+
+
+# Hosted step inventory.
+#
+# Everything above answers "does some hook somewhere mention this tool?". That
+# question is aggregate over all hooks, so pre-commit's staged-file Biome
+# satisfied "Biome is present" while pre-push ran no whole-project Biome at all.
+# The inventory below answers the question that actually matters: for each
+# verification hosted CI performs, is there a local gate performing the
+# equivalent verification at an equivalent scope, or a written reason there is
+# not?
+#
+# The inventory is curated on purpose. Semantic equivalence between
+# `nix develop .#ci --command just fe-lint` and a lefthook job is not
+# recoverable by parsing shell, and a clever inference that is quietly wrong is
+# worse than a table that fails closed. What is derived, not curated, is the
+# hosted step list itself, so a new step in checks.yml fails this suite until a
+# human classifies it.
+
+# What a check looks at, on either side of the fence.
+_WHOLE_PROJECT = "whole-project"  # the tool walks the repository, ignoring the diff
+_CHANGED_FILES = "changed-files"  # the tool receives the BASE..HEAD file list
+_PUSHED_RANGE = "pushed-range"  # the tool receives a commit range
+_STAGED_FILES = "staged-files"  # the tool receives the staged file list only
+_AFFECTED_PACKAGES = "affected-packages"  # the tool receives a package selection
+_COMMIT_MESSAGE = "commit-message"  # the tool reads a message, not a file surface
+
+_SCOPES = frozenset(
+    {
+        _WHOLE_PROJECT,
+        _CHANGED_FILES,
+        _PUSHED_RANGE,
+        _STAGED_FILES,
+        _AFFECTED_PACKAGES,
+        _COMMIT_MESSAGE,
+    }
+)
+
+# Substrings that prove a lefthook entry hands its tool the staged inventory and
+# nothing else. These keep a declared local scope honest in both directions: a
+# `staged-files` claim must show one, a `whole-project` claim must show none.
+_STAGED_MARKERS = ("{staged_files}", "--cached", "--staged", "secrets-scan staged")
+
+
+@dataclass(frozen=True)
+class _LocalGate:
+    """A lefthook entry claimed as the local counterpart of a hosted step."""
+
+    hook: str
+    job: str
+    scope: str
+
+
+@dataclass(frozen=True)
+class _HostedStep:
+    """One step of `.github/workflows/checks.yml`, classified.
+
+    `verifies` false marks checkout, cache, timing, artifact and reporting
+    steps: infrastructure whose failure says nothing about the tree. Those carry
+    a `note` instead of a scope, so the category cannot swallow a real check
+    without someone writing down that it runs no check.
+
+    A verification carries `scope` plus either `gates`, a `waiver` (no local
+    counterpart can exist) or a `gap` (one should exist and does not). `gap` is
+    deliberately a separate field from `waiver`: a waiver is a closed question,
+    a gap is an open defect this test refuses to let anyone forget.
+    """
+
+    verifies: bool
+    note: str = ""
+    scope: str = ""
+    gates: tuple[_LocalGate, ...] = ()
+    waiver: str = ""
+    gap: str = ""
+
+
+def _support(note: str) -> _HostedStep:
+    return _HostedStep(verifies=False, note=note)
+
+
+_SETUP = _support("environment setup, runs no check")
+_TIMING = _support("cost accounting, runs no check")
+_SUMMARY = _support("step-summary rendering, runs no check")
+_ARTIFACT = _support("artifact transport, runs no check")
+
+# Keyed by (workflow job id, step key). The step key is the step name, or
+# `uses:<action>` for the unnamed marketplace steps.
+_HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
+    # changes: the router. It classifies the diff and emits the lane flags. By
+    # its own summary text it "runs no checks itself".
+    ("changes", "Start router timing"): _TIMING,
+    ("changes", "uses:actions/checkout"): _SETUP,
+    ("changes", "Open router summary"): _SUMMARY,
+    ("changes", "Set up uv and Python"): _SETUP,
+    ("changes", "Prepare router environment"): _SETUP,
+    ("changes", "Mark router work start"): _TIMING,
+    ("changes", "Gather protected-main evidence"): _support("collects gate inputs, runs no check"),
+    ("changes", "Compute change gate"): _support("emits the lane flags, runs no check"),
+    ("changes", "Upload affected image record"): _ARTIFACT,
+    ("changes", "Look up a reusable Checks proof"): _support("proof cache lookup, runs no check"),
+    ("changes", "Derive worker guard"): _support("computes a timeout, runs no check"),
+    ("changes", "Write Checks attestation"): _support("writes the proof document, runs no check"),
+    ("changes", "Upload Checks attestation"): _ARTIFACT,
+    ("changes", "Report router cost"): _TIMING,
+    # worker: every verification of the tree lives here.
+    ("worker", "Start worker timing"): _TIMING,
+    ("worker", "Open worker summary"): _SUMMARY,
+    ("worker", "uses:actions/checkout"): _SETUP,
+    ("worker", "Set up selected environments"): _SETUP,
+    ("worker", "Mark unique work start"): _TIMING,
+    ("worker", "Protected-main smoke"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver=(
+            "asserts the hosted devshell can import ci-checks at all. Locally every hook already "
+            "runs inside that shell, so the same failure surfaces through whichever hook runs "
+            "first rather than through a dedicated gate."
+        ),
+    ),
+    ("worker", "Check flake"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "nix-check", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Check Lefthook version"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver=(
+            "compares the hosted lefthook binary against the min_version pin. A hook cannot check "
+            "this: lefthook is the thing running the hook, so a wrong version is already in "
+            "effect by the time any hook body executes."
+        ),
+    ),
+    ("worker", "Lint Python"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(
+            _LocalGate("pre-push", "python-lint", _WHOLE_PROJECT),
+            _LocalGate("pre-commit", "python-check-format", _STAGED_FILES),
+        ),
+    ),
+    ("worker", "Check Python formatting"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(
+            _LocalGate("pre-push", "python-format", _WHOLE_PROJECT),
+            _LocalGate("pre-commit", "python-check-format", _STAGED_FILES),
+        ),
+    ),
+    ("worker", "Lint Markdown"): _HostedStep(
+        verifies=True,
+        # `git diff --name-only "$BASE_SHA..$HEAD_SHA" -- '*.md'` into markdownlint-cli2.
+        scope=_CHANGED_FILES,
+        gates=(_LocalGate("pre-commit", "markdown-lint", _STAGED_FILES),),
+    ),
+    ("worker", "Lint protos"): _HostedStep(
+        verifies=True,
+        # `just proto-lint` runs `buf lint` over all of proto/. The local hook is
+        # glob-triggered but runs that same whole-directory command, which is why
+        # its scope is whole-project rather than staged.
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-commit", "proto-lint", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Lint workflows"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-commit", "actions-lint", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Lint frontend"): _HostedStep(
+        verifies=True,
+        # `just fe-lint` -> `pnpm --filter nohiki-frontend run check` -> biome over the app.
+        scope=_WHOLE_PROJECT,
+        gates=(
+            _LocalGate("pre-push", "frontend-lint-all", _WHOLE_PROJECT),
+            _LocalGate("pre-commit", "frontend-lint", _STAGED_FILES),
+        ),
+    ),
+    ("worker", "Lint frontend architecture (Steiger)"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "frontend-fsd", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Check i18n keys"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-commit", "i18n-check", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Lint Dockerfiles (hadolint)"): _HostedStep(
+        verifies=True,
+        # `just docker-lint` feeds hadolint every tracked Dockerfile, not the diff.
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-commit", "docker-lint", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Scan changed content for secrets"): _HostedStep(
+        verifies=True,
+        # `git diff --binary "$BASE_SHA..$HEAD_SHA" | gitleaks ... stdin`.
+        scope=_CHANGED_FILES,
+        gates=(
+            _LocalGate("pre-push", "secrets-scan", _PUSHED_RANGE),
+            _LocalGate("pre-commit", "secrets-check", _STAGED_FILES),
+        ),
+    ),
+    ("worker", "Scan repository for secrets"): _HostedStep(
+        verifies=True,
+        # `just secrets-scan` -> `gitleaks detect --source .`, the whole worktree.
+        scope=_WHOLE_PROJECT,
+        gates=(
+            _LocalGate("pre-push", "secrets-scan", _PUSHED_RANGE),
+            _LocalGate("pre-commit", "secrets-check", _STAGED_FILES),
+        ),
+        gap=(
+            "hosted scans the entire worktree; both local gates are diff-scoped. A secret that "
+            "predates the local gates, or one that arrives through a merge whose parent range "
+            "the push gate does not walk, is caught only by hosted CI."
+        ),
+    ),
+    ("worker", "Typecheck backend"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "python-typecheck", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Check selected dead code"): _HostedStep(
+        verifies=True,
+        # hosted passes "$PACKAGE_SCOPE"; the local job takes the recipe default of ALL,
+        # so the local gate is strictly wider than the hosted one.
+        scope=_AFFECTED_PACKAGES,
+        gates=(_LocalGate("pre-push", "deadcode", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Save Skylos static analysis cache"): _support("cache write, runs no check"),
+    ("worker", "Typecheck frontend"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "frontend-typecheck", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Run selected Python tests"): _HostedStep(
+        verifies=True,
+        scope=_AFFECTED_PACKAGES,
+        gates=(_LocalGate("pre-push", "python-tests", _AFFECTED_PACKAGES),),
+    ),
+    ("worker", "Run Node workspace contract tests"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "node-workspace-contract-tests", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Run Skylos cache contract tests"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "skylos-cache-tests", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Test frontend"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "frontend-tests", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Lint edge worker"): _HostedStep(
+        verifies=True,
+        # `pnpm --filter @nohiki/auth-listings-worker exec biome ci --reporter=github src/`.
+        # `just edge-lint` runs the same `biome ci src/` inside the same package; only the
+        # hosted-annotation reporter differs.
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "edge-lint", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Typecheck edge worker"): _HostedStep(
+        verifies=True,
+        # `pnpm --filter @nohiki/auth-listings-worker exec tsc --noEmit`, which `just
+        # edge-typecheck` reproduces against the same package tsconfig.json.
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "edge-typecheck", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Test edge worker"): _HostedStep(
+        verifies=True,
+        # `pnpm --filter @nohiki/auth-listings-worker exec vitest run`, which `just edge-test`
+        # reproduces; the hosted step only adds a step-summary heading around it.
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "edge-tests", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Validate PR commit messages"): _HostedStep(
+        verifies=True,
+        scope=_PUSHED_RANGE,
+        gates=(_LocalGate("commit-msg", "commitlint", _COMMIT_MESSAGE),),
+    ),
+    ("worker", "Validate PR title (merge commit subject)"): _HostedStep(
+        verifies=True,
+        scope=_COMMIT_MESSAGE,
+        waiver=(
+            "lints the pull request title, which becomes the squash subject. The title does not "
+            "exist in the local repository, so no hook can read it."
+        ),
+    ),
+    ("worker", "Check dependencies"): _HostedStep(
+        verifies=True,
+        scope=_AFFECTED_PACKAGES,
+        gates=(_LocalGate("pre-push", "deptry", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Scan architecture"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "semgrep", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Check build backends"): _HostedStep(
+        verifies=True,
+        scope=_AFFECTED_PACKAGES,
+        gates=(_LocalGate("pre-push", "build-backend", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Check API schema freshness"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "api-schema-freshness", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Check image matrix parity"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gates=(_LocalGate("pre-push", "image-matrix-parity", _WHOLE_PROJECT),),
+    ),
+    ("worker", "Check proto compatibility"): _HostedStep(
+        verifies=True,
+        # hosted passes "$BASE_SHA"; the local recipe defaults its base_ref to main.
+        scope=_PUSHED_RANGE,
+        gates=(_LocalGate("pre-push", "proto-breaking", _PUSHED_RANGE),),
+    ),
+    ("worker", "Set up Docker Buildx"): _SETUP,
+    ("worker", "Build production frontend image"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver=(
+            "builds the production image through docker/build-push-action against the hosted "
+            "layer cache. Reproducing it in a push hook would add an image build to every push; "
+            "the container contract is deliberately a hosted-only lane."
+        ),
+    ),
+    ("worker", "Smoke production frontend container"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver="consumes the image produced by the hosted-only build step above.",
+    ),
+    ("worker", "Validate OpenTelemetry collector image and configs"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver="runs the collector image; the local test runner deselects the requires_docker markers.",
+    ),
+    ("worker", "Attest container contract execution"): _support(
+        "asserts the two container steps above actually ran; proof bookkeeping, not a tree check"
+    ),
+    ("worker", "Report worker cost"): _TIMING,
+    # playwright-image: builds and smoke-tests the e2e runner image.
+    ("playwright-image", "Start worker timing"): _TIMING,
+    ("playwright-image", "uses:actions/checkout"): _SETUP,
+    ("playwright-image", "Open Playwright runner image summary"): _SUMMARY,
+    ("playwright-image", "Set up Docker Buildx"): _SETUP,
+    ("playwright-image", "Mark unique work start"): _TIMING,
+    ("playwright-image", "Build Playwright runner image"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver="hosted-only image build, for the same reason as the production frontend image.",
+    ),
+    ("playwright-image", "Verify Playwright runner"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver="runs the Playwright CLI inside the image the hosted-only step above produced.",
+    ),
+    ("playwright-image", "Report Playwright runner image cost"): _TIMING,
+    # title-policy: the pull request title lane.
+    ("title-policy", "Start title policy timing"): _TIMING,
+    ("title-policy", "uses:actions/checkout"): _SETUP,
+    ("title-policy", "Open title policy summary"): _SUMMARY,
+    ("title-policy", "Set up commit policy environment"): _SETUP,
+    ("title-policy", "Mark unique work start"): _TIMING,
+    ("title-policy", "Validate PR title (merge commit subject)"): _HostedStep(
+        verifies=True,
+        scope=_COMMIT_MESSAGE,
+        waiver="the same pull request title the worker lane checks; not present in the local repository.",
+    ),
+    ("title-policy", "Report title policy cost"): _TIMING,
+    # checks: fan-in. Verifies the run, not the tree.
+    ("checks", "Open fan-in summary"): _SUMMARY,
+    ("checks", "Require every selected check"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver="asserts every selected hosted job reached its conclusion. There is no hosted job graph locally.",
+    ),
+    ("checks", "Download router attestation"): _ARTIFACT,
+    ("checks", "Validate router attestation"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver="checks the router's own proof document against the run it claims to describe.",
+    ),
+    ("checks", "Report workflow accounting"): _TIMING,
+}
+
+# The gaps this contract knows about and refuses to carry silently. Closing one
+# means deleting its line here, which is the point: the set is asserted exactly,
+# so a new gap and a fixed gap both fail until the record is updated.
+_KNOWN_OPEN_GAPS = frozenset(
+    {
+        ("worker", "Scan repository for secrets"),
+    }
+)
+
+
+def _step_key(step: Mapping[str, object]) -> str:
+    """The inventory key for one workflow step."""
+    name = step.get("name")
+    if isinstance(name, str):
+        return name
+    uses = step.get("uses")
+    assert isinstance(uses, str), f"a step with neither name nor uses cannot be classified: {sorted(step)}"
+    return "uses:" + uses.split("@", 1)[0]
+
+
+def _job_steps(job: Mapping[str, object]) -> Iterator[Mapping[str, object]]:
+    """Every step of a workflow job, descending into native `parallel:` groups.
+
+    checks.yml puts eight steps inside `parallel:` blocks, "Lint frontend" among
+    them. A walker that reads `job["steps"]` alone treats those as absent, which
+    is precisely the class of blindness this file exists to prevent.
+    """
+    steps = job.get("steps")
+    assert isinstance(steps, list)
+    for step in steps:
+        entry = _as_mapping(step)
+        group = entry.get("parallel")
+        if isinstance(group, list) and "name" not in entry:
+            for nested in group:
+                yield _as_mapping(nested)
+        else:
+            yield entry
+
+
+@cache
+def _hosted_steps() -> dict[tuple[str, str], Mapping[str, object]]:
+    """Derive every step of checks.yml, keyed the way the inventory is keyed."""
+    workflow = _as_mapping(yaml.safe_load(_CHECKS.read_text(encoding="utf-8")))
+    derived: dict[tuple[str, str], Mapping[str, object]] = {}
+    for job_id, job in _as_mapping(workflow["jobs"]).items():
+        for step in _job_steps(_as_mapping(job)):
+            key = (job_id, _step_key(step))
+            assert key not in derived, f"duplicate step key {key}; the inventory cannot address both"
+            derived[key] = step
+    return derived
+
+
+@cache
+def _hook_entries() -> dict[str, dict[str, Mapping[str, object]]]:
+    """Every lefthook entry of every hook, commit-msg included."""
+    commit_msg = _as_mapping(_as_mapping(_load_config()["commit-msg"])["commands"])
+    return {
+        "commit-msg": {name: _as_mapping(command) for name, command in commit_msg.items()},
+        **_configured_hooks(),
+    }
+
+
+def _gate_run(gate: _LocalGate) -> str:
+    run = _hook_entries()[gate.hook][gate.job].get("run")
+    assert isinstance(run, str)
+    return run
+
+
+def test_every_hosted_step_is_classified() -> None:
+    """checks.yml is the source of truth for what hosted CI does.
+
+    A step added to the workflow has no inventory entry, so it fails here until
+    somebody records what it verifies and what covers it locally. This is the
+    property aggregate presence checking cannot express at all.
+    """
+    derived = set(_hosted_steps())
+    recorded = set(_HOSTED_INVENTORY)
+    unclassified = derived - recorded
+    stale = recorded - derived
+    assert not unclassified, "hosted steps missing from _HOSTED_INVENTORY:\n" + "\n".join(
+        f"  {job}: {step}" for job, step in sorted(unclassified)
+    )
+    assert not stale, "_HOSTED_INVENTORY names steps checks.yml no longer has:\n" + "\n".join(
+        f"  {job}: {step}" for job, step in sorted(stale)
+    )
+
+
+def test_inventory_entries_are_well_formed() -> None:
+    """Every entry states either what it verifies or why it verifies nothing."""
+    for (job, step), entry in sorted(_HOSTED_INVENTORY.items()):
+        where = f"{job}: {step}"
+        if not entry.verifies:
+            assert entry.note.strip(), f"{where} is classified as support with no reason"
+            assert not entry.gates, f"{where} is classified as support but names local coverage"
+            assert not entry.waiver, f"{where} is classified as support but carries a waiver"
+            assert not entry.gap, f"{where} is classified as support but records an open gap"
+            continue
+        assert entry.scope in _SCOPES, f"{where} declares an unknown hosted scope {entry.scope!r}"
+        assert entry.gates or entry.waiver or entry.gap, (
+            f"{where} is a verification with no local counterpart, no waiver and no recorded gap"
+        )
+        assert not (entry.waiver and entry.gap), f"{where} cannot be both waived and an open gap"
+        for gate in entry.gates:
+            assert gate.scope in _SCOPES, f"{where} declares an unknown local scope {gate.scope!r}"
+
+
+def test_inventory_local_gates_exist_in_lefthook() -> None:
+    """Every named local counterpart is a real hook entry, not a wish."""
+    entries = _hook_entries()
+    missing = {
+        f"  {job}: {step} -> {gate.hook}.{gate.job}"
+        for (job, step), entry in _HOSTED_INVENTORY.items()
+        for gate in entry.gates
+        if gate.job not in entries.get(gate.hook, {})
+    }
+    assert not missing, "inventory names local jobs lefthook does not declare:\n" + "\n".join(sorted(missing))
+
+
+def test_declared_local_scopes_match_the_hook_commands() -> None:
+    """A staged-files claim needs staged plumbing; a whole-project claim must have none.
+
+    Without this the scope column is free text, and the whole-project rule below
+    could be satisfied by relabelling pre-commit's staged Biome job.
+    """
+    wrong: list[str] = []
+    for (job, step), entry in sorted(_HOSTED_INVENTORY.items()):
+        for gate in entry.gates:
+            staged = any(marker in _gate_run(gate) for marker in _STAGED_MARKERS)
+            where = f"  {job}: {step} -> {gate.hook}.{gate.job}"
+            if gate.scope == _STAGED_FILES and not staged:
+                wrong.append(f"{where} claims staged-files but hands over no staged list")
+            if gate.scope == _WHOLE_PROJECT and staged:
+                wrong.append(f"{where} claims whole-project but runs on the staged list")
+    assert not wrong, "declared local scopes contradict lefthook:\n" + "\n".join(sorted(wrong))
+
+
+def test_whole_project_hosted_checks_have_a_whole_project_local_gate() -> None:
+    """The rule that would have caught the Biome gap.
+
+    Hosted lints the entire project. A staged-file gate cannot see a violation in
+    a file the commit did not touch, so it is not a counterpart for a
+    whole-project check however loudly it mentions the same tool.
+    """
+    uncovered: list[str] = []
+    for (job, step), entry in sorted(_HOSTED_INVENTORY.items()):
+        if not entry.verifies or entry.scope != _WHOLE_PROJECT or entry.waiver or entry.gap:
+            continue
+        if any(gate.scope == _WHOLE_PROJECT for gate in entry.gates):
+            continue
+        covered = ", ".join(f"{gate.hook}.{gate.job} ({gate.scope})" for gate in entry.gates) or "nothing"
+        uncovered.append(f"  {job}: {step} is whole-project hosted; local coverage is {covered}")
+    assert not uncovered, (
+        "hosted whole-project checks with no whole-project local gate:\n"
+        + "\n".join(uncovered)
+        + "\nAdd a whole-project local job, or record the gap with a written reason."
+    )
+
+
+def test_recorded_gaps_are_exactly_the_known_open_ones() -> None:
+    """Gaps stay loud. Opening one and closing one both fail until the record moves."""
+    recorded = {key for key, entry in _HOSTED_INVENTORY.items() if entry.gap}
+    assert recorded == _KNOWN_OPEN_GAPS, (
+        "open-gap record drifted:\n"
+        f"  newly recorded: {sorted(recorded - _KNOWN_OPEN_GAPS)}\n"
+        f"  no longer recorded: {sorted(_KNOWN_OPEN_GAPS - recorded)}"
+    )
+    for key in sorted(recorded):
+        assert _HOSTED_INVENTORY[key].gap.strip(), f"{key} is a gap with no written reason"
