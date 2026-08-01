@@ -213,19 +213,23 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
     assert gpu.dockerfile == cpu.dockerfile == "backend/services/ml-compute-service/Dockerfile"
     build_with = steps["build"]["with"]
     image_base_path = "steps.image-base-path.outputs.image_base_path"
-    assert build_with["cache-from"] == (
-        "${{ matrix.name == 'ml-compute-service-gpu' && "
-        f"format('type=registry,ref={{0}}/{{1}}:buildcache-{{2}}', {image_base_path}, matrix.name, "
-        "hashFiles(matrix.dockerfile, matrix.lockfile)) "
-        "|| format('type=gha,scope={0}-{1}', matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) }}"
+    cache_from = build_with["cache-from"]
+    cache_to = build_with["cache-to"]
+    assert isinstance(cache_from, str)
+    assert isinstance(cache_to, str)
+    assert cache_from == (
+        "${{ case(matrix.name == 'ml-compute-service-gpu', "
+        f"format('type=registry,ref={{0}}/{{1}}:buildcache', {image_base_path}, matrix.name), "
+        "format('type=gha,scope={0}', matrix.name)) }}"
     )
-    assert build_with["cache-to"] == (
-        "${{ matrix.name == 'ml-compute-service-gpu' && "
-        "(steps.mode.outputs.push == 'true' && "
-        f"format('type=registry,ref={{0}}/{{1}}:buildcache-{{2}},mode=max', {image_base_path}, matrix.name, "
-        "hashFiles(matrix.dockerfile, matrix.lockfile)) || '') "
-        "|| format('type=gha,mode=max,scope={0}-{1}', matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) }}"
+    assert cache_to == (
+        "${{ case(matrix.name == 'ml-compute-service-gpu', "
+        "case(steps.mode.outputs.push == 'true', "
+        f"format('type=registry,ref={{0}}/{{1}}:buildcache,mode=max', {image_base_path}, matrix.name), "
+        "''), format('type=gha,scope={0},mode=max', matrix.name)) }}"
     )
+    assert "hashFiles" not in cache_from
+    assert "hashFiles" not in cache_to
     login_name = "Log into GitHub Container Registry"
     assert steps[login_name]["if"] == ("steps.mode.outputs.push == 'true' || matrix.name == 'ml-compute-service-gpu'")
     assert next(index for index, step in enumerate(build_steps) if step["name"] == login_name) < next(
