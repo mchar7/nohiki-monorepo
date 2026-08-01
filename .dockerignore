@@ -4,7 +4,7 @@
 .gitignore
 
 # Local configuration and credentials must never enter a remote build context
-.local/
+.l*/**
 **/.env
 **/.env.*
 !**/.env.example
