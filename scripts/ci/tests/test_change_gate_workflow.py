@@ -1,14 +1,29 @@
 import json
 import os
 import re
-import shutil
 import subprocess
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 import pytest
 from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, mapping_sequence_at
 from ci_checks.checks.deadcode import STATIC_RESULT_OUTPUT
+from ci_checks.checks.workflow import (
+    COLD_WALL_BUDGET_SECONDS,
+    WARM_WALL_BUDGET_SECONDS,
+    WallTiming,
+    accounting_span,
+    billable_minutes,
+    derive_accounting,
+    enforce_wall_budget,
+    render_accounting,
+    render_cache_table,
+    render_open_summary,
+    select_wall_budget,
+    worker_timeout_minutes,
+)
 from ci_checks.core.change_gate import (
     CommitClass,
     GateDecision,
@@ -39,69 +54,36 @@ def _steps(job: WorkflowJob) -> list[WorkflowStep]:
     return steps
 
 
-def _accounting_command() -> str:
-    report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
-    return str(report["run"])
-
-
 def _wall_budgets() -> dict[str, int]:
-    """Return the fan-in's wall budgets by class, read out of the workflow rather than restated."""
-    pairs = re.findall(r"(warm|cold)_wall_budget_seconds=(\d+)", _accounting_command())
-    return {name: int(seconds) for name, seconds in pairs}
-
-
-def _wall_verdict_script() -> str:
-    """Lift the fan-in's budget selection, its summary rows and its wall enforcement, ready to run.
-
-    Only the commit-class expression is substituted, because a workflow expression is interpolated
-    before bash ever sees it. Everything the assertions exercise is the file's own text.
-    """
-    command = _accounting_command()
-    selection = command.index("case '${{ needs.changes.outputs.commit_class }}' in")
-    cost = command.index("# $0.006/min", selection)
-    enforcement = command.index("if ((controllable_wall_seconds >= wall_budget_seconds)); then")
-    rows = [line.strip() for line in command.splitlines() if line.strip().startswith('echo "| Wall budget')]
-    return "\n".join(
-        [
-            command[selection:cost].replace("'${{ needs.changes.outputs.commit_class }}'", '"$COMMIT_CLASS"'),
-            *rows,
-            command[enforcement:],
-        ]
-    )
+    return {
+        "warm": WARM_WALL_BUDGET_SECONDS,
+        "cold": COLD_WALL_BUDGET_SECONDS,
+    }
 
 
 def _protected_main_fan_in(worker_result: str) -> subprocess.CompletedProcess[str]:
-    bash = shutil.which("bash")
-    if bash is None:
-        pytest.skip("bash is required")
     step = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Require every selected check")
-    command = str(step["run"])
-    values = {
-        "needs.changes.result": "success",
-        "needs.changes.outputs.full": "false",
-        "needs.changes.outputs.broad": "false",
-        "needs.changes.outputs.commit_class": "standard",
-        "needs.changes.outputs.standard": "true",
-        "needs.worker.result": worker_result,
-        "needs.container-contracts.result": "skipped",
-        "needs.playwright-image.result": "skipped",
-        "needs.title-policy.result": "skipped",
-    }
-    for expression, value in values.items():
-        command = command.replace(f"${{{{ {expression} }}}}", value)
-    assert "${{" not in command
     return subprocess.run(
-        [bash, "-euo", "pipefail", "-c", command],
+        [sys.executable, str(_ROOT / str(step["run"]).split()[1]), "verdict", "checks"],
+        cwd=_ROOT,
         env=os.environ
         | {
+            "BROAD": "false",
+            "CHANGES_RESULT": "success",
+            "COMMIT_CLASS": "standard",
             "CONTAINER_EXPECTED": "false",
+            "FULL": "false",
             "NODE_GROUP_EXPECTED": "false",
             "PLAYWRIGHT_EXPECTED": "false",
+            "PLAYWRIGHT_RESULT": "skipped",
+            "STANDARD": "true",
             "TITLE_POLICY_EXPECTED": "false",
+            "TITLE_POLICY_RESULT": "skipped",
             "WORKER_COMMITLINT": "",
             "WORKER_COMMITLINT_EXPECTED": "false",
             "WORKER_CONTAINER_CONTRACTS": "",
             "WORKER_NODE_GROUP": "",
+            "WORKER_RESULT": worker_result,
             "WORK_EXPECTED": "true",
         },
         capture_output=True,
@@ -115,29 +97,8 @@ def _accounting_span(
     *,
     run_started: str = "2026-07-23T00:00:00Z",
     now_iso: str = "2026-07-23T00:02:00Z",
-) -> subprocess.CompletedProcess[str]:
-    bash = shutil.which("bash")
-    jq = shutil.which("jq")
-    if bash is None or jq is None:
-        pytest.skip("bash and jq are required")
-    command = _accounting_command()
-    start = command.index('accounting_epoch="$(date')
-    end = command.index('jobs="$(jq -c', start)
-    program = command[start:end] + (
-        '\nprintf "%s\\n" "$run_wall_seconds|$controllable_wall_seconds|$dispatch_seconds|$accounting_start_basis"\n'
-    )
-    return subprocess.run(
-        [bash, "-euo", "pipefail", "-c", program],
-        env=os.environ
-        | {
-            "now_iso": now_iso,
-            "pages": json.dumps([{"jobs": jobs}]),
-            "run_started": run_started,
-        },
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+) -> WallTiming:
+    return accounting_span(run_started, datetime.fromisoformat(now_iso), jobs)
 
 
 _CONTAINER_EXECUTORS = {
@@ -267,7 +228,7 @@ def test_every_class_flag_has_one_required_executor(
     checks = jobs["checks"]
     assert expected_job in checks["needs"]
     fan_in = next(step for step in _steps(checks) if step.get("name") == "Require every selected check")
-    assert f"needs.{expected_job}.result" in fan_in["run"]
+    assert any(f"needs.{expected_job}.result" in str(value) for value in fan_in["env"].values())
 
 
 def test_real_multisurface_decisions_keep_the_consolidated_executor_topology() -> None:
@@ -594,18 +555,12 @@ def test_worker_guard_bounds_a_hang_against_the_cold_budget() -> None:
     assert changes["outputs"]["worker_timeout_minutes"] == ("${{ steps.guards.outputs.worker_timeout_minutes }}")
     guards = next(step for step in _steps(changes) if step.get("name") == "Derive worker guard")
     command = str(guards["run"])
-    budgets = _wall_budgets()
-    cold = budgets["cold"]
-    # The matrix is created before any leg knows whether its ready cache will hit, so the guard
-    # cannot read warmth. Deriving it from the warm budget would kill a cold worker the fan-in
-    # still allows to finish, so it must take the larger of the two budgets.
-    assert cold == max(budgets.values())
-    assert f"standard|broad) cold_wall_budget_seconds={cold} ;;" in command
-    assert re.findall(r"wall_budget_seconds=(\d+)", command) == [str(cold)]
-    assert "hang_grace_minutes=2" in command
-    assert "cold_wall_budget_seconds / 60 + hang_grace_minutes" in command
-    assert cold // 60 + 2 == 16
-
+    cold = _wall_budgets()["cold"]
+    assert cold == max(_wall_budgets().values())
+    assert "workflow.py guard" in command.replace("\n", " ")
+    assert worker_timeout_minutes("standard") == worker_timeout_minutes("broad") == cold // 60 + 2 == 16
+    with pytest.raises(ValueError, match="cannot derive a guard for commit class: invalid"):
+        worker_timeout_minutes("invalid")
     assert _jobs()["worker"]["timeout-minutes"] == ("${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}")
 
 
@@ -786,47 +741,15 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
     assert "checks-attestation/checks-attestation.json" in validate_command
 
 
-def test_runtime_accounting_reads_run_and_jobs_metadata() -> None:
+def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
     report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
-    command = report["run"]
-
-    assert 'gh api "repos/$REPO/actions/runs/$RUN_ID"' in command
-    assert 'gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100"' in command
-
-
-def test_runtime_accounting_enforces_the_two_wall_targets_and_no_billable_ceiling() -> None:
-    report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
-    command = report["run"]
-    env = report["env"]
-
-    assert "if ((controllable_wall_seconds >= wall_budget_seconds)); then" in command
-    assert "exit 1" in command
-
-    # S-90: two wall targets, warm at the owner's 10 minutes and cold 244s above it, that being the
-    # widest wall penalty measured between a cold attempt and its warm re-run of the same tree
-    # (run 30415430344: 676s cold, 432s warm; run 30413265571: 681s cold, 455s warm). No
-    # billable-minute figure: billable is reported and never enforced, because the dollar ceiling
-    # binds at the account spending limit, a monthly cumulative quantity no single run can measure.
+    assert report["run"] == ('python3 scripts/ci/src/ci_checks/checks/workflow.py accounting "$GITHUB_STEP_SUMMARY"')
+    assert report["env"]["COMMIT_CLASS"] == "${{ needs.changes.outputs.commit_class }}"
+    assert "CONTAINER_SELECTED" not in report["env"]
+    assert "PLAYWRIGHT_SELECTED" not in report["env"]
     assert _wall_budgets() == {"warm": 600, "cold": 844}
-    assert "billable_budget_minutes" not in command
-    assert "| Reconstructed billable minutes | $billable_minutes |" in command
-    assert "| Estimated cost USD | $estimated_cost_usd |" in command
-    assert "| Run wall seconds (includes GitHub dispatch) | $run_wall_seconds |" in command
-    assert "| Controllable wall seconds (budgeted) | $controllable_wall_seconds |" in command
-    assert "| GitHub dispatch seconds (not budgeted) | $dispatch_seconds |" in command
-    assert "| Accounting start | $accounting_start_basis |" in command
-    assert "budget_failure" not in command
-    # R was retired: R <= 3 rearranges to W >= 20B, a lower bound on wall time, so it could only fire
-    # on runs that already passed both real ceilings. It punished intra-job speedups.
-    assert "ratio" not in command
-    assert "CONTAINER_SELECTED" not in env
-    assert "PLAYWRIGHT_SELECTED" not in env
-    assert "allowance" not in command
-    assert "artifact_worker" not in command
-
-    jobs = _jobs()
-    assert jobs["playwright-image"]["timeout-minutes"] == 9
-    assert jobs["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+    assert _jobs()["playwright-image"]["timeout-minutes"] == 9
+    assert _jobs()["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
 
 
 def test_runtime_accounting_starts_at_the_first_non_skipped_job() -> None:
@@ -849,14 +772,10 @@ def test_runtime_accounting_starts_at_the_first_non_skipped_job() -> None:
             },
         ]
     )
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().split("|", maxsplit=3) == [
-        "120",
-        "90",
-        "30",
-        "first non-skipped job start from the Actions jobs API",
-    ]
+    assert result.run_seconds == 120
+    assert result.controllable_seconds == 90
+    assert result.dispatch_seconds == 30
+    assert result.start_basis == "first non-skipped job start from the Actions jobs API"
 
 
 @pytest.mark.parametrize("started_at", [None, "not-a-timestamp"])
@@ -870,12 +789,26 @@ def test_runtime_accounting_falls_back_to_run_start_for_an_unusable_first_job_st
             }
         ]
     )
+    assert result.controllable_seconds == result.run_seconds
+    assert result.dispatch_seconds == 0
+    assert result.start_basis == "run_started_at fallback: first non-skipped job start unavailable or invalid"
 
-    assert result.returncode == 0, result.stderr
-    run_wall, controllable_wall, dispatch, basis = result.stdout.strip().split("|", maxsplit=3)
-    assert controllable_wall == run_wall
-    assert dispatch == "0"
-    assert basis == "run_started_at fallback: first non-skipped job start unavailable or invalid"
+
+def test_zero_step_job_has_zero_billable_minutes() -> None:
+    now = datetime(2026, 7, 23, 0, 2, tzinfo=UTC)
+    assert billable_minutes([], now) == 0
+    accounting = derive_accounting(
+        "2026-07-23T00:00:00Z",
+        now,
+        [],
+        ready_missed="",
+        ready_hit="",
+        deadcode_missed="",
+        deadcode_hit="",
+    )
+    assert accounting.billable_minutes == 0
+    assert accounting.estimated_cost_usd == "0.000"
+    assert accounting.jobs == ()
 
 
 def test_fan_in_consumes_the_worker_cache_signals() -> None:
@@ -892,140 +825,93 @@ def test_fan_in_consumes_the_worker_cache_signals() -> None:
     assert setup["id"] == "setup-ci"
 
 
-def _wall_verdict(
-    controllable_wall_seconds: int,
-    missed: str = "",
-    hit: str = "",
-    deadcode_missed: str | None = "",
-    deadcode_hit: str | None = "",
-) -> subprocess.CompletedProcess[str]:
-    bash = shutil.which("bash")
-    if bash is None:
-        pytest.skip("bash is not available")
-    environment = {
-        "COMMIT_CLASS": "broad",
-        "WORKER_READY_CACHE_MISSED": missed,
-        "WORKER_READY_CACHE_HIT": hit,
-        "controllable_wall_seconds": str(controllable_wall_seconds),
-    }
-    if deadcode_missed is not None:
-        environment["WORKER_DEADCODE_CACHE_MISSED"] = deadcode_missed
-    if deadcode_hit is not None:
-        environment["WORKER_DEADCODE_CACHE_HIT"] = deadcode_hit
-    return subprocess.run(
-        [bash, "-uo", "pipefail", "-c", _wall_verdict_script()],
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
+def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
+    cold = select_wall_budget("true", "", "", "true")
+    assert cold.seconds == 844
+    assert cold.classification == "cold"
+    assert cold.basis == (
+        "ready-cache primary key missed by at least one worker leg; dead-code static cache primary key restored"
     )
+    assert cold.seconds - 1 < cold.seconds
+    assert cold.seconds >= cold.seconds
+    cold_inside = derive_accounting(
+        "2026-07-23T00:00:00Z",
+        datetime(2026, 7, 23, 0, 14, 3, tzinfo=UTC),
+        [],
+        ready_missed="true",
+        ready_hit="",
+        deadcode_missed="",
+        deadcode_hit="true",
+    )
+    enforce_wall_budget(cold_inside)
+    cold_breached = derive_accounting(
+        "2026-07-23T00:00:00Z",
+        datetime(2026, 7, 23, 0, 14, 4, tzinfo=UTC),
+        [],
+        ready_missed="true",
+        ready_hit="",
+        deadcode_missed="",
+        deadcode_hit="true",
+    )
+    with pytest.raises(ValueError, match=r"class=cold observed_controllable=844s budget<844s"):
+        enforce_wall_budget(cold_breached)
+
+    warm = select_wall_budget("", "true", "", "true")
+    assert warm.seconds == 600
+    assert warm.classification == "warm"
+    assert warm.basis == (
+        "ready-cache primary key restored by every reporting worker leg; dead-code static cache primary key restored"
+    )
+    assert warm.seconds - 1 < warm.seconds
+    assert warm.seconds >= warm.seconds
+    warm_inside = derive_accounting(
+        "2026-07-23T00:00:00Z",
+        datetime(2026, 7, 23, 0, 9, 59, tzinfo=UTC),
+        [],
+        ready_missed="",
+        ready_hit="true",
+        deadcode_missed="",
+        deadcode_hit="true",
+    )
+    enforce_wall_budget(warm_inside)
+    warm_breached = derive_accounting(
+        "2026-07-23T00:00:00Z",
+        datetime(2026, 7, 23, 0, 10, tzinfo=UTC),
+        [],
+        ready_missed="",
+        ready_hit="true",
+        deadcode_missed="",
+        deadcode_hit="true",
+    )
+    with pytest.raises(ValueError, match=r"class=warm observed_controllable=600s budget<600s"):
+        enforce_wall_budget(warm_breached)
 
 
-def test_a_cold_run_is_measured_against_the_cold_budget() -> None:
-    cold = _wall_budgets()["cold"]
-
-    inside = _wall_verdict(cold - 1, missed="true", deadcode_hit="true")
-    assert inside.returncode == 0, inside.stderr
-    assert "| Wall budget class | cold |" in inside.stdout
-    assert (
-        "| Wall budget basis | ready-cache primary key missed by at least one worker leg; "
-        "dead-code static cache primary key restored |"
-    ) in inside.stdout
-
-    beyond = _wall_verdict(cold, missed="true", deadcode_hit="true")
-    assert beyond.returncode == 1
-    assert f"class=cold observed_controllable={cold}s budget<{cold}s" in beyond.stderr
-
-
-def test_a_warm_run_keeps_the_ten_minute_target() -> None:
-    warm = _wall_budgets()["warm"]
-
-    inside = _wall_verdict(warm - 1, hit="true", deadcode_hit="true")
-    assert inside.returncode == 0, inside.stderr
-    assert "| Wall budget class | warm |" in inside.stdout
-    assert (
-        "| Wall budget basis | ready-cache primary key restored by every reporting worker leg; "
-        "dead-code static cache primary key restored |"
-    ) in inside.stdout
-
-    # The cold budget is the wider one, so a warm run beyond 10 minutes must still fail: taking the
-    # cold allowance without having paid cold setup is exactly what the split must not permit.
-    beyond = _wall_verdict(warm, hit="true", deadcode_hit="true")
-    assert beyond.returncode == 1
-    assert f"class=warm observed_controllable={warm}s budget<{warm}s" in beyond.stderr
+@pytest.mark.parametrize(
+    ("ready_missed", "ready_hit", "deadcode_missed", "deadcode_hit", "basis"),
+    [
+        ("", "true", "true", "", "dead-code static cache primary key not restored"),
+        ("", "true", "", "", "dead-code static cache hit unreported"),
+        ("", "true", "", "not-a-cache-result", "dead-code static cache signal invalid"),
+        ("", "", "", "true", "ready-cache primary key hit unreported"),
+        ("true", "true", "", "true", "ready-cache primary key hit on one worker leg and missed on another"),
+    ],
+)
+def test_non_restored_or_ambiguous_cache_signals_take_the_cold_budget(
+    ready_missed: str,
+    ready_hit: str,
+    deadcode_missed: str,
+    deadcode_hit: str,
+    basis: str,
+) -> None:
+    budget = select_wall_budget(ready_missed, ready_hit, deadcode_missed, deadcode_hit)
+    assert budget.classification == "cold"
+    assert budget.seconds == COLD_WALL_BUDGET_SECONDS
+    assert basis in budget.basis
 
 
-def test_a_warm_ready_cache_with_a_missed_deadcode_cache_takes_the_cold_budget() -> None:
-    budgets = _wall_budgets()
-    result = _wall_verdict(budgets["warm"], hit="true", deadcode_missed="true")
-
-    assert result.returncode == 0, result.stderr
-    assert "| Wall budget class | cold |" in result.stdout
-    assert (
-        "| Wall budget basis | ready-cache primary key restored by every reporting worker leg; "
-        "dead-code static cache primary key not restored |"
-    ) in result.stdout
-    assert _wall_verdict(budgets["cold"], hit="true", deadcode_missed="true").returncode == 1
-
-
-def test_a_missing_deadcode_cache_signal_takes_the_cold_budget() -> None:
-    budgets = _wall_budgets()
-    result = _wall_verdict(budgets["warm"], hit="true", deadcode_missed=None, deadcode_hit=None)
-
-    assert result.returncode == 0, result.stderr
-    assert "| Wall budget class | cold |" in result.stdout
-    assert "dead-code static cache hit unreported" in result.stdout
-
-
-def test_an_empty_deadcode_cache_signal_takes_the_cold_budget() -> None:
-    budgets = _wall_budgets()
-    result = _wall_verdict(budgets["warm"], hit="true", deadcode_missed="", deadcode_hit="")
-
-    assert result.returncode == 0, result.stderr
-    assert "| Wall budget class | cold |" in result.stdout
-    assert "dead-code static cache hit unreported" in result.stdout
-
-
-def test_an_unparseable_deadcode_cache_signal_takes_the_cold_budget() -> None:
-    budgets = _wall_budgets()
-    result = _wall_verdict(budgets["warm"], hit="true", deadcode_hit="not-a-cache-result")
-
-    assert result.returncode == 0, result.stderr
-    assert "| Wall budget class | cold |" in result.stdout
-    assert "dead-code static cache signal invalid" in result.stdout
-
-
-def test_an_absent_or_mixed_warmth_signal_takes_the_cold_budget() -> None:
-    budgets = _wall_budgets()
-    cold, warm = budgets["cold"], budgets["warm"]
-
-    # A skipped worker, a protected-main smoke run and a leg that died before setup all publish
-    # nothing. Warm would then enforce a target the run never had a chance to meet.
-    absent = _wall_verdict(warm, missed="", hit="", deadcode_hit="true")
-    assert absent.returncode == 0, absent.stderr
-    assert "| Wall budget class | cold |" in absent.stdout
-    assert "ready-cache primary key hit unreported" in absent.stdout
-    assert _wall_verdict(cold, missed="", hit="", deadcode_hit="true").returncode == 1
-
-    # The wall is the span across every leg, so one missed leg means the run paid cold setup even
-    # where a sibling leg restored. Today both legs share one primary key and so always agree, but
-    # the rule must not depend on that: only the frontend leg writes the entry, and a second writer
-    # or a third leg would make the two predicates differ.
-    mixed = _wall_verdict(warm, missed="true", hit="true", deadcode_hit="true")
-    assert mixed.returncode == 0, mixed.stderr
-    assert "| Wall budget class | cold |" in mixed.stdout
-
-
-def test_runtime_accounting_jq_distinguishes_running_completed_and_both_skips() -> None:
-    jq = shutil.which("jq")
-    if jq is None:
-        pytest.skip("jq is not available")
-
-    report = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
-    command = report["run"]
-    marker = 'jq -r --arg now "$now_iso" --arg reused "${REUSED_RUN_ID:-}" --argjson expected "$expected" \''
-    start = command.index(marker) + len(marker)
-    program = command[start : command.index('\' <<< "$jobs"', start)]
+def test_accounting_render_distinguishes_running_completed_and_both_skips() -> None:
+    now = datetime(2026, 7, 23, 0, 1, tzinfo=UTC)
     jobs = [
         {
             "name": "Checks",
@@ -1059,38 +945,41 @@ def test_runtime_accounting_jq_distinguishes_running_completed_and_both_skips() 
         "Router": True,
         "Checks": True,
     }
-
-    result = subprocess.run(
-        [
-            jq,
-            "-r",
-            "--arg",
-            "now",
-            "2026-07-23T00:01:00Z",
-            "--arg",
-            "reused",
-            "18234567890",
-            "--argjson",
-            "expected",
-            json.dumps(expected),
-            program,
-        ],
-        input=json.dumps(jobs),
-        capture_output=True,
-        text=True,
-        check=False,
+    accounting = derive_accounting(
+        "2026-07-23T00:00:00Z",
+        now,
+        jobs,
+        ready_missed="",
+        ready_hit="true",
+        deadcode_missed="",
+        deadcode_hit="true",
     )
+    rendered = render_accounting(accounting, expected, "18234567890", now)
+    assert "| Checks | 60 | 1 | running (this job) |" in rendered
+    assert "| Router | 61 | 2 | success |" in rendered
+    assert "| Scoped worker (python) | 0 | 0 | skipped: already proven by run 18234567890 |" in rendered
+    assert "| Playwright runner image | 0 | 0 | skipped: not selected |" in rendered
 
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == [
-        # The fan-in cannot see its own conclusion, so it must not report itself as in_progress.
-        "| Checks | 60 | 1 | running (this job) |",
-        "| Router | 61 | 2 | success |",
-        # Selected yet skipped: the gate is asserting a prior run already proved this tree.
-        "| Scoped worker (python) | 0 | 0 | skipped: already proven by run 18234567890 |",
-        # Not selected: the gate declined the work. Same runner word, opposite meaning.
-        "| Playwright runner image | 0 | 0 | skipped: not selected |",
-    ]
+
+def test_router_open_summary_text_is_unchanged() -> None:
+    assert render_open_summary(
+        "router",
+        {
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_EVENT_NAME": "pull_request",
+            "EVENT_ACTION": "opened",
+            "GITHUB_SHA": "1234567890abcdef",
+        },
+    ) == (
+        "## Router\n\n"
+        "Classifies the tested diff into lane flags and a commit class. Runs no checks itself.\n\n"
+        "| Context | Value |\n"
+        "|---|---|\n"
+        "| Run | `123` |\n"
+        "| Event | `pull_request` (`opened`) |\n"
+        "| Tested SHA | `1234567` |\n\n"
+        "### Results\n"
+    )
 
 
 def test_digest_freshness_workflow_probes_on_schedule() -> None:
@@ -1130,26 +1019,25 @@ def test_gated_jobs_depend_on_change_outputs() -> None:
 def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
     checks = _jobs()["checks"]
     fan_in = next(step for step in _steps(checks) if step.get("name") == "Require every selected check")
-    command = fan_in["run"]
-    assert "case '${{ needs.changes.outputs.commit_class }}' in" in command
-    assert "standard)" in command
-    assert "broad)" in command
+    command = str(fan_in["run"])
+    assert command.endswith("workflow.py verdict checks")
+    assert fan_in["env"]["COMMIT_CLASS"] == "${{ needs.changes.outputs.commit_class }}"
+    assert fan_in["env"]["STANDARD"] == "${{ needs.changes.outputs.standard }}"
+    assert fan_in["env"]["BROAD"] == "${{ needs.changes.outputs.broad }}"
 
-    # One matrix job covers every unit of both classes, so the fan-in has one work result to
-    # require rather than one per shard; a failing unit fails the job it belongs to.
     required = {
-        "worker": "$WORK_EXPECTED",
-        "playwright-image": "$PLAYWRIGHT_EXPECTED",
-        "title-policy": "$TITLE_POLICY_EXPECTED",
+        "worker": ("WORKER_RESULT", "WORK_EXPECTED"),
+        "playwright-image": ("PLAYWRIGHT_RESULT", "PLAYWRIGHT_EXPECTED"),
+        "title-policy": ("TITLE_POLICY_RESULT", "TITLE_POLICY_EXPECTED"),
     }
     assert set(checks["needs"]) == {"changes"} | set(required)
-    for job_id, expectation in required.items():
-        assert f"require '${{{{ needs.{job_id}.result }}}}' \"{expectation}\" {job_id}" in command
-    assert "$BROAD_EXPECTED" not in command
+    for job_id, (result_name, expectation_name) in required.items():
+        assert f"needs.{job_id}.result" in str(fan_in["env"][result_name])
+        assert expectation_name in fan_in["env"]
+    assert "BROAD_EXPECTED" not in fan_in["env"]
     assert "WORKER_CONTAINER_CONTRACTS" in fan_in["env"]
-    assert 'test "$WORKER_CONTAINER_CONTRACTS" = true' in command
-    assert "needs.container-contracts" not in command
-    assert "broad-environment" not in command
+    assert "needs.container-contracts" not in str(fan_in)
+    assert "broad-environment" not in str(fan_in)
 
 
 def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> None:
@@ -1271,10 +1159,11 @@ def test_cache_summaries_use_observed_action_outputs() -> None:
         assert setup["id"] == "setup-ci"
         report = next(step for name, step in steps.items() if name and name.startswith("Report "))
         assert report["env"]["CACHE_OUTCOMES"] == "${{ steps.setup-ci.outputs.cache-telemetry }}"
-        # One table row per cache, not one machine-readable log line.
-        assert "| Cache | Outcome | Key |" in str(report["run"])
-        # Keys are truncated to a readable prefix; the full value stays in the job log.
-        assert "s/([0-9a-f]{8})[0-9a-f]{24,}/\\1\u2026/g" in str(report["run"])
+        assert "workflow.py summary report" in str(report["run"])
+
+    assert render_cache_table("uv=cache-hit:1234567890abcdef1234567890abcdef") == (
+        "| Cache | Outcome | Key |\n|---|---|---|\n| uv | cache hit | `12345678…` |"
+    )
 
     router_steps = {step.get("name"): step for step in _steps(jobs["changes"])}
     router_setup = router_steps["Set up uv and Python"]
@@ -1282,7 +1171,7 @@ def test_cache_summaries_use_observed_action_outputs() -> None:
     router_report = router_steps["Report router cost"]
     assert router_report["env"]["UV_CACHE_HIT"] == "${{ steps.setup-uv.outputs.cache-hit }}"
     assert router_report["env"]["UV_CACHE_KEY"] == "${{ steps.setup-uv.outputs.cache-key }}"
-    assert "| Cache | Outcome | Key |" in str(router_report["run"])
+    assert "workflow.py summary report router" in str(router_report["run"])
 
     workflow_text = _CHECKS.read_text(encoding="utf-8")
     assert "cache_hit=" not in workflow_text

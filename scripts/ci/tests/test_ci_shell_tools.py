@@ -6,11 +6,19 @@ import shutil
 import subprocess
 import tomllib
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, string_at
 from ci_checks.app import app
+from ci_checks.checks.workflow import (
+    COLD_WALL_BUDGET_SECONDS,
+    WARM_WALL_BUDGET_SECONDS,
+    billable_minutes,
+    render_report_summary,
+    select_wall_budget,
+)
 from ci_checks.core.change_gate import GateDecision, render_outputs
 from ci_checks.core.packages import PackageType, Scope, _scope_filter
 from typer.testing import CliRunner
@@ -201,9 +209,9 @@ def test_checks_aggregator_requires_every_hosted_lane() -> None:
     assert isinstance(needs, list)
     assert set(needs) == set(jobs) - {"checks"}
 
-    command = "\n".join(_commands(checks))
+    contract = str(checks)
     for job in needs:
-        assert f"needs.{job}.result" in command
+        assert f"needs.{job}.result" in contract
 
 
 def test_package_scopes_partition_all_package_types() -> None:
@@ -239,6 +247,131 @@ def test_empty_package_scope_succeeds_without_falling_back_to_all(
     assert result.exit_code == 0
     assert selected_scopes == [Scope.OTHER]
     assert "No testable packages found" in result.output
+
+
+def test_checks_workflow_factors_shared_shell_behaviour_into_python() -> None:
+    jobs = load_workflow(_CHECKS)["jobs"]
+    summaries = [
+        step
+        for job in jobs.values()
+        for step in _steps(job)
+        if str(step.get("name", "")).startswith(("Open ", "Report "))
+    ]
+    assert summaries
+    for step in summaries:
+        command = str(step["run"])
+        if step["name"] == "Report workflow accounting":
+            assert "workflow.py accounting" in command
+        else:
+            assert "workflow.py summary" in command
+
+    commands = "\n".join(command for job in jobs.values() for command in _commands(job))
+    assert "workflow.py guard" in commands.replace("\n", " ")
+    assert commands.count("workflow.py verdict") == 2
+    assert "workflow.py accounting" in commands
+    for retired_shell in (
+        "read -ra entries",
+        'billable_minutes="$(jq',
+        "wall_budget_seconds=",
+        "cold_wall_budget_seconds=",
+        "require() {",
+    ):
+        assert retired_shell not in commands
+
+
+def test_workflow_summary_subcommand_writes_exact_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary = tmp_path / "summary.md"
+    environment = {
+        "BUILD_OUTCOME": "success",
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "JOB_STARTED": "100",
+        "UNIQUE_STARTED": "130",
+        "VERIFY_OUTCOME": "success",
+    }
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
+    result = CliRunner().invoke(
+        app,
+        ["workflow-summary", "report", "playwright", str(summary)],
+    )
+
+    assert result.exit_code == 0, result.output
+    rendered = summary.read_text(encoding="utf-8")
+    match = re.search(r"\| Unique work \| (\d+) \|", rendered)
+    assert match is not None
+    assert rendered == render_report_summary(
+        "playwright",
+        environment,
+        now=130 + int(match.group(1)),
+    )
+
+
+def test_workflow_guard_and_verdict_subcommands_preserve_decisions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "output"
+    broad = CliRunner().invoke(app, ["workflow-guard", "broad", str(output)])
+    assert broad.exit_code == 0, broad.output
+    assert output.read_text(encoding="utf-8") == "worker_timeout_minutes=16\n"
+
+    invalid = CliRunner().invoke(app, ["workflow-guard", "invalid", str(output)])
+    assert invalid.exit_code != 0
+    assert isinstance(invalid.exception, ValueError)
+    assert str(invalid.exception) == "cannot derive a guard for commit class: invalid"
+
+    values = {
+        "BROAD": "false",
+        "CHANGES_RESULT": "success",
+        "COMMIT_CLASS": "standard",
+        "CONTAINER_EXPECTED": "false",
+        "FULL": "false",
+        "NODE_GROUP_EXPECTED": "false",
+        "PLAYWRIGHT_EXPECTED": "false",
+        "PLAYWRIGHT_RESULT": "skipped",
+        "STANDARD": "true",
+        "TITLE_POLICY_EXPECTED": "false",
+        "TITLE_POLICY_RESULT": "skipped",
+        "WORKER_COMMITLINT": "",
+        "WORKER_COMMITLINT_EXPECTED": "false",
+        "WORKER_CONTAINER_CONTRACTS": "",
+        "WORKER_NODE_GROUP": "",
+        "WORKER_RESULT": "success",
+        "WORK_EXPECTED": "true",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    verdict = CliRunner().invoke(app, ["workflow-verdict", "checks"])
+    assert verdict.exit_code == 0, verdict.output
+
+    monkeypatch.setenv("COMMIT_CLASS", "invalid")
+    invalid_verdict = CliRunner().invoke(app, ["workflow-verdict", "checks"])
+    assert invalid_verdict.exit_code != 0
+    assert isinstance(invalid_verdict.exception, ValueError)
+    assert str(invalid_verdict.exception) == "router emitted an invalid commit class"
+
+
+def test_workflow_accounting_arithmetic_and_wall_boundary() -> None:
+    now = datetime(2026, 7, 23, 0, 2, tzinfo=UTC)
+    jobs = [
+        {
+            "started_at": "2026-07-23T00:00:00Z",
+            "completed_at": "2026-07-23T00:01:01Z",
+        }
+    ]
+    assert billable_minutes(jobs, now) == 2
+    assert billable_minutes([], now) == 0
+
+    warm = select_wall_budget("", "true", "", "true")
+    cold = select_wall_budget("true", "", "", "true")
+    assert (warm.classification, warm.seconds) == ("warm", WARM_WALL_BUDGET_SECONDS)
+    assert (cold.classification, cold.seconds) == ("cold", COLD_WALL_BUDGET_SECONDS)
+    assert warm.seconds > WARM_WALL_BUDGET_SECONDS - 1
+    assert warm.seconds <= WARM_WALL_BUDGET_SECONDS
 
 
 def test_package_manager_comes_from_the_pinned_toolchain_not_a_fetch() -> None:

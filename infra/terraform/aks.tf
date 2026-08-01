@@ -7,6 +7,7 @@ resource "azurerm_log_analytics_workspace" "aks" {
   resource_group_name = azurerm_resource_group.app_rg.name
   sku                 = "PerGB2018"
   retention_in_days   = 30
+  daily_quota_gb      = var.log_analytics_daily_quota_gb
 
   tags = { environment = var.app_environment, application = var.app_name }
 }
@@ -24,12 +25,14 @@ resource "azurerm_kubernetes_cluster" "aks_cluster" {
   private_cluster_public_fqdn_enabled = false
   role_based_access_control_enabled   = true
   azure_policy_enabled                = true
+  sku_tier                            = var.app_environment == "prod" ? "Standard" : "Free"
 
   default_node_pool {
     name            = "default"
     node_count      = var.aks_node_count
     vm_size         = var.aks_node_vm_size
     os_disk_size_gb = var.aks_node_os_disk_size_gb
+    zones           = var.aks_node_zones
     type            = "VirtualMachineScaleSets"
     vnet_subnet_id  = var.app_environment == "prod" ? azurerm_subnet.aks[0].id : null
 
@@ -59,6 +62,30 @@ resource "azurerm_kubernetes_cluster" "aks_cluster" {
   }
   tags       = { environment = var.app_environment, application = var.app_name }
   depends_on = [azurerm_resource_group.app_rg]
+}
+
+resource "azurerm_kubernetes_cluster_node_pool" "user" {
+  count                 = var.deployment_type == "aks" ? 1 : 0
+  name                  = var.aks_user_node_pool_name
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.aks_cluster[0].id
+  vm_size               = var.aks_user_node_vm_size
+  os_disk_size_gb       = var.aks_node_os_disk_size_gb
+  zones                 = var.aks_node_zones
+  mode                  = "User"
+
+  auto_scaling_enabled = true
+  min_count            = var.aks_user_node_min_count
+  max_count            = var.aks_user_node_max_count
+  node_count           = var.aks_user_node_min_count
+
+  node_public_ip_enabled = false
+  vnet_subnet_id         = var.app_environment == "prod" ? azurerm_subnet.aks[0].id : null
+
+  tags = { environment = var.app_environment, application = var.app_name }
+
+  lifecycle {
+    ignore_changes = [node_count]
+  }
 }
 
 resource "azurerm_role_assignment" "aks_acr_pull" {
