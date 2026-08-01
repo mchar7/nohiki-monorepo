@@ -132,6 +132,7 @@ const jsdomUiTests = [
 ];
 
 export default defineConfig({
+  envDir: false,
   plugins: [rejectUnresolvedTestMocks(), react()],
   test: {
     execArgv: ['--no-experimental-webstorage'],
@@ -147,7 +148,7 @@ export default defineConfig({
           environment: 'node',
           include: ['scripts/**/*.test.mjs', 'src/**/*.test.ts'],
           exclude: domTypeScriptTests,
-          setupFiles: [],
+          setupFiles: ['./src/test/network-guard.ts'],
         },
       },
       {
