@@ -355,7 +355,7 @@ def provisioned_sources_template(tmp_path_factory: pytest.TempPathFactory) -> So
                     "dependsOn": [{"name": "infrastructure"}],
                     "decryption": {
                         "provider": "sops",
-                        "secretRef": {"name": "flux-sops"},
+                        "secretRef": {"name": "sops-age"},
                     },
                     "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
                     "prune": True,

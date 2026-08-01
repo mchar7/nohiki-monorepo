@@ -387,152 +387,6 @@ def kubernetes_observation(
     return cluster, secrets
 
 
-def _resource_items(
-    prefix: tuple[str, ...],
-    resource: str,
-    namespace: str | None = None,
-    *,
-    all_namespaces: bool = False,
-) -> list[dict[str, Any]]:
-    scope = ("-A",) if all_namespaces else (("-n", namespace) if namespace else ())
-    argv = (*prefix, *scope, "get", resource, "-o", "json")
-    result = run_readonly(argv)
-    if result.returncode != 0:
-        return []
-    try:
-        document = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        _fail(f"runtime resource query returned malformed JSON: {resource}", cause=error)
-    items = document.get("items", []) if isinstance(document, dict) else []
-    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
-        _fail(f"runtime resource query returned the wrong shape: {resource}")
-    return items
-
-
-def _resource_summary(item: dict[str, Any]) -> dict[str, Any]:
-    metadata = item.get("metadata", {})
-    spec = item.get("spec", {})
-    status = item.get("status", {})
-    conditions = [
-        {
-            "observedGeneration": condition.get("observedGeneration"),
-            "reason": condition.get("reason"),
-            "status": condition.get("status"),
-            "type": condition.get("type"),
-        }
-        for condition in status.get("conditions", [])
-        if isinstance(condition, dict)
-    ]
-    pod_spec = spec.get("template", {}).get("spec", {}) if isinstance(spec, dict) else {}
-    containers = pod_spec.get("containers", []) if isinstance(pod_spec, dict) else []
-    images = sorted(
-        str(container.get("image"))
-        for container in containers
-        if isinstance(container, dict) and container.get("image")
-    )
-    artifact = status.get("artifact", {}) if isinstance(status, dict) else {}
-    return {
-        "conditions": conditions,
-        "generation": metadata.get("generation"),
-        "images": images,
-        "kind": item.get("kind"),
-        "lastAppliedRevision": status.get("lastAppliedRevision"),
-        "lastAttemptedRevision": status.get("lastAttemptedRevision"),
-        "name": metadata.get("name"),
-        "namespace": metadata.get("namespace"),
-        "readyReplicas": status.get("readyReplicas"),
-        "revision": artifact.get("revision") if isinstance(artifact, dict) else None,
-        "uid": metadata.get("uid"),
-    }
-
-
-def runtime_observation(kubeconfig: Path) -> dict[str, Any]:
-    """Read Flux runtime state independently of kindctl, for contradiction checks."""
-    prefix = ("kubectl", "--kubeconfig", str(kubeconfig))
-    flux_instances = [_resource_summary(item) for item in _resource_items(prefix, "fluxinstances", "flux-system")]
-    reports = [_resource_summary(item) for item in _resource_items(prefix, "fluxreports", "flux-system")]
-    sources = [_resource_summary(item) for item in _resource_items(prefix, "gitrepositories", "flux-system")]
-    kustomizations = [_resource_summary(item) for item in _resource_items(prefix, "kustomizations", "flux-system")]
-    helm_releases = [_resource_summary(item) for item in _resource_items(prefix, "helmreleases", "flux-system")]
-    flux_deployments = [_resource_summary(item) for item in _resource_items(prefix, "deployments", "flux-system")]
-    operator = next((item for item in flux_deployments if item["name"] == "flux-operator"), None)
-
-    registry_deployments = [
-        _resource_summary(item) for item in _resource_items(prefix, "deployments", "nohiki-registry")
-    ]
-    registry_services = _resource_items(prefix, "services", "nohiki-registry")
-    registry_claims = [
-        _resource_summary(item) for item in _resource_items(prefix, "persistentvolumeclaims", "nohiki-registry")
-    ]
-    registry_service = next(
-        (
-            _resource_summary(item)
-            for item in registry_services
-            if item.get("metadata", {}).get("name") == "nohiki-registry"
-        ),
-        None,
-    )
-    node_port = next(
-        (
-            port.get("nodePort")
-            for item in registry_services
-            if item.get("metadata", {}).get("name") == "nohiki-registry"
-            for port in item.get("spec", {}).get("ports", [])
-            if isinstance(port, dict) and port.get("nodePort")
-        ),
-        None,
-    )
-
-    storage_classes = [_resource_summary(item) for item in _resource_items(prefix, "storageclasses")]
-    claims = [
-        _resource_summary(item) for item in _resource_items(prefix, "persistentvolumeclaims", all_namespaces=True)
-    ]
-    volumes = [_resource_summary(item) for item in _resource_items(prefix, "persistentvolumes")]
-    all_deployments = _resource_items(prefix, "deployments", all_namespaces=True)
-    workloads = [
-        _resource_summary(item)
-        for item in all_deployments
-        if item.get("metadata", {}).get("namespace") not in {"flux-system", "kube-system", "nohiki-registry"}
-    ]
-    jobs = [_resource_summary(item) for item in _resource_items(prefix, "jobs", all_namespaces=True)]
-
-    sections = empty_runtime_sections()
-    sections["flux"] = {
-        "helmReleases": helm_releases,
-        "instance": flux_instances[0] if len(flux_instances) == 1 else None,
-        "kustomizations": kustomizations,
-        "operator": operator,
-        "report": reports[0] if len(reports) == 1 else None,
-        "sources": sources,
-    }
-    sections["registry"] = {
-        "claim": registry_claims[0] if len(registry_claims) == 1 else None,
-        "deployment": registry_deployments[0] if len(registry_deployments) == 1 else None,
-        "digestHeadResults": [],
-        "image": registry_deployments[0]["images"][0]
-        if registry_deployments and registry_deployments[0]["images"]
-        else None,
-        "imageId": None,
-        "nodePort": node_port,
-        "service": registry_service,
-    }
-    sections["storage"] = {
-        "claims": claims,
-        "provisionerImages": sorted(
-            image
-            for item in all_deployments
-            if item.get("metadata", {}).get("namespace") == "kube-system"
-            for image in _resource_summary(item)["images"]
-        ),
-        "storageClasses": storage_classes,
-        "volumes": volumes,
-    }
-    sections["tests"]["healthInventory"] = jobs
-    sections["workloads"] = workloads
-    reject_secret_material(sections)
-    return sections
-
-
 def empty_runtime_sections() -> dict[str, Any]:
     """Return schema-stable empty sections not populated during C1."""
     return {
@@ -590,7 +444,6 @@ def observe(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         contexts = []
     if present:
         cluster, secrets = kubernetes_observation(kubeconfig, measurements)
-        runtime_sections = runtime_observation(kubeconfig)
     else:
         cluster = {
             "context": CONTEXT,
@@ -601,7 +454,6 @@ def observe(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
             "present": False,
         }
         secrets = []
-        runtime_sections = empty_runtime_sections()
     document: dict[str, Any] = {
         "apiVersion": "nohiki.io/v1alpha1",
         "attempt": arguments.attempt,
@@ -619,21 +471,14 @@ def observe(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
             "branch": arguments.branch,
             "remoteSha": arguments.remote_sha,
             "reviewedSha": arguments.reviewed_sha,
-            "sourceRevision": next(
-                (
-                    source["revision"]
-                    for source in runtime_sections["flux"]["sources"]
-                    if source["name"] == "flux-system"
-                ),
-                None,
-            ),
+            "sourceRevision": None,
         },
         "kind": "KindRuntimeObservation",
         "observedAt": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
         "phase": arguments.phase,
         "schemaVersion": 1,
         "secrets": secrets,
-        **runtime_sections,
+        **empty_runtime_sections(),
     }
     output_sidecar = Path(f"{arguments.output}.sha256.json")
     if output_sidecar.exists():

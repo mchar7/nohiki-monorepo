@@ -105,7 +105,7 @@ sops filestatus infra/k8s/gitops/secrets/local/nohiki-llm-runtime.sops.yaml
 kubectl kustomize infra/k8s/gitops/secrets/local >/dev/null
 ```
 
-Bootstrap applies only the `flux-system/flux-sops` trust root. Flux decrypts the
+Bootstrap applies only the `flux-system/sops-age` trust root. Flux decrypts the
 tracked sources and owns every local application Secret; Helm inline Secrets and
 local ESO duplicates remain disabled.
 

@@ -19,7 +19,7 @@
     "infra/k8s/local/kindctl",
     "infra/k8s/local/lifecycle.sh",
     "infra/k8s/local/observer.py",
-    "infra/k8s/flux-runtime/offline-egress.nft",
+    "infra/k8s/local/offline-egress.nft",
     "infra/k8s/oci-proof/",
     "infra/k8s/verification/health/templates/job.yaml",
     "infra/k8s/verification/review-attestation-v1.schema.json",
