@@ -204,9 +204,9 @@ jobs:
       # fan-in reports separately, exactly as the retired broad-* jobs were.
       fail-fast: false
       matrix:
-        # The gate emits at most the two measured-capacity legs. Python keeps the 56.8s
-        # Python-only payload; frontend carries hygiene and the full 68.1s payload. Putting
-        # hygiene on Python would add 11.3s of setup to the 344s long pole.
+        # The Python tests are the 344s long pole. Backend typechecking needs that leg's full
+        # workspace closure and adds 8.7s locally; keeping it off frontend preserves the narrowed
+        # 68.1s payload without changing which gate selections run the check.
         unit: ${{ fromJSON(needs.changes.outputs.worker_units) }}
     permissions:
       # Only the cache-writing leg needs this, but `permissions:` takes no expression, so
@@ -391,7 +391,7 @@ jobs:
         run: nix develop .#ci --command just secrets-scan
 
       - name: Typecheck backend
-        if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.typecheck_backend == 'true')
+        if: matrix.unit == 'python' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.typecheck_backend == 'true')
         run: nix develop .#ci --command just typecheck-all
 
       - name: Check selected dead code

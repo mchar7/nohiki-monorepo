@@ -28,7 +28,7 @@ _WORKER_COMMANDS = (
     ("lint_docker", "frontend", "hadolint (tracked Dockerfiles)"),
     ("lint_frontend", "frontend", "Biome; i18n:check"),
     ("lint_steiger", "frontend", "Steiger FSD architecture"),
-    ("typecheck_backend", "frontend", "ty check native source surface"),
+    ("typecheck_backend", "python", "ty check native source surface"),
     ("typecheck_frontend", "frontend", "frontend type-check"),
     ("python_any", "python", "ci-checks tests affected package closure"),
     ("node_workspace_contracts", "frontend", "pytest -m requires_node_modules"),
