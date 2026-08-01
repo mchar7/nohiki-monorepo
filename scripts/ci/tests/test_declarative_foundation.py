@@ -315,16 +315,42 @@ def test_flux_orders_crds_foundation_and_platform_with_health_gates() -> None:
     cluster_root = _K8S / "gitops" / "clusters"
     environments = {path.name for path in cluster_root.iterdir() if path.is_dir()}
     assert environments == environment_namespaces.keys()
+    common_resources = [
+        "gateway-api-crds.yaml",
+        "infrastructure.yaml",
+        "platform.yaml",
+        "observability.yaml",
+    ]
+    expected_resources = {
+        "dev-aks": common_resources,
+        "local": [
+            "bootstrap/",
+            "infrastructure.yaml",
+            "runtime-secrets.yaml",
+            "platform.yaml",
+            "observability.yaml",
+            "health.yaml",
+            "verification-api.yaml",
+            "verification-playwright.yaml",
+            "flux-instance.yaml",
+        ],
+        "prod-aks": ["release-source.yaml", *common_resources],
+        "staging-aks": common_resources,
+    }
 
     for environment, namespace in environment_namespaces.items():
         cluster = cluster_root / environment
         resources = _load(cluster / "kustomization.yaml")["resources"]
-        assert resources.count("gateway-api-crds.yaml") == 1
-        assert resources.count("infrastructure.yaml") == 1
-        assert resources.count("platform.yaml") == 1
-        assert resources.count("runtime-secrets.yaml") == (1 if environment == "local" else 0)
+        assert resources == expected_resources[environment]
+        crds_root = cluster
+        if environment == "local":
+            crds_root = cluster / "bootstrap"
+            assert _load(crds_root / "kustomization.yaml")["resources"] == [
+                "gateway-api-crds.yaml",
+                "registry.yaml",
+            ]
 
-        crds = _load(cluster / "gateway-api-crds.yaml")
+        crds = _load(crds_root / "gateway-api-crds.yaml")
         assert crds["metadata"]["name"] == "gateway-api-crds"
         assert crds["spec"]["path"] == "./infra/k8s/gitops/gateway-api-crds"
         assert crds["spec"]["wait"] is True

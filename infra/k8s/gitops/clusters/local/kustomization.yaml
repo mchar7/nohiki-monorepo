@@ -1,12 +1,12 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - gateway-api-crds.yaml
+  - bootstrap/
   - infrastructure.yaml
-  - registry.yaml
   - runtime-secrets.yaml
   - platform.yaml
   - observability.yaml
   - health.yaml
   - verification-api.yaml
   - verification-playwright.yaml
+  - flux-instance.yaml
