@@ -25,7 +25,7 @@ from ci_checks.core.change_gate import (
     render_summary,
     selected_test_packages,
 )
-from ci_checks.core.change_rules import FLAG_NAMES, SURFACE_RULES
+from ci_checks.core.change_rules import BROAD_RULES, FLAG_NAMES, SURFACE_RULES
 from ci_checks.core.display import LANE_DISPLAY_NAMES, LANE_RUNNERS
 from ci_checks.core.image_inventory import load_inventory
 from ci_checks.core.packages import (
@@ -75,6 +75,51 @@ def _synthetic_packages() -> dict[str, Package]:
     }
 
 
+_CORE_PATH = "scripts/ci/src/ci_checks/core"
+_ROUTER_GLOBAL_CORE_MODULES = (
+    "__init__.py",
+    "change_gate.py",
+    "change_rules.py",
+    "display.py",
+    "image_inventory.py",
+    "packages.py",
+)
+_PACKAGE_CONFINED_CORE_MODULES = (
+    "process_env.py",
+    "repository.py",
+    "scanner.py",
+)
+
+
+@pytest.mark.parametrize("module", _ROUTER_GLOBAL_CORE_MODULES)
+def test_router_global_core_modules_remain_broad(module: str) -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate({f"{_CORE_PATH}/{module}"}, packages)
+
+    assert decision.commit_class is CommitClass.BROAD
+    assert not decision.unmatched
+    assert decision.affected == set(packages)
+
+
+@pytest.mark.parametrize("module", _PACKAGE_CONFINED_CORE_MODULES)
+def test_package_confined_core_modules_select_ci_checks_without_broad(module: str) -> None:
+    decision = evaluate({f"{_CORE_PATH}/{module}"}, load_packages_with_deps(Scope.ALL))
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert not decision.unmatched
+    assert "ci-checks" in decision.affected
+
+
+def test_every_core_module_has_exactly_one_explicit_classification() -> None:
+    expected = set(_ROUTER_GLOBAL_CORE_MODULES) | set(_PACKAGE_CONFINED_CORE_MODULES)
+    actual = {path.name for path in (REPO_ROOT / _CORE_PATH).glob("*.py")}
+
+    assert actual == expected
+    for module in actual:
+        path = f"{_CORE_PATH}/{module}"
+        assert sum(rule.matches(path) for rule in (*BROAD_RULES, *SURFACE_RULES)) == 1
+
+
 @pytest.mark.parametrize(
     "changed",
     [
@@ -107,7 +152,7 @@ def test_evaluate_fails_closed_for_unmatched_and_broad_policy_files(
         ("scripts/ci/src/ci_checks/checks/gate.py", CommitClass.BROAD),
         ("scripts/ci/src/ci_checks/checks/internal_refs.py", CommitClass.BROAD),
         ("scripts/ci/src/ci_checks/checks/tests.py", CommitClass.BROAD),
-        ("scripts/ci/src/ci_checks/core/repository.py", CommitClass.BROAD),
+        ("scripts/ci/src/ci_checks/core/repository.py", CommitClass.STANDARD),
         ("scripts/ci/config/internal-reference-terms.toml", CommitClass.BROAD),
     ],
 )
@@ -227,6 +272,21 @@ def test_justfile_selects_owned_checks() -> None:
     assert {"api_schema_freshness", "image_matrix_parity"} <= decision.flags
     # The workflow runs buf breaking inline; the Justfile recipe is local-only.
     assert "proto_breaking" not in decision.flags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/build-push.yml",
+        "Justfile",
+        "infra/k8s/local/images.json",
+    ],
+)
+def test_image_matrix_parity_inputs_remain_selected(path: str) -> None:
+    decision = evaluate({path}, _synthetic_packages())
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert "image_matrix_parity" in decision.flags
 
 
 def _valid_protected_evidence(head_sha: str = "head") -> ProtectedMainEvidence:

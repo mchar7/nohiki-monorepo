@@ -100,6 +100,7 @@ def test_gpu_pool_autoscales_between_zero_and_one_for_bounded_idle_cost() -> Non
     assert "auto_scaling_enabled = true" in pool
     assert "min_count = var.aks_gpu_node_min_count" in pool
     assert "max_count = var.aks_gpu_node_max_count" in pool
+    assert "node_count = var.aks_gpu_node_min_count" in pool
 
 
 def test_gpu_pool_carries_dedicated_label_and_noschedule_taint() -> None:
