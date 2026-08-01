@@ -715,6 +715,24 @@ def test_evaluate_infra_change_seeds_ci_checks() -> None:
     assert "ci-checks" in evaluate({"infra/k8s/helm/values.yaml"}, packages).affected
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "infra/k8s/helm/values.yaml",
+        "infra/k8s/observability/base/otel/collector.yaml",
+        "scripts/ci/tests/fixtures/values.prod.identity.yaml",
+        ".github/workflows/build-push.yml",
+        ".github/workflows/cd_deploy-to-aks_nohiki.yml",
+        "infra/k8s/local/lifecycle.sh",
+        "Justfile",
+    ],
+)
+def test_gitops_contract_inputs_select_gitops_contract_tests(path: str) -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+
+    assert "gitops-contract-tests" in evaluate({path}, packages).affected
+
+
 def test_evaluate_alembic_change_seeds_ci_checks() -> None:
     packages = load_packages_with_deps(Scope.ALL)
     changed = {"backend/services/user-pref-service/alembic/versions/001_initial_migration.py"}
