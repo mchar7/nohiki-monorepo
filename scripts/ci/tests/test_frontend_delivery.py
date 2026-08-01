@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import pytest
 import yaml
+from ci_checks.checks.workflow import verdict_cmd
 from ci_checks.core.image_inventory import load_inventory
 from helm_test_utils import runtime_eso_args
 
@@ -422,7 +423,10 @@ def test_canonical_release_and_local_image_specs_are_equal() -> None:
     assert release_specs == normalized_inventory_specs
 
 
-def test_checks_workflow_consolidates_container_contracts_without_playwright() -> None:
+def test_checks_workflow_consolidates_container_contracts_without_playwright(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workflow = yaml.safe_load(_CHECKS_WORKFLOW.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
 
@@ -509,13 +513,32 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright() -
         "FRONTEND_SMOKE_EXPECTED": "${{ needs.changes.outputs.frontend_smoke }}",
         "OTEL_EXPECTED": "${{ needs.changes.outputs.otel_collector }}",
     }
-    for invocation in (
-        'require "$BUILDX_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" container-buildx',
-        'require "$IMAGE_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" frontend-image',
-        'require "$SMOKE_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" frontend-smoke',
-        'require "$OTEL_OUTCOME" "$OTEL_EXPECTED" otel-collector',
-    ):
-        assert invocation in attestation["run"]
+    assert "workflow.py verdict container" in str(attestation["run"]).replace("\n", " ")
+    output = tmp_path / "github-output"
+    outcomes = {
+        "BUILDX_OUTCOME": "success",
+        "IMAGE_OUTCOME": "success",
+        "SMOKE_OUTCOME": "success",
+        "OTEL_OUTCOME": "skipped",
+        "FRONTEND_SMOKE_EXPECTED": "true",
+        "OTEL_EXPECTED": "false",
+    }
+    for name, value in outcomes.items():
+        monkeypatch.setenv(name, value)
+    verdict_cmd("container", output)
+    assert output.read_text(encoding="utf-8") == "executed=true\n"
+
+    labels = {
+        "BUILDX_OUTCOME": "container-buildx",
+        "IMAGE_OUTCOME": "frontend-image",
+        "SMOKE_OUTCOME": "frontend-smoke",
+        "OTEL_OUTCOME": "otel-collector",
+    }
+    for variable, label in labels.items():
+        monkeypatch.setenv(variable, "failure")
+        with pytest.raises(ValueError, match=rf"{label} was .* but concluded failure"):
+            verdict_cmd("container", output)
+        monkeypatch.setenv(variable, outcomes[variable])
     assert worker["outputs"]["container_contracts_executed"] == (
         "${{ steps.container-contracts.outputs.executed == 'true' && 'true' || '' }}"
     )
