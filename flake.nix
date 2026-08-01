@@ -60,10 +60,10 @@
 
         pnpmPackage = pkgs.stdenvNoCC.mkDerivation {
           pname = "pnpm";
-          version = "11.13.1";
+          version = "11.17.0";
           src = pkgs.fetchurl {
-            url = "https://registry.npmjs.org/pnpm/-/pnpm-11.13.1.tgz";
-            hash = "sha512-svx2g7imUlQU59E+G6KMqt3elr9m7FQL+ut+cCuB8+C+TR8pXt9/n+A5Z0Co3ORQnFgt33mJH0VD/qMtN2RfJQ==";
+            url = "https://registry.npmjs.org/pnpm/-/pnpm-11.17.0.tgz";
+            hash = "sha512-zKPOozKtJUu4QUX5ZtGfSHlhUhA0b8kseaBH8joNezzKPDeS8AdrofGDHSd++88KkRmzGppg7Kf7PWIx8zHvcg==";
           };
           sourceRoot = "package";
           nativeBuildInputs = [ pkgs.makeWrapper ];

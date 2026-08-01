@@ -3,7 +3,7 @@ FROM docker.io/library/node:26.5.0-alpine@sha256:c9f02360d2bc66e709b300214395588
 
 WORKDIR /workspace
 
-RUN npm install --global pnpm@11.13.1
+RUN npm install --global pnpm@11.17.0
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY typescript ./typescript
