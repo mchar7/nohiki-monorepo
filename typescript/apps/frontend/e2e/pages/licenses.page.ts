@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test';
+import type { Download, Locator, Page } from '@playwright/test';
 import { BasePage } from './base.page.ts';
 
 const OPEN_SOURCE_LICENSES_RE = /open source licenses/iu;
@@ -19,7 +19,13 @@ export class LicensesPage extends BasePage {
     this.pageHeading = page.getByRole('heading', { name: OPEN_SOURCE_LICENSES_RE });
     this.licenseSummaryTab = page.getByRole('tab', { name: LICENSE_SUMMARY_RE });
     this.fullLicenseTextsTab = page.getByRole('tab', { name: FULL_LICENSE_TEXTS_RE });
-    this.downloadButton = page.getByRole('button', { name: DOWNLOAD_LICENSE_RE });
+    this.downloadButton = page.getByRole('link', { name: DOWNLOAD_LICENSE_RE });
+  }
+
+  async downloadLicenses(): Promise<Download> {
+    const downloadPromise = this.page.waitForEvent('download');
+    await this.downloadButton.click();
+    return downloadPromise;
   }
 
   async switchToFullLicenseTexts(): Promise<void> {
