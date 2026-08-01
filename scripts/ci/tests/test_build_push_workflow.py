@@ -108,23 +108,25 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
         assert (_ROOT / record.dockerfile).is_file()
         assert (_ROOT / record.lockfile).is_file()
 
-    cache_inputs = "hashFiles(matrix.dockerfile, matrix.lockfile)"
-    assert build_steps["build"]["with"]["cache-from"] == (
-        "${{ matrix.name == 'ml-compute-service-gpu' && "
-        "format('type=registry,ref={0}/{1}:buildcache-{2}', "
-        "steps.image-base-path.outputs.image_base_path, matrix.name, "
-        f"{cache_inputs}) || format('type=gha,scope={{0}}-{{1}}', matrix.name, {cache_inputs})"
-        " }}"
+    cache_from = build_steps["build"]["with"]["cache-from"]
+    cache_to = build_steps["build"]["with"]["cache-to"]
+    assert isinstance(cache_from, str)
+    assert isinstance(cache_to, str)
+    assert cache_from == (
+        "${{ case(matrix.name == 'ml-compute-service-gpu', "
+        "format('type=registry,ref={0}/{1}:buildcache', "
+        "steps.image-base-path.outputs.image_base_path, matrix.name), "
+        "format('type=gha,scope={0}', matrix.name)) }}"
     )
-    assert build_steps["build"]["with"]["cache-to"] == (
-        "${{ matrix.name == 'ml-compute-service-gpu' && "
-        "(steps.mode.outputs.push == 'true' && "
-        "format('type=registry,ref={0}/{1}:buildcache-{2},mode=max', "
-        "steps.image-base-path.outputs.image_base_path, matrix.name, "
-        f"{cache_inputs}) || '') || format('type=gha,mode=max,scope={{0}}-{{1}}', "
-        f"matrix.name, {cache_inputs})"
-        " }}"
+    assert cache_to == (
+        "${{ case(matrix.name == 'ml-compute-service-gpu', "
+        "case(steps.mode.outputs.push == 'true', "
+        "format('type=registry,ref={0}/{1}:buildcache,mode=max', "
+        "steps.image-base-path.outputs.image_base_path, matrix.name), ''), "
+        "format('type=gha,scope={0},mode=max', matrix.name)) }}"
     )
+    assert "hashFiles" not in cache_from
+    assert "hashFiles" not in cache_to
     assert build["needs"] == ["event-validation"]
     for gate in (
         "needs.event-validation.outputs.authorized == 'true'",
@@ -184,6 +186,18 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
         for job_name, job in jobs.items()
         if any(job["permissions"].get(name) == "write" for name in ("contents", "pull-requests"))
     } == {"aggregate-digests"}
+
+
+def test_non_push_gpu_build_exports_no_cache() -> None:
+    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    cache_to = next(
+        step["with"]["cache-to"] for step in workflow["jobs"]["build-push"]["steps"] if step.get("id") == "build"
+    )
+
+    assert cache_to.startswith(
+        "${{ case(matrix.name == 'ml-compute-service-gpu', case(steps.mode.outputs.push == 'true', "
+    )
+    assert ", ''), format('type=gha,scope={0},mode=max', matrix.name)) }}" in cache_to
 
 
 def test_build_push_matrix_is_resolved_from_the_affected_image_record() -> None:

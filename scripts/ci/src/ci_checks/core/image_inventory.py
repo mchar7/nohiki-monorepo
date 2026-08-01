@@ -53,7 +53,7 @@ class ImageRecord:
         context: Repo-relative Docker build context directory.
         dockerfile: Repo-relative Dockerfile path.
         build_args: Single ``KEY=VALUE`` build argument, empty when unused.
-        lockfile: Repo-relative lockfile that keys the Buildx cache with the Dockerfile.
+        lockfile: Repo-relative dependency input whose changes select this image.
         timeout: Build-and-scan cap in minutes.
         ownership: Repo-relative rules selecting this image; a trailing ``/`` means prefix.
     """

@@ -270,9 +270,9 @@ jobs:
           load: ${{ steps.mode.outputs.push != 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: ${{ matrix.name == 'ml-compute-service-gpu' && format('type=registry,ref={0}/{1}:buildcache-{2}', steps.image-base-path.outputs.image_base_path, matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) || format('type=gha,scope={0}-{1}', matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) }}
+          cache-from: ${{ case(matrix.name == 'ml-compute-service-gpu', format('type=registry,ref={0}/{1}:buildcache', steps.image-base-path.outputs.image_base_path, matrix.name), format('type=gha,scope={0}', matrix.name)) }}
           # GPU registry cache is global: import always, export only on authorized pushes.
-          cache-to: ${{ matrix.name == 'ml-compute-service-gpu' && (steps.mode.outputs.push == 'true' && format('type=registry,ref={0}/{1}:buildcache-{2},mode=max', steps.image-base-path.outputs.image_base_path, matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) || '') || format('type=gha,mode=max,scope={0}-{1}', matrix.name, hashFiles(matrix.dockerfile, matrix.lockfile)) }}
+          cache-to: ${{ case(matrix.name == 'ml-compute-service-gpu', case(steps.mode.outputs.push == 'true', format('type=registry,ref={0}/{1}:buildcache,mode=max', steps.image-base-path.outputs.image_base_path, matrix.name), ''), format('type=gha,scope={0},mode=max', matrix.name)) }}
           platforms: linux/amd64
           provenance: ${{ steps.mode.outputs.push == 'true' }}
 
