@@ -282,7 +282,7 @@ def test_github_summary_states_the_policy_behind_every_coverage_number() -> None
 
 
 @pytest.mark.asyncio
-async def test_parallel_runner_syncs_frozen_workspace_once_before_tests(
+async def test_parallel_runner_syncs_locked_workspace_once_before_tests(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """One consolidated pytest process starts after the workspace-wide sync."""
@@ -337,7 +337,7 @@ async def test_parallel_runner_syncs_frozen_workspace_once_before_tests(
             "cuda",
             "--group",
             "deadcode",
-            "--frozen",
+            "--locked",
         ]
     ]
     assert events == ["sync", "pytest"]
@@ -383,7 +383,7 @@ async def test_parallel_runner_skips_workspace_sync_in_ci_and_dispatches_tests(
     )
 
     assert consolidated_calls == [["first", "second"]]
-    assert "INFO: Skipping workspace sync; CI already installed the frozen workspace." in console.export_text()
+    assert "INFO: Skipping workspace sync; CI already installed the locked workspace." in console.export_text()
 
 
 def test_consolidated_pythonpath_exposes_only_collision_free_helpers() -> None:

@@ -25,6 +25,8 @@ from ci_checks.checks.workflow import (
     worker_timeout_minutes,
 )
 from ci_checks.core.change_gate import (
+    BroadCause,
+    BroadReason,
     CommitClass,
     GateDecision,
     evaluate,
@@ -289,7 +291,6 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Lint workflows",
             "Lint Dockerfiles (hadolint)",
             "Scan repository for secrets",
-            "Typecheck backend",
             "Check selected dead code",
             "Check dependencies",
             "Scan architecture",
@@ -313,7 +314,10 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Smoke production frontend container",
             "Validate OpenTelemetry collector image and configs",
         },
-        "python": {"Run selected Python tests"},
+        "python": {
+            "Typecheck backend",
+            "Run selected Python tests",
+        },
     }
     assert set(bins) == set(_WORKER_UNITS)
 
@@ -485,10 +489,47 @@ def test_python_test_lane_uses_gate_scope_once_per_class() -> None:
     assert '--packages "$TEST_PACKAGES"' in command
     assert '--summary-title "$SUMMARY_TITLE"' in command
     assert run_tests["env"]["SUMMARY_TITLE"] == ("${{ needs.changes.outputs.commit_class }}")
-    # The 344s test step is the long pole and the only member of its payload leg.
+    # The 344s test step remains the long pole after the 8.7s backend typecheck moves beside it.
     condition = str(run_tests["if"])
     assert "matrix.unit == 'python'" in condition
     assert "matrix.unit == 'frontend'" not in condition
+
+
+def test_backend_typecheck_keeps_gate_trigger_parity_and_executes_once() -> None:
+    step = next(step for step in _steps(_jobs()["worker"]) if step.get("name") == "Typecheck backend")
+    condition = str(step["if"])
+    assert condition.startswith("matrix.unit == 'python' && ")
+    assert "matrix.unit == 'frontend'" not in condition
+    assert condition.endswith(
+        "needs.changes.outputs.protected_main_smoke != 'true' "
+        "&& (needs.changes.outputs.broad_unbounded == 'true' "
+        "|| needs.changes.outputs.typecheck_backend == 'true')"
+    )
+    assert step["run"] == "nix develop .#ci --command just typecheck-all"
+
+    for protected_main_smoke in (False, True):
+        for typecheck_backend in (False, True):
+            for broad_cause in (None, BroadCause.POLICY_SOURCE, BroadCause.UNMATCHED_PATH):
+                reasons = []
+                if broad_cause is not None:
+                    reasons.append(BroadReason(broad_cause, broad_cause.value))
+                decision = GateDecision(
+                    full=broad_cause is not None,
+                    reasons=reasons,
+                    flags={"typecheck_backend"} if typecheck_backend else set(),
+                    protected_main_smoke=protected_main_smoke,
+                )
+                outputs = render_outputs(decision, (), "pull_request")
+                triggered_before = outputs["protected_main_smoke"] != "true"
+                triggered_before = triggered_before and "true" in (
+                    outputs["broad_unbounded"],
+                    outputs["typecheck_backend"],
+                )
+                execution_count = 0
+                if triggered_before:
+                    execution_count = json.loads(outputs["worker_units"]).count("python")
+
+                assert execution_count == int(triggered_before), outputs
 
 
 def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> None:
@@ -668,7 +709,8 @@ def test_protected_main_reuse_preserves_cache_publication_and_checks_verdict() -
     worker_setup = next(step for step in _steps(jobs["worker"]) if step.get("uses") == "./.github/actions/setup-ci")
     assert worker_setup["with"]["payload"] == "${{ matrix.unit == 'python' && 'python' || 'full' }}"
     assert worker_setup["with"]["save-ready-cache"] == (
-        "${{ matrix.unit == 'frontend' && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
+        "${{ (matrix.unit == 'python' || matrix.unit == 'frontend') "
+        "&& (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
     )
 
     checks = jobs["checks"]
@@ -1049,7 +1091,7 @@ def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> Non
     assert str(steps["Test frontend"]["run"]).endswith("just fe-test")
 
 
-def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> None:
+def test_setup_and_secret_scan_keep_one_definition_and_one_writer_per_payload() -> None:
     standard = _jobs()["worker"]
     job_env = standard["env"]
     assert "lint_markdown" not in str(job_env["NIX_SETUP_SELECTED"])
@@ -1067,10 +1109,11 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> Non
     assert setup["uses"] == "./.github/actions/setup-ci"
     assert setup["with"]["ready-cache"] == "${{ env.NIX_SETUP_SELECTED }}"
     assert setup["with"]["node"] == "${{ env.NODE_SETUP_SELECTED }}"
-    # Frontend is the only full-payload leg and the only possible cache writer. Pull requests
-    # write only for broad decisions; main pushes write for either class.
+    # Python and frontend are the stable writers for their distinct payloads. Pull requests write
+    # only for broad decisions; main pushes write for either class.
     assert setup["with"]["save-ready-cache"] == (
-        "${{ matrix.unit == 'frontend' && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
+        "${{ (matrix.unit == 'python' || matrix.unit == 'frontend') "
+        "&& (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
     )
 
     for name in ("Lint Python", "Check Python formatting"):

@@ -323,19 +323,77 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
     assert len(just_syncs) == 1, just_syncs
 
     install_step = next(step for step in _setup_steps() if step.get("name") == "Install workspace (CI closure)")
-    assert "nix develop .#ci --command scripts/dev/sync-ci-environment.sh" in str(install_step["run"])
+    assert install_step["env"] == {"PAYLOAD": "${{ inputs.payload }}"}
+    assert install_step["run"] == ('nix develop .#ci --command scripts/dev/sync-ci-environment.sh "$PAYLOAD"')
     ci_sync = _read_text(_SYNC_CI_ENVIRONMENT).replace("\\\n", " ")
-    sync_start = ci_sync.index("uv sync")
-    hosted_sync = ci_sync[sync_start:].strip()
+    hosted_syncs: dict[str, list[str]] = {}
+    for payload in ("python", "full"):
+        branch = re.search(
+            rf"^\s*{payload}\)\n(?P<body>.*?)(?=^\s*(?:python|full|\*)\))",
+            ci_sync,
+            re.MULTILINE | re.DOTALL,
+        )
+        assert branch, payload
+        sync_line = next(line for line in branch["body"].splitlines() if "uv sync" in line)
+        hosted_syncs[payload] = shlex.split(sync_line[sync_line.index("uv sync") :])
+    assert hosted_syncs == {
+        "python": [
+            "uv",
+            "sync",
+            "--locked",
+            "--all-packages",
+            "--no-default-groups",
+            "--group",
+            "ci",
+            "--no-install-package",
+            "skylos",
+            "-q",
+        ],
+        "full": [
+            "uv",
+            "sync",
+            "--locked",
+            "--package",
+            "nohiki-monorepo",
+            "--package",
+            "ci-checks",
+            "--package",
+            "bff-service",
+            "--package",
+            "user-auth-service",
+            "--no-default-groups",
+            "--group",
+            "ci",
+            "--group",
+            "deadcode",
+            "--no-install-package",
+            "skylos",
+            "-q",
+        ],
+    }
+    deadcode_sync_lines = _read_text(_SYNC_CI_DEADCODE).replace("\\\n", " ").splitlines()
+    deadcode_sync = next(line[line.index("uv sync") :] for line in deadcode_sync_lines if "uv sync" in line)
+    assert shlex.split(deadcode_sync) == [
+        "uv",
+        "sync",
+        "--locked",
+        "--package",
+        "nohiki-monorepo",
+        "--package",
+        "ci-checks",
+        "--package",
+        "bff-service",
+        "--package",
+        "user-auth-service",
+        "--no-default-groups",
+        "--group",
+        "ci",
+        "--group",
+        "deadcode",
+        "-q",
+    ]
     for command in (*flake_syncs, *just_syncs):
         _assert_cpu_development_sync(command)
-    hosted_tokens = shlex.split(hosted_sync)
-    assert hosted_tokens[:2] == ["uv", "sync"]
-    assert "--locked" in hosted_tokens
-    assert "--all-packages" in hosted_tokens
-    assert "--no-default-groups" in hosted_tokens
-    assert hosted_tokens[hosted_tokens.index("--group") + 1] == "ci"
-    assert "cuda" not in hosted_tokens
 
     dockerfile = _read_text(_ML_COMPUTE_DOCKERFILE)
     gpu_stage = re.search(
@@ -386,7 +444,7 @@ def test_root_lint_group_is_the_minimal_ruff_environment() -> None:
     assert project["dependency-groups"]["lint"] == ["ruff>=0.15.0"]
 
 
-def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
+def test_complete_environment_uses_one_reconciled_cache_entry_per_payload() -> None:
     steps = _setup_steps()
     by_name = {step.get("name"): step for step in steps}
     restore = by_name["Restore complete CI environment"]
@@ -402,13 +460,16 @@ def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
     )
     assert restore_separator == save_separator == "@"
     assert restore_ref == save_ref
-    # Two entries, one identity surface. The Python entry turns over on flake/uv inputs and the
-    # Node entry on pnpm inputs, so a lane restores only what its own lockfiles can invalidate.
+    # Two cache families, with the Python family split by payload. Python entries turn over on
+    # flake/uv inputs and Node entries on pnpm inputs, so lanes restore only what they can invalidate.
     # Every input must still key exactly one entry: an input in neither goes stale unnoticed,
     # and one in both reinstates the coupling the split exists to remove.
     node_restore = by_name["Restore Node modules"]
     key = str(restore["with"]["primary-key"])
     node_key = str(node_restore["with"]["key"])
+    payload_key_component = "${{ inputs.payload }}"
+    assert payload_key_component in key
+    assert payload_key_component in str(save["with"]["primary-key"])
     python_identity = (
         "flake.nix",
         "flake.lock",
@@ -435,11 +496,13 @@ def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
     assert "github.sha" not in key
     assert "github.sha" not in node_key
     lookup = by_name["Look up complete CI environment"]
+    payload_prefix = "ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-"
+    assert restore["with"]["restore-prefixes-first-match"] == payload_prefix
+    assert save["with"]["purge-prefixes"] == payload_prefix
     assert lookup["uses"] == restore["uses"]
     assert lookup["with"]["primary-key"] == restore["with"]["primary-key"]
     assert lookup["with"]["paths"] == restore["with"]["paths"]
     assert lookup["with"]["lookup-only"] is True
-    assert restore["with"]["restore-prefixes-first-match"] == ("ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-")
 
     # Each provisioning step is gated on the miss of the entry that would have supplied it, so
     # a hit on one entry never suppresses work the other entry failed to deliver.
@@ -490,14 +553,14 @@ def test_complete_environment_uses_one_reconciled_cache_entry() -> None:
     assert all(
         "$RUNNER_TEMP/skylos_key" not in str(step.get("run", "")) for step in steps if step is not skylos_install
     )
+    node_save = by_name["Save Node modules"]
     # Each entry is saved on its own producer succeeding. Coupling them would let a failed pnpm
     # install withhold a perfectly good store, which is what the split exists to stop.
-    node_save = by_name["Save Node modules"]
+    assert save["with"]["primary-key"] == restore["with"]["primary-key"]
     assert "steps.workspace-sync.outcome == 'success'" in str(save["if"])
     assert "steps.node-install.outcome == 'success'" not in str(save["if"])
     assert "steps.node-install.outcome == 'success'" in str(node_save["if"])
     assert "steps.workspace-sync.outcome == 'success'" not in str(node_save["if"])
-    assert save["with"]["primary-key"] == "${{ steps.ready-cache.outputs.primary-key }}"
     assert save["with"]["paths"] == restore["with"]["paths"]
     assert node_save["with"]["key"] == "${{ steps.node-modules-cache.outputs.cache-primary-key }}"
     assert node_save["with"]["path"] == node_restore["with"]["path"]
@@ -605,7 +668,7 @@ def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
     assert str(save["uses"]).startswith("actions/cache/save@")
 
 
-def test_hosted_python_syncs_enforce_the_lock_without_frozen_aliases() -> None:
+def test_ci_python_syncs_enforce_the_lock_without_frozen_aliases() -> None:
     sync_lines = [
         line.strip()
         for workflow_path in sorted(_WORKFLOWS.glob("*.yml"))
@@ -616,6 +679,10 @@ def test_hosted_python_syncs_enforce_the_lock_without_frozen_aliases() -> None:
     assert sync_lines
     assert all("--locked" in line for line in sync_lines)
     assert all("--frozen" not in line for line in sync_lines)
+    api_runner_syncs = [
+        line.strip() for line in _read_text(_ROOT / "tests" / "Dockerfile.api-runner").splitlines() if "uv sync" in line
+    ]
+    assert api_runner_syncs == ["uv sync --locked --project tests --no-dev"]
 
 
 def test_periodic_hygiene_workflows_are_absent() -> None:
