@@ -403,6 +403,10 @@ secrets-scan mode="detect":
         *) echo "mode must be detect or staged" >&2; exit 2 ;;
     esac
 
+# Scan a pushed commit range for secrets
+secrets-scan-range range:
+    nix develop .#ci --command gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --log-opts '{{ range }}'
+
 # Evaluate the native Nix flake checks
 nix-check:
     nix flake check
