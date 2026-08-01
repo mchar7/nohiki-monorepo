@@ -8,8 +8,8 @@ env:
   TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
   TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER || 'tfstate' }}
 on:
-  # dispatch-only while the Azure environment is torn down; the build-chain
-  # trigger returns with the CD redesign
+  # Manual dispatch deploys infrastructure. Merged bot pull requests from
+  # bot/update-production-runtime and bot/update-production-image-digests activate production runtime.
   workflow_dispatch:
     inputs:
       environment:
@@ -284,7 +284,7 @@ jobs:
 
       - name: Install Nix
         if: needs.prepare-deployment.outputs.env_name == 'dev'
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
 
       - name: Resolve dev runtime coordinates
         if: needs.prepare-deployment.outputs.env_name == 'dev'
