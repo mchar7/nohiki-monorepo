@@ -835,7 +835,7 @@ def _copy_secret_sources(state: ProofState) -> None:
             "create",
             "secret",
             "generic",
-            "sops-age",
+            "flux-sops",
             "-n",
             "flux-system",
             f"--from-file=age.agekey={_absolute_secret('SOPS_AGE_KEY_FILE')}",
@@ -884,7 +884,7 @@ def _write_initial_overlay(state: ProofState) -> None:
         encoding="utf-8",
     )
     (root / "cluster/registry.yaml").write_text(
-        (state.paths.clone / "infra/k8s/gitops/clusters/local/registry.yaml")
+        (state.paths.clone / "infra/k8s/gitops/clusters/local/bootstrap/registry.yaml")
         .read_text()
         .replace("./infra/k8s/gitops/registry", "./infra/k8s/oci-proof/generated/registry"),
         encoding="utf-8",

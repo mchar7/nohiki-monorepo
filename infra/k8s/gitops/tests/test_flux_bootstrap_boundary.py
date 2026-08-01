@@ -382,7 +382,7 @@ def _execute_fixture(
         '    cp -- "$selected" "$USED_KUBECONFIG" ;;\n'
         '  *" create namespace flux-system --dry-run=client -o yaml")\n'
         "    printf 'apiVersion: v1\\nkind: Namespace\\nmetadata:\\n  name: flux-system\\n' ;;\n"
-        '  *" create secret generic sops-age "*)\n'
+        '  *" create secret generic flux-sops "*)\n'
         "    for argument do\n"
         '      case "$argument" in\n'
         "        --from-file=age.agekey=*)\n"
@@ -667,7 +667,7 @@ def test_expected_old_ref_transaction_fails_safely_on_concurrent_head_change(
     assert _git(repo, "rev-parse", "HEAD^") == before_sha
     invocations = calls.read_text(encoding="utf-8")
     assert "flux --kubeconfig=" not in invocations
-    assert " create secret generic sops-age " not in invocations
+    assert " create secret generic flux-sops " not in invocations
     assert not applied_age.exists()
 
 
@@ -686,7 +686,7 @@ def test_execute_orders_review_push_trust_root_bootstrap_and_remote_verification
         for i, call in enumerate(invocations)
         if call.endswith(" create namespace flux-system --dry-run=client -o yaml")
     )
-    age = next(i for i, call in enumerate(invocations) if " create secret generic sops-age -n flux-system " in call)
+    age = next(i for i, call in enumerate(invocations) if " create secret generic flux-sops -n flux-system " in call)
     flux = next(i for i, call in enumerate(invocations) if " bootstrap github " in f" {call} ")
 
     assert len(remote_checks) == 3
@@ -712,7 +712,7 @@ def test_flux_failure_leaves_seeded_trust_root_and_withholds_command_output(
     assert "flux-bootstrap-private-output" not in result.stdout + result.stderr
     invocations = calls.read_text(encoding="utf-8")
     assert " create namespace flux-system --dry-run=client -o yaml" in invocations
-    assert " create secret generic sops-age -n flux-system " in invocations
+    assert " create secret generic flux-sops -n flux-system " in invocations
     assert applied_age.exists()
     assert invocations.count("git ls-remote runtime-control") == 2
 
