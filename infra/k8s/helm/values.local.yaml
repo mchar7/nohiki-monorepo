@@ -245,44 +245,80 @@ user-auth-service:
 user-pref-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
   qdrant:
     enabled: true
 
 user-upload-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
 
 user-entitlement-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
 
 job-ingest-discovery-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
 
 job-ingest-schedule-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: false
 
 job-query-composition-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
 
 job-ingest-enrichment-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: false
 
 job-storage-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 1
 
 job-correlation-evaluation-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
 
 doc-template-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
   extraEnv:
     - name: DOC_TEMPLATE_GOTENBERG__BASE_URL
       value: "http://nohiki-gotenberg:3000"
@@ -290,10 +326,18 @@ doc-template-service:
 doc-content-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
 
 doc-process-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
   extraEnv:
     - name: DOC_PROCESS_DOCLING__BASE_URL
       value: "http://nohiki-docling:5001"
@@ -304,14 +348,26 @@ docling-serve:
 ml-gateway-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
 
 ml-compute-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 1
 
 skill-graph-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 1
 
 bff-service:
   enabled: true
@@ -340,6 +396,8 @@ bff-service:
 notification-service:
   enabled: true
   image: *localFirstPartyImage
+  scaling:
+    enabled: false
 
 frontend:
   enabled: true
@@ -378,8 +436,20 @@ kube-prometheus-stack:
 mimir-distributed:
   minio:
     enabled: false
+  alertmanager:
+    enabled: false
+  overrides_exporter:
+    enabled: false
+  query_scheduler:
+    enabled: false
+  rollout_operator:
+    enabled: false
+  kafka:
+    enabled: false
   mimir:
     structuredConfig:
+      ingest_storage:
+        enabled: false
       common:
         storage:
           s3:
@@ -415,12 +485,16 @@ mimir-distributed:
     replicas: 1
   ingester:
     replicas: 1
+    zoneAwareReplication:
+      enabled: false
   querier:
     replicas: 1
   query_frontend:
     replicas: 1
   store_gateway:
     replicas: 1
+    zoneAwareReplication:
+      enabled: false
   compactor:
     replicas: 1
   ruler:
@@ -469,6 +543,12 @@ tempo-distributed:
     replicas: 1
 
 loki:
+  lokiCanary:
+    enabled: false
+  chunksCache:
+    enabled: false
+  resultsCache:
+    enabled: false
   loki:
     storage:
       bucketNames:

@@ -40,12 +40,17 @@ observability:
 scaling:
   enabled: false
   type: kafka
-  minReplicas: 0
-  maxReplicas: 5
+  minReplicas: "0"
+  maxReplicas: 3
   pollingInterval: 15
   cooldownPeriod: 300
   kafka:
     lagThreshold: "10"
+    topics:
+      - name: doc-template.cmd.create-requested.v1
+      - name: doc-template.cmd.version-add-requested.v1
+      - name: doc-template.cmd.delete-requested.v1
+      - name: doc-template.cmd.render-requested.v1
 
 resources:
   requests:

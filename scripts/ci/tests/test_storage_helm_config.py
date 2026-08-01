@@ -63,3 +63,36 @@ def test_production_storage_renders_native_azure_blob_provider(tmp_path: Path) -
     }
     assert env["USER_UPLOAD_S3__PROVIDER"] == "azure_blob"
     assert env["USER_UPLOAD_S3__ENDPOINT"] == "https://nohikiprod.blob.core.windows.net"
+
+
+def test_kafka_scaling_enablement_and_partition_limit_are_explicit() -> None:
+    scalable = {
+        "doc-content-service",
+        "doc-process-service",
+        "doc-template-service",
+        "job-correlation-evaluation-service",
+        "job-ingest-discovery-service",
+        "job-query-composition-service",
+        "job-storage-service",
+        "ml-compute-service",
+        "ml-gateway-service",
+        "skill-graph-service",
+        "user-entitlement-service",
+        "user-pref-service",
+        "user-upload-service",
+    }
+    excluded = {
+        "job-ingest-enrichment-service",
+        "job-ingest-schedule-service",
+        "notification-service",
+    }
+
+    for values_name in ("values.dev.yaml", "values.staging.yaml"):
+        values = yaml.safe_load((_HELM / values_name).read_text(encoding="utf-8"))
+        assert {name for name in scalable if values[name]["scaling"]["enabled"]} == scalable
+        assert {name for name in excluded if not values[name]["scaling"]["enabled"]} == excluded
+
+    base = yaml.safe_load((_HELM / "values.yaml").read_text(encoding="utf-8"))
+    partition_count = base["global"]["kafka"]["partitionCount"]
+    assert partition_count == base["kafkaCluster"]["config"]["numPartitions"] == 3
+    assert {name for name in excluded if base[name]["scaling"]["excluded"]} == excluded

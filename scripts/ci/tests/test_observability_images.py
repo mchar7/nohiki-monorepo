@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from _documents import Manifest, load_manifests, load_mapping
+from _documents import Manifest, load_manifests, load_mapping, mapping_at
 from helm_test_utils import runtime_eso_args
 from test_image_digest_gitops import _digest_values
 
@@ -60,6 +60,18 @@ _UPGRADED_IMAGE_COUNTS = {
     "docker.io/grafana/tempo:2.9.3@sha256:0d355cc7d9d23f93641a999fd9432084acf647f7731c732ed80f7b9a122ec85b": 5,
     "docker.io/memcached:1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7": 3,
     "docker.io/prom/memcached-exporter:v0.15.5@sha256:92a6ad5a3d3e2dffc75efd4e18d1470fa5703dd79b6bace53fe11312b634578e": 2,  # noqa: E501
+}
+_LOCAL_DISABLED_IMAGES = {
+    "docker.io/grafana/loki-canary:3.6.12@sha256:1e9bfcff38679ecf9de4e3492050c81b6c64e64421ac13d9a4f936b7d1836179",
+    "docker.io/prom/memcached-exporter:v0.15.5@sha256:92a6ad5a3d3e2dffc75efd4e18d1470fa5703dd79b6bace53fe11312b634578e",
+}
+_LOCAL_IMAGE_COUNTS = {
+    "docker.io/grafana/loki:3.6.12@sha256:2483b71b28b15dee230f85512cae2b20c4b5f6e98a6eabe686cbccfa5ea3ba4a": 3,
+    "docker.io/grafana/loki-canary:3.6.12@sha256:1e9bfcff38679ecf9de4e3492050c81b6c64e64421ac13d9a4f936b7d1836179": 0,
+    "docker.io/grafana/mimir:3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d": 8,
+    "docker.io/grafana/tempo:2.9.3@sha256:0d355cc7d9d23f93641a999fd9432084acf647f7731c732ed80f7b9a122ec85b": 5,
+    "docker.io/memcached:1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7": 1,
+    "docker.io/prom/memcached-exporter:v0.15.5@sha256:92a6ad5a3d3e2dffc75efd4e18d1470fa5703dd79b6bace53fe11312b634578e": 0,  # noqa: E501
 }
 _EXPECTED_SCAN_FINDINGS = {
     "loki": (1, 0),
@@ -156,13 +168,18 @@ def test_observability_images_use_exact_refs_and_workload_counts(values_file: st
     documents = _render(values_file, tmp_path)
     rendered_images = _container_images(documents)
     affected = [image for image in rendered_images if image.partition("@")[2] in _DIGESTS]
+    expected_images = (
+        _EXPECTED_IMAGES - _LOCAL_DISABLED_IMAGES if values_file == "values.local.yaml" else _EXPECTED_IMAGES
+    )
+    expected_counts = _LOCAL_IMAGE_COUNTS if values_file == "values.local.yaml" else _UPGRADED_IMAGE_COUNTS
+    expected_repositories = {re.sub(r":[^/]+$", "", image.partition("@")[0]) for image in expected_images}
 
     assert documents
     assert all("apiVersion" in document and "kind" in document for document in documents)
-    assert set(affected) == _EXPECTED_IMAGES
+    assert set(affected) == expected_images
     assert not any(image.startswith(_FORBIDDEN_PREFIXES) for image in rendered_images)
-    actual_counts = {image: rendered_images.count(image) for image in _UPGRADED_IMAGE_COUNTS}
-    assert actual_counts == _UPGRADED_IMAGE_COUNTS
+    actual_counts = {image: rendered_images.count(image) for image in expected_counts}
+    assert actual_counts == expected_counts
 
     by_repository: dict[str, set[str]] = {}
     for image in affected:
@@ -171,7 +188,7 @@ def test_observability_images_use_exact_refs_and_workload_counts(values_file: st
         assert _DIGEST.fullmatch(digest), image
         by_repository.setdefault(repository.partition(":")[0], set()).add(image)
 
-    assert set(by_repository) == _REPOSITORIES
+    assert set(by_repository) == expected_repositories
     assert all(len(refs) == 1 for refs in by_repository.values())
 
 
@@ -240,6 +257,27 @@ def test_opentelemetry_test_framework_image_has_one_versioned_digest_owner() -> 
 )
 def test_observability_pin_guard_rejects_ambiguous_or_versionless_pins(image: dict[str, str]) -> None:
     assert not _image_pin_is_unambiguous(image)
+
+
+def test_local_mimir_and_loki_disable_replica_amplification() -> None:
+    values = load_mapping(_CHART / "values.local.yaml")
+    mimir = mapping_at(values, "mimir-distributed")
+    assert all(
+        mapping_at(mimir, component).get("enabled") is False
+        for component in ("alertmanager", "kafka", "overrides_exporter", "query_scheduler", "rollout_operator")
+    )
+    assert mapping_at(mimir, "mimir", "structuredConfig", "ingest_storage").get("enabled") is False
+    for component in ("distributor", "ingester", "querier", "query_frontend", "store_gateway", "compactor", "ruler"):
+        assert mapping_at(mimir, component).get("replicas") == 1
+    assert mapping_at(mimir, "ingester", "zoneAwareReplication").get("enabled") is False
+    assert mapping_at(mimir, "store_gateway", "zoneAwareReplication").get("enabled") is False
+
+    loki = mapping_at(values, "loki")
+    assert all(
+        mapping_at(loki, component).get("enabled") is False
+        for component in ("chunksCache", "lokiCanary", "resultsCache")
+    )
+    assert all(mapping_at(loki, component).get("replicas") == 1 for component in ("backend", "read", "write"))
 
 
 def test_loki_and_cache_images_are_aligned_without_config_changes() -> None:

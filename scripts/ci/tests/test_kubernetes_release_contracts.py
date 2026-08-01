@@ -8,7 +8,6 @@ import pytest
 from _documents import (
     Manifest,
     load_manifests,
-    load_mapping,
     load_workflow,
     mapping_at,
     mapping_sequence_at,
@@ -132,10 +131,27 @@ def test_staging_uses_canonical_first_party_images_and_external_jwt_secret(
 
 def test_production_kafka_scalers_require_authenticated_tls(tmp_path: Path) -> None:
     documents = _helm("values.prod.yaml", tmp_path)
-    values = load_mapping(_CHART / "values.prod.yaml")
-    assert string_at(values, "global", "kafka", "security", "protocol") == "SASL_SSL"
+    rendered_protocols: set[str] = set()
+    for document in documents:
+        if document.get("kind") != "Deployment":
+            continue
+        containers = mapping_at(document, "spec", "template", "spec").get("containers", [])
+        assert isinstance(containers, list)
+        for container in containers:
+            assert isinstance(container, dict)
+            environment = container.get("env", [])
+            assert isinstance(environment, list)
+            for entry in environment:
+                assert isinstance(entry, dict)
+                name = entry.get("name", "")
+                if isinstance(name, str) and name.endswith("KAFKA__SECURITY__PROTOCOL"):
+                    value = entry.get("value")
+                    assert isinstance(value, str)
+                    rendered_protocols.add(value)
+    assert rendered_protocols == {"SASL_SSL"}
 
     auth = _named(documents, "TriggerAuthentication", "nohiki-kafka-auth")
+    auth_name = metadata_of(auth)["name"]
     refs = {
         string_at(item, "parameter"): (string_at(item, "name"), string_at(item, "key"))
         for item in mapping_sequence_at(auth, "spec", "secretTargetRef")
@@ -144,7 +160,6 @@ def test_production_kafka_scalers_require_authenticated_tls(tmp_path: Path) -> N
         "sasl": ("kafka-sasl-credentials", "mechanism"),
         "username": ("kafka-sasl-credentials", "username"),
         "password": ("kafka-sasl-credentials", "password"),
-        "tls": ("kafka-tls-credentials", "tls"),
     }
 
     scalers = [document for document in documents if document["kind"] == "ScaledObject"]
@@ -158,7 +173,7 @@ def test_production_kafka_scalers_require_authenticated_tls(tmp_path: Path) -> N
     assert kafka_triggers
     for scaler_name, trigger in kafka_triggers:
         assert mapping_at(trigger, "metadata").get("tls") == "enable", scaler_name
-        assert mapping_at(trigger, "authenticationRef") == {"name": "nohiki-kafka-auth"}, scaler_name
+        assert mapping_at(trigger, "authenticationRef") == {"name": auth_name}, scaler_name
     assert any(document.get("kind") == "HTTPScaledObject" for document in documents)
     keda_installer = (_ROOT / "infra" / "terraform" / "keda.tf").read_text(encoding="utf-8")
     assert 'resource "helm_release" "keda"' in keda_installer
