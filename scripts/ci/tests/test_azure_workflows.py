@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ _AKS_WORKFLOW = _WORKFLOWS / "cd_deploy-to-aks_nohiki.yml"
 _FLUX_BOOTSTRAP = _REPOSITORY_ROOT / "infra" / "k8s" / "gitops" / "install" / "bootstrap.sh"
 _LEGACY_AZURE_WORKFLOW = _WORKFLOWS / "cd_deploy-to-azure_nohiki.yml"
 _DESTROY_WORKFLOW = _WORKFLOWS / "cd_destroy-aks_nohiki.yml"
+_PINNED_NIX_INSTALLER = re.compile(r"^cachix/install-nix-action@[0-9a-f]{40}$")
 
 
 @cache
@@ -31,6 +33,20 @@ def _triggers(workflow: dict[str, Any]) -> dict[str, Any]:
 
 def _steps(job: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {step.get("id", step["name"]): step for step in job["steps"]}
+
+
+def test_aks_trigger_surface_is_manual_deploy_plus_merged_production_activation() -> None:
+    workflow = _load(_AKS_WORKFLOW)
+    triggers = _triggers(workflow)
+
+    assert set(triggers) == {"workflow_dispatch", "pull_request"}
+    assert triggers["pull_request"] == {"types": ["closed"]}
+    assert workflow["jobs"]["activate-production-runtime"]["if"] == (
+        "github.event_name == 'pull_request' && github.event.action == 'closed' && "
+        "github.event.pull_request.merged == true && "
+        "(github.event.pull_request.head.ref == 'bot/update-production-runtime' || "
+        "github.event.pull_request.head.ref == 'bot/update-production-image-digests')"
+    )
 
 
 def test_prod_source_stamp_reads_release_sha_from_quoted_heredoc_environment() -> None:
@@ -62,6 +78,7 @@ def test_dev_deploy_bootstraps_native_flux_with_complete_runtime_contract() -> N
         assert name in steps, name
         assert "needs.prepare-deployment.outputs.env_name == 'dev'" in steps[name]["if"], name
 
+    assert _PINNED_NIX_INSTALLER.fullmatch(str(steps["Install Nix"].get("uses", "")))
     coordinates = steps["Resolve dev runtime coordinates"]["run"]
     assert 'repository="${GITHUB_REPOSITORY,,}"' in coordinates
     assert 'deployment_sha="${{ github.event.workflow_run.head_sha || github.sha }}"' in coordinates

@@ -18,6 +18,8 @@ _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _WORKFLOWS = _ROOT / ".github" / "workflows"
 _SETUP_CI = _ROOT / ".github" / "actions" / "setup-ci" / "action.yml"
 _DEADCODE_SWEEP = _WORKFLOWS / "deadcode-sweep.yml"
+_DIGEST_FRESHNESS = _WORKFLOWS / "digest-freshness.yml"
+_AKS_DEPLOY = _WORKFLOWS / "cd_deploy-to-aks_nohiki.yml"
 _WEEKLY_SWEEP = _WORKFLOWS / "weekly-sweep.yml"
 _FLAKE = _ROOT / "flake.nix"
 _UV_CONFIG = _ROOT / "toolchain" / "uv.toml"
@@ -49,6 +51,7 @@ _ACTION_USE = re.compile(
     r"^\s*(?:-\s*)?uses:\s*(?P<action>[^@\s]+/[^@\s]+)@(?P<revision>[0-9a-f]{40})"
     r"\s+#\s+(?P<version>v\d+(?:\.\d+)*)\s*$"
 )
+_PINNED_NIX_INSTALLER = re.compile(r"^cachix/install-nix-action@[0-9a-f]{40}$")
 
 
 @cache
@@ -97,6 +100,21 @@ def test_all_workflow_actions_are_sha_pinned_with_version_comments() -> None:
     assert not failures, "workflow actions must use full SHA pins with version comments:\n" + "\n".join(failures)
     divergent = {action: sorted(pins) for action, pins in pins_by_action.items() if len(pins) != 1}
     assert not divergent, f"workflow action pins diverge by identity: {divergent}"
+
+
+def test_nix_installers_share_the_canonical_bot_managed_pin() -> None:
+    canonical = next(step for step in _setup_steps() if step.get("name") == "Install Nix").get("uses", "")
+    assert _PINNED_NIX_INSTALLER.fullmatch(str(canonical))
+
+    workflow_installers = {
+        str(_DIGEST_FRESHNESS.relative_to(_ROOT)): next(
+            step for step in _steps(_workflow_jobs(_DIGEST_FRESHNESS)["probe"]) if step.get("name") == "Install Nix"
+        ).get("uses", ""),
+        str(_AKS_DEPLOY.relative_to(_ROOT)): next(
+            step for step in _steps(_workflow_jobs(_AKS_DEPLOY)["deploy-to-aks"]) if step.get("name") == "Install Nix"
+        ).get("uses", ""),
+    }
+    assert workflow_installers == dict.fromkeys(workflow_installers, canonical)
 
 
 def test_workflow_checkouts_do_not_persist_credentials() -> None:
