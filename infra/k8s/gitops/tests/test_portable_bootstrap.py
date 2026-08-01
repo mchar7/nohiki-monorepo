@@ -175,15 +175,20 @@ def test_native_flux_replaces_the_committed_engine_manifest_and_installer() -> N
 
 
 def test_flux_cli_is_pinned_in_the_flake_devshell() -> None:
-    # The version pin lives in the flake (nixpkgs), not a volatile README literal, so
-    # the durable regression is that the k8s devshell provisions the flux CLI.
+    # Pinned nixpkgs trails the required Flux release, so the flake pins the
+    # downloaded CLI version and verifies every supported platform by SHA-256.
+    source = FLAKE.read_text(encoding="utf-8")
+    assert re.search(r'fluxVersion\s*=\s*"2\.9\.2";', source), "flake.nix must pin Flux CLI v2.9.2"
+    checksums = re.findall(r'fluxSha256\s*=\s*"([0-9a-f]{64})";', source)
+    assert len(checksums) == 4, "each supported platform must pin the Flux CLI release checksum"
+    assert len(set(checksums)) == 4, "Flux CLI platform checksums must not be duplicated"
     block = re.search(
         r"k8sTools\s*=\s*with pkgs;\s*\[(.*?)\]",
-        FLAKE.read_text(encoding="utf-8"),
+        source,
         re.DOTALL,
     )
     assert block, "flake.nix must define a k8sTools package list"
-    assert "fluxcd" in block.group(1), "the k8s devshell must provide the pinned flux CLI (fluxcd)"
+    assert "fluxPackage" in block.group(1), "the k8s devshell must provide the checksum-pinned Flux CLI"
 
 
 # ---------------------------------------------------------- bounded bootstrap CLI

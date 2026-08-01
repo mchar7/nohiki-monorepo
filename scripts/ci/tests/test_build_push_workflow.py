@@ -6,6 +6,7 @@ from ci_checks.core.image_inventory import load_inventory
 _ROOT = Path(__file__).resolve().parents[3]
 _WORKFLOW = _ROOT / ".github" / "workflows" / "build-push.yml"
 _TRIVYIGNORE = _ROOT / ".trivyignore"
+_HELM_WORKFLOW = _ROOT / ".github" / "workflows" / "release-helm-charts.yml"
 
 
 def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dispatch() -> None:
@@ -21,6 +22,11 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
             "inputs": {
                 "push_to_registry": {
                     "description": "Push images to container registry? (false = build + scan only)",
+                    "type": "boolean",
+                    "default": False,
+                },
+                "full_sweep": {
+                    "description": "Build all 27 images instead of the routine 21 products",
                     "type": "boolean",
                     "default": False,
                 },
@@ -66,9 +72,11 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
         '[[ "$WORKFLOW_RUN_SHA" =~ ^[0-9a-f]{40}$ ]]',
     ):
         assert check in script
+    assert 'should_push="false"' in script
     assert 'should_push="true"' in script
-    assert 'should_push="$PUSH_TO_REGISTRY"' in script
-    assert '[[ "$should_push" == "false" ]]' in script
+    assert '[[ "$PUSH_TO_REGISTRY" == "true" ]]' in script
+    assert '[[ "$PUBLICATION_ENABLED" == "true" ]]' in script
+    assert "Image publication is disabled by IMAGE_PUBLICATION_ENABLED." in script
     assert '[[ -n "$IMAGE_TAG" ]]' in script
     assert '[[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]' in script
     assert 'echo "Error: Image tag must match the OCI tag policy." >&2' in script
@@ -127,7 +135,7 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
     )
     assert "hashFiles" not in cache_from
     assert "hashFiles" not in cache_to
-    assert build["needs"] == ["event-validation"]
+    assert build["needs"] == ["event-validation", "vendor-base-images"]
     for gate in (
         "needs.event-validation.outputs.authorized == 'true'",
         "needs.event-validation.outputs.has_images == 'true'",
@@ -141,6 +149,8 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
     assert build_steps["mode"]["env"]["SHOULD_PUSH"] == "${{ needs.event-validation.outputs.should_push }}"
     assert build_steps["build"]["with"]["push"] == "${{ steps.mode.outputs.push == 'true' }}"
     assert build_steps["build"]["with"]["provenance"] == "${{ steps.mode.outputs.push == 'true' }}"
+    assert build_steps["build"]["with"]["sbom"] == "${{ steps.mode.outputs.push == 'true' }}"
+    assert build_steps["build"]["with"]["file"] == "${{ steps.protected-dockerfile.outputs.path }}"
     metadata_tags = build_steps["meta"]["with"]["tags"]
     assert "type=ref,event=tag" not in metadata_tags
     assert "type=raw,value=sha-${{ needs.event-validation.outputs.short_source_sha }},enable=true" in metadata_tags
@@ -188,6 +198,44 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
     } == {"aggregate-digests"}
 
 
+def test_both_publication_capabilities_remain_fail_closed_behind_repository_variables() -> None:
+    image_workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    image_triggers = image_workflow.get("on", image_workflow.get(True))
+    assert image_triggers["workflow_dispatch"]["inputs"]["push_to_registry"]["default"] is False
+    image_job = image_workflow["jobs"]["event-validation"]
+    assert "vars.IMAGE_PUBLICATION_ENABLED == 'true'" in image_job["if"]
+    validation = next(step for step in image_job["steps"] if step.get("id") == "validate-event")
+    assert validation["env"]["PUBLICATION_ENABLED"] == "${{ vars.IMAGE_PUBLICATION_ENABLED }}"
+    assert "Image publication is disabled by IMAGE_PUBLICATION_ENABLED." in validation["run"]
+
+    chart_workflow = yaml.safe_load(_HELM_WORKFLOW.read_text(encoding="utf-8"))
+    assert set(chart_workflow.get("on", chart_workflow.get(True))) == {"workflow_run"}
+    assert "vars.CHART_PUBLICATION_ENABLED == 'true'" in chart_workflow["jobs"]["publish"]["if"]
+
+
+def test_published_builds_vendor_every_pinned_oci_input_before_building() -> None:
+    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    vendor = jobs["vendor-base-images"]
+    assert vendor["needs"] == ["event-validation"]
+    assert "needs.event-validation.outputs.should_push == 'true'" in vendor["if"]
+    assert vendor["permissions"] == {"contents": "read", "packages": "write"}
+    vendor_steps = {step["name"]: step for step in vendor["steps"]}
+    script = vendor_steps["Vendor digest-pinned OCI build inputs"]["run"]
+    assert "python3 scripts/ci/image_matrix.py bases" in script
+    assert "skopeo copy --all --preserve-digests" in script
+    assert '[[ "$copied_digest" == "$digest" ]]' in script
+    assert '[[ "$mirror_reference" == *"@${digest}" ]]' in script
+
+    build = jobs["build-push"]
+    assert "needs.vendor-base-images.result == 'success'" in build["if"]
+    protected = next(step for step in build["steps"] if step.get("id") == "protected-dockerfile")
+    assert protected["env"]["SHOULD_PUSH"] == "${{ steps.mode.outputs.push }}"
+    assert "python3 scripts/ci/image_matrix.py mirror-dockerfile" in protected["run"]
+    assert '--mirror-root "$MIRROR_ROOT"' in protected["run"]
+    assert 'cp "${SOURCE_DOCKERFILE}.dockerignore" "${dockerfile}.dockerignore"' in protected["run"]
+
+
 def test_non_push_gpu_build_exports_no_cache() -> None:
     workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
     cache_to = next(
@@ -207,7 +255,8 @@ def test_build_push_matrix_is_resolved_from_the_affected_image_record() -> None:
     assert "schedule" not in triggers
 
     jobs = workflow["jobs"]
-    assert set(jobs) == {"event-validation", "build-push", "aggregate-digests"}
+    assert set(jobs) == {"event-validation", "vendor-base-images", "build-push", "aggregate-digests"}
+    assert "hashFiles" not in _WORKFLOW.read_text(encoding="utf-8")
 
     validation = jobs["event-validation"]
     assert validation["timeout-minutes"] == 1
@@ -248,6 +297,9 @@ def test_build_push_matrix_is_resolved_from_the_affected_image_record() -> None:
     resolve = validation_steps["resolve-images"]
     assert resolve["env"]["RECORD_OUTCOME"] == "${{ steps.affected-record.outcome }}"
     assert "$RECORD_OUTCOME" in resolve["run"]
+    assert resolve["env"]["FULL_SWEEP"] == "${{ github.event.inputs.full_sweep }}"
+    assert "selection=(--full)" in resolve["run"]
+    assert '$FULL_SWEEP" == "true"' in resolve["run"]
     assert "python3 scripts/ci/image_matrix.py matrix" in resolve["run"]
     assert "uv sync" not in resolve["run"]
     assert "uv run" not in resolve["run"]
@@ -268,6 +320,13 @@ def test_build_push_matrix_is_resolved_from_the_affected_image_record() -> None:
     assert assemble["env"]["AFFECTED_IMAGES"] == "${{ needs.event-validation.outputs.images }}"
     assert "--existing infra/k8s/helm/values.prod.digests.yaml" in assemble["run"]
     assert '--affected "$AFFECTED_IMAGES"' in assemble["run"]
+    aggregate = jobs["aggregate-digests"]
+    assert "needs.event-validation.outputs.has_images == 'false'" in aggregate["env"]["DIGESTS_ENABLED"]
+    assert "needs.build-push.result == 'skipped'" in aggregate["env"]["DIGESTS_ENABLED"]
+    download_digests = next(step for step in aggregate["steps"] if step["name"] == "Download image digest records")
+    assert download_digests["if"] == (
+        "env.DIGESTS_ENABLED == 'true' && needs.event-validation.outputs.has_images == 'true'"
+    )
 
 
 def test_trivy_waivers_each_have_a_reason_and_expiry() -> None:

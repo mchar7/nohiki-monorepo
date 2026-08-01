@@ -14,10 +14,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
 
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 IMAGE_TIMEOUT_MINUTES: Final = 16
+PRODUCT_CLASS: Final = "product"
+VERIFICATION_OPS_CLASS: Final = "verification/ops"
+IMAGE_CLASSES: Final = frozenset({PRODUCT_CLASS, VERIFICATION_OPS_CLASS})
 TOP_LEVEL_KEYS: Final = frozenset({"schema_version", "no_image_ownership", "images"})
-IMAGE_KEYS: Final = frozenset({"name", "context", "dockerfile", "build_args", "lockfile", "timeout", "ownership"})
+IMAGE_KEYS: Final = frozenset(
+    {"name", "context", "dockerfile", "build_args", "lockfile", "timeout", "ownership", "class"}
+)
 AFFECTED_RECORD_KEYS: Final = frozenset({"head_sha", "images"})
 
 INVENTORY_PATH: Final = Path(__file__).resolve().parents[5] / "scripts" / "ci" / "image_inventory.json"
@@ -38,6 +43,12 @@ SELECTION_AUTHORITY_PATHS: Final = frozenset(
 
 _SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 _NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+_PINNED_IMAGE_RE = re.compile(
+    r"^(?:#\s*syntax=|FROM\s+(?:--platform=\S+\s+)?|COPY\s+(?:--\S+\s+)*?--from=)"
+    r"(?P<ref>\S+?@sha256:[0-9a-f]{64})",
+    re.IGNORECASE | re.MULTILINE,
+)
+_MIRROR_ROOT_RE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+\Z")
 
 
 class InventoryError(ValueError):
@@ -56,6 +67,7 @@ class ImageRecord:
         lockfile: Repo-relative dependency input whose changes select this image.
         timeout: Build-and-scan cap in minutes.
         ownership: Repo-relative rules selecting this image; a trailing ``/`` means prefix.
+        image_class: Publication class: ``product`` or ``verification/ops``.
     """
 
     name: str
@@ -65,6 +77,7 @@ class ImageRecord:
     lockfile: str
     timeout: int
     ownership: tuple[str, ...]
+    image_class: str
 
     def matrix_row(self) -> dict[str, object]:
         """Return this record as one ``strategy.matrix.include`` row.
@@ -99,6 +112,30 @@ class ImageInventory:
     def names(self) -> tuple[str, ...]:
         """Return every canonical image name in declaration order."""
         return tuple(record.name for record in self.images)
+
+    @property
+    def product_names(self) -> tuple[str, ...]:
+        """Return routine-publication image names in declaration order."""
+        return tuple(record.name for record in self.images if record.image_class == PRODUCT_CLASS)
+
+
+@dataclass(frozen=True, slots=True)
+class VendoredBaseImage:
+    """One digest-pinned OCI build input and its owned mirror identity."""
+
+    source: str
+    mirror_repository: str
+    digest: str
+
+    @property
+    def mirror_tag(self) -> str:
+        """Return the deterministic tag used to seed the mirror."""
+        return f"{self.mirror_repository}:sha256-{self.digest.removeprefix('sha256:')}"
+
+    @property
+    def mirror_reference(self) -> str:
+        """Return the digest-preserving reference consumed by BuildKit."""
+        return f"{self.mirror_repository}@{self.digest}"
 
 
 def _check_rule(rule: object, field: str) -> str:
@@ -161,6 +198,77 @@ def _rules(raw: object, field: str, *, allow_empty: bool) -> tuple[str, ...]:
     return tuple(rules)
 
 
+def _canonical_registry_reference(reference: str) -> tuple[str, str, str]:
+    tagged, separator, digest = reference.rpartition("@")
+    if not separator:
+        msg = f"base image {reference!r} is not digest pinned"
+        raise InventoryError(msg)
+    last_component = tagged.rsplit("/", maxsplit=1)[-1]
+    if ":" in last_component:
+        repository, tag = tagged.rsplit(":", maxsplit=1)
+        tag_suffix = f":{tag}"
+    else:
+        repository, tag_suffix = tagged, ""
+    first_component = repository.split("/", maxsplit=1)[0]
+    if "/" not in repository:
+        repository = f"docker.io/library/{repository}"
+    elif "." not in first_component and ":" not in first_component and first_component != "localhost":
+        repository = f"docker.io/{repository}"
+    return f"{repository}{tag_suffix}@{digest}", repository, digest
+
+
+def _base_images(text: str, mirror_root: str) -> tuple[VendoredBaseImage, ...]:
+    if not _MIRROR_ROOT_RE.fullmatch(mirror_root):
+        msg = f"base-image mirror root {mirror_root!r} is not a canonical registry path"
+        raise InventoryError(msg)
+    pins: dict[str, VendoredBaseImage] = {}
+    for match in _PINNED_IMAGE_RE.finditer(text):
+        original = match["ref"]
+        source, repository, digest = _canonical_registry_reference(original)
+        pins[original] = VendoredBaseImage(
+            source=source,
+            mirror_repository=f"{mirror_root}/{repository}",
+            digest=digest,
+        )
+    return tuple(pins[reference] for reference in sorted(pins))
+
+
+def vendored_base_images(
+    inventory: ImageInventory,
+    checkout: Path,
+    mirror_root: str,
+) -> tuple[VendoredBaseImage, ...]:
+    """Collect every unique digest-pinned OCI input used by the inventory."""
+    pins: dict[str, VendoredBaseImage] = {}
+    for record in inventory.images:
+        dockerfile = checkout / record.dockerfile
+        try:
+            text = dockerfile.read_text(encoding="utf-8")
+        except OSError as exc:
+            msg = f"cannot read image {record.name} dockerfile {dockerfile}: {exc}"
+            raise InventoryError(msg) from exc
+        for pin in _base_images(text, mirror_root):
+            pins[pin.source] = pin
+    return tuple(pins[source] for source in sorted(pins))
+
+
+def render_vendored_dockerfile(record: ImageRecord, checkout: Path, mirror_root: str) -> str:
+    """Rewrite one Dockerfile to consume owned mirrors at the original digests."""
+    dockerfile = checkout / record.dockerfile
+    try:
+        text = dockerfile.read_text(encoding="utf-8")
+    except OSError as exc:
+        msg = f"cannot read image {record.name} dockerfile {dockerfile}: {exc}"
+        raise InventoryError(msg) from exc
+    mirrors = {pin.source: pin.mirror_reference for pin in _base_images(text, mirror_root)}
+
+    def replace(match: re.Match[str]) -> str:
+        source, _, _ = _canonical_registry_reference(match["ref"])
+        return match.group(0).replace(match["ref"], mirrors[source])
+
+    return _PINNED_IMAGE_RE.sub(replace, text)
+
+
 def _record(raw: object, checkout: Path) -> ImageRecord:
     if not isinstance(raw, dict):
         msg = f"image record keys must be exactly {sorted(IMAGE_KEYS)}"
@@ -176,6 +284,10 @@ def _record(raw: object, checkout: Path) -> ImageRecord:
     build_args = fields["build_args"]
     if not isinstance(build_args, str):
         msg = f"image {name} build_args must be a string"
+        raise InventoryError(msg)
+    image_class = fields["class"]
+    if image_class not in IMAGE_CLASSES:
+        msg = f"image {name} class must be one of {sorted(IMAGE_CLASSES)}"
         raise InventoryError(msg)
     timeout = fields["timeout"]
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout != IMAGE_TIMEOUT_MINUTES:
@@ -199,6 +311,7 @@ def _record(raw: object, checkout: Path) -> ImageRecord:
         lockfile=str(fields["lockfile"]),
         timeout=timeout,
         ownership=_rules(fields["ownership"], f"image {name} ownership", allow_empty=False),
+        image_class=str(image_class),
     )
 
 

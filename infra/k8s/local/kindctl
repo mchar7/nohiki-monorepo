@@ -1,0 +1,814 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime as dt
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any, Iterator, Sequence
+
+CLUSTER = "nohiki"
+CONTEXT = "kind-nohiki"
+KUBERNETES_VERSION = "v1.36.1"
+KIND_VERSION = "v0.32.0"
+FLUX_VERSION = "2.9.2"
+FLUX_OPERATOR_VERSION = "0.55.0"
+CREATE_TIMEOUT = 120
+REGISTRY_HOSTS = b'''server = "http://127.0.0.1:30500"
+
+[host."http://127.0.0.1:30500"]
+  capabilities = ["pull", "resolve"]
+  skip_verify = true
+'''
+DELETE_TIMEOUT = 120
+REPO_ROOT = Path(__file__).absolute().parents[3]
+CONFIG = REPO_ROOT / "infra/k8s/local/kind.yaml"
+OBSERVER = REPO_ROOT / "infra/k8s/local/observer.py"
+
+
+class KindctlError(RuntimeError):
+    pass
+
+
+def canonical_bytes(value: object) -> bytes:
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def write_exclusive(path: Path, value: object, mode: int = 0o600) -> None:
+    data = canonical_bytes(value)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def write_atomic(path: Path, value: object, mode: int = 0o600) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        os.fchmod(fd, mode)
+        os.write(fd, canonical_bytes(value))
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.replace(temporary_path, path)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        temporary_path.unlink(missing_ok=True)
+
+
+def run_command(
+    argv: Sequence[str],
+    *,
+    env: dict[str, str] | None = None,
+    input_text: str | None = None,
+    timeout: int | float | None = None,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        list(argv),
+        check=False,
+        capture_output=True,
+        text=True,
+        input=input_text,
+        env=env,
+        timeout=timeout,
+    )
+    if check and result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise KindctlError(f"command failed ({result.returncode}): {' '.join(argv)}: {stderr}")
+    return result
+
+
+def command_json(argv: Sequence[str], **kwargs: Any) -> Any:
+    result = run_command(argv, **kwargs)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise KindctlError(f"command did not return JSON: {' '.join(argv)}") from error
+
+
+def validate_runner_path() -> None:
+    source = Path(__file__)
+    if source.is_symlink():
+        raise KindctlError("kindctl must be invoked through its non-symlink path")
+    if source.absolute().resolve() != source.absolute():
+        raise KindctlError("kindctl path must resolve without symlinks")
+    if REPO_ROOT.resolve() != REPO_ROOT:
+        raise KindctlError("repository root must resolve without symlinks")
+
+
+def validate_attempt_dir(raw: str | None) -> Path:
+    if raw is None:
+        raise KindctlError("this command requires --attempt-dir")
+    path = Path(raw)
+    if not path.is_absolute():
+        raise KindctlError("--attempt-dir must be absolute")
+    try:
+        metadata = path.stat()
+    except FileNotFoundError as error:
+        raise KindctlError("--attempt-dir must already exist") from error
+    if not path.is_dir() or path.is_symlink() or path.resolve() != path:
+        raise KindctlError("--attempt-dir must be a canonical real directory")
+    if metadata.st_uid != os.getuid():
+        raise KindctlError("--attempt-dir must be owned by the invoking user")
+    if stat.S_IMODE(metadata.st_mode) != 0o700:
+        raise KindctlError("--attempt-dir must have mode 0700")
+    return path
+
+
+def provider_environment(kubeconfig: Path | None = None) -> dict[str, str]:
+    provider = os.environ.get("KIND_EXPERIMENTAL_PROVIDER", "podman")
+    if provider != "podman":
+        raise KindctlError("KIND_EXPERIMENTAL_PROVIDER must be podman")
+    environment = os.environ | {"KIND_EXPERIMENTAL_PROVIDER": "podman"}
+    if kubeconfig is not None:
+        environment["KUBECONFIG"] = str(kubeconfig)
+    return environment
+
+
+def boot_id() -> str:
+    return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+
+
+def process_start_ticks(pid: int) -> int:
+    fields = Path(f"/proc/{pid}/stat").read_text(encoding="ascii").split()
+    return int(fields[21])
+
+
+def process_matches(record: dict[str, Any]) -> bool:
+    try:
+        return record["bootId"] == boot_id() and process_start_ticks(int(record["pid"])) == int(record["startTicks"])
+    except (FileNotFoundError, KeyError, TypeError, ValueError, ProcessLookupError):
+        return False
+
+
+def runtime_root() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base:
+        raise KindctlError("XDG_RUNTIME_DIR is required")
+    path = Path(base) / "nohiki-kind"
+    if path.exists():
+        metadata = path.stat()
+        if not path.is_dir() or path.is_symlink() or metadata.st_uid != os.getuid():
+            raise KindctlError("runner runtime path is not a user-owned directory")
+        if stat.S_IMODE(metadata.st_mode) != 0o700:
+            raise KindctlError("runner runtime path must have mode 0700")
+    return path
+
+
+@contextlib.contextmanager
+def mutation_lock(command: str, attempt: Path) -> Iterator[None]:
+    root = runtime_root()
+    root.mkdir(mode=0o700, exist_ok=True)
+    lock_path = root / "kindctl.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    owner_path = root / "lock-owner.json"
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            owner = owner_path.read_text(encoding="utf-8") if owner_path.exists() else "owner record unavailable"
+            raise KindctlError(f"another kindctl mutation holds the lock: {owner}") from error
+        if owner_path.exists():
+            try:
+                stale = json.loads(owner_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as error:
+                raise KindctlError("stale lock owner record is malformed") from error
+            if process_matches(stale):
+                raise KindctlError("live lock owner record exists without lock contention")
+            owner_path.unlink()
+            cleanup = attempt / "commands" / f"{command}-stale-lock.json"
+            cleanup.parent.mkdir(mode=0o700, exist_ok=True)
+            write_exclusive(cleanup, {"removed": stale})
+        record = {
+            "attempt": str(attempt),
+            "bootId": boot_id(),
+            "command": command,
+            "pid": os.getpid(),
+            "startTicks": process_start_ticks(os.getpid()),
+            "startedAt": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
+        }
+        write_atomic(owner_path, record)
+        yield
+    finally:
+        owner_path.unlink(missing_ok=True)
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+        lock_path.unlink(missing_ok=True)
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+
+
+@contextlib.contextmanager
+def command_record(command: str, attempt: Path) -> Iterator[dict[str, Any]]:
+    directory = attempt / "commands"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    output = directory / f"{command}.json"
+    if output.exists():
+        raise KindctlError(f"command output must be absent: {output}")
+    record: dict[str, Any] = {
+        "command": command,
+        "startedAt": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
+    }
+    exit_code = 1
+    try:
+        yield record
+        exit_code = 0
+    finally:
+        record["finishedAt"] = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
+        record["exitCode"] = exit_code
+        write_exclusive(output, record)
+
+
+def exact_tool_version(argv: Sequence[str], expected_pattern: str, label: str) -> None:
+    result = run_command(argv, timeout=10)
+    output = (result.stdout + result.stderr).strip()
+    if re.search(expected_pattern, output) is None:
+        raise KindctlError(f"{label} version mismatch: {output}")
+
+
+def preflight() -> None:
+    for executable in ("kind", "kubectl", "helm", "kustomize", "flux", "flux-operator", "podman", "systemd-run"):
+        if shutil.which(executable) is None:
+            raise KindctlError(f"required executable is missing: {executable}")
+    exact_tool_version(("kind", "version"), r"\bv0\.32\.0\b", "kind")
+    exact_tool_version(("flux", "version", "--client"), r"\b2\.9\.2\b", "Flux")
+    exact_tool_version(("flux-operator", "version"), r"\b0\.55\.0\b", "Flux Operator")
+    info = command_json(("podman", "info", "--format", "json"), timeout=15)
+    host = info.get("host", {})
+    if bool(host.get("security", {}).get("rootless")) is not True:
+        raise KindctlError("Podman must run rootless")
+    if str(host.get("cgroupVersion")) != "v2" or str(host.get("cgroupManager")) != "systemd":
+        raise KindctlError("Podman requires cgroup v2 with the systemd manager")
+    if info.get("store", {}).get("configFile") is None:
+        raise KindctlError("Podman storage metadata is unavailable")
+    log_driver = str(host.get("logDriver", info.get("store", {}).get("graphDriverName", "")))
+    if log_driver and log_driver != "k8s-file":
+        raise KindctlError("Podman log driver must be k8s-file")
+    probe = run_command(
+        ("systemd-run", "--scope", "--user", "-p", "Delegate=yes", "--quiet", "sh", "-c", "cat /sys/fs/cgroup/cgroup.controllers"),
+        timeout=15,
+    ).stdout.split()
+    if not {"cpu", "io", "memory", "pids"}.issubset(probe):
+        raise KindctlError("delegated user scope lacks required cgroup controllers")
+    thresholds = {
+        Path("/proc/sys/kernel/pid_max"): 32768,
+        Path("/proc/sys/fs/inotify/max_user_watches"): 524288,
+        Path("/proc/sys/fs/inotify/max_user_instances"): 512,
+    }
+    for path, minimum in thresholds.items():
+        if int(path.read_text(encoding="ascii")) < minimum:
+            raise KindctlError(f"{path} must be at least {minimum}")
+    modules = Path("/proc/modules").read_text(encoding="ascii")
+    for module in ("nf_nat", "nf_tables"):
+        if re.search(rf"^{module}\s", modules, re.MULTILINE) is None:
+            raise KindctlError(f"kernel module is not loaded: {module}")
+    if (os.cpu_count() or 0) < 16:
+        raise KindctlError("at least 16 logical CPUs are required")
+    memory_available = int(next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:"))) * 1024
+    if memory_available < 48 * 1024**3:
+        raise KindctlError("at least 48 GiB available RAM is required")
+    graph_root = Path(str(info.get("store", {}).get("graphRoot", "")))
+    if not graph_root.is_absolute() or shutil.disk_usage(graph_root).free < 60 * 1024**3:
+        raise KindctlError("at least 60 GiB free Podman storage is required")
+
+
+def kube_args(kubeconfig: Path, *args: str) -> tuple[str, ...]:
+    return ("kubectl", "--kubeconfig", str(kubeconfig), *args)
+
+
+def kind_clusters() -> list[str]:
+    result = run_command(("kind", "get", "clusters"), env=provider_environment(), timeout=15, check=False)
+    if result.returncode != 0:
+        raise KindctlError(f"kind get clusters failed: {result.stderr.strip()}")
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def kube_contexts(kubeconfig: Path | None) -> list[str]:
+    argv = ["kubectl"]
+    if kubeconfig is not None and kubeconfig.exists():
+        argv.extend(("--kubeconfig", str(kubeconfig)))
+    argv.extend(("config", "get-contexts", "-o", "name"))
+    result = run_command(argv, timeout=10, check=False)
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def podman_json(argv: Sequence[str]) -> list[dict[str, Any]]:
+    result = run_command(argv, timeout=10, check=False)
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise KindctlError(f"Podman returned malformed JSON: {' '.join(argv)}") from error
+    return value if isinstance(value, list) else [value]
+
+
+def network_attachments(document: dict[str, Any]) -> list[str]:
+    attachments: list[str] = []
+    containers = document.get("containers", document.get("Containers", {}))
+    if isinstance(containers, dict):
+        for identifier, value in containers.items():
+            name = value.get("name", value.get("Name", identifier)) if isinstance(value, dict) else identifier
+            if CLUSTER in str(name):
+                attachments.append(str(name))
+    return sorted(attachments)
+
+
+def collect_residue(kubeconfig: Path | None = None) -> dict[str, list[str]]:
+    clusters = [name for name in kind_clusters() if name == CLUSTER]
+    contexts = [name for name in kube_contexts(kubeconfig) if name == CONTEXT]
+    containers = podman_json(("podman", "ps", "-a", "--filter", f"label=io.x-k8s.kind.cluster={CLUSTER}", "--format", "json"))
+    container_names = sorted(str(item.get("Names", item.get("Names", item.get("Id", "")))) for item in containers)
+    volumes = podman_json(("podman", "volume", "ls", "--filter", f"label=io.x-k8s.kind.cluster={CLUSTER}", "--format", "json"))
+    volume_names = sorted(str(item.get("Name", item.get("Driver", ""))) for item in volumes)
+    network_result = run_command(("podman", "network", "inspect", "kind"), timeout=10, check=False)
+    network: list[str] = []
+    if network_result.returncode == 0:
+        try:
+            documents = json.loads(network_result.stdout)
+        except json.JSONDecodeError as error:
+            raise KindctlError("Podman kind network inspect returned malformed JSON") from error
+        document = documents[0] if isinstance(documents, list) and documents else documents
+        attachments = network_attachments(document if isinstance(document, dict) else {})
+        other_clusters = [name for name in kind_clusters() if name != CLUSTER]
+        if attachments or not other_clusters:
+            network = attachments or ["kind"]
+    proxy_state: list[str] = []
+    try:
+        root = runtime_root()
+    except KindctlError:
+        root = Path("/__nohiki_missing_runtime__")
+    if root.exists():
+        proxy_state = sorted(path.name for path in root.iterdir())
+    api: list[str] = []
+    if kubeconfig is not None and kubeconfig.exists():
+        result = run_command((*kube_args(kubeconfig), "--request-timeout=2s", "get", "--raw=/version"), timeout=4, check=False)
+        if result.returncode == 0:
+            api = [str(kubeconfig)]
+    return {
+        "apiEndpoints": api,
+        "containers": [name for name in container_names if name],
+        "contexts": contexts,
+        "kindClusters": clusters,
+        "networkAttachments": network,
+        "proxyState": proxy_state,
+        "volumes": [name for name in volume_names if name],
+    }
+
+
+def require_no_residue(kubeconfig: Path | None = None) -> dict[str, list[str]]:
+    inventory = collect_residue(kubeconfig)
+    nonempty = {key: value for key, value in inventory.items() if value}
+    if nonempty:
+        raise KindctlError(f"Nohiki cluster residue remains: {json.dumps(nonempty, sort_keys=True)}")
+    return inventory
+
+
+def create_argv(kubeconfig: Path) -> tuple[str, ...]:
+    return (
+        "systemd-run", "--scope", "--user", "-p", "Delegate=yes", "env",
+        "KIND_EXPERIMENTAL_PROVIDER=podman", f"KUBECONFIG={kubeconfig}",
+        "kind", "create", "cluster", "--name", CLUSTER, "--config", str(CONFIG),
+        "--kubeconfig", str(kubeconfig), "--wait", f"{CREATE_TIMEOUT}s",
+    )
+
+
+def validate_cluster(kubeconfig: Path) -> tuple[str, list[str]]:
+    context = run_command(kube_args(kubeconfig, "config", "current-context"), timeout=10).stdout.strip()
+    if context != CONTEXT:
+        raise KindctlError(f"unexpected kubeconfig context: {context}")
+    version = command_json(kube_args(kubeconfig, "get", "--raw=/version"), timeout=15)
+    if version.get("gitVersion") != KUBERNETES_VERSION:
+        raise KindctlError(f"Kubernetes version must be {KUBERNETES_VERSION}")
+    nodes_document = command_json(kube_args(kubeconfig, "get", "nodes", "-o", "json"), timeout=15)
+    nodes = nodes_document.get("items", [])
+    if len(nodes) != 1:
+        raise KindctlError("cluster must contain exactly one node")
+    ready = next((condition for condition in nodes[0].get("status", {}).get("conditions", []) if condition.get("type") == "Ready"), None)
+    if ready is None or ready.get("status") != "True":
+        raise KindctlError("the sole node must be Ready")
+    kube_system = command_json(kube_args(kubeconfig, "get", "namespace", "kube-system", "-o", "json"), timeout=15)
+    uid = str(kube_system.get("metadata", {}).get("uid", ""))
+    if not uid:
+        raise KindctlError("kube-system UID is absent")
+    return uid, [str(nodes[0]["metadata"]["name"])]
+
+
+def repair_nodes(kubeconfig: Path) -> list[dict[str, str]]:
+    nodes = [line for line in run_command(("kind", "get", "nodes", "--name", CLUSTER), env=provider_environment(kubeconfig), timeout=15).stdout.splitlines() if line]
+    if not nodes:
+        raise KindctlError("kind returned no nodes")
+    measurements: list[dict[str, str]] = []
+    for node in nodes:
+        run_command(("podman", "exec", node, "sysctl", "-w", "net.ipv4.conf.all.arp_ignore=0", "net.ipv4.conf.default.arp_ignore=0"), timeout=15)
+        all_value = run_command(("podman", "exec", node, "sysctl", "-n", "net.ipv4.conf.all.arp_ignore"), timeout=10).stdout.strip()
+        default_value = run_command(("podman", "exec", node, "sysctl", "-n", "net.ipv4.conf.default.arp_ignore"), timeout=10).stdout.strip()
+        if (all_value, default_value) != ("0", "0"):
+            raise KindctlError(f"ARP repair did not persist on {node}")
+        inspect = command_json(("podman", "inspect", "--type", "container", node), timeout=10)
+        container = inspect[0] if isinstance(inspect, list) else inspect
+        measurements.append({
+            "arpIgnoreAll": all_value,
+            "arpIgnoreDefault": default_value,
+            "containerId": str(container.get("Id", "")),
+            "hostsSha256": "",
+            "name": node,
+            "startTime": str(container.get("State", {}).get("StartedAt", "")),
+        })
+    run_command(kube_args(kubeconfig, "-n", "kube-system", "rollout", "restart", "daemonset/kindnet"), timeout=30)
+    run_command(kube_args(kubeconfig, "-n", "kube-system", "rollout", "status", "daemonset/kindnet", "--timeout=120s"), timeout=125)
+    run_command(kube_args(kubeconfig, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=120s"), timeout=125)
+    return measurements
+
+
+def require_node_pid_limits(nodes: Sequence[str]) -> dict[str, int]:
+    limits: dict[str, int] = {}
+    for node in nodes:
+        document = command_json(("podman", "inspect", "--type", "container", node), timeout=10)
+        container = document[0] if isinstance(document, list) else document
+        limit = container.get("HostConfig", {}).get("PidsLimit")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise KindctlError(f"node PidsLimit must be a positive integer: {node}")
+        limits[node] = limit
+    return limits
+def install_registry_hosts(kubeconfig: Path, nodes: Sequence[str]) -> str:
+    expected_hash = hashlib.sha256(REGISTRY_HOSTS).hexdigest()
+    descriptor, temporary_name = tempfile.mkstemp(prefix="nohiki-hosts-")
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        os.write(descriptor, REGISTRY_HOSTS)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        for node in nodes:
+            run_command(("podman", "exec", node, "mkdir", "-p", "/etc/containerd/certs.d/localhost:5000"), timeout=10)
+            run_command(("podman", "cp", str(temporary), f"{node}:/etc/containerd/certs.d/localhost:5000/hosts.toml"), timeout=15)
+            run_command(("podman", "exec", node, "chmod", "0644", "/etc/containerd/certs.d/localhost:5000/hosts.toml"), timeout=10)
+            mode = run_command(("podman", "exec", node, "stat", "-c", "%a", "/etc/containerd/certs.d/localhost:5000/hosts.toml"), timeout=10).stdout.strip()
+            observed_hash = run_command(("podman", "exec", node, "sha256sum", "/etc/containerd/certs.d/localhost:5000/hosts.toml"), timeout=10).stdout.split()[0]
+            if mode != "644" or observed_hash != expected_hash:
+                raise KindctlError(f"registry hosts copy verification failed on {node}")
+            run_command(kube_args(kubeconfig, "annotate", "node", node, f"nohiki.io/hosts-sha256={expected_hash}", "--overwrite"), timeout=15)
+        return expected_hash
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+
+
+def require_storage_class(kubeconfig: Path) -> dict[str, str]:
+    document = command_json(kube_args(kubeconfig, "get", "storageclass", "standard", "-o", "json"), timeout=15)
+    metadata = document.get("metadata", {})
+    annotations = metadata.get("annotations", {})
+    if annotations.get("storageclass.kubernetes.io/is-default-class") != "true":
+        raise KindctlError("standard StorageClass must be default")
+    expected = {"provisioner": "rancher.io/local-path", "volumeBindingMode": "WaitForFirstConsumer", "reclaimPolicy": "Delete"}
+    actual = {key: str(document.get(key, "")) for key in expected}
+    if actual != expected:
+        raise KindctlError(f"standard StorageClass mismatch: {actual}")
+    return actual
+
+
+def storage_probe(kubeconfig: Path) -> dict[str, str]:
+    nonce = hashlib.sha256(os.urandom(32)).hexdigest()
+    manifest = f"""apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nohiki-storage-probe
+spec:
+  storageClassName: standard
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 64Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nohiki-storage-writer
+spec:
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: docker.io/library/alpine:3.22
+      command: [sh, -c, "printf %s {nonce} > /data/nonce"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: nohiki-storage-probe
+"""
+    run_command(kube_args(kubeconfig, "apply", "-f", "-"), input_text=manifest, timeout=30)
+    try:
+        run_command(kube_args(kubeconfig, "wait", "--for=jsonpath={.status.phase}=Succeeded", "pod/nohiki-storage-writer", "--timeout=120s"), timeout=125)
+        claim = command_json(kube_args(kubeconfig, "get", "pvc", "nohiki-storage-probe", "-o", "json"), timeout=15)
+        volume_name = str(claim.get("spec", {}).get("volumeName", ""))
+        capacity = str(claim.get("status", {}).get("capacity", {}).get("storage", ""))
+        if claim.get("status", {}).get("phase") != "Bound" or not volume_name or not capacity:
+            raise KindctlError("storage probe claim did not bind")
+        run_command(kube_args(kubeconfig, "delete", "pod", "nohiki-storage-writer", "--wait=true", "--timeout=60s"), timeout=65)
+        reader = """apiVersion: v1
+kind: Pod
+metadata:
+  name: nohiki-storage-reader
+spec:
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: docker.io/library/alpine:3.22
+      command: [sh, -c, "cat /data/nonce"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: nohiki-storage-probe
+"""
+        run_command(kube_args(kubeconfig, "apply", "-f", "-"), input_text=reader, timeout=30)
+        run_command(kube_args(kubeconfig, "wait", "--for=jsonpath={.status.phase}=Succeeded", "pod/nohiki-storage-reader", "--timeout=120s"), timeout=125)
+        observed = run_command(kube_args(kubeconfig, "logs", "pod/nohiki-storage-reader", "-c", "probe"), timeout=15).stdout.strip()
+        if observed != nonce:
+            raise KindctlError("storage nonce changed across Pod recreation")
+        return {"accessModes": "ReadWriteOnce", "capacity": capacity, "persistentVolume": volume_name, "storageClass": "standard"}
+    finally:
+        run_command(kube_args(kubeconfig, "delete", "pod", "nohiki-storage-writer", "nohiki-storage-reader", "--ignore-not-found", "--wait=true", "--timeout=60s"), timeout=65, check=False)
+        claim = run_command(kube_args(kubeconfig, "get", "pvc", "nohiki-storage-probe", "-o", "json"), timeout=15, check=False)
+        volume_name = ""
+        if claim.returncode == 0:
+            try:
+                volume_name = str(json.loads(claim.stdout).get("spec", {}).get("volumeName", ""))
+            except json.JSONDecodeError:
+                pass
+        run_command(kube_args(kubeconfig, "delete", "pvc", "nohiki-storage-probe", "--ignore-not-found", "--wait=true", "--timeout=60s"), timeout=65, check=False)
+        if volume_name:
+            result = run_command(kube_args(kubeconfig, "wait", "--for=delete", f"pv/{volume_name}", "--timeout=120s"), timeout=125, check=False)
+            if result.returncode != 0:
+                raise KindctlError("storage probe PersistentVolume was not deleted")
+
+
+def network_probe(kubeconfig: Path) -> dict[str, bool]:
+    manifest = """apiVersion: v1
+kind: Pod
+metadata:
+  name: nohiki-network-a
+spec:
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: docker.io/library/alpine:3.22
+      command: [sleep, "3600"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nohiki-network-b
+spec:
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: docker.io/library/alpine:3.22
+      command: [sleep, "3600"]
+"""
+    run_command(kube_args(kubeconfig, "apply", "-f", "-"), input_text=manifest, timeout=30)
+    try:
+        run_command(kube_args(kubeconfig, "wait", "--for=condition=Ready", "pod/nohiki-network-a", "pod/nohiki-network-b", "--timeout=120s"), timeout=125)
+        pod_b = command_json(kube_args(kubeconfig, "get", "pod", "nohiki-network-b", "-o", "json"), timeout=15)
+        pod_ip = str(pod_b.get("status", {}).get("podIP", ""))
+        node = command_json(kube_args(kubeconfig, "get", "node", "nohiki-control-plane", "-o", "json"), timeout=15)
+        node_ip = next((str(item["address"]) for item in node.get("status", {}).get("addresses", []) if item.get("type") == "InternalIP"), "")
+        probes = {
+            "dns": ("nslookup", "kubernetes.default.svc.cluster.local"),
+            "nodeApi": ("wget", "-qO-", "--no-check-certificate", f"https://{node_ip}:6443/version"),
+            "podIp": ("ping", "-c", "1", "-W", "2", pod_ip),
+            "serviceVersion": ("wget", "-qO-", "--no-check-certificate", "https://10.96.0.1/version"),
+        }
+        results = {
+            name: run_command(kube_args(kubeconfig, "exec", "nohiki-network-a", "--", *argv), timeout=15, check=False).returncode == 0
+            for name, argv in probes.items()
+        }
+        if not all(results.values()):
+            raise KindctlError(f"stock kind network probe failed: {results}")
+        return results
+    finally:
+        run_command(kube_args(kubeconfig, "delete", "pod", "nohiki-network-a", "nohiki-network-b", "--ignore-not-found", "--wait=true", "--timeout=60s"), timeout=65, check=False)
+
+
+def write_measurements(attempt: Path, kubeconfig: Path, cluster_uid: str, nodes: list[dict[str, str]], network: dict[str, bool], storage: dict[str, str]) -> None:
+    metadata = kubeconfig.stat()
+    document = {
+        "apiVersion": "nohiki.io/v1alpha1",
+        "attempt": int(re.search(r"(\d+)$", attempt.name).group(1)) if re.search(r"(\d+)$", attempt.name) else 1,
+        "cluster": {"context": CONTEXT, "name": CLUSTER, "uid": cluster_uid},
+        "kubeconfig": {"device": metadata.st_dev, "inode": metadata.st_ino, "mode": "0600", "owner": metadata.st_uid, "path": str(kubeconfig)},
+        "kind": "KindctlMeasurements",
+        "lockSha256": sha256_file(CONFIG),
+        "network": network,
+        "nodes": nodes,
+        "schemaVersion": 1,
+        "secrets": [],
+        "source": {"branch": None, "remoteSha": None, "reviewedSha": None},
+        "storage": storage,
+    }
+    output = attempt / "runner-measurements.json"
+    sidecar = attempt / "runner-measurements.sha256.json"
+    write_exclusive(output, document)
+    write_exclusive(sidecar, {"attempt": document["attempt"], "clusterUid": cluster_uid, "lockSha256": document["lockSha256"], "sha256": sha256_file(output)})
+
+
+def validate_kubeconfig_binding(attempt: Path, kubeconfig: Path) -> None:
+    measurements_path = attempt / "runner-measurements.json"
+    sidecar_path = attempt / "runner-measurements.sha256.json"
+    if any(path.is_symlink() or not path.is_file() for path in (measurements_path, sidecar_path)):
+        raise KindctlError("delete requires runner measurement and sidecar files")
+    measurements_bytes = measurements_path.read_bytes()
+    measurements = json.loads(measurements_bytes)
+    sidecar = json.loads(sidecar_path.read_bytes())
+    if canonical_bytes(measurements) != measurements_bytes or canonical_bytes(sidecar) != sidecar_path.read_bytes():
+        raise KindctlError("runner measurement inputs must be canonical JSON")
+    if sidecar.get("sha256") != hashlib.sha256(measurements_bytes).hexdigest():
+        raise KindctlError("runner measurement sidecar hash does not match")
+    binding = measurements.get("kubeconfig", {})
+    metadata = kubeconfig.stat()
+    actual = {
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+        "mode": f"{stat.S_IMODE(metadata.st_mode):04o}",
+        "owner": metadata.st_uid,
+        "path": str(kubeconfig),
+    }
+    if binding != actual or actual["owner"] != os.getuid() or actual["mode"] != "0600":
+        raise KindctlError("runner-owned kubeconfig identity changed")
+
+
+def create(attempt: Path) -> dict[str, Any]:
+    runtime = attempt / "runtime"
+    kubeconfig = runtime / "kubeconfig"
+    if runtime.exists() or kubeconfig.exists():
+        raise KindctlError("runner-owned runtime and kubeconfig must be absent before create")
+    require_no_residue(kubeconfig)
+    preflight()
+    runtime.mkdir(mode=0o700)
+    descriptor = os.open(kubeconfig, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    os.close(descriptor)
+    try:
+        run_command(create_argv(kubeconfig), timeout=CREATE_TIMEOUT)
+        if stat.S_IMODE(kubeconfig.stat().st_mode) != 0o600:
+            raise KindctlError("runner-owned kubeconfig must have mode 0600")
+        cluster_uid, cluster_nodes = validate_cluster(kubeconfig)
+        nodes = repair_nodes(kubeconfig)
+        pids_limits = require_node_pid_limits(cluster_nodes)
+        require_storage_class(kubeconfig)
+        network = network_probe(kubeconfig)
+        storage = storage_probe(kubeconfig)
+        write_measurements(attempt, kubeconfig, cluster_uid, nodes, network, storage)
+        return {"nodePidsLimits": pids_limits}
+    except BaseException:
+        diagnostics(attempt, kubeconfig)
+        raise
+
+
+def diagnostics(attempt: Path | None, kubeconfig: Path | None) -> dict[str, Any]:
+    commands: list[tuple[str, ...]] = [
+        ("kind", "get", "clusters"),
+        ("podman", "ps", "-a", "--format", "json"),
+        ("podman", "network", "inspect", "kind"),
+    ]
+    if kubeconfig is not None and kubeconfig.exists():
+        commands.extend((
+            kube_args(kubeconfig, "get", "nodes", "-o", "wide"),
+            kube_args(kubeconfig, "get", "pods", "-A", "-o", "wide"),
+            kube_args(kubeconfig, "get", "events", "-A", "--sort-by=.lastTimestamp"),
+        ))
+    entries = []
+    for argv in commands:
+        result = run_command(argv, timeout=15, check=False)
+        entries.append({"argv": list(argv), "exitCode": result.returncode, "stderr": result.stderr, "stdout": result.stdout})
+    document = {"command": "diagnostics", "entries": entries, "observedAt": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")}
+    if attempt is not None:
+        directory = attempt / "diagnostics"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        name = f"diagnostics-{time.time_ns()}.json"
+        write_exclusive(directory / name, document)
+    return document
+
+
+def delete(attempt: Path) -> None:
+    runtime = attempt / "runtime"
+    kubeconfig = runtime / "kubeconfig"
+    if not kubeconfig.is_file() or kubeconfig.is_symlink() or stat.S_IMODE(kubeconfig.stat().st_mode) != 0o600:
+        raise KindctlError("delete requires the runner-owned mode-0600 kubeconfig")
+    validate_kubeconfig_binding(attempt, kubeconfig)
+    diagnostics(attempt, kubeconfig)
+    argv = (
+        "systemd-run", "--scope", "--user", "-p", "Delegate=yes", "env",
+        "KIND_EXPERIMENTAL_PROVIDER=podman", f"KUBECONFIG={kubeconfig}",
+        "kind", "delete", "cluster", "--name", CLUSTER, "--kubeconfig", str(kubeconfig),
+    )
+    try:
+        run_command(argv, timeout=DELETE_TIMEOUT)
+    except BaseException:
+        diagnostics(attempt, kubeconfig)
+        raise
+    kubeconfig.unlink()
+    runtime.rmdir()
+    remaining = [name for name in kind_clusters() if name != CLUSTER]
+    network = run_command(("podman", "network", "inspect", "kind"), timeout=10, check=False)
+    if network.returncode == 0:
+        documents = json.loads(network.stdout)
+        document = documents[0] if isinstance(documents, list) and documents else documents
+        attachments = network_attachments(document if isinstance(document, dict) else {})
+        if any(CLUSTER in item for item in attachments):
+            raise KindctlError("Nohiki endpoint remains attached to the kind network")
+        if not remaining and not attachments:
+            run_command(("podman", "network", "rm", "kind"), timeout=15)
+
+
+def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="kindctl")
+    parser.add_argument("--attempt-dir")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("preflight")
+    subparsers.add_parser("create")
+    subparsers.add_parser("diagnostics")
+    observe_parser = subparsers.add_parser("observe")
+    observe_parser.add_argument("observer_args", nargs=argparse.REMAINDER)
+    subparsers.add_parser("delete")
+    subparsers.add_parser("residue")
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    validate_runner_path()
+    arguments = parse_arguments(sys.argv[1:] if argv is None else argv)
+    if arguments.command == "observe":
+        forwarded = arguments.observer_args
+        if not forwarded or forwarded[0] != "--":
+            raise KindctlError("observe requires an argument separator: kindctl observe -- <observer argv>")
+        os.execv(OBSERVER, [str(OBSERVER), *forwarded[1:]])
+    attempt = validate_attempt_dir(arguments.attempt_dir) if arguments.attempt_dir else None
+    if arguments.command == "preflight":
+        preflight()
+    elif arguments.command == "diagnostics":
+        document = diagnostics(attempt, (attempt / "runtime/kubeconfig") if attempt else None)
+        if attempt is None:
+            print(json.dumps(document, sort_keys=True))
+    elif arguments.command == "residue":
+        kubeconfig = (attempt / "runtime/kubeconfig") if attempt else None
+        print(json.dumps(require_no_residue(kubeconfig), sort_keys=True))
+    elif arguments.command in {"create", "delete"}:
+        if attempt is None:
+            raise KindctlError(f"{arguments.command} requires --attempt-dir")
+        with mutation_lock(arguments.command, attempt), command_record(arguments.command, attempt) as record:
+            if arguments.command == "create":
+                record.update(create(attempt))
+            else:
+                delete(attempt)
+            record["result"] = "passed"
+        if arguments.command == "delete":
+            require_no_residue(attempt / "runtime/kubeconfig")
+    else:
+        raise KindctlError(f"unsupported command: {arguments.command}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (KindctlError, subprocess.TimeoutExpired, OSError, ValueError) as error:
+        print(f"kindctl: {error}", file=sys.stderr)
+        raise SystemExit(1) from error

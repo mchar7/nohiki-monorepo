@@ -58,6 +58,92 @@
           '';
         };
 
+        releasePlatform = {
+          x86_64-linux = {
+            os = "linux";
+            arch = "amd64";
+            kindSha256 = "50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54";
+            fluxSha256 = "4092b367fd060097976fb7261601f79420ecf7266328417dfd8dfee27de0e6a3";
+            fluxOperatorSha256 = "67a9dad35c06ad76a298b6a28440022be0e2db3b93ef96dd090b4eaa77f542f7";
+          };
+          aarch64-linux = {
+            os = "linux";
+            arch = "arm64";
+            kindSha256 = "b92cd615e97585de8ddade28ed5cd7feb4248d717c233eea5b03c37298900f5d";
+            fluxSha256 = "665bfe5aeb843faf907e7f77250c31840499ff2dc65a64c2479409e3728748d1";
+            fluxOperatorSha256 = "228380fdee63c310634eef11da2319641a2d42deb5464a3456a5113cbd5325f4";
+          };
+          x86_64-darwin = {
+            os = "darwin";
+            arch = "amd64";
+            kindSha256 = "295ac6d0d634c9819c9907df45e3017d1f13166bd13c3404c45e79f7faa47498";
+            fluxSha256 = "e4583db32e4f4f4ec195084f0381c704e5104a55a7ec4c1a444396137ecdb161";
+            fluxOperatorSha256 = "b9c44e55b51a57565239e702bdc65fe6f7a38b632cbfa553716fc921d89e6e66";
+          };
+          aarch64-darwin = {
+            os = "darwin";
+            arch = "arm64";
+            kindSha256 = "dca67911095a110c2b5c36e26df6cac860c602033e456c0db47be498cdef1ebb";
+            fluxSha256 = "1dd6791738b1c250748c24c24b48e92908881596f999ad8bf10f84763d66fdb3";
+            fluxOperatorSha256 = "90094f17601e536b7087147137f27b0cd0bfdf81aa33c2e12c20d22fc7d8889b";
+          };
+        }.${system};
+
+        kindVersion = "0.32.0";
+        kindPackage = pkgs.stdenvNoCC.mkDerivation {
+          pname = "kind";
+          version = kindVersion;
+          src = pkgs.fetchurl {
+            url = "https://github.com/kubernetes-sigs/kind/releases/download/v${kindVersion}/kind-${releasePlatform.os}-${releasePlatform.arch}";
+            sha256 = releasePlatform.kindSha256;
+          };
+          dontUnpack = true;
+          installPhase = ''
+            mkdir -p "$out/bin"
+            install -m755 "$src" "$out/bin/kind"
+          '';
+        };
+
+        mkTarCli = { pname, version, owner, repo, asset, binary, sha256 }:
+          pkgs.stdenvNoCC.mkDerivation {
+            inherit pname version;
+            src = pkgs.fetchurl {
+              url = "https://github.com/${owner}/${repo}/releases/download/v${version}/${asset}";
+              inherit sha256;
+            };
+            sourceRoot = "source";
+            unpackPhase = ''
+              mkdir source
+              tar -xzf "$src" -C source
+            '';
+            installPhase = ''
+              mkdir -p "$out/bin"
+              install -m755 "${binary}" "$out/bin/${binary}"
+            '';
+          };
+
+        fluxVersion = "2.9.2";
+        fluxPackage = mkTarCli {
+          pname = "flux";
+          version = fluxVersion;
+          owner = "fluxcd";
+          repo = "flux2";
+          asset = "flux_${fluxVersion}_${releasePlatform.os}_${releasePlatform.arch}.tar.gz";
+          binary = "flux";
+          sha256 = releasePlatform.fluxSha256;
+        };
+
+        fluxOperatorVersion = "0.55.0";
+        fluxOperatorPackage = mkTarCli {
+          pname = "flux-operator";
+          version = fluxOperatorVersion;
+          owner = "controlplaneio-fluxcd";
+          repo = "flux-operator";
+          asset = "flux-operator_${fluxOperatorVersion}_${releasePlatform.os}_${releasePlatform.arch}.tar.gz";
+          binary = "flux-operator";
+          sha256 = releasePlatform.fluxOperatorSha256;
+        };
+
         pnpmPackage = pkgs.stdenvNoCC.mkDerivation {
           pname = "pnpm";
           version = "11.17.0";
@@ -147,7 +233,17 @@
         k8sTools = with pkgs; [
           kubectx
           stern
-          fluxcd
+          kindPackage
+          fluxPackage
+          fluxOperatorPackage
+        ] ++ lib.optionals stdenv.isLinux [
+          podman
+          conmon
+          crun
+          fuse-overlayfs
+          slirp4netns
+          netavark
+          aardvark-dns
         ];
 
         # Native libs for Python packages: asyncpg, argon2-cffi, grpcio, lxml, numpy
@@ -332,7 +428,7 @@
           name = "nohiki-k8s";
           packages = coreTools ++ containerTools ++ infraTools ++ k8sTools ++ [ python ];
           shellHook = ''
-            echo "k8s shell ready (kubectl, helm, kustomize, k9s, kubectx, stern, flux)"
+            echo "k8s shell ready (kubectl, helm, kustomize, k9s, kubectx, stern, kind, flux, flux-operator, rootless Podman)"
             if [ -n "''${KUBECONFIG:-}" ]; then
               echo "  KUBECONFIG=$KUBECONFIG"
             else
