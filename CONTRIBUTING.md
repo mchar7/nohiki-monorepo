@@ -295,24 +295,49 @@ just ast-query <kind>                 # Query symbols by kind
 
 ### Git hooks (Lefthook)
 
-Pre-commit hooks auto-fix ruff lint/format, Biome, and markdownlint. They also
-run buf lint, gitleaks, actionlint, and hadolint.
-Pre-push hooks run ty, unit tests, hygiene checks, strict deadcode, backend
-build checks, and buf breaking when proto files change.
+The configured hooks are:
 
-Hooks run on every commit and push. Bypass mechanisms (`LEFTHOOK=0`,
-`SKIP_PREPUSH=1`, `git --no-verify`, branch-name skip patterns) are not
-honoured. When a hook fails on a file unrelated to the current change, fix
-the unrelated issue on the same branch in a separate atomic commit before merging.
-The merge commit preserves both repairs as reviewable semantic commits.
+- **Commit message:** Conventional Commit validation (`commitlint`) and the internal-reference check.
+- **Pre-commit:** Python Ruff lint and format, frontend Biome lint and format, protobuf lint, Markdown lint,
+  frontend i18n validation, staged-secret scanning, GitHub Actions lint, and Dockerfile lint. Lefthook skips this
+  hook during merges and rebases.
+- **Pre-push:**
+  - Internal-reference range validation
+  - Python lint
+  - Python format
+  - Python typecheck
+  - Frontend typecheck
+  - Nix flake check
+  - Affected Python tests
+  - Skylos cache tests
+  - Node workspace contract tests
+  - Frontend tests
+  - Strict dead-code analysis
+  - Deptry
+  - Semgrep architecture checks
+  - Strict backend build policy
+  - Frontend architecture checks
+  - API schema freshness
+  - Image matrix parity
+  - Protobuf breaking-change detection
 
-GitHub Actions uses `.github/workflows/checks.yml` for lint, commitlint, and
-pre-push parity; its `changes` job change-gates every lane through
-`ci-checks gate` (dependency-graph package scoping, fail-closed on unmapped
-files) and records the verdict in the run's step summary.
-Container builds and pushes live in `.github/workflows/build-push.yml`;
-`.github/workflows/digest-freshness.yml` probes pinned base-image digests
-weekly; there is no `test.yml` workflow.
+The installed pre-push wrapper invokes the pinned Lefthook binary with `--force`, so every pre-push job above runs
+on a normal push even when its configured glob does not match the change. Before invoking Lefthook, the wrapper
+unsets `LEFTHOOK`, `LEFTHOOK_BIN`, `LEFTHOOK_VERBOSE`, `LEFTHOOK_CONFIG`, and `LEFTHOOK_EXCLUDE`. Those variables
+therefore cannot disable a push that reaches the wrapper. There is no `SKIP_PREPUSH` override or branch-name skip.
+
+Hooks remain client-side. `git push --no-verify` bypasses the pre-push hook completely, before the wrapper can run;
+no client-side wrapper can prevent that. Use it only as a deliberate exception, knowing that it skips all local
+pre-push checks and leaves the hosted checks to catch failures.
+
+Pre-push is not a 30 to 60 second check. Measured full runs took about 180 seconds with warm caches and 420 seconds
+with cold caches. Strict dead-code analysis accounted for about 270 seconds of the cold run.
+
+GitHub Actions uses `.github/workflows/checks.yml` for lint, commitlint, and pre-push parity; its `changes` job
+change-gates every lane through `ci-checks gate` (dependency-graph package scoping, fail-closed on unmapped files)
+and records the verdict in the run's step summary. Container builds and pushes live in
+`.github/workflows/build-push.yml`; `.github/workflows/digest-freshness.yml` probes pinned base-image digests weekly;
+there is no `test.yml` workflow.
 
 ```bash
 just hooks-install                # Install hooks (run once after clone)
@@ -431,8 +456,8 @@ build-backend = "uv_build"
 **Enforcement:** `just hygiene-build-backend` reports migration progress and
 fails on drift (packages already on uv_build diverging from the canonical
 stanza, or carrying residue from superseded `[tool.hatch.*]` /
-`[tool.setuptools.*]` sections). `just hygiene-build-backend-strict`
-additionally fails on any package not yet migrated to uv_build. Wire this
+`[tool.setuptools.*]` sections). `just hygiene-build-backend-strict` also
+fails on any package not yet migrated to uv_build. Wire this
 into `just hygiene` once the rollout is complete.
 
 ### Exceptions
