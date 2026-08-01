@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { saveAs } from 'file-saver';
 import { ArrowLeft, Download, FileText, Scale } from 'lucide-react';
 import type { JSX } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -71,19 +70,15 @@ function useLicenses(): ReturnType<typeof useQuery<{ content: string; summary: L
   });
 }
 
-// Reusable download button
-function DownloadButton({ content }: { readonly content: string }): JSX.Element {
+function DownloadButton(): JSX.Element {
   const { t } = useTranslation('legal');
 
-  const handleDownload = (): void => {
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    saveAs(blob, 'third-party-licenses.txt');
-  };
-
   return (
-    <Button variant="outline" size="sm" onClick={handleDownload}>
-      <Download className="mr-2 size-4" />
-      {t('licenses.fullText.download')}
+    <Button variant="outline" size="sm" asChild={true}>
+      <a href="/third-party-licenses.txt" download="third-party-licenses.txt">
+        <Download className="mr-2 size-4" />
+        {t('licenses.fullText.download')}
+      </a>
     </Button>
   );
 }
@@ -197,7 +192,7 @@ function LicenseContent({
             <CardDescription>{t('licenses.fullText.description')}</CardDescription>
           </CardHeader>
           <CardContent>
-            <DownloadButton content={content} />
+            <DownloadButton />
           </CardContent>
         </Card>
       </TabsContent>
@@ -211,7 +206,7 @@ function LicenseContent({
                 {t('licenses.summary.packages', { count: summary.total })}
               </CardDescription>
             </div>
-            <DownloadButton content={content} />
+            <DownloadButton />
           </CardHeader>
           <Separator />
           <CardContent className="p-0">
