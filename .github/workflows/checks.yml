@@ -74,20 +74,7 @@ jobs:
       - name: Open router summary
         env:
           EVENT_ACTION: ${{ github.event.action }}
-        run: |
-          {
-            echo "## Router"
-            echo
-            echo "Classifies the tested diff into lane flags and a commit class. Runs no checks itself."
-            echo
-            echo "| Context | Value |"
-            echo "|---|---|"
-            echo "| Run | \`$GITHUB_RUN_ID\` |"
-            echo "| Event | \`$GITHUB_EVENT_NAME\` (\`${EVENT_ACTION:-none}\`) |"
-            echo "| Tested SHA | \`${GITHUB_SHA:0:7}\` |"
-            echo
-            echo "### Results"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary open router "$GITHUB_STEP_SUMMARY"
 
       - name: Set up uv and Python
         id: setup-uv
@@ -162,22 +149,9 @@ jobs:
         id: guards
         env:
           COMMIT_CLASS: ${{ steps.gate.outputs.commit_class }}
-        run: |
-          case "$COMMIT_CLASS" in
-            # S-90 split the wall budget into a cold and a warm one. This value is fixed when the
-            # matrix is created, before any leg knows whether its ready cache will hit, so only the
-            # larger of the two can bound a hang without killing a legitimately cold worker.
-            standard|broad) cold_wall_budget_seconds=844 ;;
-            *)
-              echo "cannot derive a guard for commit class: $COMMIT_CLASS" >&2
-              exit 1
-              ;;
-          esac
-          # A timeout is a hang guard, not the class budget verdict. Parallel broad units
-          # share one fan-in wall clock, so each uses the same wall-plus-grace guard.
-          hang_grace_minutes=2
-          timeout=$((cold_wall_budget_seconds / 60 + hang_grace_minutes))
-          echo "worker_timeout_minutes=$timeout" >> "$GITHUB_OUTPUT"
+        run: >
+          python3 scripts/ci/src/ci_checks/checks/workflow.py
+          guard "$COMMIT_CLASS" "$GITHUB_OUTPUT"
       - name: Write Checks attestation
         if: github.event_name == 'pull_request' && github.event.action != 'edited'
         env:
@@ -216,55 +190,7 @@ jobs:
           TITLE_ONLY: ${{ steps.reuse.outputs.title_only }}
           REUSED_RUN_ID: ${{ steps.reuse.outputs.reused_run_id }}
           EVENT_ACTION: ${{ github.event.action }}
-        run: |
-          now="$(date +%s)"
-          if [[ "$UV_CACHE_HIT" == true ]]; then uv_state=hit; else uv_state=miss; fi
-          # Shaped like the composite's cache-telemetry so every job renders caches identically.
-          CACHE_OUTCOMES="uv=$uv_state:${UV_CACHE_KEY:-none}"
-          # shellcheck disable=SC2016 # Markdown code spans are literal.
-          {
-            if [ "$TITLE_ONLY" = true ]; then
-              echo
-              echo "**Substantive units short-circuited.** This event changed only the pull request"
-              echo "title, which cannot change the tree, so run \`$REUSED_RUN_ID\` already proves every"
-              echo "verdict above. Commit policy still runs in \`Title policy\`."
-            fi
-            echo
-            echo "### Cost"
-            echo
-            echo "| Phase | Seconds |"
-            echo "|---|---:|"
-            echo "| Setup | $((UNIQUE_STARTED - JOB_STARTED)) |"
-            echo "| Unique work | $((now - UNIQUE_STARTED)) |"
-            echo
-            echo "| Cache | Outcome | Key |"
-            echo "|---|---|---|"
-            read -ra entries <<< "$CACHE_OUTCOMES"
-            for entry in "${entries[@]}"; do
-              name="${entry%%=*}"
-              value="${entry#*=}"
-              key="${value#*:}"
-              state="${value%%:*}"
-              if [ "$key" = none ]; then
-                key="—"
-              else
-                # A 64-character hash tells a human nothing; the full key is in the job log.
-                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1…/g')\`"
-              fi
-              printf '| %s | %s | %s |\n' "$name" "${state//-/ }" "$key"
-            done
-            echo
-            echo "### Commands"
-            echo
-            if [ "$GITHUB_EVENT_NAME" = push ]; then
-              echo '- `ci-checks gate-evidence`'
-            fi
-            echo '- `ci-checks gate`'
-            echo '- `ci-checks gate-reuse`'
-            if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "${EVENT_ACTION:-}" != edited ]; then
-              echo '- `git rev-parse HEAD^{tree}`; `jq` attestation'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary report router "$GITHUB_STEP_SUMMARY"
 
 
   worker:
@@ -317,36 +243,17 @@ jobs:
         id: timing
         run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Open worker summary
         env:
           UNIT: ${{ matrix.unit }}
           UNITS: ${{ join(fromJSON(needs.changes.outputs.worker_units), ', ') }}
           COMMIT_CLASS: ${{ needs.changes.outputs.commit_class }}
-        run: |
-          case "$UNIT" in
-            python) scope='the Python leg: the affected-package test closure.' ;;
-            frontend) scope='the frontend leg: Node, hygiene and policy checks.' ;;
-            *) echo "unknown worker unit: $UNIT" >&2; exit 1 ;;
-          esac
-          {
-            echo "## Scoped worker ($UNIT)"
-            echo
-            echo "Runs $scope"
-            echo
-            echo "| Context | Value |"
-            echo "|---|---|"
-            echo "| Run | \`$GITHUB_RUN_ID\` |"
-            echo "| Unit | \`$UNIT\` of \`$UNITS\` |"
-            echo "| Commit class | \`$COMMIT_CLASS\` |"
-            echo "| Tested SHA | \`${GITHUB_SHA:0:7}\` |"
-            echo
-            echo "### Results"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary open worker "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
 
 
       - name: Set up selected environments
@@ -657,28 +564,9 @@ jobs:
           OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
           FRONTEND_SMOKE_EXPECTED: ${{ needs.changes.outputs.frontend_smoke }}
           OTEL_EXPECTED: ${{ needs.changes.outputs.otel_collector }}
-        run: |
-          require() {
-            outcome="$1"
-            expected="$2"
-            name="$3"
-            if [ "$expected" = true ]; then
-              test "$outcome" = success || {
-                echo "$name was selected but concluded $outcome" >&2
-                return 1
-              }
-            else
-              test "$outcome" = skipped || {
-                echo "$name was not selected but concluded $outcome" >&2
-                return 1
-              }
-            fi
-          }
-          require "$BUILDX_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" container-buildx
-          require "$IMAGE_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" frontend-image
-          require "$SMOKE_OUTCOME" "$FRONTEND_SMOKE_EXPECTED" frontend-smoke
-          require "$OTEL_OUTCOME" "$OTEL_EXPECTED" otel-collector
-          echo "executed=true" >> "$GITHUB_OUTPUT"
+        run: >
+          python3 scripts/ci/src/ci_checks/checks/workflow.py
+          verdict container "$GITHUB_OUTPUT"
 
       - name: Report worker cost
         if: always()
@@ -692,95 +580,29 @@ jobs:
           IMAGE_OUTCOME: ${{ steps.frontend-image.outcome }}
           SMOKE_OUTCOME: ${{ steps.frontend-smoke.outcome }}
           OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
-        run: |
-          now="$(date +%s)"
-          # A unit reports only what it actually ran. `all` runs everything; a broad unit runs
-          # its own bin, so the owning unit is part of the claim, not just the router flag.
-          commands=()
-          record() {
-            if [ "$SMOKE" != true ] && [ "$1" = true ] && [ "$UNIT" = "$2" ]; then
-              commands+=("$3")
-            fi
-          }
-          record "${{ needs.changes.outputs.nix }}" frontend 'nix flake check; lefthook version'
-          record "${{ needs.changes.outputs.lint_python }}" frontend 'ruff check/format (whole tree on broad, changed files on standard)'
-          record "${{ needs.changes.outputs.lint_markdown }}" frontend 'markdownlint-cli2 (changed Markdown files)'
-          record "${{ needs.changes.outputs.lint_proto }}" frontend 'buf lint'
-          record "${{ needs.changes.outputs.lint_workflows }}" frontend 'actionlint; check-jsonschema'
-          record "${{ needs.changes.outputs.lint_docker }}" frontend 'hadolint (tracked Dockerfiles)'
-          record "${{ needs.changes.outputs.lint_frontend }}" frontend 'Biome; i18n:check'
-          record "${{ needs.changes.outputs.lint_steiger }}" frontend 'Steiger FSD architecture'
-          record "${{ needs.changes.outputs.typecheck_backend }}" frontend 'ty check native source surface'
-          record "${{ needs.changes.outputs.typecheck_frontend }}" frontend 'frontend type-check'
-          record "${{ needs.changes.outputs.python_any }}" python 'ci-checks tests affected package closure'
-          record "${{ needs.changes.outputs.node_workspace_contracts }}" frontend 'pytest -m requires_node_modules'
-          record "${{ needs.changes.outputs.frontend_tests }}" frontend 'frontend Vitest'
-          record "${{ needs.changes.outputs.edge_worker }}" frontend 'Biome; tsc; Vitest edge worker'
-          record "${{ needs.changes.outputs.hygiene }}" frontend 'ci-checks deptry --packages affected closure; Semgrep architecture scan'
-          record "${{ needs.changes.outputs.build_backend }}" frontend 'ci-checks build-backend --packages affected closure'
-          record "${{ needs.changes.outputs.api_schema_freshness }}" frontend 'just api-schema-check'
-          record "${{ needs.changes.outputs.image_matrix_parity }}" frontend 'just image-matrix-check'
-          record "${{ needs.changes.outputs.proto_breaking }}" frontend 'buf breaking'
-          record "${{ needs.changes.outputs.commitlint_expected }}" frontend 'commitlint PR range; commitlint PR title'
-          record "${{ needs.changes.outputs.frontend_smoke }}" frontend 'Buildx production frontend image; hardened-runtime container smoke'
-          record "${{ needs.changes.outputs.otel_collector }}" frontend 'OpenTelemetry collector image and rendered config validation'
-          {
-            # Results is filled by the tools that emit their own block. A bounded broad run
-            # routinely selects none of them, so an empty section is the normal outcome and has to
-            # read as one rather than as a report that failed to arrive.
-            if [ "$SMOKE" = true ]; then
-              echo
-              echo "Protected-main smoke only. No check in this unit reports findings."
-            elif ((${#commands[@]} == 0)); then
-              echo
-              echo "The gate selected no check for the \`$UNIT\` bin on this change, so there is"
-              echo "nothing to report here. The secret scan below is the only work this unit did."
-            fi
-            echo
-            if [ "$CONTAINER_SELECTED" = true ]; then
-              echo
-              echo "| Container check | Outcome |"
-              echo "|---|---|"
-              echo "| Production frontend image build | $IMAGE_OUTCOME |"
-              echo "| Frontend container hardened-runtime smoke | $SMOKE_OUTCOME |"
-              echo "| OpenTelemetry collector image and rendered configs | $OTEL_OUTCOME |"
-            fi
-            echo "### Cost"
-            echo
-            echo "| Phase | Seconds |"
-            echo "|---|---:|"
-            echo "| Setup | $((UNIQUE_STARTED - JOB_STARTED)) |"
-            echo "| Unique work | $((now - UNIQUE_STARTED)) |"
-            echo
-            echo "| Cache | Outcome | Key |"
-            echo "|---|---|---|"
-            read -ra entries <<< "${CACHE_OUTCOMES:-}"
-            for entry in "${entries[@]}"; do
-              name="${entry%%=*}"
-              value="${entry#*=}"
-              key="${value#*:}"
-              state="${value%%:*}"
-              if [ "$key" = none ]; then
-                key="—"
-              else
-                # A 64-character hash tells a human nothing; the full key is in the job log.
-                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1…/g')\`"
-              fi
-              printf '| %s | %s | %s |\n' "$name" "${state//-/ }" "$key"
-            done
-            echo
-            echo "### Commands"
-            echo
-            if [ "$SMOKE" = true ]; then
-              # shellcheck disable=SC2016 # Markdown code spans are literal.
-              echo '- `ci-checks --help` (protected-main smoke)'
-            fi
-            for command in "${commands[@]}"; do
-              echo "- \`$command\`"
-            done
-            # shellcheck disable=SC2016 # Markdown code spans are literal.
-            echo '- changed-content or repository-wide `gitleaks` scan'
-          } >> "$GITHUB_STEP_SUMMARY"
+          FLAG_NIX: ${{ needs.changes.outputs.nix }}
+          FLAG_LINT_PYTHON: ${{ needs.changes.outputs.lint_python }}
+          FLAG_LINT_MARKDOWN: ${{ needs.changes.outputs.lint_markdown }}
+          FLAG_LINT_PROTO: ${{ needs.changes.outputs.lint_proto }}
+          FLAG_LINT_WORKFLOWS: ${{ needs.changes.outputs.lint_workflows }}
+          FLAG_LINT_DOCKER: ${{ needs.changes.outputs.lint_docker }}
+          FLAG_LINT_FRONTEND: ${{ needs.changes.outputs.lint_frontend }}
+          FLAG_LINT_STEIGER: ${{ needs.changes.outputs.lint_steiger }}
+          FLAG_TYPECHECK_BACKEND: ${{ needs.changes.outputs.typecheck_backend }}
+          FLAG_TYPECHECK_FRONTEND: ${{ needs.changes.outputs.typecheck_frontend }}
+          FLAG_PYTHON_ANY: ${{ needs.changes.outputs.python_any }}
+          FLAG_NODE_WORKSPACE_CONTRACTS: ${{ needs.changes.outputs.node_workspace_contracts }}
+          FLAG_FRONTEND_TESTS: ${{ needs.changes.outputs.frontend_tests }}
+          FLAG_EDGE_WORKER: ${{ needs.changes.outputs.edge_worker }}
+          FLAG_HYGIENE: ${{ needs.changes.outputs.hygiene }}
+          FLAG_BUILD_BACKEND: ${{ needs.changes.outputs.build_backend }}
+          FLAG_API_SCHEMA_FRESHNESS: ${{ needs.changes.outputs.api_schema_freshness }}
+          FLAG_IMAGE_MATRIX_PARITY: ${{ needs.changes.outputs.image_matrix_parity }}
+          FLAG_PROTO_BREAKING: ${{ needs.changes.outputs.proto_breaking }}
+          FLAG_COMMITLINT_EXPECTED: ${{ needs.changes.outputs.commitlint_expected }}
+          FLAG_FRONTEND_SMOKE: ${{ needs.changes.outputs.frontend_smoke }}
+          FLAG_OTEL_COLLECTOR: ${{ needs.changes.outputs.otel_collector }}
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary report worker "$GITHUB_STEP_SUMMARY"
 
 
   playwright-image:
@@ -801,20 +623,7 @@ jobs:
           persist-credentials: false
 
       - name: Open Playwright runner image summary
-        run: |
-          {
-            echo "## Playwright runner image"
-            echo
-            echo "Builds the Playwright runner image and asserts the bundled Playwright CLI runs"
-            echo "inside it."
-            echo
-            echo "| Context | Value |"
-            echo "|---|---|"
-            echo "| Run | \`$GITHUB_RUN_ID\` |"
-            echo "| Tested SHA | \`${GITHUB_SHA:0:7}\` |"
-            echo
-            echo "### Results"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary open playwright "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -851,33 +660,7 @@ jobs:
           UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
           BUILD_OUTCOME: ${{ steps.runner-image.outcome }}
           VERIFY_OUTCOME: ${{ steps.runner-verify.outcome }}
-        run: |
-          now="$(date +%s)"
-          # shellcheck disable=SC2016 # Markdown code spans are literal.
-          {
-            echo
-            echo "| Check | Outcome |"
-            echo "|---|---|"
-            echo "| Playwright runner image build | $BUILD_OUTCOME |"
-            echo "| \`playwright --version\` inside the built image | $VERIFY_OUTCOME |"
-            echo
-            echo "### Cost"
-            echo
-            echo "| Phase | Seconds |"
-            echo "|---|---:|"
-            echo "| Setup | $((UNIQUE_STARTED - JOB_STARTED)) |"
-            echo "| Unique work | $((now - UNIQUE_STARTED)) |"
-            echo
-            # The previous report named a BuildKit cache outcome this job never queries and never
-            # observed. A cache table with no rows would repeat that claim in a nicer shape.
-            echo "This job restores no \`actions/cache\` entries. Image layers come from the"
-            echo "BuildKit \`type=gha\` cache, which reports its hit rate in the build step log."
-            echo
-            echo "### Commands"
-            echo
-            echo '- Buildx build of `typescript/apps/frontend/Dockerfile.playwright-runner`'
-            echo '- `playwright --version` inside the built image'
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary report playwright "$GITHUB_STEP_SUMMARY"
 
   # The only work an `edited` event can invalidate once the tree is proven. The PR title becomes
   # the merge commit subject, so it is re-linted on every edit; the attestation the router matched
@@ -903,21 +686,7 @@ jobs:
       - name: Open title policy summary
         env:
           REUSED_RUN_ID: ${{ needs.changes.outputs.reused_run_id }}
-        run: |
-          {
-            echo "## Title policy"
-            echo
-            echo "Re-lints the pull request title, which becomes the merge commit subject and is the"
-            echo "only thing an \`edited\` event can change. Run \`${REUSED_RUN_ID:-unknown}\` proves the tree."
-            echo
-            echo "| Context | Value |"
-            echo "|---|---|"
-            echo "| Run | \`$GITHUB_RUN_ID\` |"
-            echo "| Tested SHA | \`${GITHUB_SHA:0:7}\` |"
-            echo "| Proven by | \`${REUSED_RUN_ID:-unknown}\` |"
-            echo
-            echo "### Results"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary open title "$GITHUB_STEP_SUMMARY"
 
       # commitlint is a root devDependency, so the Node payload restores the shared node_modules
       # cache and skips Nix.
@@ -946,43 +715,7 @@ jobs:
           JOB_STARTED: ${{ steps.timing.outputs.started }}
           UNIQUE_STARTED: ${{ steps.unique.outputs.started }}
           TITLE_OUTCOME: ${{ steps.title-lint.outcome }}
-        run: |
-          now="$(date +%s)"
-          # shellcheck disable=SC2016 # Markdown code spans are literal.
-          {
-            echo
-            echo "| Check | Outcome |"
-            echo "|---|---|"
-            echo "| commitlint on the pull request title | $TITLE_OUTCOME |"
-            echo
-            echo "### Cost"
-            echo
-            echo "| Phase | Seconds |"
-            echo "|---|---:|"
-            echo "| Setup | $((UNIQUE_STARTED - JOB_STARTED)) |"
-            echo "| Unique work | $((now - UNIQUE_STARTED)) |"
-            echo
-            echo "| Cache | Outcome | Key |"
-            echo "|---|---|---|"
-            read -ra entries <<< "${CACHE_OUTCOMES:-}"
-            for entry in "${entries[@]}"; do
-              name="${entry%%=*}"
-              value="${entry#*=}"
-              key="${value#*:}"
-              state="${value%%:*}"
-              if [ "$key" = none ]; then
-                key="—"
-              else
-                # A 64-character hash tells a human nothing; the full key is in the job log.
-                key="\`$(printf '%s' "$key" | sed -E 's/([0-9a-f]{8})[0-9a-f]{24,}/\1…/g')\`"
-              fi
-              printf '| %s | %s | %s |\n' "$name" "${state//-/ }" "$key"
-            done
-            echo
-            echo "### Commands"
-            echo
-            echo '- `commitlint` on the pull request title'
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary report title "$GITHUB_STEP_SUMMARY"
 
   checks:
     name: Checks
@@ -998,6 +731,13 @@ jobs:
       actions: read
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/ci/src/ci_checks/checks/workflow.py
+          sparse-checkout-cone-mode: false
+          fetch-depth: 1
+          persist-credentials: false
+
       # No timing steps: a fan-in performs no setup and no unique work, so measuring its own
       # setup and work seconds only ever produced 0 and 1. Its cost is the run's, reported below.
       - name: Open fan-in summary
@@ -1006,24 +746,7 @@ jobs:
           COMMIT_CLASS: ${{ needs.changes.outputs.commit_class }}
           TITLE_ONLY: ${{ needs.changes.outputs.title_only }}
           REUSED_RUN_ID: ${{ needs.changes.outputs.reused_run_id }}
-        run: |
-          {
-            echo "## Checks"
-            echo
-            echo "Fan-in. Asserts every selected job reached the conclusion the gate required,"
-            echo "validates the router attestation, and accounts for the run."
-            echo
-            echo "| Context | Value |"
-            echo "|---|---|"
-            echo "| Run | \`$GITHUB_RUN_ID\` |"
-            echo "| Event | \`$GITHUB_EVENT_NAME\` (\`${EVENT_ACTION:-none}\`) |"
-            echo "| Commit class | \`$COMMIT_CLASS\` |"
-            if [ "$TITLE_ONLY" = true ]; then
-              echo "| Reuse | title-only edit, tree proven by run \`${REUSED_RUN_ID:-unknown}\` |"
-            fi
-            echo
-            echo "### Results"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary open checks "$GITHUB_STEP_SUMMARY"
 
       - name: Require every selected check
         env:
@@ -1043,65 +766,15 @@ jobs:
           CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
           WORKER_CONTAINER_CONTRACTS: ${{ needs.worker.outputs.container_contracts_executed }}
           PLAYWRIGHT_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true') }}
-        run: |
-          test '${{ needs.changes.result }}' = success
-          test '${{ needs.changes.outputs.full }}' = '${{ needs.changes.outputs.broad }}'
-          case '${{ needs.changes.outputs.commit_class }}' in
-            standard)
-              test '${{ needs.changes.outputs.standard }}' = true
-              test '${{ needs.changes.outputs.broad }}' = false
-              ;;
-            broad)
-              test '${{ needs.changes.outputs.standard }}' = false
-              test '${{ needs.changes.outputs.broad }}' = true
-              ;;
-            *)
-              echo "router emitted an invalid commit class" >&2
-              exit 1
-              ;;
-          esac
-          require() {
-            result="$1"; expected="$2"; name="$3"
-            if [ "$expected" = true ]; then
-              test "$result" = success || {
-                echo "$name was selected but concluded $result" >&2
-                return 1
-              }
-            else
-              test "$result" = skipped || {
-                echo "$name was not selected but concluded $result" >&2
-                return 1
-              }
-            fi
-          }
-          # One matrix result covers every selected unit: a failing unit fails the whole job.
-          require '${{ needs.worker.result }}' "$WORK_EXPECTED" worker
-          if [ "$WORKER_COMMITLINT_EXPECTED" = true ]; then
-            test "$WORKER_COMMITLINT" = true || {
-              echo "the selected worker did not execute commit policy" >&2
-              exit 1
-            }
-          else
-            test "$WORKER_COMMITLINT" != true
-          fi
-          if [ "$NODE_GROUP_EXPECTED" = true ]; then
-            test "$WORKER_NODE_GROUP" = true || {
-              echo "the selected worker did not execute the Node command group" >&2
-              exit 1
-            }
-          else
-            test "$WORKER_NODE_GROUP" != true
-          fi
-          if [ "$CONTAINER_EXPECTED" = true ]; then
-            test "$WORKER_CONTAINER_CONTRACTS" = true || {
-              echo "the selected worker did not complete every container contract" >&2
-              exit 1
-            }
-          else
-            test "$WORKER_CONTAINER_CONTRACTS" != true
-          fi
-          require '${{ needs.playwright-image.result }}' "$PLAYWRIGHT_EXPECTED" playwright-image
-          require '${{ needs.title-policy.result }}' "$TITLE_POLICY_EXPECTED" title-policy
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          FULL: ${{ needs.changes.outputs.full }}
+          BROAD: ${{ needs.changes.outputs.broad }}
+          COMMIT_CLASS: ${{ needs.changes.outputs.commit_class }}
+          STANDARD: ${{ needs.changes.outputs.standard }}
+          WORKER_RESULT: ${{ needs.worker.result }}
+          PLAYWRIGHT_RESULT: ${{ needs.playwright-image.result }}
+          TITLE_POLICY_RESULT: ${{ needs.title-policy.result }}
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py verdict checks
 
       - name: Download router attestation
         if: github.event_name == 'pull_request' && github.event.action != 'edited'
@@ -1136,156 +809,10 @@ jobs:
           WORK_EXPECTED: ${{ (needs.changes.outputs.standard == 'true' || needs.changes.outputs.broad == 'true') && needs.changes.outputs.title_only != 'true' }}
           PLAYWRIGHT_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true') }}
           TITLE_POLICY_EXPECTED: ${{ needs.changes.outputs.title_only == 'true' }}
+          COMMIT_CLASS: ${{ needs.changes.outputs.commit_class }}
           # Single-writer cache signals preserve hits and misses across the worker matrix.
           WORKER_READY_CACHE_MISSED: ${{ needs.worker.outputs.ready_cache_missed }}
           WORKER_READY_CACHE_HIT: ${{ needs.worker.outputs.ready_cache_hit }}
           WORKER_DEADCODE_CACHE_MISSED: ${{ needs.worker.outputs.deadcode_cache_missed }}
           WORKER_DEADCODE_CACHE_HIT: ${{ needs.worker.outputs.deadcode_cache_hit }}
-        run: |
-          now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          run="$(gh api "repos/$REPO/actions/runs/$RUN_ID")"
-          run_started="$(jq -r '.run_started_at' <<< "$run")"
-          pages="$(gh api --paginate --slurp "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100")"
-          accounting_epoch="$(date -u -d "$now_iso" +%s)"
-          run_started_epoch="$(date -u -d "$run_started" +%s)"
-          run_wall_seconds=$((accounting_epoch - run_started_epoch))
-          first_job_started_epoch="$(jq -r '
-            [.[] | .jobs[] | select(.conclusion != "skipped")] as $eligible
-            | [$eligible[] | try (.started_at | fromdateiso8601) catch empty] as $starts
-            | if ($eligible | length) > 0 and ($starts | length) == ($eligible | length)
-              then ($starts | min)
-              else empty
-              end
-          ' <<< "$pages" 2>/dev/null || true)"
-          if [[ "$first_job_started_epoch" =~ ^[0-9]+$ ]] \
-            && ((first_job_started_epoch >= run_started_epoch \
-              && first_job_started_epoch <= accounting_epoch)); then
-            controllable_wall_seconds=$((accounting_epoch - first_job_started_epoch))
-            dispatch_seconds=$((first_job_started_epoch - run_started_epoch))
-            accounting_start_basis="first non-skipped job start from the Actions jobs API"
-          else
-            controllable_wall_seconds=$run_wall_seconds
-            dispatch_seconds=0
-            accounting_start_basis="run_started_at fallback: first non-skipped job start unavailable or invalid"
-          fi
-          jobs="$(jq -c '[.[] | .jobs[] | select(.started_at != null)]' <<< "$pages")"
-          billable_minutes="$(jq --arg now "$now_iso" '
-            [.[]
-              | (((.completed_at // $now) | fromdateiso8601) - (.started_at | fromdateiso8601))
-              | (. / 60 | ceil)
-            ] | add // 0
-          ' <<< "$jobs")"
-          case '${{ needs.changes.outputs.commit_class }}' in
-            standard|broad)
-              # S-90's warm budget requires exact cache-hit evidence from every material cache.
-              warm_wall_budget_seconds=600
-              cold_wall_budget_seconds=844
-              ;;
-            *)
-              echo "cannot account for an invalid commit class" >&2
-              exit 1
-              ;;
-          esac
-          case "${WORKER_READY_CACHE_MISSED:-}:${WORKER_READY_CACHE_HIT:-}" in
-            true:)
-              ready_cache_state=missed
-              ready_cache_basis="ready-cache primary key missed by at least one worker leg"
-              ;;
-            :true)
-              ready_cache_state=restored
-              ready_cache_basis="ready-cache primary key restored by every reporting worker leg"
-              ;;
-            true:true)
-              ready_cache_state=mixed
-              ready_cache_basis="ready-cache primary key hit on one worker leg and missed on another"
-              ;;
-            :)
-              ready_cache_state=unreported
-              ready_cache_basis="ready-cache primary key hit unreported"
-              ;;
-            *)
-              ready_cache_state=invalid
-              ready_cache_basis="ready-cache signal invalid"
-              ;;
-          esac
-          case "${WORKER_DEADCODE_CACHE_MISSED:-}:${WORKER_DEADCODE_CACHE_HIT:-}" in
-            true:)
-              deadcode_cache_state=missed
-              deadcode_cache_basis="dead-code static cache primary key not restored"
-              ;;
-            :true)
-              deadcode_cache_state=restored
-              deadcode_cache_basis="dead-code static cache primary key restored"
-              ;;
-            :)
-              deadcode_cache_state=unreported
-              deadcode_cache_basis="dead-code static cache hit unreported"
-              ;;
-            *)
-              deadcode_cache_state=invalid
-              deadcode_cache_basis="dead-code static cache signal invalid"
-              ;;
-          esac
-          if [ "$ready_cache_state" = restored ] && [ "$deadcode_cache_state" = restored ]; then
-            wall_budget_seconds=$warm_wall_budget_seconds
-            wall_budget_class=warm
-          else
-            wall_budget_seconds=$cold_wall_budget_seconds
-            wall_budget_class=cold
-          fi
-          wall_budget_basis="$ready_cache_basis; $deadcode_cache_basis"
-          # $0.006/min, Linux x64 2-vCPU, verified against this account's own July billing.
-          estimated_cost_usd="$(printf '%d.%03d' \
-            "$((billable_minutes * 6 / 1000))" "$((billable_minutes * 6 % 1000))")"
-          # A bare `skipped` conflates two opposite facts: the gate declining work, and the gate
-          # asserting a prior run already proved this tree. The expectation bits separate them.
-          expected="$(jq -n \
-            --argjson worker "$WORK_EXPECTED" \
-            --argjson playwright "$PLAYWRIGHT_EXPECTED" \
-            --argjson title "$TITLE_POLICY_EXPECTED" \
-            '{worker: $worker, "Playwright runner image": $playwright,
-              "Title policy": $title, "Router": true, "Checks": true}')"
-          {
-            echo
-            echo "| Job | Exact seconds | Rounded billable minutes | Conclusion |"
-            echo "|---|---:|---:|---|"
-            jq -r --arg now "$now_iso" --arg reused "${REUSED_RUN_ID:-}" --argjson expected "$expected" '
-              .[] |
-              (((.completed_at // $now) | fromdateiso8601) - (.started_at | fromdateiso8601)) as $seconds |
-              (if (.name | startswith("Scoped worker")) then $expected.worker
-               else ($expected[.name] // false) end) as $wanted |
-              (if .conclusion == null then "running (this job)"
-               elif .conclusion != "skipped" then .conclusion
-               elif $wanted and $reused != "" then "skipped: already proven by run \($reused)"
-               elif $wanted then "skipped: expected to run"
-               else "skipped: not selected" end) as $concl |
-              "| \(.name) | \($seconds) | \(($seconds / 60) | ceil) | \($concl) |"
-            ' <<< "$jobs"
-            echo
-            echo "### Cost"
-            echo
-            echo "A fan-in performs no setup and no unique work; its cost is the run's."
-            echo
-            echo "| Measure | Value |"
-            echo "|---|---:|"
-            echo "| Run wall seconds (includes GitHub dispatch) | $run_wall_seconds |"
-            echo "| Controllable wall seconds (budgeted) | $controllable_wall_seconds |"
-            echo "| GitHub dispatch seconds (not budgeted) | $dispatch_seconds |"
-            echo "| Accounting start | $accounting_start_basis |"
-            echo "| Wall budget seconds | $wall_budget_seconds |"
-            echo "| Wall budget class | $wall_budget_class |"
-            echo "| Wall budget basis | $wall_budget_basis |"
-            echo "| Reconstructed billable minutes | $billable_minutes |"
-            echo "| Estimated cost USD | $estimated_cost_usd |"
-            echo
-            echo "### Commands"
-            echo
-            echo "- router attestation validation"
-            echo "- jobs API accounting aggregation"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if ((controllable_wall_seconds >= wall_budget_seconds)); then
-            echo "wall budget breached: class=${wall_budget_class}" \
-              "observed_controllable=${controllable_wall_seconds}s" \
-              "budget<${wall_budget_seconds}s basis=${wall_budget_basis}" >&2
-            exit 1
-          fi
+        run: python3 scripts/ci/src/ci_checks/checks/workflow.py accounting "$GITHUB_STEP_SUMMARY"

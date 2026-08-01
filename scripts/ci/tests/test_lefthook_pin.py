@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 import yaml
+from ci_checks.checks.workflow import render_report_summary
 
 _ROOT = Path(__file__).resolve().parents[3]
 _FLAKE = _ROOT / "flake.nix"
@@ -305,7 +306,21 @@ def test_standard_ci_worker_checks_flake_and_ci_shell_lefthook_version() -> None
     lefthook_step = steps["Check Lefthook version"]
 
     assert lefthook_step["env"]["LEFTHOOK_VERSION"] == _LEFTHOOK_VERSION
-    assert re.search(r"\bnix\s+flake\s+check\b", commands)
+    assert steps["Check flake"]["run"] == "nix develop .#ci --command just nix-check"
+    report = render_report_summary(
+        "worker",
+        {
+            "CACHE_OUTCOMES": "",
+            "CONTAINER_SELECTED": "false",
+            "FLAG_NIX": "true",
+            "JOB_STARTED": "100",
+            "SMOKE": "false",
+            "UNIQUE_STARTED": "120",
+            "UNIT": "frontend",
+        },
+        now=140,
+    )
+    assert "- `nix flake check; lefthook version`" in report
     assert re.search(
         r"\bnix\s+develop\s+\.\#ci\s+--command\s+lefthook\s+version\b",
         commands,

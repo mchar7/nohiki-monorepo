@@ -134,7 +134,19 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
     ),
     SurfaceRule(
         (
-            "scripts/ci/src/ci_checks/core/*",
+            # Importing any core submodule executes the package initializer.
+            "scripts/ci/src/ci_checks/core/__init__.py",
+            "scripts/ci/src/ci_checks/core/change_gate.py",
+            "scripts/ci/src/ci_checks/core/change_rules.py",
+            "scripts/ci/src/ci_checks/core/display.py",
+            "scripts/ci/src/ci_checks/core/image_inventory.py",
+            "scripts/ci/src/ci_checks/core/packages.py",
+        ),
+        flags=BROAD_PYTHON_FLAGS,
+        packages=("ci-checks",),
+    ),
+    SurfaceRule(
+        (
             "scripts/ci/src/ci_checks/checks/gate.py",
             "scripts/ci/src/ci_checks/checks/internal_refs.py",
             # The runner controls every package's test invocation.
@@ -148,6 +160,14 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
 
 
 SURFACE_RULES: tuple[SurfaceRule, ...] = (
+    SurfaceRule(
+        (
+            "scripts/ci/src/ci_checks/core/process_env.py",
+            "scripts/ci/src/ci_checks/core/repository.py",
+            "scripts/ci/src/ci_checks/core/scanner.py",
+        ),
+        packages=("ci-checks",),
+    ),
     SurfaceRule(
         ("*.md", "**/*.md", ".markdownlint-cli2.jsonc", ".markdownlint.json", ".markdownlintignore"),
         flags=("lint_markdown",),

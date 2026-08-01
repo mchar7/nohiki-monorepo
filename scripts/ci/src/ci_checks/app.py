@@ -27,6 +27,7 @@ from ci_checks.checks import freshness as _freshness
 from ci_checks.checks import gate as _gate
 from ci_checks.checks import internal_refs as _internal_refs
 from ci_checks.checks import migration_truth as _migration_truth
+from ci_checks.checks import workflow as _workflow
 from ci_checks.checks.tests import tests_app
 from ci_checks.core.display import console
 from ci_checks.core.packages import Package, Scope, load_packages
@@ -45,6 +46,12 @@ app.add_typer(tests_app, name="tests")
 app.command("gate")(_gate.gate_cmd)
 app.command("gate-evidence")(_gate.gate_evidence_cmd)
 app.command("gate-reuse")(_gate.gate_reuse_cmd)
+
+# GitHub Checks workflow summary, verdict and accounting adapters.
+app.command("workflow-guard")(_workflow.guard_cmd)
+app.command("workflow-summary")(_workflow.summary_cmd)
+app.command("workflow-verdict")(_workflow.verdict_cmd)
+app.command("workflow-accounting")(_workflow.accounting_cmd)
 
 
 def _filter_packages(

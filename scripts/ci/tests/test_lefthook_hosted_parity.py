@@ -1338,6 +1338,7 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
     ),
     ("title-policy", "Report title policy cost"): _TIMING,
     # checks: fan-in. Verifies the run, not the tree.
+    ("checks", "uses:actions/checkout"): _SETUP,
     ("checks", "Open fan-in summary"): _SUMMARY,
     ("checks", "Require every selected check"): _HostedStep(
         verifies=True,
@@ -1438,6 +1439,17 @@ def test_every_hosted_step_is_classified() -> None:
     assert not stale, "_HOSTED_INVENTORY names steps checks.yml no longer has:\n" + "\n".join(
         f"  {job}: {step}" for job, step in sorted(stale)
     )
+
+
+def test_fan_in_checkout_is_file_sparse_and_shallow() -> None:
+    """The required status context may fetch only its stdlib helper, never the monorepo."""
+    checkout = _hosted_steps()[("checks", "uses:actions/checkout")]
+    assert _as_mapping(checkout["with"]) == {
+        "sparse-checkout": "scripts/ci/src/ci_checks/checks/workflow.py",
+        "sparse-checkout-cone-mode": False,
+        "fetch-depth": 1,
+        "persist-credentials": False,
+    }
 
 
 def test_inventory_entries_are_well_formed() -> None:

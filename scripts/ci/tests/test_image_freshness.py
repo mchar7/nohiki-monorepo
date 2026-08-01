@@ -1,4 +1,5 @@
 import contextlib
+import re
 import subprocess
 import urllib.error
 import urllib.request
@@ -9,12 +10,16 @@ from typing import Never, Self
 
 import pytest
 import typer
+from _documents import load_workflow
 from ci_checks.checks import freshness
 
 _DIGEST = "a" * 64
 _OTHER = "b" * 64
 _CHECKSUM = "c" * 64
 _URL = "https://example.invalid/release/v1.34.3/bin/linux/amd64/kubectl"
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+_DIGEST_FRESHNESS = _REPOSITORY_ROOT / ".github" / "workflows" / "digest-freshness.yml"
+_PINNED_NIX_INSTALLER = re.compile(r"^cachix/install-nix-action@[0-9a-f]{40}$")
 
 
 def _proc(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
@@ -229,3 +234,14 @@ def test_probe_pin_handles_registry_port_with_tag(monkeypatch: pytest.MonkeyPatc
 
     assert refs[0] == f"docker://registry.example:5000/team/image@sha256:{_DIGEST}"
     assert refs[1] == "docker://registry.example:5000/team/image:1.0"
+
+
+def test_digest_freshness_uses_pinned_nix_installer_and_all_extras_closure() -> None:
+    workflow = load_workflow(_DIGEST_FRESHNESS)
+    steps = workflow["jobs"]["probe"]["steps"]
+
+    install_nix = next(step for step in steps if step.get("name") == "Install Nix")
+    assert _PINNED_NIX_INSTALLER.fullmatch(str(install_nix.get("uses", "")))
+
+    install_workspace = next(step for step in steps if step.get("name") == "Install workspace (all packages + extras)")
+    assert "--all-packages --all-extras --no-extra cuda --locked" in str(install_workspace["run"])

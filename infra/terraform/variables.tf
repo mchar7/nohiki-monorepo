@@ -96,15 +96,53 @@ variable "aks_cluster_name_suffix" {
 }
 
 variable "aks_node_count" {
-  description = "Number of nodes in the AKS default node pool."
+  description = "Number of nodes in the AKS default system node pool."
   type        = number
-  default     = 1
+  default     = 3
 }
 
 variable "aks_node_vm_size" {
-  description = "VM size for AKS cluster nodes."
+  description = "VM size for AKS system nodes."
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_D2s_v5"
+}
+
+variable "aks_node_zones" {
+  description = "Availability zones for the regular AKS node pools."
+  type        = list(string)
+  default     = ["1", "2", "3"]
+}
+
+variable "aks_user_node_pool_name" {
+  description = "Name of the autoscaling AKS user node pool."
+  type        = string
+  default     = "user"
+}
+
+variable "aks_user_node_vm_size" {
+  description = "VM size for AKS user nodes."
+  type        = string
+  default     = "Standard_D4s_v5"
+}
+
+variable "aks_user_node_min_count" {
+  description = "Minimum node count for the autoscaling AKS user node pool."
+  type        = number
+  default     = 4
+  validation {
+    condition     = var.aks_user_node_min_count >= 1 && floor(var.aks_user_node_min_count) == var.aks_user_node_min_count
+    error_message = "aks_user_node_min_count must be a whole number >= 1."
+  }
+}
+
+variable "aks_user_node_max_count" {
+  description = "Maximum node count for the autoscaling AKS user node pool."
+  type        = number
+  default     = 6
+  validation {
+    condition     = var.aks_user_node_max_count >= var.aks_user_node_min_count && floor(var.aks_user_node_max_count) == var.aks_user_node_max_count
+    error_message = "aks_user_node_max_count must be a whole number >= aks_user_node_min_count."
+  }
 }
 
 variable "aks_node_os_disk_size_gb" {
@@ -117,6 +155,16 @@ variable "aks_load_balancer_sku" {
   description = "SKU for the AKS load balancer (basic or standard)."
   type        = string
   default     = "standard"
+}
+
+variable "log_analytics_daily_quota_gb" {
+  description = "Daily Log Analytics ingestion limit in GB."
+  type        = number
+  default     = 10
+  validation {
+    condition     = var.log_analytics_daily_quota_gb > 0
+    error_message = "log_analytics_daily_quota_gb must be greater than 0."
+  }
 }
 
 # --- Key Vault Configuration ---
