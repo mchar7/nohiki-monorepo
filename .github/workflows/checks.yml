@@ -261,10 +261,10 @@ jobs:
         uses: ./.github/actions/setup-ci
         with:
           ready-cache: ${{ env.NIX_SETUP_SELECTED }}
-          # Python restores no node_modules. Frontend owns the Nix-dependent hygiene lanes and the
-          # Node workspace contract, so it takes the full payload and is the sole cache writer.
+          # Python and frontend select different cache payloads, so each is its payload's stable
+          # writer while the broad-or-push trust boundary remains unchanged.
           payload: ${{ matrix.unit == 'python' && 'python' || 'full' }}
-          save-ready-cache: ${{ matrix.unit == 'frontend' && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}
+          save-ready-cache: ${{ (matrix.unit == 'python' || matrix.unit == 'frontend') && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}
           node: ${{ env.NODE_SETUP_SELECTED }}
           full-node-workspace: ${{ needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true' }}
           skylos-cache: ${{ env.DEADCODE_SELECTED }}

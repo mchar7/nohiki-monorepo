@@ -668,7 +668,8 @@ def test_protected_main_reuse_preserves_cache_publication_and_checks_verdict() -
     worker_setup = next(step for step in _steps(jobs["worker"]) if step.get("uses") == "./.github/actions/setup-ci")
     assert worker_setup["with"]["payload"] == "${{ matrix.unit == 'python' && 'python' || 'full' }}"
     assert worker_setup["with"]["save-ready-cache"] == (
-        "${{ matrix.unit == 'frontend' && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
+        "${{ (matrix.unit == 'python' || matrix.unit == 'frontend') "
+        "&& (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
     )
 
     checks = jobs["checks"]
@@ -1049,7 +1050,7 @@ def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> Non
     assert str(steps["Test frontend"]["run"]).endswith("just fe-test")
 
 
-def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> None:
+def test_setup_and_secret_scan_keep_one_definition_and_one_writer_per_payload() -> None:
     standard = _jobs()["worker"]
     job_env = standard["env"]
     assert "lint_markdown" not in str(job_env["NIX_SETUP_SELECTED"])
@@ -1067,10 +1068,11 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_cache_writer() -> Non
     assert setup["uses"] == "./.github/actions/setup-ci"
     assert setup["with"]["ready-cache"] == "${{ env.NIX_SETUP_SELECTED }}"
     assert setup["with"]["node"] == "${{ env.NODE_SETUP_SELECTED }}"
-    # Frontend is the only full-payload leg and the only possible cache writer. Pull requests
-    # write only for broad decisions; main pushes write for either class.
+    # Python and frontend are the stable writers for their distinct payloads. Pull requests write
+    # only for broad decisions; main pushes write for either class.
     assert setup["with"]["save-ready-cache"] == (
-        "${{ matrix.unit == 'frontend' && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
+        "${{ (matrix.unit == 'python' || matrix.unit == 'frontend') "
+        "&& (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}"
     )
 
     for name in ("Lint Python", "Check Python formatting"):

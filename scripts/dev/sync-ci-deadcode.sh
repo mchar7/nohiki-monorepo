@@ -3,8 +3,11 @@ set -eu
 
 export UV_PYTHON=${UV_PYTHON:-$(command -v python)}
 
-# The same closure as scripts/dev/sync-ci-environment.sh without its `skylos` exclusion, so the
-# only work left is fetching and building the private fork itself. Needs GIT_SSH_COMMAND pointing
-# at the Skylos deploy key; the caller supplies it.
+# Match the full cached closure so this credentialed sync adds Skylos without widening the venv.
 exec scripts/dev/env-lock.sh exclusive venv -- \
-    uv sync --locked --all-packages --no-default-groups --group ci --group deadcode -q
+    uv sync --locked \
+        --package nohiki-monorepo \
+        --package ci-checks \
+        --package bff-service \
+        --package user-auth-service \
+        --no-default-groups --group ci --group deadcode -q

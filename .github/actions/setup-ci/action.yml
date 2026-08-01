@@ -62,7 +62,7 @@ runs:
       id: ready-cache-lookup
       uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
       with:
-        primary-key: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-ci/action.yml', 'flake.nix', 'flake.lock', 'uv.lock', '**/pyproject.toml', '.python-version', 'scripts/dev/sync-ci-environment.sh') }}
+        primary-key: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-${{ hashFiles('.github/actions/setup-ci/action.yml', 'flake.nix', 'flake.lock', 'uv.lock', '**/pyproject.toml', '.python-version', 'scripts/dev/sync-ci-environment.sh') }}
         lookup-only: true
         paths: .venv
 
@@ -78,8 +78,8 @@ runs:
       id: ready-cache
       uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
       with:
-        primary-key: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-ci/action.yml', 'flake.nix', 'flake.lock', 'uv.lock', '**/pyproject.toml', '.python-version', 'scripts/dev/sync-ci-environment.sh') }}
-        restore-prefixes-first-match: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-
+        primary-key: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-${{ hashFiles('.github/actions/setup-ci/action.yml', 'flake.nix', 'flake.lock', 'uv.lock', '**/pyproject.toml', '.python-version', 'scripts/dev/sync-ci-environment.sh') }}
+        restore-prefixes-first-match: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-
         paths: .venv
 
     # Without this the ready-cache path has no pnpm and no node on PATH at all: the pnpm and Node
@@ -122,7 +122,9 @@ runs:
       id: workspace-sync
       if: inputs.ready-cache == 'true' && inputs.payload != 'node' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true') && steps.ready-cache.outputs.hit-primary-key != 'true'
       shell: bash
-      run: nix develop .#ci --command scripts/dev/sync-ci-environment.sh
+      env:
+        PAYLOAD: ${{ inputs.payload }}
+      run: nix develop .#ci --command scripts/dev/sync-ci-environment.sh "$PAYLOAD"
 
     # pnpm links its per-package directories relatively into the root node_modules/.pnpm store, so
     # the trees are only valid together and only as a set.
@@ -220,11 +222,11 @@ runs:
       if: inputs.ready-cache == 'true' && inputs.payload != 'node' && inputs.save-ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-lookup.outputs.hit-primary-key != 'true') && steps.ready-cache.outputs.hit-primary-key != 'true' && steps.workspace-sync.outcome == 'success' && steps.ready-cache.outputs.primary-key != ''
       uses: nix-community/cache-nix-action/save@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
       with:
-        primary-key: ${{ steps.ready-cache.outputs.primary-key }}
+        primary-key: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-${{ hashFiles('.github/actions/setup-ci/action.yml', 'flake.nix', 'flake.lock', 'uv.lock', '**/pyproject.toml', '.python-version', 'scripts/dev/sync-ci-environment.sh') }}
         paths: .venv
         gc-max-store-size-linux: "0"
         purge: true
-        purge-prefixes: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-
+        purge-prefixes: ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-
         purge-created: 0
         purge-primary-key: never
 

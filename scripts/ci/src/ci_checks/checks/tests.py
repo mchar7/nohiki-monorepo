@@ -300,9 +300,9 @@ def _get_src_dir(pkg: Package) -> str:
 
 
 def _sync_workspace(console: Console) -> None:
-    """Synchronize the frozen workspace environment before parallel test execution.
+    """Synchronize the locked workspace environment before parallel test execution.
 
-    CI may skip this sync after installing the cached frozen workspace. Local runs use
+    CI may skip this sync after installing the cached locked workspace. Local runs use
     the canonical dev sync shape behind the exclusive venv lock so a runner invocation
     never narrows an environment that other consumers share.
     """
@@ -312,7 +312,7 @@ def _sync_workspace(console: Console) -> None:
         "yes",
         "on",
     }:
-        console.print("[blue]INFO:[/blue] Skipping workspace sync; CI already installed the frozen workspace.")
+        console.print("[blue]INFO:[/blue] Skipping workspace sync; CI already installed the locked workspace.")
         return
     result = subprocess.run(
         [
@@ -328,7 +328,7 @@ def _sync_workspace(console: Console) -> None:
             "cuda",
             "--group",
             "deadcode",
-            "--frozen",
+            "--locked",
         ],
         capture_output=True,
         text=True,
