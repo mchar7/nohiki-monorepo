@@ -527,7 +527,6 @@ def test_ops_changes_bypass_the_routine_class_filter(
         "infra/k8s/helm/values.prod.yaml",
         "infra/terraform/main.tf",
         "infra/k8s/local/images.json",
-        "scripts/util/analyze_codebase.py",
         "scripts/infra/verify-k8s-jobs.py",
         ".github/workflows/release-helm-charts.yml",
     ],

@@ -30,7 +30,6 @@
     "scripts/infra/setup-postgres-replication.sh",
     "scripts/infra/validate_local_secret_sources.py",
     "scripts/infra/verify-k8s-jobs.py",
-    "scripts/util/analyze_codebase.py",
     "skills-lock.json"
   ],
   "images": [
