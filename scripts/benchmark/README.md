@@ -69,12 +69,15 @@ silently widens on resume.
 
 ## Run an experiment
 
-An output path is required. The runner never discovers or merges an arbitrary historical result.
+Set `BENCHMARK_OUTPUT_FILE` to the chosen result JSON file and `LLM_SETTINGS_FILE` to the settings file. Keep
+generated results in an ignored local output directory.
 
 ```bash
+: "${BENCHMARK_OUTPUT_FILE:?Set BENCHMARK_OUTPUT_FILE to the result JSON file}"
+: "${LLM_SETTINGS_FILE:?Set LLM_SETTINGS_FILE to the settings file}"
 uv run --package llm-benchmark llm-benchmark run \
-  --output .local/benchmark/results/extraction.json \
-  --llm-settings .local/benchmark/llm-settings.json \
+  --output "$BENCHMARK_OUTPUT_FILE" \
+  --llm-settings "$LLM_SETTINGS_FILE" \
   --chain benchmark_job_extraction \
   --cost-cap 100 \
   --unknown-price-max 1 \
@@ -84,8 +87,9 @@ uv run --package llm-benchmark llm-benchmark run \
 A small explicit-model smoke test can use the convenience form:
 
 ```bash
+: "${BENCHMARK_SMOKE_OUTPUT_FILE:?Set BENCHMARK_SMOKE_OUTPUT_FILE to the smoke-test result JSON file}"
 uv run --package llm-benchmark llm-benchmark run \
-  --output .local/benchmark/results/smoke.json \
+  --output "$BENCHMARK_SMOKE_OUTPUT_FILE" \
   --model openrouter:vendor/model \
   --fixture senior_python_remote \
   --max-tokens 4096 \
@@ -112,8 +116,9 @@ including the same model routed or configured differently, is rejected before di
 checkpoints, and consensus weights are keyed by model.
 
 ```bash
+: "${BENCHMARK_OUTPUT_FILE:?Set BENCHMARK_OUTPUT_FILE to the result JSON file}"
 uv run --package llm-benchmark llm-benchmark evaluate \
-  .local/benchmark/results/extraction.json \
+  "$BENCHMARK_OUTPUT_FILE" \
   --judge-model openai:judge-a:high \
   --judge-model openai:judge-b:high \
   --judge-weight 1 \
@@ -148,8 +153,8 @@ resumed run skips every attempted unit and seeds its budget from the persisted c
 output is written durably (temp file, fsync, atomic replace, parent-directory fsync) to `<result>.eval.json` after
 successful completion, and never overwrites the source result.
 
-Generated results belong under an ignored local directory such as `.local/benchmark/results/`. Historical
-artifacts should remain immutable and separate from active experiments.
+Generated results belong under the ignored local output directory chosen by the operator. Historical artifacts
+should remain immutable and separate from active experiments.
 
 ## Other commands
 
@@ -158,7 +163,8 @@ artifacts should remain immutable and separate from active experiments.
 uv run --package llm-benchmark llm-benchmark fixtures
 
 # Display one result
-uv run --package llm-benchmark llm-benchmark results .local/benchmark/results/extraction.json
+: "${BENCHMARK_OUTPUT_FILE:?Set BENCHMARK_OUTPUT_FILE to the result JSON file}"
+uv run --package llm-benchmark llm-benchmark results "$BENCHMARK_OUTPUT_FILE"
 ```
 
 ## Verification
