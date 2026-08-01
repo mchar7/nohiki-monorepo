@@ -4,6 +4,8 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import re
+import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from types import ModuleType
 
@@ -120,7 +122,14 @@ def test_artifact_lock_is_closed_complete_and_binds_every_committed_byte() -> No
     assert hashlib.sha256(chart_path.read_bytes()).hexdigest() == chart_sha
 
     generated = _mapping_at(lock, "generated")
-    assert set(generated) == {"operatorInstall", "fallbackInstall"}
+    assert set(generated) == {"operatorInstall"}
+    locked_generated_paths = {_string(_mapping(entry)["path"]) for entry in generated.values()}
+    committed_generated_paths = {
+        artifact.relative_to(_ROOT).as_posix()
+        for artifact in _RUNTIME.rglob("*.yaml")
+        if artifact.name == "install.yaml" or artifact.name.endswith("-install.yaml")
+    }
+    assert locked_generated_paths == committed_generated_paths
     for raw_entry in generated.values():
         entry = _mapping(raw_entry)
         assert set(entry) == {"path", "canonicalSha256", "generator"}
@@ -237,81 +246,89 @@ def test_bootstrap_root_is_ordered_before_the_complete_final_root() -> None:
     ]
 
 
-def test_fallback_install_and_sync_are_offline_private_and_digest_pinned() -> None:
-    install = _documents(_RUNTIME / "fallback/install.yaml")
-    deployments: dict[str, dict[str, object]] = {}
-    for document in install:
-        if document.get("kind") == "Deployment":
-            deployments[_string_at(document, "metadata", "name")] = document
-    assert set(deployments) == {
-        "source-controller",
-        "kustomize-controller",
-        "helm-controller",
-        "notification-controller",
-    }
-    for deployment in deployments.values():
-        containers = _list(_at(deployment, "spec", "template", "spec", "containers"))
-        assert len(containers) == 1
-        image = _string(_mapping(containers[0])["image"])
-        assert re.fullmatch(r"ghcr\.io/fluxcd/[a-z-]+@sha256:[0-9a-f]{64}", image)
+def test_missing_operator_manifest_fails_with_diagnostic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner = _load_runner()
+    missing = tmp_path / "operator-install.yaml"
+    monkeypatch.setattr(runner, "OPERATOR_INSTALL", missing)
 
-    sync_text = (_RUNTIME / "fallback/sync.yaml").read_text(encoding="utf-8")
-    assert sync_text.count("${RUNTIME_CONTROL_BRANCH}") == 1
-    source, root = _documents(_RUNTIME / "fallback/sync.yaml")
-    assert source["kind"] == "GitRepository"
-    assert _string_at(source, "spec", "url").startswith("ssh://")
-    assert _at(source, "spec", "secretRef") == {"name": "flux-system"}
-    assert root["kind"] == "Kustomization"
-    assert _at(root, "spec", "path") == "./infra/k8s/gitops/clusters/local"
-    assert _at(root, "spec", "prune") is True
-    assert _at(root, "spec", "decryption") == {"provider": "sops", "secretRef": {"name": "flux-sops"}}
+    with pytest.raises(runner.KindctlError) as caught:
+        runner.install_operator_runtime(tmp_path / "kubeconfig", tmp_path / "bootstrap.yaml")
+
+    assert str(caught.value) == f"Flux Operator install failed: operator manifest missing: {missing}"
 
 
-def test_operator_failure_selects_core_once_without_retry_in_both_drills(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("failing_fragment", "diagnostic"),
+    [
+        ("operator-install.yaml", "operator manifest apply failed"),
+        (
+            "crd/fluxinstances.fluxcd.controlplane.io",
+            "operator CRD fluxinstances.fluxcd.controlplane.io did not become Established",
+        ),
+        (
+            "deployment/flux-operator",
+            "operator Deployment flux-operator did not become Available",
+        ),
+        (
+            "get secret flux-system flux-sops",
+            "required Secrets flux-system and flux-sops are unavailable",
+        ),
+        ("flux-instance-bootstrap.yaml", "bootstrap FluxInstance apply failed"),
+        ("fluxinstance/flux", "FluxInstance flux did not become Ready"),
+    ],
+)
+def test_operator_install_failure_identifies_condition(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failing_fragment: str,
+    diagnostic: str,
 ) -> None:
+    runner = _load_runner()
+
+    def command(argv: Sequence[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        failed = failing_fragment in " ".join(argv)
+        return subprocess.CompletedProcess(
+            argv,
+            23 if failed else 0,
+            stdout="",
+            stderr="simulated kubectl failure" if failed else "",
+        )
+
+    monkeypatch.setattr(runner, "run_command", command)
+
+    with pytest.raises(runner.KindctlError) as caught:
+        runner.install_operator_runtime(
+            tmp_path / "kubeconfig",
+            _RUNTIME / "flux-instance-bootstrap.yaml",
+        )
+
+    message = str(caught.value)
+    assert diagnostic in message
+    assert "command exited 23: simulated kubectl failure" in message
+
+
+def test_successful_qualification_converges_on_operator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     runner = _load_runner()
     monkeypatch.setenv("NOHIKI_RUNTIME_CONTROL_BRANCH", "runtime-control/local/test")
     monkeypatch.setenv("NOHIKI_REVIEWED_TOPIC_SHA", "a" * 40)
     monkeypatch.setattr(runner, "validate_runtime_control", lambda *_: None)
-    monkeypatch.setattr(runner, "render_branch_manifest", lambda *_: "b" * 64)
-    operator_calls: list[str] = []
-    core_calls: list[str] = []
+    rendered: list[tuple[Path, str, Path]] = []
+    installed: list[tuple[Path, Path]] = []
 
-    def failed_operator(*_: object) -> bool:
-        operator_calls.append("operator")
-        return False
+    def render(source: Path, branch: str, destination: Path) -> str:
+        rendered.append((source, branch, destination))
+        return "b" * 64
 
-    def core(*_: object) -> None:
-        core_calls.append("core")
+    def install(kubeconfig: Path, bootstrap: Path) -> None:
+        installed.append((kubeconfig, bootstrap))
 
-    monkeypatch.setattr(runner, "operator_install_once", failed_operator)
-    monkeypatch.setattr(runner, "install_core_runtime", core)
+    monkeypatch.setattr(runner, "render_branch_manifest", render)
+    monkeypatch.setattr(runner, "install_operator_runtime", install)
     kubeconfig = tmp_path / "kubeconfig"
+    bootstrap = tmp_path / "runtime/flux-rendered/flux-instance-bootstrap.yaml"
 
-    operator_to_core = runner.qualify_flux_runtime(kubeconfig, tmp_path, "operator-to-core")
-    assert operator_to_core["selected"] == "core"
-    assert operator_calls == ["operator"]
-    assert core_calls == ["core"]
+    result = runner.qualify_flux_runtime(kubeconfig, tmp_path)
 
-    operator_calls.clear()
-    core_calls.clear()
-    core_to_operator = runner.qualify_flux_runtime(kubeconfig, tmp_path, "core-to-operator")
-    assert core_to_operator["selected"] == "core"
-    assert operator_calls == ["operator"]
-    assert core_calls == ["core", "core"]
-
-
-def test_successful_operator_is_selected_without_invoking_core_fallback() -> None:
-    runner = _load_runner()
-    calls: list[str] = []
-
-    def operator() -> bool:
-        calls.append("operator")
-        return True
-
-    def core() -> None:
-        calls.append("core")
-
-    assert runner.select_flux_runtime(operator, core) == "operator"
-    assert calls == ["operator"]
+    assert result == {"bootstrapSha256": "b" * 64, "selected": "operator"}
+    assert rendered == [(runner.BOOTSTRAP_INSTANCE, "runtime-control/local/test", bootstrap)]
+    assert installed == [(kubeconfig, bootstrap)]
