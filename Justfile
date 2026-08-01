@@ -194,7 +194,7 @@ hygiene-build-backend-strict packages="ALL":
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --packages '{{ packages }}' --ci --strict
 
 # Run every developer-reproducible CI check
-verify: lint format-check lint-md typecheck-all test-all-packages test-skylos-cache test-node-contracts hygiene fe-check fe-fsd fe-i18n proto-lint proto-breaking workflow-lint docker-lint secrets-scan nix-check api-schema-check image-matrix-check
+verify: lint format-check lint-md typecheck-all test-all-packages test-skylos-cache test-node-contracts hygiene fe-check fe-fsd fe-i18n edge-check proto-lint proto-breaking workflow-lint docker-lint secrets-scan nix-check api-schema-check image-matrix-check
 
 # Scaffold CLI
 
@@ -337,6 +337,23 @@ fe-i18n:
 # Run frontend unit tests
 fe-test:
     {{ test_run }} {{ env_lock }} shared node_modules -- {{ pnpm }} --filter nohiki-frontend run test
+
+# Cloudflare edge worker
+
+# Run all edge worker checks
+edge-check: edge-typecheck edge-lint edge-test
+
+# Type-check the Cloudflare edge worker
+edge-typecheck:
+    {{ test_run }} {{ env_lock }} shared node_modules -- {{ pnpm }} --filter @nohiki/auth-listings-worker exec tsc --noEmit
+
+# Check edge worker lint and formatting
+edge-lint:
+    {{ env_lock }} shared node_modules -- {{ pnpm }} --filter @nohiki/auth-listings-worker exec biome ci src/
+
+# Run edge worker unit tests
+edge-test:
+    {{ test_run }} {{ env_lock }} shared node_modules -- {{ pnpm }} --filter @nohiki/auth-listings-worker exec vitest run
 
 # Service development
 
