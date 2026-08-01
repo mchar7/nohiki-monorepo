@@ -124,12 +124,36 @@ running. The full port map is in [`infra/compose/`](infra/compose/README.md).
 
 ## Quality gates
 
-One gate contract with environment-appropriate concurrency: [`lefthook`](lefthook.yml) parallelizes independent
-checks on the shared developer machine, while [CI](.github/workflows/checks.yml) distributes the same gates across
-independent hosted runners. Contract tests keep both surfaces aligned. Commits get the fast linters and a secrets scan;
-pushes get typechecks, the full test suite, dependency and dead-code hygiene, and protobuf breaking-change detection.
-CI adds commit-message validation, a full-history secrets scan, and Trivy scans on every
-[built image](.github/workflows/build-push.yml).
+[`lefthook`](lefthook.yml) defines the local gate contract:
+
+- Commit-message hooks run commitlint and the internal-reference check.
+- Pre-commit runs Python Ruff lint and format, frontend Biome lint and format, protobuf and Markdown lint, frontend
+  i18n validation, staged-secret scanning, GitHub Actions lint, and Dockerfile lint. Lefthook skips pre-commit during
+  merges and rebases.
+- Pre-push runs:
+  - Internal-reference range validation
+  - Python lint, format, typecheck, and affected tests
+  - Skylos cache tests
+  - Node workspace contract tests
+  - Frontend typecheck and tests
+  - Nix flake check
+  - Dependency hygiene
+  - Strict dead-code analysis
+  - Semgrep checks
+  - Strict backend build policy
+  - Frontend architecture checks
+  - API schema freshness
+  - Image matrix parity
+  - Protobuf breaking-change detection
+
+The installed wrapper forces every pre-push job to run and prevents Lefthook environment variables from disabling a
+normal push. It cannot protect a hook that Git does not invoke: `git push --no-verify` bypasses pre-push completely.
+Measured full pre-push runs took about 180 seconds warm and 420 seconds cold, with strict dead-code analysis taking
+about 270 seconds of the cold run.
+
+[CI](.github/workflows/checks.yml) distributes the corresponding gates across independent hosted runners. Contract
+tests keep the local and hosted surfaces aligned. CI also adds commit-message validation, a full-history secrets scan,
+and Trivy scans on every [built image](.github/workflows/build-push.yml).
 
 Conventions, worktree layout, and branch naming live in [CONTRIBUTING.md](CONTRIBUTING.md).
 
