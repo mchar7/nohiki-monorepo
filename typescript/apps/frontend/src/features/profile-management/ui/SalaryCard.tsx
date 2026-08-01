@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select.tsx';
-import type { ProfileFormValues } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
 
 const CURRENCY_OPTIONS = ['USD', 'CAD', 'EUR', 'GBP'] as const;
 const FREQUENCY_OPTIONS = ['HOURLY', 'DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'ANNUALLY'] as const;

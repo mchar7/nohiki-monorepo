@@ -16,7 +16,7 @@ import { OptionalIndicator } from '@/shared/ui/optional-indicator.tsx';
 import { SectionIcon } from '@/shared/ui/section-icon.tsx';
 import { Slider } from '@/shared/ui/slider.tsx';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip.tsx';
-import type { ProfileFormValues } from '../schemas/index.ts';
+import type { ProfileFormValues } from '../model/index.ts';
 
 type TranslationFn = TFunction<'profiles'>;
 

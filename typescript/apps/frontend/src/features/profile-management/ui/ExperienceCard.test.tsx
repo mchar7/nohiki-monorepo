@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { JSX } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 import { describe, expect, vi } from 'vitest';
-import { PROFILE_FORM_DEFAULTS, type ProfileFormValues } from '../schemas/index.ts';
+import { PROFILE_FORM_DEFAULTS, type ProfileFormValues } from '../model/index.ts';
 import { ExperienceCard } from './ExperienceCard.tsx';
 
 vi.mock('react-i18next', async (importOriginal) => {
