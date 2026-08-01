@@ -222,7 +222,7 @@ test-scaffold:
 
 # Run package-aware unit tests across uv workspace members
 test-all-packages:
-    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope all --ci
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope all --ci --workers 2
 
 # Run Skylos cache contract tests
 test-skylos-cache:
@@ -234,11 +234,11 @@ test-node-contracts:
 
 # Run package-aware unit tests for backend services only
 test-backend-packages:
-    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope services --ci
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope services --ci --workers 2
 
 # Run package-aware unit tests for shared libraries only
 test-libs-packages:
-    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope libs --ci
+    {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope libs --ci --workers 2
 
 # Run tests for a specific service
 test service:
