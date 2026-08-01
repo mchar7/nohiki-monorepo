@@ -4,7 +4,7 @@ Usage: {{ include "nohiki-common.keda-scaler" . }}
 */}}
 {{- define "nohiki-common.keda-scaler" -}}
 {{- $scaling := .Values.scaling | default dict }}
-{{- if $scaling.enabled }}
+{{- if and $scaling.enabled (not $scaling.excluded) }}
 {{- $type := $scaling.type | default "http" }}
 {{- if eq $type "http" }}
 {{ include "nohiki-common.kedaScaledObject.http" . }}
@@ -28,6 +28,10 @@ Usage: {{ include "nohiki-common.kedaScaledObject.http" . }}
 {{- $http := $scaling.http | default dict }}
 {{- $glob := .Values.global | default dict }}
 {{- $globScaling := $glob.scaling | default dict }}
+{{- $minReplicas := $globScaling.minReplicas | default 0 }}
+{{- if hasKey $scaling "minReplicas" }}
+{{- $minReplicas = $scaling.minReplicas }}
+{{- end }}
 apiVersion: http.keda.sh/v1alpha1
 kind: HTTPScaledObject
 metadata:
@@ -55,7 +59,7 @@ spec:
     service: {{ include "nohiki-common.fullname" . }}
     port: {{ .Values.service.port | default 8000 }}
   replicas:
-    min: {{ $scaling.minReplicas | default $globScaling.minReplicas | default 0 }}
+    min: {{ $minReplicas }}
     max: {{ $scaling.maxReplicas | default $globScaling.maxReplicas | default 10 }}
   scaledownPeriod: {{ $scaling.cooldownPeriod | default $globScaling.cooldownPeriod | default 300 }}
 {{- end }}
@@ -66,20 +70,29 @@ KEDA ScaledObject for Kafka consumer services.
 Usage: {{ include "nohiki-common.kedaScaledObject.kafka" . }}
 */}}
 {{- define "nohiki-common.kedaScaledObject.kafka" -}}
-{{- if ne .Values.enabled false }}
 {{- $scaling := .Values.scaling | default dict }}
 {{- $kafka := $scaling.kafka | default dict }}
+{{- if and (ne .Values.enabled false) $kafka.topics }}
 {{- $glob := .Values.global | default dict }}
 {{- $globScaling := $glob.scaling | default dict }}
 {{- $globKafka := $glob.kafka | default dict }}
-{{- $authenticationRef := $kafka.authenticationRef | default "" }}
 {{- $security := $globKafka.security | default dict }}
 {{- $sasl := $security.sasl | default dict }}
-{{- if and (not $authenticationRef) $sasl.secretName }}
+{{- $authenticationRef := "" }}
+{{- if $sasl.secretName }}
 {{- $authenticationRef = printf "%s-kafka-auth" $.Release.Name }}
 {{- end }}
 {{- $kafkaTLS := eq ($security.protocol | default "") "SASL_SSL" }}
 {{- $kedaConsumerGroup := $kafka.consumerGroup | default $.Values.kafka.consumerGroup | default (include "nohiki-common.name" $) }}
+{{- $minReplicas := $globScaling.minReplicas | default 0 }}
+{{- if hasKey $scaling "minReplicas" }}
+{{- $minReplicas = $scaling.minReplicas }}
+{{- end }}
+{{- $maxReplicas := int ($scaling.maxReplicas | default $globScaling.maxReplicas | default 10) }}
+{{- $partitionCount := int ($kafka.partitionCount | default $globKafka.partitionCount | default 3) }}
+{{- if gt $maxReplicas $partitionCount }}
+{{- $maxReplicas = $partitionCount }}
+{{- end }}
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -92,13 +105,12 @@ spec:
     name: {{ include "nohiki-common.fullname" . }}
   pollingInterval: {{ $scaling.pollingInterval | default 15 }}
   cooldownPeriod: {{ $scaling.cooldownPeriod | default $globScaling.cooldownPeriod | default 300 }}
-  minReplicaCount: {{ $scaling.minReplicas | default $globScaling.minReplicas | default 0 }}
-  maxReplicaCount: {{ $scaling.maxReplicas | default $globScaling.maxReplicas | default 10 }}
-  {{- if eq (int ($scaling.minReplicas | default $globScaling.minReplicas | default 0)) 0 }}
+  minReplicaCount: {{ $minReplicas }}
+  maxReplicaCount: {{ $maxReplicas }}
+  {{- if eq (int $minReplicas) 0 }}
   idleReplicaCount: 0
   {{- end }}
   triggers:
-    {{- if $kafka.topics }}
     {{- range $kafka.topics }}
     - type: kafka
       metadata:
@@ -106,24 +118,6 @@ spec:
         consumerGroup: {{ $kedaConsumerGroup }}
         topic: {{ .name }}
         lagThreshold: {{ .lagThreshold | default $kafka.lagThreshold | default "10" | quote }}
-        allowIdleConsumers: "true"
-        {{- if $kafkaTLS }}
-        tls: enable
-        {{- end }}
-        {{- if $kafka.offsetResetPolicy }}
-        offsetResetPolicy: {{ $kafka.offsetResetPolicy | quote }}
-        {{- end }}
-      {{- if $authenticationRef }}
-      authenticationRef:
-        name: {{ $authenticationRef }}
-      {{- end }}
-    {{- end }}
-    {{- else }}
-    - type: kafka
-      metadata:
-        bootstrapServers: {{ $globKafka.bootstrapServers | default "nohiki-kafka:9092" }}
-        consumerGroup: {{ $kedaConsumerGroup }}
-        lagThreshold: {{ $kafka.lagThreshold | default "10" | quote }}
         allowIdleConsumers: "true"
         {{- if $kafkaTLS }}
         tls: enable
@@ -152,14 +146,23 @@ Usage: {{ include "nohiki-common.kedaScaledObject.multi" . }}
 {{- $globScaling := $glob.scaling | default dict }}
 {{- $globKafka := $glob.kafka | default dict }}
 {{- $globPrometheus := $glob.prometheus | default dict }}
-{{- $authenticationRef := $kafka.authenticationRef | default "" }}
 {{- $security := $globKafka.security | default dict }}
 {{- $sasl := $security.sasl | default dict }}
-{{- if and (not $authenticationRef) $sasl.secretName }}
+{{- $authenticationRef := "" }}
+{{- if $sasl.secretName }}
 {{- $authenticationRef = printf "%s-kafka-auth" $.Release.Name }}
 {{- end }}
 {{- $kafkaTLS := eq ($security.protocol | default "") "SASL_SSL" }}
 {{- $kedaConsumerGroup := $kafka.consumerGroup | default $.Values.kafka.consumerGroup | default (include "nohiki-common.name" $) }}
+{{- $minReplicas := $globScaling.minReplicas | default 0 }}
+{{- if hasKey $scaling "minReplicas" }}
+{{- $minReplicas = $scaling.minReplicas }}
+{{- end }}
+{{- $maxReplicas := int ($scaling.maxReplicas | default $globScaling.maxReplicas | default 10) }}
+{{- $partitionCount := int ($kafka.partitionCount | default $globKafka.partitionCount | default 3) }}
+{{- if gt $maxReplicas $partitionCount }}
+{{- $maxReplicas = $partitionCount }}
+{{- end }}
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -172,9 +175,9 @@ spec:
     name: {{ include "nohiki-common.fullname" . }}
   pollingInterval: {{ $scaling.pollingInterval | default 15 }}
   cooldownPeriod: {{ $scaling.cooldownPeriod | default $globScaling.cooldownPeriod | default 300 }}
-  minReplicaCount: {{ $scaling.minReplicas | default $globScaling.minReplicas | default 0 }}
-  maxReplicaCount: {{ $scaling.maxReplicas | default $globScaling.maxReplicas | default 10 }}
-  {{- if eq (int ($scaling.minReplicas | default $globScaling.minReplicas | default 0)) 0 }}
+  minReplicaCount: {{ $minReplicas }}
+  maxReplicaCount: {{ $maxReplicas }}
+  {{- if eq (int $minReplicas) 0 }}
   idleReplicaCount: 0
   {{- end }}
   triggers:
@@ -223,6 +226,10 @@ Usage: {{ include "nohiki-common.kedaScaledObject.prometheus" . }}
 {{- $glob := .Values.global | default dict }}
 {{- $globScaling := $glob.scaling | default dict }}
 {{- $globPrometheus := $glob.prometheus | default dict }}
+{{- $minReplicas := $globScaling.minReplicas | default 0 }}
+{{- if hasKey $scaling "minReplicas" }}
+{{- $minReplicas = $scaling.minReplicas }}
+{{- end }}
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -235,9 +242,9 @@ spec:
     name: {{ include "nohiki-common.fullname" . }}
   pollingInterval: {{ $scaling.pollingInterval | default 15 }}
   cooldownPeriod: {{ $scaling.cooldownPeriod | default $globScaling.cooldownPeriod | default 300 }}
-  minReplicaCount: {{ $scaling.minReplicas | default $globScaling.minReplicas | default 0 }}
+  minReplicaCount: {{ $minReplicas }}
   maxReplicaCount: {{ $scaling.maxReplicas | default $globScaling.maxReplicas | default 10 }}
-  {{- if eq (int ($scaling.minReplicas | default $globScaling.minReplicas | default 0)) 0 }}
+  {{- if eq (int $minReplicas) 0 }}
   idleReplicaCount: 0
   {{- end }}
   triggers:

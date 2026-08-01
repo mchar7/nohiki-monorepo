@@ -38,6 +38,11 @@ global:
   kafka:
     bootstrapServers: nohiki-kafka:9092
     dsn: "kafka://nohiki-kafka:9092"
+    partitionCount: 3
+    security:
+      protocol: PLAINTEXT
+      sasl:
+        secretName: ""
 
   s3:
     endpoint: http://nohiki-rustfs:9000
@@ -211,6 +216,7 @@ observability:
 # Scaling settings (service-level, KEDA)
 scaling:
   enabled: false
+  excluded: false
   type: ""  # http, kafka, prometheus, or multi
   minReplicas: 0
   maxReplicas: 10
@@ -225,7 +231,6 @@ scaling:
   # Kafka scaling config (for type: kafka or multi)
   kafka:
     lagThreshold: "10"
-    authenticationRef: ""
     topics: []  # [{name: "topic.name.v1", lagThreshold: "10"}]
   # Prometheus scaling config (for type: prometheus or multi)
   prometheus:

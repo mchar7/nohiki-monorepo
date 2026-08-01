@@ -13,6 +13,7 @@ from _documents import (
     metadata_of,
     string_at,
 )
+from helm_test_utils import runtime_eso_args
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
@@ -42,9 +43,10 @@ def _render_rollout_container() -> Container:
             "-f",
             "values.yaml",
             "-f",
-            "values.local.yaml",
+            "values.dev.yaml",
             "-n",
-            "nohiki",
+            "nohiki-dev",
+            *runtime_eso_args("dev"),
         ],
         cwd=_CHART,
         capture_output=True,
@@ -76,13 +78,19 @@ def test_rollout_operator_image_and_args_match_nested_chart_contract() -> None:
 
     assert app_version == "v0.38.0"
     assert image_tag == f"{app_version}@{_DIGEST}"
+    local_values = load_mapping(_CHART / "values.local.yaml")
+    local_mimir = local_values.get("mimir-distributed")
+    assert isinstance(local_mimir, dict)
+    local_rollout_operator = local_mimir.get("rollout_operator")
+    assert isinstance(local_rollout_operator, dict)
+    assert local_rollout_operator.get("enabled") is False
 
     container = _render_rollout_container()
     assert container["image"] == f"docker.io/grafana/rollout-operator:{image_tag}"
     assert set(container["args"]) == {
-        "-kubernetes.namespace=nohiki",
+        "-kubernetes.namespace=nohiki-dev",
         "-zpdb.pod-ready-annotation-patch-timeout=5s",
         "-server-tls.enabled=true",
         "-server-tls.self-signed-cert.secret-name=certificate",
-        "-server-tls.self-signed-cert.dns-name=nohiki-rollout-operator.nohiki.svc",
+        "-server-tls.self-signed-cert.dns-name=nohiki-rollout-operator.nohiki-dev.svc",
     }

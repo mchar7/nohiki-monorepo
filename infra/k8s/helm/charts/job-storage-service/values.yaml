@@ -43,12 +43,17 @@ observability:
 scaling:
   enabled: false
   type: kafka
-  minReplicas: 0
-  maxReplicas: 5
+  minReplicas: 1
+  maxReplicas: 3
   pollingInterval: 15
   cooldownPeriod: 300
   kafka:
     lagThreshold: "10"
+    topics:
+      - name: job-listing.cmd.backfill-requested.v1
+      - name: job-ingest.fct.listing-discovered.v1
+      - name: job-ingest.fct.enrichment-completed.v1
+      - name: job-listing.cmd.snapshot-refresh-requested.v1
 
 resources:
   requests:

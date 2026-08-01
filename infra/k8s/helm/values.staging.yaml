@@ -127,19 +127,22 @@ user-pref-service:
   qdrant:
     enabled: true
   scaling:
-    minReplicas: 1
-    maxReplicas: 5
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 3
 
 user-upload-service:
   replicaCount: 1
   scaling:
-    minReplicas: 0
+    enabled: true
+    minReplicas: "0"
     maxReplicas: 3
 
 user-entitlement-service:
   replicaCount: 1
   scaling:
-    minReplicas: 1
+    enabled: true
+    minReplicas: "0"
     maxReplicas: 3
 
 # Job domain services (Kafka-driven, mostly scale-to-zero)
@@ -147,71 +150,82 @@ user-entitlement-service:
 job-storage-service:
   replicaCount: 2
   scaling:
+    enabled: true
     minReplicas: 1
-    maxReplicas: 5
+    maxReplicas: 3
 
 job-ingest-discovery-service:
   replicaCount: 1
   scaling:
-    minReplicas: 0
-    maxReplicas: 5
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 3
 
 job-ingest-schedule-service:
   replicaCount: 1
   scaling:
+    enabled: false
     minReplicas: 0
     maxReplicas: 3
 
 job-ingest-enrichment-service:
   replicaCount: 1
   scaling:
+    enabled: false
     minReplicas: 0
-    maxReplicas: 5
+    maxReplicas: 3
 
 job-query-composition-service:
   replicaCount: 1
   scaling:
-    minReplicas: 0
+    enabled: true
+    minReplicas: "0"
     maxReplicas: 3
 
 job-correlation-evaluation-service:
   replicaCount: 1
   scaling:
-    minReplicas: 0
-    maxReplicas: 5
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 3
 
 # ML services (Kafka-driven)
 
 ml-gateway-service:
   replicaCount: 1
   scaling:
-    minReplicas: 0
+    enabled: true
+    minReplicas: "0"
     maxReplicas: 3
 
 ml-compute-service:
   replicaCount: 1
   scaling:
+    enabled: true
     minReplicas: 1
-    maxReplicas: 5
+    maxReplicas: 3
 
 # Doc domain services (Kafka-driven)
 
 doc-template-service:
   replicaCount: 1
   scaling:
-    minReplicas: 1
+    enabled: true
+    minReplicas: "0"
     maxReplicas: 3
 
 doc-content-service:
   replicaCount: 1
   scaling:
-    minReplicas: 0
-    maxReplicas: 5
+    enabled: true
+    minReplicas: "0"
+    maxReplicas: 3
 
 doc-process-service:
   replicaCount: 1
   scaling:
-    minReplicas: 0
+    enabled: true
+    minReplicas: "0"
     maxReplicas: 3
 
 # Skill + notification (Kafka-driven)
@@ -219,12 +233,14 @@ doc-process-service:
 skill-graph-service:
   replicaCount: 1
   scaling:
-    minReplicas: 0
+    enabled: true
+    minReplicas: "0"
     maxReplicas: 3
 
 notification-service:
   replicaCount: 1
   scaling:
+    enabled: false
     minReplicas: 0
     maxReplicas: 3
 

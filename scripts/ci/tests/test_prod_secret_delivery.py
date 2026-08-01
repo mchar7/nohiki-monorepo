@@ -332,7 +332,6 @@ def test_redis_qdrant_database_and_keda_secret_semantics(tmp_path: Path) -> None
         "sasl": ("kafka-sasl-credentials", "mechanism"),
         "username": ("kafka-sasl-credentials", "username"),
         "password": ("kafka-sasl-credentials", "password"),
-        "tls": ("kafka-tls-credentials", "tls"),
     }
 
 

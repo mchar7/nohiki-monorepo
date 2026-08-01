@@ -35,12 +35,19 @@ observability:
 scaling:
   enabled: false
   type: kafka
-  minReplicas: 0
-  maxReplicas: 5
+  minReplicas: "0"
+  maxReplicas: 3
   pollingInterval: 15
   cooldownPeriod: 300
   kafka:
     lagThreshold: "10"
+    topics:
+      - name: user-pref.cdc.pref-created.v1
+      - name: user-pref.cdc.pref-updated.v1
+      - name: user-pref.cdc.pref-deleted.v1
+      - name: user-entitlement.cdc.entitlement-changed.v1
+      - name: user-auth.cdc.account-deleted.v1
+      - name: user-auth.fct.activity.v1
 
 resources:
   requests:

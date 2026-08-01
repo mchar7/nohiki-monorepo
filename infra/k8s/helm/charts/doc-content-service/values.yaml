@@ -57,12 +57,15 @@ observability:
 scaling:
   enabled: false
   type: kafka
-  minReplicas: 0
-  maxReplicas: 5
+  minReplicas: "0"
+  maxReplicas: 3
   pollingInterval: 15
   cooldownPeriod: 300
   kafka:
     lagThreshold: "10"
+    topics:
+      - name: doc-content.cmd.generation-requested.v1
+      - name: job-correlation.cdc.correlation-evaluated.v1
 
 resources:
   requests:

@@ -219,6 +219,11 @@ global:
     version: 4.3.0
     bootstrapServers: nohiki-kafka-kafka-bootstrap:9092
     dsn: "kafka://nohiki-kafka-kafka-bootstrap:9092"
+    partitionCount: 3
+    security:
+      protocol: PLAINTEXT
+      sasl:
+        secretName: ""
 
   # S3 configuration (RustFS in-cluster or Azure Blob in production)
   # region: RustFS ignores this but some S3 clients require it; use "local" for in-cluster.
@@ -330,16 +335,47 @@ user-pref-service:
   enabled: true
   database:
     enabled: true
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: user-pref.sys.skill-callback.v1
+        - name: user-pref.sys.embedding-callback.v1
+        - name: user-pref.cmd.create-requested.v1
+        - name: user-pref.cmd.update-requested.v1
+        - name: user-pref.cmd.delete-requested.v1
+        - name: user-pref.cmd.attach-upload.v1
+        - name: user-pref.cmd.detach-upload.v1
+        - name: user-pref.cmd.settings-update-requested.v1
+        - name: user-pref.cmd.pref-importance-update-requested.v1
+        - name: user-upload.cdc.upload-deleted.v1
+        - name: user-auth.cdc.account-deleted.v1
 
 user-upload-service:
   enabled: true
   database:
     enabled: true
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: user-auth.cdc.account-deleted.v1
+        - name: user-upload.cmd.create-requested.v1
+        - name: user-upload.cmd.delete-requested.v1
 
 user-entitlement-service:
   enabled: true
   database:
     enabled: true
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: user-auth.cdc.account-updated.v1
+        - name: user-auth.cdc.account-deleted.v1
 
 # Job domain services
 job-ingest-discovery-service:
@@ -347,27 +383,57 @@ job-ingest-discovery-service:
   database:
     enabled: true
     schema: job_ingest_discovery_schema
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: job-ingest.cmd.discovery-requested.v1
 
 job-ingest-schedule-service:
   enabled: true
   database:
     enabled: true
     schema: job_schedule_schema
+  scaling:
+    excluded: true
 
 job-query-composition-service:
   enabled: true
   database:
     enabled: true
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: user-pref.cdc.pref-created.v1
+        - name: user-pref.cdc.pref-updated.v1
+        - name: user-pref.cdc.pref-deleted.v1
+        - name: user-entitlement.cdc.entitlement-changed.v1
+        - name: user-auth.cdc.account-deleted.v1
+        - name: user-auth.fct.activity.v1
 
 job-ingest-enrichment-service:
   enabled: true
   database:
     enabled: true
+  scaling:
+    excluded: true
 
 job-storage-service:
   enabled: true
   database:
     enabled: true
+  scaling:
+    minReplicas: 1
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: job-listing.cmd.backfill-requested.v1
+        - name: job-ingest.fct.listing-discovered.v1
+        - name: job-ingest.fct.enrichment-completed.v1
+        - name: job-listing.cmd.snapshot-refresh-requested.v1
 
 job-correlation-evaluation-service:
   enabled: true
@@ -376,31 +442,95 @@ job-correlation-evaluation-service:
   debezium:
     mode: wal
     resourcePrefix: job_correlation
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: job-correlation.sys.backfill-listings.v1
+        - name: job-correlation.cmd.feedback-recorded.v1
+        - name: job-correlation.cmd.training-export-requested.v1
+        - name: feedback.cmd.score-feedback-requested.v1
+        - name: feedback.cmd.score-adjustment-requested.v1
+        - name: job-listing.cdc.listing-created.v1
+        - name: job-listing.cdc.listing-updated.v1
+        - name: job-listing.cdc.listing-deleted.v1
+        - name: user-pref.cdc.pref-created.v1
+        - name: user-pref.cdc.pref-updated.v1
+        - name: user-pref.cdc.pref-deleted.v1
 
 # Doc domain services
 doc-template-service:
   enabled: true
   database:
     enabled: true
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: doc-template.cmd.create-requested.v1
+        - name: doc-template.cmd.version-add-requested.v1
+        - name: doc-template.cmd.delete-requested.v1
+        - name: doc-template.cmd.render-requested.v1
 
 doc-content-service:
   enabled: true
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: doc-content.cmd.generation-requested.v1
+        - name: job-correlation.cdc.correlation-evaluated.v1
 
 doc-process-service:
   enabled: true
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: doc-process.cmd.processing-requested.v1
 
 # ML services
 ml-gateway-service:
   enabled: true
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: ml.cmd.batch-embedding-requested.v1
+        - name: ml.cmd.embedding-requested.v1
+        - name: ml.cmd.rerank-requested.v1
 
 ml-compute-service:
   enabled: true
+  scaling:
+    minReplicas: 1
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: ml.sys.kubernetes-compute.v1
 
 # Skill service
 skill-graph-service:
   enabled: true
   database:
     enabled: true
+  scaling:
+    minReplicas: "0"
+    maxReplicas: 3
+    kafka:
+      topics:
+        - name: skill.sys.batch-embedding-callback.v1
+        - name: skill.fct.skill-graph-seeded.v1
+        - name: skill.fct.mention-created.v1
+        - name: skill.cmd.normalization-requested.v1
+        - name: skill.sys.normalization-embedding-callback.v1
+        - name: skill.fct.alias-learned.v1
+        - name: skill.cmd.skill-proposed.v1
 
 # Infrastructure services
 bff-service:
@@ -412,6 +542,8 @@ notification-service:
   enabled: true
   database:
     enabled: true
+  scaling:
+    excluded: true
 
 frontend:
   enabled: true
@@ -519,14 +651,6 @@ keda:
     enabled: true
     interceptorReplicas: 2
     waitTimeout: "30s"
-  kafka:
-    authEnabled: false
-    sasl:
-      enabled: false
-      secretName: kafka-sasl-credentials
-    tls:
-      enabled: false
-      secretName: kafka-tls-credentials
 
 # Infrastructure dependencies are enabled by environment overlays.
 

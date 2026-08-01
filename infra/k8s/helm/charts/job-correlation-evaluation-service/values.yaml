@@ -58,12 +58,24 @@ observability:
 scaling:
   enabled: false
   type: kafka
-  minReplicas: 0
-  maxReplicas: 5
+  minReplicas: "0"
+  maxReplicas: 3
   pollingInterval: 15
   cooldownPeriod: 300
   kafka:
     lagThreshold: "10"
+    topics:
+      - name: job-correlation.sys.backfill-listings.v1
+      - name: job-correlation.cmd.feedback-recorded.v1
+      - name: job-correlation.cmd.training-export-requested.v1
+      - name: feedback.cmd.score-feedback-requested.v1
+      - name: feedback.cmd.score-adjustment-requested.v1
+      - name: job-listing.cdc.listing-created.v1
+      - name: job-listing.cdc.listing-updated.v1
+      - name: job-listing.cdc.listing-deleted.v1
+      - name: user-pref.cdc.pref-created.v1
+      - name: user-pref.cdc.pref-updated.v1
+      - name: user-pref.cdc.pref-deleted.v1
 
 resources:
   requests:
