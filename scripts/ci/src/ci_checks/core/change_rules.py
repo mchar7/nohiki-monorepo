@@ -352,15 +352,18 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule((".github/workflows/build-push.yml",), flags=("image_matrix_parity",)),
     # Helm, compose, gitops, and Qdrant contract tests live in ci-checks.
     SurfaceRule(("infra/*", "infra/**/*"), packages=("ci-checks",)),
-    # Direct inputs rendered or inspected by gitops-contract-tests live outside its package root.
+    # Inputs rendered or inspected by gitops-contract-tests select that test package.
     SurfaceRule(
         (
             ".github/workflows/build-push.yml",
             ".github/workflows/cd_deploy-to-aks_nohiki.yml",
             "Justfile",
+            "infra/k8s/gitops/*",
+            "infra/k8s/gitops/**/*",
             "infra/k8s/helm/*",
             "infra/k8s/helm/**/*",
-            "infra/k8s/local/lifecycle.sh",
+            "infra/k8s/local/*",
+            "infra/k8s/local/**/*",
             "infra/k8s/observability/*",
             "infra/k8s/observability/**/*",
             "scripts/ci/tests/fixtures/values.prod.identity.yaml",
