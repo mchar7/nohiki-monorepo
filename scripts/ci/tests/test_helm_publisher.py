@@ -371,6 +371,7 @@ def test_chart_http_repositories_are_registered_exactly_before_dependency_build(
         "external-secrets",
         "opentelemetry",
         "strimzi",
+        "kedacore",
         "bitnami",
         "qdrant",
         "maikumori",

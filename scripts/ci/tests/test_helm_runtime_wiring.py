@@ -1,25 +1,19 @@
-"""Regression coverage for the two verified Helm runtime blockers.
+"""Render-level Helm wiring contracts.
 
-Blocker 1 -- database DSN wiring:
-    Every DB-backed service Deployment must receive ``DATABASE__DSN`` (env-prefix
-    aware) from its per-service credential Secret ``{svc}-db-credentials`` -- the
-    same Secret the ``{svc}-db-migrate`` Job uses -- via ``secretKeyRef`` key
-    ``dsn``. Workloads that are not DB-backed must never receive a ``DATABASE__DSN``.
+Database DSN expectations come from rendered migration Jobs rather than a
+second service list. S3 URL assertions exercise the application's public URL
+rules at the environment boundary.
 
-Blocker 2 -- local S3 presign URL:
-    The local S3 public URL must use an RFC 6761 ``.localhost`` name or a
-    loopback IP address over HTTP. The application validator
-    (``nohiki_s3_client.S3Settings.validate_public_url``) rejects arbitrary
-    non-loopback HTTP hosts. Staging and production public URLs must never use
-    insecure HTTP.
-
-The DB-backed set is derived from the rendered migration Jobs rather than a
-hardcoded list, so the tests stay correct as services are added or removed.
+Kafka scaler expectations are derived independently from production startup:
+the test follows imports executed from each service's ``main`` module, locates
+reachable ``message_handler`` decorators, and evaluates their topic and group
+expressions from service settings defaults. Rendered ``(topic, consumerGroup)``
+pairs must exactly equal that startup-reachable inventory.
 """
 
 from __future__ import annotations
 
-import runpy
+import ast
 import subprocess
 from ipaddress import ip_address
 from pathlib import Path
@@ -33,87 +27,239 @@ _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
 _NETWORK = Path(__file__).parent / "fixtures" / "values.prod.network.yaml"
-_TOPICS = runpy.run_path(
-    str(_ROOT / "backend" / "libs" / "nohiki-kafka-client" / "src" / "nohiki_kafka_client" / "topics.py")
-)["Topics"]
-_KAFKA_SCALER_TOPICS = {
-    "nohiki-doc-content-service": {
-        _TOPICS.DOC_CONTENT_GENERATION_REQUESTED,
-        _TOPICS.JOB_CORRELATION_EVALUATED,
-    },
-    "nohiki-doc-process-service": {_TOPICS.DOC_PROCESS_PROCESSING_REQUESTED},
-    "nohiki-doc-template-service": {
-        _TOPICS.DOC_TEMPLATE_CREATE_REQUESTED,
-        _TOPICS.DOC_TEMPLATE_DELETE_REQUESTED,
-        _TOPICS.DOC_TEMPLATE_RENDER_REQUESTED,
-        _TOPICS.DOC_TEMPLATE_VERSION_ADD_REQUESTED,
-    },
-    "nohiki-job-correlation-evaluation-service": {
-        _TOPICS.FEEDBACK_SCORE_ADJUSTMENT_REQUESTED,
-        _TOPICS.FEEDBACK_SCORE_FEEDBACK_REQUESTED,
-        _TOPICS.JOB_CORRELATION_BACKFILL_LISTINGS,
-        _TOPICS.JOB_CORRELATION_FEEDBACK_RECORDED,
-        _TOPICS.JOB_CORRELATION_TRAINING_EXPORT_REQUESTED,
-        _TOPICS.JOB_LISTING_CREATED,
-        _TOPICS.JOB_LISTING_DELETED,
-        _TOPICS.JOB_LISTING_UPDATED,
-        _TOPICS.USER_PREF_CREATED,
-        _TOPICS.USER_PREF_DELETED,
-        _TOPICS.USER_PREF_UPDATED,
-    },
-    "nohiki-job-ingest-discovery-service": {_TOPICS.JOB_INGEST_DISCOVERY_REQUESTED},
-    "nohiki-job-query-composition-service": {
-        _TOPICS.USER_AUTH_ACCOUNT_DELETED,
-        _TOPICS.USER_AUTH_ACTIVITY,
-        _TOPICS.USER_ENTITLEMENT_CHANGED,
-        _TOPICS.USER_PREF_CREATED,
-        _TOPICS.USER_PREF_DELETED,
-        _TOPICS.USER_PREF_UPDATED,
-    },
-    "nohiki-job-storage-service": {
-        _TOPICS.JOB_INGEST_ENRICHMENT_COMPLETED,
-        _TOPICS.JOB_INGEST_LISTING_DISCOVERED,
-        _TOPICS.JOB_LISTING_BACKFILL_REQUESTED,
-        _TOPICS.JOB_LISTING_SNAPSHOT_REFRESH_REQUESTED,
-    },
-    "nohiki-ml-compute-service": {_TOPICS.ML_INTERNAL_K8S_COMPUTE},
-    "nohiki-ml-gateway-service": {
-        _TOPICS.ML_BATCH_EMBEDDING_REQUESTED,
-        _TOPICS.ML_EMBEDDING_REQUESTED,
-        _TOPICS.ML_RERANK_REQUESTED,
-    },
-    "nohiki-skill-graph-service": {
-        _TOPICS.SKILL_ALIAS_LEARNED,
-        _TOPICS.SKILL_BATCH_EMBEDDING_CALLBACK,
-        _TOPICS.SKILL_GRAPH_SEEDED,
-        _TOPICS.SKILL_MENTION_CREATED,
-        _TOPICS.SKILL_NORMALIZATION_EMBEDDING_CALLBACK,
-        _TOPICS.SKILL_NORMALIZATION_REQUESTED,
-        _TOPICS.SKILL_PROPOSED,
-    },
-    "nohiki-user-entitlement-service": {
-        _TOPICS.USER_AUTH_ACCOUNT_DELETED,
-        _TOPICS.USER_AUTH_ACCOUNT_UPDATED,
-    },
-    "nohiki-user-pref-service": {
-        _TOPICS.USER_AUTH_ACCOUNT_DELETED,
-        _TOPICS.USER_PREF_ATTACH_UPLOAD_REQUESTED,
-        _TOPICS.USER_PREF_CREATE_REQUESTED,
-        _TOPICS.USER_PREF_DELETE_REQUESTED,
-        _TOPICS.USER_PREF_DETACH_UPLOAD_REQUESTED,
-        _TOPICS.USER_PREF_EMBEDDING_CALLBACK,
-        _TOPICS.USER_PREF_FEATURE_IMPORTANCE_UPDATE_REQUESTED,
-        _TOPICS.USER_PREF_SETTINGS_UPDATE_REQUESTED,
-        _TOPICS.USER_PREF_SKILL_CALLBACK,
-        _TOPICS.USER_PREF_UPDATE_REQUESTED,
-        _TOPICS.USER_UPLOAD_DELETED,
-    },
-    "nohiki-user-upload-service": {
-        _TOPICS.USER_AUTH_ACCOUNT_DELETED,
-        _TOPICS.USER_UPLOAD_CREATE_REQUESTED,
-        _TOPICS.USER_UPLOAD_DELETE_REQUESTED,
-    },
+_KAFKA_SCALER_SERVICES = {
+    "nohiki-doc-content-service",
+    "nohiki-doc-process-service",
+    "nohiki-doc-template-service",
+    "nohiki-job-correlation-evaluation-service",
+    "nohiki-job-ingest-discovery-service",
+    "nohiki-job-query-composition-service",
+    "nohiki-job-storage-service",
+    "nohiki-ml-compute-service",
+    "nohiki-ml-gateway-service",
+    "nohiki-skill-graph-service",
+    "nohiki-user-entitlement-service",
+    "nohiki-user-pref-service",
+    "nohiki-user-upload-service",
 }
+_TOPICS_PATH = _ROOT / "backend" / "libs" / "nohiki-kafka-client" / "src" / "nohiki_kafka_client" / "topics.py"
+
+
+def _topic_literals() -> dict[str, str]:
+    tree = ast.parse(_TOPICS_PATH.read_text(encoding="utf-8"))
+    literals: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
+            continue
+        target = node.targets[0] if isinstance(node, ast.Assign) else node.target
+        if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            literals[target.id] = node.value.value
+    return literals
+
+
+_TOPIC_LITERALS = _topic_literals()
+
+
+def _service_module_path(source: Path, package: str, module: str) -> Path | None:
+    if module == package:
+        candidates = (source / "__init__.py",)
+    else:
+        relative = module.removeprefix(f"{package}.").replace(".", "/")
+        candidates = (source / f"{relative}.py", source / relative / "__init__.py")
+    return next((candidate for candidate in candidates if candidate.exists()), None)
+
+
+def _executed_imports(tree: ast.Module) -> list[ast.Import | ast.ImportFrom]:
+    imports: list[ast.Import | ast.ImportFrom] = []
+
+    def visit(nodes: list[ast.stmt]) -> None:
+        for node in nodes:
+            # Type-only imports are not executed by production startup.
+            if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
+                continue
+            if isinstance(node, ast.Import | ast.ImportFrom):
+                imports.append(node)
+                continue
+            for field, value in ast.iter_fields(node):
+                if field in {"body", "orelse", "finalbody"} and isinstance(value, list):
+                    visit(value)
+                elif field == "handlers":
+                    for handler in value:
+                        visit(handler.body)
+
+    visit(tree.body)
+    return imports
+
+
+def _startup_modules(service: str) -> dict[str, ast.Module]:
+    package = service.replace("-", "_")
+    source = _ROOT / "backend" / "services" / service / "src" / package
+    pending = [f"{package}.main"]
+    modules: dict[str, ast.Module] = {}
+
+    while pending:
+        module = pending.pop()
+        path = _service_module_path(source, package, module)
+        if path is None or module in modules:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        modules[module] = tree
+        current_package = module if path.name == "__init__.py" else module.rsplit(".", 1)[0]
+
+        for node in _executed_imports(tree):
+            if isinstance(node, ast.Import):
+                candidates = [alias.name for alias in node.names]
+            else:
+                if node.level:
+                    parts = current_package.split(".")
+                    prefix = ".".join(parts[: len(parts) - node.level + 1])
+                    base = f"{prefix}.{node.module}" if node.module else prefix
+                else:
+                    base = node.module or ""
+                candidates = [base, *(f"{base}.{alias.name}" for alias in node.names)]
+            pending.extend(
+                candidate
+                for candidate in candidates
+                if candidate.startswith(package) and _service_module_path(source, package, candidate)
+            )
+    return modules
+
+
+def _service_settings(service: str) -> tuple[dict[str, str], ast.expr | None]:
+    package = service.replace("-", "_")
+    source = _ROOT / "backend" / "services" / service / "src" / package
+    facts = {"service_name": service}
+    consumer_group_property: ast.expr | None = None
+
+    for path in source.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign | ast.AnnAssign):
+                target = node.targets[0] if isinstance(node, ast.Assign) else node.target
+                value = node.value
+                if isinstance(target, ast.Name):
+                    if target.id == "service_name" and isinstance(value, ast.Constant) and isinstance(value.value, str):
+                        facts["service_name"] = value.value
+                    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "Field":
+                        default = next(
+                            (
+                                keyword.value.value
+                                for keyword in value.keywords
+                                if keyword.arg == "default" and isinstance(keyword.value, ast.Constant)
+                            ),
+                            None,
+                        )
+                        if isinstance(default, str):
+                            facts[target.id] = default
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == "kafka_consumer_group":
+                returned = next((item for item in ast.walk(node) if isinstance(item, ast.Return)), None)
+                if returned is not None:
+                    consumer_group_property = returned.value
+    return facts, consumer_group_property
+
+
+def _handler_value(
+    expression: ast.expr,
+    assignments: dict[str, ast.expr],
+    base_group: str,
+    facts: dict[str, str],
+    consumer_group_property: ast.expr | None,
+) -> str:
+    if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+        return expression.value
+    if isinstance(expression, ast.Name):
+        return _handler_value(
+            assignments[expression.id],
+            assignments,
+            base_group,
+            facts,
+            consumer_group_property,
+        )
+    if isinstance(expression, ast.JoinedStr):
+        literal_parts: list[str] = []
+        for value in expression.values:
+            if isinstance(value, ast.FormattedValue):
+                literal_parts.append(
+                    _handler_value(value.value, assignments, base_group, facts, consumer_group_property)
+                )
+            else:
+                assert isinstance(value, ast.Constant)
+                assert isinstance(value.value, str)
+                literal_parts.append(value.value)
+        return "".join(literal_parts)
+    if isinstance(expression, ast.Attribute):
+        parts: list[str] = []
+        current: ast.expr = expression
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, ast.Name):
+            parts.append(current.id)
+        dotted = ".".join(reversed(parts))
+        value: str | None = None
+        if dotted == "settings.kafka.consumer_group":
+            value = base_group
+        elif dotted == "settings.kafka_consumer_group":
+            value = (
+                base_group
+                if consumer_group_property is None
+                else _handler_value(consumer_group_property, assignments, base_group, facts, None)
+            )
+        elif dotted.startswith("settings.kafka."):
+            value = facts[dotted.rsplit(".", 1)[1]]
+        elif dotted in {"settings.service_name", "self.service_name"}:
+            value = facts["service_name"]
+        elif dotted.startswith("Topics."):
+            value = _TOPIC_LITERALS[dotted.split(".", 1)[1]]
+        if value is not None:
+            return value
+    unsupported = f"unsupported handler registration expression: {ast.dump(expression)}"
+    raise AssertionError(unsupported)
+
+
+def _startup_handler_pairs(service: str, base_group: str) -> set[tuple[str, str]]:
+    facts, consumer_group_property = _service_settings(service)
+    pairs: set[tuple[str, str]] = set()
+    for tree in _startup_modules(service).values():
+        assignments: dict[str, ast.expr] = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign | ast.AnnAssign):
+                target = node.targets[0] if isinstance(node, ast.Assign) else node.target
+                if isinstance(target, ast.Name) and node.value is not None:
+                    assignments[target.id] = node.value
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            for decorator in node.decorator_list:
+                if (
+                    not isinstance(decorator, ast.Call)
+                    or not isinstance(decorator.func, ast.Attribute)
+                    or decorator.func.attr != "message_handler"
+                ):
+                    continue
+                group_expression = next(keyword.value for keyword in decorator.keywords if keyword.arg == "group_id")
+                pairs.add(
+                    (
+                        _handler_value(
+                            decorator.args[0],
+                            assignments,
+                            base_group,
+                            facts,
+                            consumer_group_property,
+                        ),
+                        _handler_value(
+                            group_expression,
+                            assignments,
+                            base_group,
+                            facts,
+                            consumer_group_property,
+                        ),
+                    )
+                )
+    return pairs
+
+
 _WARM_KAFKA_SCALERS = {
     "nohiki-job-storage-service",
     "nohiki-ml-compute-service",
@@ -290,7 +436,7 @@ def test_staging_and_production_s3_public_urls_are_not_insecure_http(
             assert value.startswith("https://"), f"{name} S3 public URL must use HTTPS in {values_name}, got {value!r}"
 
 
-def test_kafka_scalers_are_presence_partition_and_topic_aware(tmp_path: Path) -> None:
+def test_kafka_scalers_match_startup_reachable_topic_groups(tmp_path: Path) -> None:
     for values_name, expected_maximum in (
         ("values.local.yaml", 1),
         ("values.dev.yaml", 3),
@@ -301,14 +447,30 @@ def test_kafka_scalers_are_presence_partition_and_topic_aware(tmp_path: Path) ->
         scalers = {
             document["metadata"]["name"]: document for document in documents if document.get("kind") == "ScaledObject"
         }
-        assert set(scalers) == set(_KAFKA_SCALER_TOPICS), values_name
+        deployments = _deployments(documents)
+        assert set(scalers) == _KAFKA_SCALER_SERVICES, values_name
         assert not set(scalers) & _LIFECYCLE_EXCLUSIONS
+        assert not any(
+            document.get("apiVersion", "").startswith("http.keda.sh/") or document.get("kind") == "HTTPInterceptorProxy"
+            for document in documents
+        )
 
-        for name, expected_topics in _KAFKA_SCALER_TOPICS.items():
-            spec = scalers[name]["spec"]
+        for name, scaler in scalers.items():
+            spec = scaler["spec"]
             triggers = [trigger for trigger in spec["triggers"] if trigger["type"] == "kafka"]
-            assert all("topic" in trigger["metadata"] for trigger in triggers), (values_name, name)
-            assert {trigger["metadata"]["topic"] for trigger in triggers} == expected_topics
+            environment = deployments[name]["spec"]["template"]["spec"]["containers"][0]["env"]
+            base_group = next(
+                entry["value"] for entry in environment if entry["name"].endswith("KAFKA__CONSUMER_GROUP")
+            )
+            expected_pairs = _startup_handler_pairs(name.removeprefix("nohiki-"), base_group)
+            rendered_pairs = {
+                (trigger["metadata"]["topic"], trigger["metadata"]["consumerGroup"]) for trigger in triggers
+            }
+            assert rendered_pairs == expected_pairs, (
+                values_name,
+                name,
+                {"missing": expected_pairs - rendered_pairs, "extra": rendered_pairs - expected_pairs},
+            )
             assert spec["minReplicaCount"] == (1 if name in _WARM_KAFKA_SCALERS else 0), (values_name, name)
             assert spec["maxReplicaCount"] == expected_maximum
             if name in _WARM_KAFKA_SCALERS:

@@ -24,13 +24,9 @@ spec:
     - Egress
   ingress:
     {{- $monitoring := .Values.monitoring | default dict }}
-    {{- $scaling := .Values.scaling | default dict }}
-    {{- $globalKeda := ((.Values.global | default dict).keda | default dict) }}
-    {{- $httpAddon := $globalKeda.httpAddon | default dict }}
     {{- $hasGatewayIngress := ($np.allowGatewayIngress | default false) }}
     {{- $hasBffIngress := ($np.allowBffIngress | default false) }}
-    {{- $hasKedaIngress := and $httpAddon.enabled $scaling.enabled (eq ($scaling.type | default "") "http") }}
-    {{- if or $monitoring.enabled $hasGatewayIngress $hasBffIngress $hasKedaIngress }}
+    {{- if or $monitoring.enabled $hasGatewayIngress $hasBffIngress }}
     {{- if $monitoring.enabled }}
     - from:
         - namespaceSelector:
@@ -59,16 +55,6 @@ spec:
             matchLabels:
               app.kubernetes.io/name: bff-service
               app.kubernetes.io/instance: {{ .Release.Name }}
-      ports:
-        - port: {{ .Values.service.port | default 8000 }}
-          protocol: TCP
-    {{- end }}
-    {{- if $hasKedaIngress }}
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: nohiki-http-interceptor
-              app.kubernetes.io/part-of: nohiki
       ports:
         - port: {{ .Values.service.port | default 8000 }}
           protocol: TCP

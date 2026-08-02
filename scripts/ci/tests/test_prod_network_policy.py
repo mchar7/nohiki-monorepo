@@ -311,29 +311,6 @@ def test_public_https_rules_exclude_private_networks(tmp_path: Path) -> None:
             assert set(public[0].get("except", ())) == _NON_PUBLIC_IPV4
 
 
-def test_keda_interceptor_ingress_requires_installed_http_addon(tmp_path: Path) -> None:
-    interceptor = (
-        ("app.kubernetes.io/name", "nohiki-http-interceptor"),
-        ("app.kubernetes.io/part-of", "nohiki"),
-    )
-    default = _policy_union(_render("values.prod.yaml", tmp_path))
-    assert all(interceptor not in _pod_sources(policy["ingress"]) for policy in default.values())
-
-    enabled = _policy_union(
-        _render(
-            "values.prod.yaml",
-            tmp_path,
-            "--set",
-            "global.keda.httpAddon.enabled=true",
-            "--set",
-            "bff-service.scaling.enabled=true",
-            "--set",
-            "bff-service.scaling.type=http",
-        )
-    )
-    assert interceptor in _pod_sources(enabled["nohiki-bff-service"]["ingress"])
-
-
 @pytest.mark.parametrize("values_name", ["values.local.yaml", "values.staging.yaml"])
 def test_non_prod_overlays_still_render(values_name: str, tmp_path: Path) -> None:
     assert _render(values_name, tmp_path)

@@ -6,9 +6,7 @@ Usage: {{ include "nohiki-common.keda-scaler" . }}
 {{- $scaling := .Values.scaling | default dict }}
 {{- if and $scaling.enabled (not $scaling.excluded) }}
 {{- $type := $scaling.type | default "http" }}
-{{- if eq $type "http" }}
-{{ include "nohiki-common.kedaScaledObject.http" . }}
-{{- else if eq $type "kafka" }}
+{{- if eq $type "kafka" }}
 {{ include "nohiki-common.kedaScaledObject.kafka" . }}
 {{- else if eq $type "multi" }}
 {{ include "nohiki-common.kedaScaledObject.multi" . }}
@@ -18,52 +16,6 @@ Usage: {{ include "nohiki-common.keda-scaler" . }}
 {{- end }}
 {{- end }}
 
-{{/*
-KEDA HTTPScaledObject for HTTP-based services.
-Usage: {{ include "nohiki-common.kedaScaledObject.http" . }}
-*/}}
-{{- define "nohiki-common.kedaScaledObject.http" -}}
-{{- if ne .Values.enabled false }}
-{{- $scaling := .Values.scaling | default dict }}
-{{- $http := $scaling.http | default dict }}
-{{- $glob := .Values.global | default dict }}
-{{- $globScaling := $glob.scaling | default dict }}
-{{- $minReplicas := $globScaling.minReplicas | default 0 }}
-{{- if hasKey $scaling "minReplicas" }}
-{{- $minReplicas = $scaling.minReplicas }}
-{{- end }}
-apiVersion: http.keda.sh/v1alpha1
-kind: HTTPScaledObject
-metadata:
-  name: {{ include "nohiki-common.fullname" . }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "nohiki-common.labels" . | nindent 4 }}
-spec:
-  hosts:
-    - {{ include "nohiki-common.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
-    {{- range $http.additionalHosts }}
-    - {{ . }}
-    {{- end }}
-  {{- if $http.pathPrefixes }}
-  pathPrefixes:
-    {{- range $http.pathPrefixes }}
-    - {{ . }}
-    {{- end }}
-  {{- end }}
-  targetPendingRequests: {{ $http.targetPendingRequests | default 100 }}
-  scaleTargetRef:
-    name: {{ include "nohiki-common.fullname" . }}
-    kind: Deployment
-    apiVersion: apps/v1
-    service: {{ include "nohiki-common.fullname" . }}
-    port: {{ .Values.service.port | default 8000 }}
-  replicas:
-    min: {{ $minReplicas }}
-    max: {{ $scaling.maxReplicas | default $globScaling.maxReplicas | default 10 }}
-  scaledownPeriod: {{ $scaling.cooldownPeriod | default $globScaling.cooldownPeriod | default 300 }}
-{{- end }}
-{{- end }}
 
 {{/*
 KEDA ScaledObject for Kafka consumer services.
@@ -115,7 +67,7 @@ spec:
     - type: kafka
       metadata:
         bootstrapServers: {{ $globKafka.bootstrapServers | default "nohiki-kafka:9092" }}
-        consumerGroup: {{ $kedaConsumerGroup }}
+        consumerGroup: {{ .consumerGroup | default $kedaConsumerGroup }}
         topic: {{ .name }}
         lagThreshold: {{ .lagThreshold | default $kafka.lagThreshold | default "10" | quote }}
         allowIdleConsumers: "true"
@@ -187,7 +139,7 @@ spec:
     - type: kafka
       metadata:
         bootstrapServers: {{ $globKafka.bootstrapServers | default "nohiki-kafka:9092" }}
-        consumerGroup: {{ $kedaConsumerGroup }}
+        consumerGroup: {{ .consumerGroup | default $kedaConsumerGroup }}
         topic: {{ .name }}
         lagThreshold: {{ .lagThreshold | default $kafka.lagThreshold | default "10" | quote }}
         allowIdleConsumers: "true"
