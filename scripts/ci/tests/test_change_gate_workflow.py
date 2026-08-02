@@ -360,7 +360,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
         "node_group_executed": ("${{ steps.setup-ci.outputs.node-group-executed == 'true' && 'true' || '' }}"),
         "commitlint_executed": ("${{ steps.commitlint-range.outcome == 'success' && 'true' || '' }}"),
         # Warmth publishes two names for one fact because '' cannot distinguish "this leg restored"
-        # from "this leg never reported", and S-90 makes the second case cold.
+        # from "this leg never reported"; an unreported run must be classified cold.
         "ready_cache_missed": ("${{ steps.setup-ci.outputs.ready-cache-hit != 'true' && 'true' || '' }}"),
         "ready_cache_hit": ("${{ steps.setup-ci.outputs.ready-cache-hit == 'true' && 'true' || '' }}"),
         "deadcode_cache_missed": (
@@ -408,11 +408,10 @@ def test_execution_attestations_are_not_scoped_to_one_commit_class() -> None:
     assert "needs.changes.outputs.standard == 'true'" not in container_expectation
     assert "needs.changes.outputs.broad == 'true'" not in container_expectation
 
-    # The Node expectation must track the same router flags the worker uses to request the
-    # group. Compared as sets: disjunct order carries no meaning and is not a contract.
     def referenced_flags(expression: str) -> set[str]:
         return set(re.findall(r"needs\.changes\.outputs\.(\w+)", expression))
 
+    # The expectation attests the same provisioning operation the worker requests.
     assert referenced_flags(str(env["NODE_GROUP_EXPECTED"])) == referenced_flags(
         str(_jobs()["worker"]["env"]["NODE_SETUP_SELECTED"])
     )
@@ -559,6 +558,58 @@ def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> No
     }
     assert marked
     assert all(name.startswith(f"{_CI_TESTS}/") for name in marked), marked
+
+
+def test_environment_selectors_contain_every_lane_that_invokes_the_environment() -> None:
+    worker = _jobs()["worker"]
+    setup = next(step for step in _steps(worker) if step.get("uses") == "./.github/actions/setup-ci")
+    lane_names = set(FLAG_NAMES) | {"commitlint_expected", "protected_main_smoke"}
+    selected_re = re.compile(r"needs\.changes\.outputs\.(\w+)\s*==\s*'true'")
+
+    def selected_lanes(expression: object) -> set[str]:
+        return lane_names & set(selected_re.findall(str(expression)))
+
+    clean_env = os.environ.copy()
+    clean_env.pop("VIRTUAL_ENV", None)
+    clean_env.pop("PROJECT_ROOT", None)
+    recipes = json.loads(
+        subprocess.run(
+            ["just", "--dump", "--dump-format", "json"],
+            cwd=_ROOT,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )["recipes"]
+
+    required = {"nix": set(), "node": set(), "full-node-workspace": set()}
+    for step in _steps(worker):
+        run = str(step.get("run", ""))
+        lanes = selected_lanes(step.get("if", ""))
+        if not run or not lanes:
+            continue
+
+        recipe = re.search(r"\bjust\s+([\w-]+)", run)
+        command_surface = run
+        if recipe is not None and recipe.group(1) in recipes:
+            command_surface += json.dumps(recipes[recipe.group(1)])
+
+        if "nix develop" in run:
+            required["nix"].update(lanes)
+        if "pnpm" in command_surface or "node_modules" in command_surface:
+            required["node"].update(lanes)
+        if "node_modules" in command_surface or "--filter" in command_surface:
+            required["full-node-workspace"].update(lanes)
+
+    selected = {
+        "nix": selected_lanes(worker["env"]["NIX_SETUP_SELECTED"]),
+        "node": selected_lanes(worker["env"]["NODE_SETUP_SELECTED"]),
+        "full-node-workspace": selected_lanes(setup["with"]["full-node-workspace"]),
+    }
+    missing = {name: sorted(lanes - selected[name]) for name, lanes in required.items()}
+    missing_message = "; ".join(f"{name}={','.join(names)}" for name, names in missing.items())
+    assert all(required[name] <= selected[name] for name in required), missing_message
 
 
 def test_skylos_cache_tests_run_only_where_the_private_analyzer_is_installed() -> None:
