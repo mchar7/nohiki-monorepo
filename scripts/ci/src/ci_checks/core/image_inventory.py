@@ -319,7 +319,7 @@ def _record(raw: object, checkout: Path) -> ImageRecord:
     )
 
 
-def _no_image_rules(raw: object, images: Sequence[ImageRecord]) -> tuple[str, ...]:
+def _no_image_rules(raw: object, images: Sequence[ImageRecord], checkout: Path) -> tuple[str, ...]:
     rules = _rules(raw, "no_image_ownership", allow_empty=True)
     for rule in rules:
         if any(_overlaps(rule, authority) for authority in SELECTION_AUTHORITY_PATHS):
@@ -330,6 +330,9 @@ def _no_image_rules(raw: object, images: Sequence[ImageRecord]) -> tuple[str, ..
                 if _overlaps(rule, owned):
                     msg = f"no_image_ownership rule {rule!r} overlaps image {record.name} rule {owned!r}"
                     raise InventoryError(msg)
+        if not (checkout / rule).exists():
+            msg = f"no_image_ownership rule {rule!r} does not exist"
+            raise InventoryError(msg)
     return rules
 
 
@@ -396,7 +399,10 @@ def load_inventory(path: Path | None = None, checkout: Path | None = None) -> Im
             msg = f"duplicate image name {record.name}"
             raise InventoryError(msg)
         seen.add(record.name)
-    return ImageInventory(images=images, no_image_ownership=_no_image_rules(data["no_image_ownership"], images))
+    return ImageInventory(
+        images=images,
+        no_image_ownership=_no_image_rules(data["no_image_ownership"], images, root),
+    )
 
 
 def affected_images(changed: Iterable[str], inventory: ImageInventory) -> tuple[str, ...]:

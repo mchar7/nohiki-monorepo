@@ -257,6 +257,11 @@ def test_vendored_dockerfiles_consume_owned_mirrors_at_the_original_digests(
         pytest.param({"images": [_record(ownership=["a/../b"])]}, "normalized path", id="traversing-ownership-rule"),
         pytest.param({"no_image_ownership": ["x", "x"]}, "repeats the rule", id="duplicate-no-image-rule"),
         pytest.param({"no_image_ownership": ["../x"]}, "normalized path", id="traversing-no-image-rule"),
+        pytest.param(
+            {"no_image_ownership": ["missing.no-image"]},
+            "does not exist",
+            id="missing-no-image-rule",
+        ),
         pytest.param({"no_image_ownership": ["context/"]}, "overlaps image", id="prefix-prefix-overlap"),
         pytest.param({"no_image_ownership": ["context/file"]}, "overlaps image", id="exact-inside-prefix-overlap"),
         pytest.param({"no_image_ownership": ["context"]}, "overlaps image", id="exact-names-owned-directory"),
@@ -321,6 +326,7 @@ def test_exact_rules_match_only_the_named_path(checkout: Path) -> None:
     """A path extending an exact rule must miss it, which is observable only with two images."""
     (checkout / "second").mkdir()
     (checkout / "second" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    (checkout / "context" / "other").touch()
     built = _synthetic(
         checkout,
         images=[
@@ -536,7 +542,6 @@ def test_ops_changes_bypass_the_routine_class_filter(
     "path",
     [
         "scripts/dev/env-lock.sh",
-        "skills-lock.json",
         "Justfile",
         "CONTRIBUTING.md",
         "README.md",
