@@ -2,8 +2,8 @@ apiVersion: v2
 name: nohiki-foundation
 description: >-
   Declarative cluster foundation for Nohiki. Owns cert-manager, kgateway,
-  agentgateway, CloudNativePG, External Secrets, and OpenTelemetry operators
-  and their CRDs. Flux applies the pinned Gateway API experimental CRDs in a
+  agentgateway, External Secrets, and OpenTelemetry operators and their CRDs.
+  Flux applies the pinned Gateway API experimental CRDs in a
   dedicated pre-foundation Kustomization before it reconciles this chart.
 type: application
 version: 0.1.0
