@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -11,7 +12,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from _documents import load_manifests, load_mapping
+from _documents import load_manifests, load_mapping, mapping_at
+from ci_checks.checks import freshness
 from ci_checks.core.image_inventory import load_inventory
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -30,6 +32,8 @@ _SYNTHETIC_REPOSITORY = "example-org/example-monorepo"
 _SYNTHETIC_PREFIX = f"ghcr.io/{_SYNTHETIC_REPOSITORY}"
 _PROD_IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
 _PROD_NETWORK = Path(__file__).parent / "fixtures" / "values.prod.network.yaml"
+_PROD_DIGEST_OVERLAY = _CHART / "values.prod.digests.yaml"
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 def _digest_values(tmp_path: Path, *, omit: str | None = None, invalid: str | None = None) -> Path:
@@ -84,6 +88,21 @@ def _assert_schedule_tick_image(actual: str, expected: str) -> None:
 @cache
 def _names() -> tuple[str, ...]:
     return load_inventory().names
+
+
+def _production_digest_values(path: Path = _PROD_DIGEST_OVERLAY) -> dict[str, str]:
+    values = mapping_at(load_mapping(path), "global", "imageDigests")
+    invalid = {
+        repository: digest
+        for repository, digest in values.items()
+        if not isinstance(repository, str) or not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest)
+    }
+    assert not invalid, f"production image digests must be lowercase sha256 values: {invalid}"
+    return {
+        repository: digest
+        for repository, digest in values.items()
+        if isinstance(repository, str) and isinstance(digest, str)
+    }
 
 
 def _record(name: str, index: int = 0, *, repository: str = _SYNTHETIC_REPOSITORY) -> dict[str, str]:
@@ -334,6 +353,38 @@ def test_production_helmrelease_consumes_generated_digest_overlay() -> None:
         "infra/k8s/helm/values.prod.network.yaml",
         "infra/k8s/helm/values.prod.digests.yaml",
     ]
+
+
+def test_checked_in_production_digest_overlay_matches_inventory() -> None:
+    digests = _production_digest_values()
+    expected = {f"{_FIRST_PARTY_PREFIX}{name}" for name in _names()}
+    actual = set(digests)
+
+    assert len(digests) == len(expected), "production digest overlay must contain one entry per inventory record"
+    assert actual == expected, (
+        f"production digest overlay must match inventory; "
+        f"missing={sorted(expected - actual)}, unexpected={sorted(actual - expected)}"
+    )
+
+
+def test_scheduled_freshness_collector_includes_production_digest_overlay() -> None:
+    source = str(_PROD_DIGEST_OVERLAY.relative_to(_ROOT))
+    assert source in freshness._tracked_dockerfiles()
+    assert freshness.collect_pins([source]) == {
+        f"{repository}@{digest}": [source] for repository, digest in _production_digest_values().items()
+    }
+
+
+def test_checked_in_production_digest_overlay_renders_first_party_images_immutable() -> None:
+    digests = _production_digest_values()
+    result = _render("values.prod.yaml", _PROD_DIGEST_OVERLAY)
+    assert result.returncode == 0, result.stderr
+
+    documents = load_manifests(result.stdout)
+    images = [image for image in _images(documents) if image.startswith(_FIRST_PARTY_PREFIX)]
+    expected_images = {f"{repository}@{digest}" for repository, digest in digests.items()}
+    assert images
+    assert set(images) <= expected_images
 
 
 @pytest.mark.parametrize(
