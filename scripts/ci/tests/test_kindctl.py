@@ -91,6 +91,7 @@ elif name == "systemd-run":
 
 def _stub_create_acceptance(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "preflight", lambda: None)
+    monkeypatch.setattr(runner, "kind_modules_override", lambda: None)
     monkeypatch.setattr(runner, "validate_cluster", lambda _path: ("cluster-uid", ["nohiki-control-plane"]))
     monkeypatch.setattr(
         runner,
@@ -183,6 +184,65 @@ def test_create_argv_is_scoped_podman_and_bounded(tmp_path: Path) -> None:
         "120s",
     )
     assert runner.CREATE_TIMEOUT == runner.DELETE_TIMEOUT == 120
+
+
+def test_kind_modules_override_preserves_conventional_hosts_and_fails_loudly(tmp_path: Path) -> None:
+    runner = _load_runner()
+    conventional = tmp_path / "lib/modules"
+    booted = tmp_path / "run/booted/modules"
+    current = tmp_path / "run/current/modules"
+    conventional.mkdir(parents=True)
+    assert runner.kind_modules_override((conventional, booted, current), "test-release") is None
+
+    conventional.rmdir()
+    (booted / "test-release").mkdir(parents=True)
+    assert runner.kind_modules_override((conventional, booted, current), "test-release") == booted.resolve()
+
+    (booted / "test-release").rmdir()
+    with pytest.raises(runner.KindctlError) as raised:
+        runner.kind_modules_override((conventional, booted, current), "test-release")
+    message = str(raised.value)
+    assert all(str(path) in message for path in (conventional, booted, current))
+
+
+def test_create_path_executes_provider_rewrite_for_missing_lib_modules(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    real_bin = tmp_path / "real-bin"
+    real_bin.mkdir()
+    log = tmp_path / "podman-argv.json"
+    podman = real_bin / "podman"
+    podman.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+Path({json.dumps(str(log))}).write_text(json.dumps(sys.argv[1:]), encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
+    podman.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{real_bin}:{os.environ['PATH']}")
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    modules = tmp_path / "host-modules"
+    modules.mkdir()
+
+    provider_bin = runner.install_kind_provider_wrapper(runtime, modules)
+    create_command = runner.create_argv(runtime / "kubeconfig", provider_bin)
+    path_assignment = next(value for value in create_command if value.startswith("PATH="))
+    environment = os.environ | {"PATH": path_assignment.removeprefix("PATH=")}
+    subprocess.run(
+        ["podman", "create", "--volume", "/lib/modules:/lib/modules:ro", "node"],
+        check=True,
+        env=environment,
+    )
+
+    observed = json.loads(log.read_text(encoding="utf-8"))
+    assert observed == ["create", "--volume", f"{modules}:/lib/modules:ro", "node"]
 
 
 def test_preflight_accepts_pinned_client_outputs(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -65,6 +65,11 @@ OPERATOR_CRDS = (
     "resourcesetinputproviders.fluxcd.controlplane.io",
     "resourcesets.fluxcd.controlplane.io",
 )
+KIND_MODULE_PATHS = (
+    Path("/lib/modules"),
+    Path("/run/booted-system/kernel-modules/lib/modules"),
+    Path("/run/current-system/kernel-modules/lib/modules"),
+)
 
 
 class KindctlError(RuntimeError):
@@ -446,10 +451,59 @@ def require_no_residue(kubeconfig: Path | None = None, active_attempt: Path | No
     return inventory
 
 
-def create_argv(kubeconfig: Path) -> tuple[str, ...]:
+def kind_modules_override(
+    paths: Sequence[Path] = KIND_MODULE_PATHS,
+    release: str | None = None,
+) -> Path | None:
+    conventional, *alternatives = paths
+    if conventional.is_dir():
+        return None
+    kernel_release = os.uname().release if release is None else release
+    for candidate in alternatives:
+        if (candidate / kernel_release).is_dir():
+            return candidate.resolve()
+    probed = ", ".join(str(path) for path in paths)
+    raise KindctlError(f"kernel modules tree is unavailable; probed paths: {probed}")
+
+
+def install_kind_provider_wrapper(runtime: Path, modules: Path) -> Path:
+    executable = shutil.which("podman")
+    if executable is None:
+        raise KindctlError("required executable is missing: podman")
+    podman = Path(executable).resolve()
+    if not podman.is_file() or not os.access(podman, os.X_OK):
+        raise KindctlError(f"Podman executable is invalid: {podman}")
+    directory = runtime / "provider-bin"
+    directory.mkdir(mode=0o700)
+    wrapper = directory / "podman"
+    program = f"""#!/usr/bin/env python3
+import os
+import sys
+
+podman = {json.dumps(str(podman))}
+source = "/lib/modules:/lib/modules:ro"
+replacement = {json.dumps(f"{modules}:/lib/modules:ro")}
+argv = [replacement if value == source else value for value in sys.argv[1:]]
+os.execv(podman, [podman, *argv])
+"""
+    descriptor = os.open(wrapper, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(program)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return directory
+
+
+def create_argv(kubeconfig: Path, provider_bin: Path | None = None) -> tuple[str, ...]:
+    environment = (
+        "KIND_EXPERIMENTAL_PROVIDER=podman",
+        f"KUBECONFIG={kubeconfig}",
+    )
+    if provider_bin is not None:
+        environment += (f"PATH={provider_bin}:{os.environ['PATH']}",)
     return (
         "systemd-run", "--scope", "--user", "-p", "Delegate=yes", "env",
-        "KIND_EXPERIMENTAL_PROVIDER=podman", f"KUBECONFIG={kubeconfig}",
+        *environment,
         "kind", "create", "cluster", "--name", CLUSTER, "--config", str(CONFIG),
         "--kubeconfig", str(kubeconfig), "--wait", f"{CREATE_TIMEOUT}s",
     )
@@ -1331,11 +1385,13 @@ def create(attempt: Path) -> dict[str, Any]:
         cleanup_cluster(attempt)
     require_no_residue(kubeconfig, attempt)
     preflight()
+    modules = kind_modules_override()
     runtime.mkdir(mode=0o700)
-    descriptor = os.open(kubeconfig, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    os.close(descriptor)
     try:
-        run_command(create_argv(kubeconfig), timeout=CREATE_TIMEOUT)
+        provider_bin = install_kind_provider_wrapper(runtime, modules) if modules is not None else None
+        descriptor = os.open(kubeconfig, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        os.close(descriptor)
+        run_command(create_argv(kubeconfig, provider_bin), timeout=CREATE_TIMEOUT)
         validate_owned_kubeconfig(kubeconfig)
         cluster_uid, cluster_nodes = validate_cluster(kubeconfig)
         nodes = repair_nodes(kubeconfig)
