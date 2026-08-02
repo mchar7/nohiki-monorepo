@@ -2,7 +2,7 @@
 name = "doc-content-service"
 version = "0.1.0"
 license = "AGPL-3.0-only"
-description = "Microservice for LLM-powered content generation with flexible schemas"
+description = "Prepares schema-constrained job-application drafts with an LLM for user review"
 requires-python = ">=3.14"
 dependencies = [
     "nohiki-common-exceptions==0.1.0",

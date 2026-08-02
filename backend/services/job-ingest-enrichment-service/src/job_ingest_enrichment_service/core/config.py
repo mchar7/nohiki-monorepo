@@ -47,7 +47,9 @@ class Settings(DatabaseMixin, RedisMixin, KafkaMixin, LLMMixin, ManifestMixin, N
     service_name: str = "job-ingest-enrichment-service"
     service_version: str = "0.1.0"
     service_name_friendly: str = "Listing Parser Service"
-    service_desc_friendly: str = "Microservice for processing raw job data into structured format using LLM analysis"
+    service_desc_friendly: str = (
+        "Structures raw job-listing data with LLM-assisted extraction to support discovery and evaluation"
+    )
 
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)

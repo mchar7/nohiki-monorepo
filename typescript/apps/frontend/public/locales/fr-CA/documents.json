@@ -76,7 +76,7 @@
       "heading": "Sélectionnez une correspondance d'emploi",
       "description": "Vous pouvez optionnellement adapter ce document à une offre d'emploi spécifique",
       "skip": "Ignorer - générer sans adaptation",
-      "score": "Indice d’adéquation : {{score}} / 100",
+      "score": "Score de correspondance : {{score}} / 100",
       "emptyTitle": "Aucune correspondance trouvée",
       "emptyDescription": "Générez un document sans l'adapter, ou créez d'abord des correspondances"
     },

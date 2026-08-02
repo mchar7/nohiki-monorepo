@@ -158,7 +158,7 @@ describe('matchesTableColumns', () => {
     });
 
     // Headers
-    expect(screen.getByText('Fit index')).toBeInTheDocument();
+    expect(screen.getByText('Match score')).toBeInTheDocument();
     expect(screen.getByText('Company')).toBeInTheDocument();
     expect(screen.getByText('Location')).toBeInTheDocument();
     expect(screen.getByText('Status')).toBeInTheDocument();

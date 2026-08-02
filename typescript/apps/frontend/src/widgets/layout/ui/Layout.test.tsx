@@ -20,7 +20,7 @@ vi.mock('react-i18next', async (importOriginal) => {
       t: (key: string) => {
         const translations: Record<string, string> = {
           appName: 'Nohiki',
-          appTagline: 'Job Search Automation',
+          appTagline: 'Your job search, organized.',
           'common:appName': 'Nohiki',
           'modules.platform.title': 'Platform',
           'modules.platform.description': 'Jobs Platform',

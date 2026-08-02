@@ -44,7 +44,7 @@
   },
   "appName": "Nohiki",
   "unavailable": "Indisponible",
-  "appTagline": "Automatisation de recherche d'emploi",
+  "appTagline": "Votre recherche d’emploi, organisée.",
   "characterCounter": {
     "count": "{{current}}/{{max}}"
   },

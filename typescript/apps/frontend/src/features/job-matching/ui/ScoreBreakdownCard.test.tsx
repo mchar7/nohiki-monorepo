@@ -58,7 +58,7 @@ describe('ScoreBreakdownCard public fit-ranking contract', () => {
     renderCard(BREAKDOWN);
 
     expect(screen.getByRole('region', { name: 'Fit breakdown' })).toBeInTheDocument();
-    expect(screen.getByText('Fit index 85 / 100')).toBeInTheDocument();
+    expect(screen.getByText('Match score 85 / 100')).toBeInTheDocument();
     expect(screen.getByText('Role relevance')).toBeInTheDocument();
     expect(screen.getByText('Skills')).toBeInTheDocument();
     expect(screen.getByText('Location')).toBeInTheDocument();
@@ -104,7 +104,7 @@ describe('ScoreBreakdownCard public fit-ranking contract', () => {
   ] as const)('renders unavailable when the typed breakdown is %s', (_state, breakdown) => {
     renderCard(breakdown);
 
-    expect(screen.getByText('Fit index 85 / 100')).toBeInTheDocument();
+    expect(screen.getByText('Match score 85 / 100')).toBeInTheDocument();
     expect(screen.getByText(i18n.t('jobs:match.breakdown.unavailable'))).toBeInTheDocument();
     expect(screen.queryByRole('list')).not.toBeInTheDocument();
   });
