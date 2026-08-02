@@ -24,6 +24,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from ci_checks.core.image_inventory import split_registry_pin
 from ci_checks.core.packages import REPO_ROOT
 
 # FROM [--platform=...] ref and COPY [--flag ...] --from=ref, both pinned as
@@ -173,15 +174,10 @@ def probe_pin(ref: str) -> PinProbe:
     """
     if ref.startswith(("http://", "https://")):
         return _probe_url(ref)
-    tagged, _, digest = ref.partition("@")
-    head, sep, candidate = tagged.rpartition(":")
-    # A colon only introduces a tag in the final path component; otherwise
-    # it is a registry port (registry.example:5000/team/image).
-    tag = candidate if sep and "/" not in candidate else ""
-    bare = head if tag else tagged
+    tagged, bare, digest = split_registry_pin(ref)
     pinned = _skopeo(["inspect", "--raw", f"docker://{bare}@{digest}"])
     tag_digest = ""
-    if tag:
+    if tagged != bare:
         current = _skopeo(["inspect", "--format", "{{.Digest}}", f"docker://{tagged}"])
         tag_digest = current.stdout.strip() if current.returncode == 0 else ""
     detail = "" if pinned.returncode == 0 else pinned.stderr.strip().splitlines()[-1][:200]
