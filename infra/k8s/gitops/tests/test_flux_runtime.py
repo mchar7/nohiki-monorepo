@@ -192,6 +192,17 @@ def test_flux_instances_are_runtime_owned_and_git_roots_do_not_contain_them() ->
         ]
 
 
+def test_core_fallback_stays_on_bootstrap_root_until_publication() -> None:
+    documents = list(yaml.safe_load_all((_RUNTIME / "fallback/sync.yaml").read_text(encoding="utf-8")))
+    sync = next(_mapping(document) for document in documents if _mapping(document).get("kind") == "Kustomization")
+    assert _at(sync, "spec", "path") == "./infra/k8s/gitops/clusters/local/bootstrap"
+    assert _at(_load(_CLUSTER / "bootstrap/kustomization.yaml"), "resources") == [
+        "gateway-api-crds.yaml",
+        "registry.yaml",
+    ]
+    assert len(cast(list[object], _at(_load(_CLUSTER / "kustomization.yaml"), "resources"))) == 8
+
+
 def test_full_root_preserves_publication_and_ordered_verification_dependencies() -> None:
     bootstrap = _load(_CLUSTER / "bootstrap/kustomization.yaml")
     final = _load(_CLUSTER / "kustomization.yaml")
