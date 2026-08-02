@@ -26,8 +26,6 @@ commit-msg:
   commands:
     commitlint:
       run: scripts/dev/env-lock.sh shared node_modules -- pnpm exec commitlint --edit {1}
-    internal-refs-msg:
-      run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks internal-refs --message {1}
 # PRE-COMMIT: Fast checks on staged files (~5-15s)
 # All commands run in parallel, auto-fix where possible
 pre-commit:
@@ -143,29 +141,6 @@ pre-commit:
 # Phased execution: typecheck -> tests -> hygiene
 pre-push:
   jobs:
-    # First serial job: scan every pushed commit message and patch.
-    # Lefthook normally forwards pre-push's ref lines on stdin. Empty stdin
-    # falls back to the local push ref, then origin/main when no push ref exists.
-    - name: internal-refs-range
-      run: |
-        set -eu
-        refs=$(cat)
-        if [ -n "$refs" ]; then
-          printf '%s\n' "$refs" | while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
-            if [ -z "$local_ref" ] || [ -z "$local_sha" ] || [ -z "$remote_ref" ] || [ -z "$remote_sha" ]; then
-              echo "ERROR: malformed pre-push ref input" >&2
-              exit 1
-            fi
-            scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks internal-refs --range "$remote_sha..$local_sha"
-          done
-        else
-          range='@{push}..HEAD'
-          if ! git rev-parse --verify '@{push}' >/dev/null 2>&1; then
-            range='origin/main..HEAD'
-          fi
-          scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks internal-refs --range "$range"
-        fi
-
     # Scan only the commits being pushed. Whole-history scans include unrelated worktree branches.
     # No glob: secrets can appear in any file type, so path filtering would create blind spots.
     - name: secrets-scan

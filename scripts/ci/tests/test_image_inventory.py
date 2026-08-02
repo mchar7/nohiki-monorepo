@@ -439,7 +439,6 @@ def test_a_frontend_only_source_path_selects_frontend_alone(inventory: ImageInve
     "path",
     [
         "scripts/ci/src/ci_checks/app.py",
-        "scripts/ci/src/ci_checks/checks/internal_refs.py",
         "scripts/ci/src/ci_checks/checks/tests.py",
         "scripts/ci/src/ci_checks/core/repository.py",
         "scripts/ci/README.md",
