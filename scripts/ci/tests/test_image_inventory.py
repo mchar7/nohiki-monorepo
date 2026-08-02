@@ -1,6 +1,7 @@
 """Contracts for the canonical release-image inventory, its matching, and its CLI views."""
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -188,19 +189,36 @@ def test_vendored_base_inventory_covers_every_digest_pinned_oci_input(inventory:
     pins = vendored_base_images(inventory, _ROOT, _MIRROR_ROOT)
     assert len(pins) == 10
     assert {pin.source.split("@", maxsplit=1)[0] for pin in pins} == {
-        "docker.io/docker/dockerfile:1.16",
-        "docker.io/library/caddy:2.10.2-alpine",
-        "docker.io/library/golang:1.26.5-bookworm",
-        "docker.io/library/gradle:9.6.1-jdk25-alpine",
-        "docker.io/library/node:26.5.0-alpine",
-        "ghcr.io/astral-sh/uv:0.11.28",
-        "mcr.microsoft.com/playwright:v1.62.0-noble",
-        "public.ecr.aws/docker/library/python:3.14.6-slim",
-        "quay.io/debezium/connect:3.6.0.Final",
-        "registry.k8s.io/kubectl:v1.35.0",
+        "docker.io/docker/dockerfile",
+        "docker.io/library/caddy",
+        "docker.io/library/golang",
+        "docker.io/library/gradle",
+        "docker.io/library/node",
+        "ghcr.io/astral-sh/uv",
+        "mcr.microsoft.com/playwright",
+        "public.ecr.aws/docker/library/python",
+        "quay.io/debezium/connect",
+        "registry.k8s.io/kubectl",
     }
     assert all(pin.mirror_repository.startswith(f"{_MIRROR_ROOT}/") for pin in pins)
     assert all(pin.mirror_tag.endswith(pin.digest.removeprefix("sha256:")) for pin in pins)
+
+
+def test_bases_cli_emits_a_debezium_source_accepted_by_skopeo(tmp_path: Path) -> None:
+    rows = _cli("bases", "--mirror-root", _MIRROR_ROOT).stdout.splitlines()
+    source = next(row.split("\t", maxsplit=1)[0] for row in rows if "quay.io/debezium/connect" in row)
+    registries_conf = tmp_path / "registries.conf"
+    registries_conf.write_text('unqualified-search-registries = ["docker.io"]\n', encoding="utf-8")
+
+    inspected = subprocess.run(
+        ["skopeo", "inspect", "--raw", f"docker://{source}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=os.environ | {"CONTAINERS_REGISTRIES_CONF": str(registries_conf)},
+    )
+
+    assert inspected.returncode == 0, inspected.stderr
 
 
 def test_vendored_dockerfiles_consume_owned_mirrors_at_the_original_digests(
@@ -239,6 +257,11 @@ def test_vendored_dockerfiles_consume_owned_mirrors_at_the_original_digests(
         pytest.param({"images": [_record(ownership=["a/../b"])]}, "normalized path", id="traversing-ownership-rule"),
         pytest.param({"no_image_ownership": ["x", "x"]}, "repeats the rule", id="duplicate-no-image-rule"),
         pytest.param({"no_image_ownership": ["../x"]}, "normalized path", id="traversing-no-image-rule"),
+        pytest.param(
+            {"no_image_ownership": ["missing.no-image"]},
+            "does not exist",
+            id="missing-no-image-rule",
+        ),
         pytest.param({"no_image_ownership": ["context/"]}, "overlaps image", id="prefix-prefix-overlap"),
         pytest.param({"no_image_ownership": ["context/file"]}, "overlaps image", id="exact-inside-prefix-overlap"),
         pytest.param({"no_image_ownership": ["context"]}, "overlaps image", id="exact-names-owned-directory"),
@@ -303,6 +326,7 @@ def test_exact_rules_match_only_the_named_path(checkout: Path) -> None:
     """A path extending an exact rule must miss it, which is observable only with two images."""
     (checkout / "second").mkdir()
     (checkout / "second" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    (checkout / "context" / "other").touch()
     built = _synthetic(
         checkout,
         images=[
@@ -518,7 +542,6 @@ def test_ops_changes_bypass_the_routine_class_filter(
     "path",
     [
         "scripts/dev/env-lock.sh",
-        "skills-lock.json",
         "Justfile",
         "CONTRIBUTING.md",
         "README.md",

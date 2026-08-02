@@ -417,7 +417,7 @@ async def run_package_tests(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=pkg.path,
-        env=sanitized_python_env(),
+        env=sanitized_python_env(extra={"PROJECT_ROOT": str(REPO_ROOT)}),
     )
 
     stdout_reader = proc.stdout
@@ -869,7 +869,7 @@ async def run_consolidated_tests(
             cmd.extend(["-m", markers])
         cmd.extend(extra_args)
 
-        test_env = sanitized_python_env()
+        test_env = sanitized_python_env(extra={"PROJECT_ROOT": str(REPO_ROOT)})
         test_paths = [str(path) for path in _pythonpath_test_dirs(packages)]
         if existing_pythonpath := test_env.get("PYTHONPATH"):
             test_paths.append(existing_pythonpath)
