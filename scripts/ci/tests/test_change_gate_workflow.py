@@ -2,7 +2,7 @@ import json
 import os
 import re
 import subprocess
-import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -56,6 +56,35 @@ def _steps(job: WorkflowJob) -> list[WorkflowStep]:
     return steps
 
 
+def _run_workflow_step(
+    step: WorkflowStep,
+    *,
+    workflow_values: Mapping[str, str] | None = None,
+    runner_values: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    raw_environment = step.get("env", {})
+    assert isinstance(raw_environment, dict)
+    step_environment = {
+        str(name): str(value).lower() if isinstance(value, bool) else str(value)
+        for name, value in raw_environment.items()
+    }
+    if workflow_values is not None:
+        assert workflow_values.keys() <= step_environment.keys()
+        step_environment.update(workflow_values)
+    environment = {name: value for name, value in os.environ.items() if name not in {"PROJECT_ROOT", "VIRTUAL_ENV"}}
+    environment.update(step_environment)
+    if runner_values is not None:
+        environment.update(runner_values)
+    return subprocess.run(
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", str(step["run"])],
+        cwd=_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def _wall_budgets() -> dict[str, int]:
     return {
         "warm": WARM_WALL_BUDGET_SECONDS,
@@ -65,11 +94,9 @@ def _wall_budgets() -> dict[str, int]:
 
 def _protected_main_fan_in(worker_result: str) -> subprocess.CompletedProcess[str]:
     step = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Require every selected check")
-    return subprocess.run(
-        [sys.executable, str(_ROOT / str(step["run"]).split()[1]), "verdict", "checks"],
-        cwd=_ROOT,
-        env=os.environ
-        | {
+    return _run_workflow_step(
+        step,
+        workflow_values={
             "BROAD": "false",
             "CHANGES_RESULT": "success",
             "COMMIT_CLASS": "standard",
@@ -88,9 +115,6 @@ def _protected_main_fan_in(worker_result: str) -> subprocess.CompletedProcess[st
             "WORKER_RESULT": worker_result,
             "WORK_EXPECTED": "true",
         },
-        capture_output=True,
-        text=True,
-        check=False,
     )
 
 
@@ -843,6 +867,142 @@ def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
     assert _wall_budgets() == {"warm": 600, "cold": 844}
     assert _jobs()["playwright-image"]["timeout-minutes"] == 9
     assert _jobs()["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+
+
+def test_guard_entrypoint_emits_the_parsed_workflow_output(tmp_path: Path) -> None:
+    step = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Derive worker guard")
+    output = tmp_path / "guard-output"
+
+    result = _run_workflow_step(
+        step,
+        workflow_values={"COMMIT_CLASS": "broad"},
+        runner_values={"GITHUB_OUTPUT": str(output)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert output.exists()
+    assert output.read_text(encoding="utf-8") == (f"worker_timeout_minutes={worker_timeout_minutes('broad')}\n")
+
+
+def test_summary_entrypoint_writes_the_parsed_workflow_report(tmp_path: Path) -> None:
+    step = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Open router summary")
+    summary = tmp_path / "summary.md"
+
+    result = _run_workflow_step(
+        step,
+        workflow_values={"EVENT_ACTION": "opened"},
+        runner_values={
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_RUN_ID": "42",
+            "GITHUB_SHA": "0123456789abcdef",
+            "GITHUB_STEP_SUMMARY": str(summary),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert summary.exists()
+    rendered = summary.read_text(encoding="utf-8")
+    assert rendered.startswith("## Router\n")
+    assert "| Run | `42` |" in rendered
+    assert "| Event | `pull_request` (`opened`) |" in rendered
+    assert "| Tested SHA | `0123456` |" in rendered
+
+
+def test_container_verdict_entrypoint_enforces_and_attests_the_parsed_step(tmp_path: Path) -> None:
+    step = next(step for step in _steps(_jobs()["worker"]) if step.get("name") == "Attest container contract execution")
+    output = tmp_path / "container-output"
+    successful_values = {
+        "BUILDX_OUTCOME": "success",
+        "FRONTEND_SMOKE_EXPECTED": "true",
+        "IMAGE_OUTCOME": "success",
+        "OTEL_EXPECTED": "false",
+        "OTEL_OUTCOME": "skipped",
+        "SMOKE_OUTCOME": "success",
+    }
+
+    succeeded = _run_workflow_step(
+        step,
+        workflow_values=successful_values,
+        runner_values={"GITHUB_OUTPUT": str(output)},
+    )
+
+    assert succeeded.returncode == 0, succeeded.stderr
+    assert output.exists()
+    assert output.read_text(encoding="utf-8") == "executed=true\n"
+
+    failed = _run_workflow_step(
+        step,
+        workflow_values=successful_values | {"IMAGE_OUTCOME": "failure"},
+        runner_values={"GITHUB_OUTPUT": str(tmp_path / "failed-container-output")},
+    )
+    assert failed.returncode == 1
+    assert failed.stderr == "frontend-image was selected but concluded failure\n"
+
+
+def test_accounting_entrypoint_enforces_the_parsed_workflow_wall_budget(tmp_path: Path) -> None:
+    step = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+
+if any("/jobs?" in argument for argument in sys.argv):
+    print(json.dumps([{"jobs": []}]))
+else:
+    started = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(
+        seconds=int(os.environ["FAKE_CONTROLLABLE_SECONDS"])
+    )
+    print(json.dumps({"run_started_at": started.isoformat().replace("+00:00", "Z")}))
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    workflow_values = {
+        "COMMIT_CLASS": "standard",
+        "WORKER_DEADCODE_CACHE_HIT": "true",
+        "WORKER_DEADCODE_CACHE_MISSED": "",
+        "WORKER_READY_CACHE_HIT": "true",
+        "WORKER_READY_CACHE_MISSED": "",
+    }
+    runner_environment = {
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+    }
+    below_summary = tmp_path / "below-summary.md"
+
+    below = _run_workflow_step(
+        step,
+        workflow_values=workflow_values,
+        runner_values=runner_environment
+        | {
+            "FAKE_CONTROLLABLE_SECONDS": str(WARM_WALL_BUDGET_SECONDS - 10),
+            "GITHUB_STEP_SUMMARY": str(below_summary),
+        },
+    )
+
+    assert below.returncode == 0, below.stderr
+    below_report = below_summary.read_text(encoding="utf-8")
+    assert f"| Wall budget seconds | {WARM_WALL_BUDGET_SECONDS} |" in below_report
+    assert "| Wall budget class | warm |" in below_report
+
+    breached_summary = tmp_path / "breached-summary.md"
+    breached = _run_workflow_step(
+        step,
+        workflow_values=workflow_values,
+        runner_values=runner_environment
+        | {
+            "FAKE_CONTROLLABLE_SECONDS": str(WARM_WALL_BUDGET_SECONDS),
+            "GITHUB_STEP_SUMMARY": str(breached_summary),
+        },
+    )
+
+    assert breached.returncode == 1
+    assert "wall budget breached: class=warm observed_controllable=" in breached.stderr
+    assert f"budget<{WARM_WALL_BUDGET_SECONDS}s" in breached.stderr
 
 
 def test_runtime_accounting_starts_at_the_first_non_skipped_job() -> None:
