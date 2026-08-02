@@ -156,7 +156,7 @@ global:
           limits:
             memory: 256Mi
             cpu: 200m
-    otelEndpoint: http://nohiki-tempo-distributor:4317
+    otelEndpoint: http://nohiki-tempo:4317
     otelInsecure: "true"
     otelEnabled: "false"
     phoenixEndpoint: ""
@@ -184,7 +184,7 @@ global:
     otel:
       enabled: true
       host: nohiki.localhost
-      collectorService: nohiki-tempo-distributor
+      collectorService: nohiki-tempo
       collectorPort: 4318
       path: /v1/traces
 
@@ -589,54 +589,20 @@ mimir-distributed:
     replicas: 1
     initContainers: [*localMimirStorageWait]
 
-tempo-distributed:
-  memcached:
-    initContainers: [*localTempoStorageWait]
-  traces:
-    otlp:
-      http:
-        enabled: true
-      grpc:
-        enabled: true
-  tempo:
-    structuredConfig:
+tempo:
+  initContainers: [*localTempoStorageWait]
+  config:
+    storage:
+      trace:
+        s3:
+          endpoint: *localRustfsEndpoint
+          insecure: true
+    metrics_generator:
       storage:
-        trace:
-          s3:
-            endpoint: *localRustfsEndpoint
-            insecure: true
-      metrics_generator:
-        processor:
-          span_metrics:
-            dimensions:
-              - service.name
-              - service.namespace
-              - http.method
-              - http.status_code
-              - cache_status
-              - country
-        storage:
-          remote_write:
-            - url: http://nohiki-mimir-nginx.nohiki.svc:80/api/v1/push
-              headers:
-                X-Scope-OrgID: nohiki
-  distributor:
-    replicas: 1
-    initContainers: [*localTempoStorageWait]
-  ingester:
-    replicas: 1
-    initContainers: [*localTempoStorageWait]
-  querier:
-    replicas: 1
-    initContainers: [*localTempoStorageWait]
-  queryFrontend:
-    replicas: 1
-    initContainers: [*localTempoStorageWait]
-  compactor:
-    replicas: 1
-    initContainers: [*localTempoStorageWait]
-  metricsGenerator:
-    replicas: 1
+        remote_write:
+          - url: http://nohiki-mimir-nginx.nohiki.svc:80/api/v1/push
+            headers:
+              X-Scope-OrgID: nohiki
 
 loki:
   lokiCanary:

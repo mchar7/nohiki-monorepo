@@ -230,7 +230,9 @@ global:
   s3:
     endpoint: http://nohiki-rustfs:9000
     region: local
-    readinessImage: amazon/aws-cli:2.35.21@sha256:238583846e731f31c9848dae26c5a560769ff35c4c5368a4cb6be5816683e485
+    readinessImage:
+      repository: amazon/aws-cli
+      tag: 2.35.21@sha256:238583846e731f31c9848dae26c5a560769ff35c4c5368a4cb6be5816683e485
 
   # Qdrant configuration
   qdrant:
@@ -1208,122 +1210,12 @@ mimir-distributed:
         cpu: 250m
         memory: 256Mi
 
-tempo-distributed:
+# Sustained ingest or query saturation measured by the load workstream triggers a per-environment return to distributed Tempo; object storage needs no data migration.
+tempo:
   enabled: true
-  memcached:
-    image:
-      registry: docker.io
-      repository: memcached
-      tag: 1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7
-    resources:
-      requests:
-        cpu: 10m
-        memory: 32Mi
-      limits:
-        cpu: 100m
-        memory: 128Mi
-  gateway:
-    image:
-      registry: docker.io
-      repository: nginxinc/nginx-unprivileged
-      tag: 1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        cpu: 200m
-        memory: 128Mi
-  global:
-    image:
-      registry: docker.io
-    extraEnvFrom:
-      - secretRef:
-          name: observability-storage-credentials
-  tempo:
-    image:
-      repository: grafana/tempo
-      registry: docker.io
-      tag: 2.9.3@sha256:0d355cc7d9d23f93641a999fd9432084acf647f7731c732ed80f7b9a122ec85b
-    structuredConfig:
-      multitenancy_enabled: true
-      storage:
-        trace:
-          backend: s3
-          s3:
-            endpoint: ""
-            bucket: nohiki-tempo
-            insecure: false
-      metrics_generator:
-        storage:
-          path: /var/tempo/wal
-          remote_write:
-            - url: ""
-              headers:
-                X-Scope-OrgID: nohiki
-        processor:
-          span_metrics:
-            dimensions:
-              - service.name
-              - service.namespace
-              - http.method
-              - http.status_code
-              - cache_status
-              - country
-  distributor:
-    replicas: 2
-    resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
-      limits:
-        cpu: 500m
-        memory: 512Mi
-  ingester:
-    replicas: 2
-    resources:
-      requests:
-        cpu: 100m
-        memory: 512Mi
-      limits:
-        cpu: 500m
-        memory: 1Gi
-  querier:
-    replicas: 2
-    resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
-      limits:
-        cpu: 500m
-        memory: 512Mi
-  queryFrontend:
-    replicas: 1
-    resources:
-      requests:
-        cpu: 50m
-        memory: 128Mi
-      limits:
-        cpu: 250m
-        memory: 256Mi
-  compactor:
-    replicas: 1
-    resources:
-      requests:
-        cpu: 50m
-        memory: 256Mi
-      limits:
-        cpu: 250m
-        memory: 512Mi
-  metricsGenerator:
-    replicas: 1
-    resources:
-      requests:
-        cpu: 50m
-        memory: 256Mi
-      limits:
-        cpu: 250m
-        memory: 512Mi
+  extraEnvFrom:
+    - secretRef:
+        name: observability-storage-credentials
 
 loki:
   enabled: true

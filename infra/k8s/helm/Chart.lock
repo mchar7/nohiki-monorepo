@@ -86,9 +86,9 @@ dependencies:
 - name: mimir-distributed
   repository: https://grafana.github.io/helm-charts
   version: 6.1.0
-- name: tempo-distributed
-  repository: https://grafana.github.io/helm-charts
-  version: 1.61.3
+- name: tempo-monolithic
+  repository: file://./charts/tempo-monolithic
+  version: 0.1.0
 - name: loki
   repository: https://grafana.github.io/helm-charts
   version: 7.0.0
@@ -98,5 +98,5 @@ dependencies:
 - name: opentelemetry-operator
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.119.0
-digest: sha256:043a4eb780a219fa598a86df676f0c3b2bd4069e0a813916501299bad6ef4a13
-generated: "2026-07-15T16:32:50.110756974-04:00"
+digest: sha256:d220682d8d0f6c3812f56d330d93afb2e4a1aa5b7ad52139125c32c098385e4c
+generated: "2026-08-02T18:56:55.251430194-04:00"

@@ -182,7 +182,7 @@ def test_local_s3_consumers_wait_for_declared_rustfs_buckets() -> None:
         if application_buckets or uses_observability_credentials:
             consumers[document["metadata"]["name"]] = (pod_spec, application_buckets)
 
-    assert len(consumers) == 25
+    assert len(consumers) == 20
     uncovered_consumers: set[str] = set()
     for workload_name, (pod_spec, application_buckets) in consumers.items():
         waits = [
@@ -227,4 +227,19 @@ def test_local_s3_consumers_wait_for_declared_rustfs_buckets() -> None:
         assert endpoint == "http://nohiki-rustfs:9000"
         assert wait_buckets
         assert wait_buckets <= declared_buckets
+    tempo_workloads = {
+        (document["kind"], document["metadata"]["name"])
+        for document in documents
+        if document.get("kind") in {"DaemonSet", "Deployment", "StatefulSet"}
+        and document.get("metadata", {}).get("name", "").startswith("nohiki-tempo")
+    }
+    assert tempo_workloads == {("StatefulSet", "nohiki-tempo")}
+    tempo_pod_spec = next(
+        pod_spec for workload_name, (pod_spec, _) in consumers.items() if workload_name == "nohiki-tempo"
+    )
+    tempo_container = next(container for container in tempo_pod_spec["containers"] if container["name"] == "tempo")
+    assert "-target=all" in tempo_container["args"]
+    assert any(
+        container.get("name") == "wait-for-object-storage" for container in tempo_pod_spec.get("initContainers", [])
+    )
     assert uncovered_consumers == _OBJECT_STORAGE_WAIT_WAIVERS

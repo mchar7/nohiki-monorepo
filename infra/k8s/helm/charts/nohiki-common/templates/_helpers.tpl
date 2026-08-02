@@ -182,8 +182,9 @@ Wait for an in-cluster object-storage bucket before starting an S3-backed servic
 {{- $serviceS3 := .Values.s3 | default dict }}
 {{- if and ($serviceS3.enabled | default false) (eq ($globalS3.endpoint | default "") "http://nohiki-rustfs:9000") }}
 {{- $secrets := $global.secrets | default dict }}
+{{- $readinessImage := required "global.s3.readinessImage is required for an in-cluster S3 consumer" $globalS3.readinessImage }}
 - name: wait-for-object-storage
-  image: {{ required "global.s3.readinessImage is required for an in-cluster S3 consumer" $globalS3.readinessImage | quote }}
+  image: {{ printf "%s:%s" (required "global.s3.readinessImage.repository is required" $readinessImage.repository) (required "global.s3.readinessImage.tag is required" $readinessImage.tag) | quote }}
   imagePullPolicy: IfNotPresent
   securityContext:
     allowPrivilegeEscalation: false

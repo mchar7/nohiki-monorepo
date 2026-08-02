@@ -169,11 +169,12 @@ dependencies:
     repository: "https://grafana.github.io/helm-charts"
     condition: mimir-distributed.enabled
 
-  # Observability: Tempo (distributed traces)
-  - name: tempo-distributed
-    version: "1.61.3"
-    repository: "https://grafana.github.io/helm-charts"
-    condition: tempo-distributed.enabled
+  # Observability: Tempo (single binary)
+  - name: tempo-monolithic
+    alias: tempo
+    version: "0.1.0"
+    repository: "file://./charts/tempo-monolithic"
+    condition: tempo.enabled
 
   # Observability: Loki (log aggregation, SimpleScalable mode)
   - name: loki

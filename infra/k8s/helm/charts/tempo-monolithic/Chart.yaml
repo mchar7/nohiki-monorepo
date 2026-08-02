@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tempo-monolithic
+description: Auditable single-binary Tempo deployment for Nohiki
+type: application
+version: 0.1.0
+appVersion: "2.9.3"

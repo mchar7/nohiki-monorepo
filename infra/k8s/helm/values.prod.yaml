@@ -559,41 +559,27 @@ mimir-distributed:
   ruler:
     replicas: 2
 
-tempo-distributed:
-  tempo:
-    structuredConfig:
+tempo:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  config:
+    storage:
+      trace:
+        backend: azure
+        azure:
+          storage_account_name: nohikiprodobs
+          container_name: nohiki-prod-tempo
+    metrics_generator:
       storage:
-        trace:
-          backend: azure
-          azure:
-            storage_account_name: nohikiprodobs
-            container_name: nohiki-prod-tempo
-      metrics_generator:
-        storage:
-          remote_write:
-            - url: http://nohiki-mimir-nginx.nohiki-prod.svc:80/api/v1/push
-              headers:
-                X-Scope-OrgID: nohiki
-  distributor:
-    replicas: 3
-    resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
-  ingester:
-    replicas: 3
-    resources:
-      requests:
-        cpu: 250m
-        memory: 1Gi
-  querier:
-    replicas: 3
-  query_frontend:
-    replicas: 2
-  compactor:
-    replicas: 1
-  metrics_generator:
-    replicas: 2
+        remote_write:
+          - url: http://nohiki-mimir-nginx.nohiki-prod.svc:80/api/v1/push
+            headers:
+              X-Scope-OrgID: nohiki
 
 loki:
   loki:

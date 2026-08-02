@@ -1,0 +1,106 @@
+fullnameOverride: nohiki-tempo
+
+image:
+  repository: docker.io/grafana/tempo
+  tag: 2.9.3@sha256:0d355cc7d9d23f93641a999fd9432084acf647f7731c732ed80f7b9a122ec85b
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+revisionHistoryLimit: 3
+
+serviceAccount:
+  create: true
+  name: nohiki-tempo
+  annotations: {}
+  automountServiceAccountToken: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+config:
+  multitenancy_enabled: true
+  server:
+    http_listen_port: 3200
+    grpc_listen_port: 9095
+  distributor:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+  storage:
+    trace:
+      backend: s3
+      s3:
+        endpoint: ""
+        bucket: nohiki-tempo
+        insecure: false
+      wal:
+        path: /var/tempo/wal
+  metrics_generator:
+    storage:
+      path: /var/tempo/generator/wal
+      remote_write:
+        - url: ""
+          headers:
+            X-Scope-OrgID: nohiki
+    processor:
+      span_metrics:
+        dimensions:
+          - service.name
+          - service.namespace
+          - http.method
+          - http.status_code
+          - cache_status
+          - country
+  overrides:
+    defaults:
+      metrics_generator:
+        processors:
+          - service-graphs
+          - span-metrics
+
+extraEnvFrom: []
+initContainers: []
+
+persistence:
+  accessModes: [ReadWriteOnce]
+  size: 10Gi
+  storageClass: ""
+
+service:
+  annotations: {}
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  labels:
+    release: prometheus
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
