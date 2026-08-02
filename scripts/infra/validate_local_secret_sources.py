@@ -968,7 +968,7 @@ def _validate_flux(path: Path) -> None:
         "path": "./infra/k8s/gitops/secrets/local",
         "prune": True,
         "wait": True,
-        "decryption": {"provider": "sops", "secretRef": {"name": "flux-sops"}},
+        "decryption": {"provider": "sops", "secretRef": {"name": "sops-age"}},
     }
     for key, value in expected.items():
         if spec_values.get(key) != value:

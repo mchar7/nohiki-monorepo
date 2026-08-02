@@ -16,7 +16,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Callable, Iterator, Literal, Sequence
+from typing import Any, Iterator, Sequence
 
 CLUSTER = "nohiki"
 CONTEXT = "kind-nohiki"
@@ -35,21 +35,6 @@ DELETE_TIMEOUT = 120
 REPO_ROOT = Path(__file__).absolute().parents[3]
 CONFIG = REPO_ROOT / "infra/k8s/local/kind.yaml"
 OBSERVER = REPO_ROOT / "infra/k8s/local/observer.py"
-FLUX_RUNTIME = REPO_ROOT / "infra/k8s/flux-runtime"
-OPERATOR_INSTALL = FLUX_RUNTIME / "operator-install.yaml"
-BOOTSTRAP_INSTANCE = FLUX_RUNTIME / "flux-instance-bootstrap.yaml"
-FINAL_INSTANCE = FLUX_RUNTIME / "flux-instance.yaml"
-FALLBACK_INSTALL = FLUX_RUNTIME / "fallback/install.yaml"
-FALLBACK_SYNC = FLUX_RUNTIME / "fallback/sync.yaml"
-RUNTIME_BRANCH = re.compile(r"runtime-control/local/[a-z0-9][a-z0-9._-]*\Z")
-REVIEWED_SHA = re.compile(r"[0-9a-f]{40}\Z")
-BRANCH_SENTINEL = "${RUNTIME_CONTROL_BRANCH}"
-OPERATOR_CRDS = (
-    "fluxinstances.fluxcd.controlplane.io",
-    "fluxreports.fluxcd.controlplane.io",
-    "resourcesetinputproviders.fluxcd.controlplane.io",
-    "resourcesets.fluxcd.controlplane.io",
-)
 
 
 class KindctlError(RuntimeError):
@@ -500,153 +485,6 @@ def install_registry_hosts(kubeconfig: Path, nodes: Sequence[str]) -> str:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
 
-def validate_runtime_control(branch: str, reviewed_sha: str) -> None:
-    if RUNTIME_BRANCH.fullmatch(branch) is None:
-        raise KindctlError("NOHIKI_RUNTIME_CONTROL_BRANCH is not an approved local runtime-control branch")
-    if REVIEWED_SHA.fullmatch(reviewed_sha) is None:
-        raise KindctlError("NOHIKI_REVIEWED_TOPIC_SHA must be a full lowercase Git SHA")
-    current_branch = run_command(("git", "branch", "--show-current"), timeout=10).stdout.strip()
-    local_sha = run_command(("git", "rev-parse", "HEAD"), timeout=10).stdout.strip()
-    if current_branch != branch or local_sha != reviewed_sha:
-        raise KindctlError("local branch and HEAD must equal the reviewed runtime-control source")
-    reference = f"refs/heads/{branch}"
-    remote = run_command(("git", "ls-remote", "--exit-code", "--heads", "origin", reference), timeout=30).stdout
-    if remote != f"{reviewed_sha}\t{reference}\n":
-        raise KindctlError("remote runtime-control branch does not equal the reviewed SHA")
-
-
-def render_branch_manifest(source: Path, branch: str, destination: Path) -> str:
-    if not source.is_file() or source.is_symlink() or source.resolve() != source:
-        raise KindctlError(f"runtime manifest must be a canonical regular file: {source}")
-    committed = source.read_text(encoding="utf-8")
-    if committed.count(BRANCH_SENTINEL) != 1:
-        raise KindctlError(f"runtime manifest must contain exactly one branch sentinel: {source}")
-    rendered = committed.replace(BRANCH_SENTINEL, branch)
-    if BRANCH_SENTINEL in rendered or rendered.replace(branch, BRANCH_SENTINEL, 1) != committed:
-        raise KindctlError(f"runtime manifest changed outside its branch sentinel: {source}")
-    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
-        os.write(descriptor, rendered.encode())
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    return hashlib.sha256(rendered.encode()).hexdigest()
-
-
-def operator_install_once(kubeconfig: Path, bootstrap: Path) -> bool:
-    if not OPERATOR_INSTALL.is_file():
-        return False
-    apply_result = run_command(kube_args(kubeconfig, "apply", "-f", str(OPERATOR_INSTALL)), timeout=120, check=False)
-    if apply_result.returncode != 0:
-        return False
-    for crd in OPERATOR_CRDS:
-        wait = run_command(
-            kube_args(kubeconfig, "wait", "--for=condition=Established", f"crd/{crd}", "--timeout=120s"),
-            timeout=125,
-            check=False,
-        )
-        if wait.returncode != 0:
-            return False
-    available = run_command(
-        kube_args(
-            kubeconfig,
-            "-n",
-            "flux-system",
-            "wait",
-            "--for=condition=Available",
-            "deployment/flux-operator",
-            "--timeout=300s",
-        ),
-        timeout=305,
-        check=False,
-    )
-    if available.returncode != 0:
-        return False
-    secrets = run_command(
-        kube_args(kubeconfig, "-n", "flux-system", "get", "secret", "flux-system", "flux-sops"),
-        timeout=15,
-        check=False,
-    )
-    if secrets.returncode != 0:
-        return False
-    instance = run_command(kube_args(kubeconfig, "apply", "-f", str(bootstrap)), timeout=120, check=False)
-    if instance.returncode != 0:
-        return False
-    ready = run_command(
-        kube_args(
-            kubeconfig,
-            "-n",
-            "flux-system",
-            "wait",
-            "--for=condition=Ready",
-            "fluxinstance/flux",
-            "--timeout=600s",
-        ),
-        timeout=605,
-        check=False,
-    )
-    return ready.returncode == 0
-
-
-def install_core_runtime(kubeconfig: Path, sync: Path) -> None:
-    run_command(kube_args(kubeconfig, "apply", "-f", str(FALLBACK_INSTALL)), timeout=120)
-    for deployment in ("source-controller", "kustomize-controller", "helm-controller", "notification-controller"):
-        run_command(
-            kube_args(
-                kubeconfig,
-                "-n",
-                "flux-system",
-                "wait",
-                "--for=condition=Available",
-                f"deployment/{deployment}",
-                "--timeout=300s",
-            ),
-            timeout=305,
-        )
-    run_command(kube_args(kubeconfig, "apply", "-f", str(sync)), timeout=120)
-
-
-def select_flux_runtime(
-    operator_attempt: Callable[[], bool],
-    core_fallback: Callable[[], None],
-) -> Literal["operator", "core"]:
-    if operator_attempt():
-        return "operator"
-    core_fallback()
-    return "core"
-
-
-def qualify_flux_runtime(
-    kubeconfig: Path,
-    attempt: Path,
-    direction: Literal["operator-to-core", "core-to-operator"],
-) -> dict[str, str]:
-    branch = os.environ.get("NOHIKI_RUNTIME_CONTROL_BRANCH", "")
-    reviewed_sha = os.environ.get("NOHIKI_REVIEWED_TOPIC_SHA", "")
-    validate_runtime_control(branch, reviewed_sha)
-    render_root = attempt / "runtime" / "flux-rendered"
-    bootstrap = render_root / "flux-instance-bootstrap.yaml"
-    sync = render_root / "fallback-sync.yaml"
-    bootstrap_hash = render_branch_manifest(BOOTSTRAP_INSTANCE, branch, bootstrap)
-    sync_hash = render_branch_manifest(FALLBACK_SYNC, branch, sync)
-
-    def attempt_operator() -> bool:
-        return operator_install_once(kubeconfig, bootstrap)
-
-    def select_core() -> None:
-        install_core_runtime(kubeconfig, sync)
-
-    if direction == "core-to-operator":
-        select_core()
-    selected = select_flux_runtime(attempt_operator, select_core)
-    return {
-        "bootstrapSha256": bootstrap_hash,
-        "direction": direction,
-        "selected": selected,
-        "syncSha256": sync_hash,
-    }
-
 
 
 
@@ -875,10 +713,6 @@ def diagnostics(attempt: Path | None, kubeconfig: Path | None) -> dict[str, Any]
             kube_args(kubeconfig, "get", "nodes", "-o", "wide"),
             kube_args(kubeconfig, "get", "pods", "-A", "-o", "wide"),
             kube_args(kubeconfig, "get", "events", "-A", "--sort-by=.lastTimestamp"),
-            kube_args(kubeconfig, "-n", "flux-system", "get", "fluxinstances,fluxreports", "-o", "wide"),
-            kube_args(kubeconfig, "-n", "flux-system", "get", "gitrepositories,kustomizations", "-o", "wide"),
-            kube_args(kubeconfig, "-n", "flux-system", "get", "deployments", "-o", "wide"),
-            kube_args(kubeconfig, "get", "pvc", "-A", "-o", "wide"),
         ))
     entries = []
     for argv in commands:
@@ -935,12 +769,6 @@ def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
     observe_parser.add_argument("observer_args", nargs=argparse.REMAINDER)
     subparsers.add_parser("delete")
     subparsers.add_parser("residue")
-    runtime_parser = subparsers.add_parser("flux-runtime")
-    runtime_parser.add_argument(
-        "--direction",
-        choices=("operator-to-core", "core-to-operator"),
-        required=True,
-    )
     return parser.parse_args(argv)
 
 
@@ -962,22 +790,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif arguments.command == "residue":
         kubeconfig = (attempt / "runtime/kubeconfig") if attempt else None
         print(json.dumps(require_no_residue(kubeconfig), sort_keys=True))
-    elif arguments.command in {"create", "delete", "flux-runtime"}:
+    elif arguments.command in {"create", "delete"}:
         if attempt is None:
             raise KindctlError(f"{arguments.command} requires --attempt-dir")
         with mutation_lock(arguments.command, attempt), command_record(arguments.command, attempt) as record:
             if arguments.command == "create":
                 record.update(create(attempt))
-            elif arguments.command == "delete":
-                delete(attempt)
             else:
-                record.update(
-                    qualify_flux_runtime(
-                        attempt / "runtime/kubeconfig",
-                        attempt,
-                        arguments.direction,
-                    )
-                )
+                delete(attempt)
             record["result"] = "passed"
         if arguments.command == "delete":
             require_no_residue(attempt / "runtime/kubeconfig")

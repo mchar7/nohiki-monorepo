@@ -75,7 +75,6 @@ coverage.json
 !/infra/terraform/.terraform.lock.hcl
 !/infra/terraform/bootstrap/.terraform.lock.hcl
 !/infra/k8s/helm/Chart.lock
-!/infra/k8s/flux-runtime/artifacts.lock.yaml
 !/infra/k8s/helm-foundation/Chart.lock
 
 # Editor directories and files - personal local settings only

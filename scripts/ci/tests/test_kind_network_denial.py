@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
-_POLICY = _ROOT / "infra/k8s/flux-runtime/offline-egress.nft"
+_POLICY = _ROOT / "infra/k8s/local/offline-egress.nft"
 _EXPECTED = """table inet nohiki_offline {
   set private_v4 {
     type ipv4_addr
