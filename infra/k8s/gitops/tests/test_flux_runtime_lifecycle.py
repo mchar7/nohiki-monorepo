@@ -6,6 +6,7 @@ import importlib.machinery
 import importlib.util
 import json
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -45,12 +46,12 @@ def test_runtime_commands_reach_their_effectful_entrypoints(
     calls: list[tuple[str, object]] = []
 
     @contextlib.contextmanager
-    def mutation_lock(command: str, _attempt: Path) -> object:
+    def mutation_lock(command: str, _attempt: Path) -> Iterator[None]:
         calls.append(("lock", command))
         yield
 
     @contextlib.contextmanager
-    def command_record(command: str, _attempt: Path) -> object:
+    def command_record(command: str, _attempt: Path) -> Iterator[dict[str, object]]:
         record: dict[str, object] = {}
         yield record
         calls.append(("record", (command, record)))
@@ -233,7 +234,7 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
     monkeypatch.setattr(runner, "render_branch_manifest", lambda *_: "4" * 64)
     monkeypatch.setattr(runner, "flux_source_revision", lambda *_: "refs/heads/test@sha1:" + _REVISION)
     monkeypatch.setattr(runner, "wait_flux_instance", lambda *_: "flux-uid")
-    states = {
+    states: dict[str, object] = {
         "metadata": {"generation": 7},
         "status": {
             "lastAppliedRevision": "refs/heads/test@sha1:" + _REVISION,

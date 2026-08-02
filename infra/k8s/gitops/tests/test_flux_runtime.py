@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -18,17 +19,19 @@ _ARTIFACTS = _RUNTIME / "runtime-artifacts.py"
 _CONFIGMAP = _RUNTIME / "attempt-configmap.py"
 
 
-def _load(path: Path) -> dict[str, object]:
-    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+def _mapping(value: object) -> dict[str, object]:
     assert isinstance(value, dict)
-    return value
+    return cast(dict[str, object], value)
+
+
+def _load(path: Path) -> dict[str, object]:
+    return _mapping(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
 def _at(value: object, *path: str) -> object:
     current = value
     for key in path:
-        assert isinstance(current, dict)
-        current = current[key]
+        current = _mapping(current)[key]
     return current
 
 
@@ -90,7 +93,9 @@ def test_artifact_lock_derives_chart_and_operator_digests_from_upstream_oci_byte
     assert len(amd64) == 1
     assert _at(lock, "images", "operator", "indexOrImageDigest") == index_digest
     assert _at(lock, "images", "operator", "platformManifestDigest") == amd64[0]["digest"]
-    assert _at(lock, "images", "operator", "reference").endswith("@" + index_digest)
+    reference = _at(lock, "images", "operator", "reference")
+    assert isinstance(reference, str)
+    assert reference.endswith("@" + index_digest)
 
 
 def test_attempt_configmap_producer_closes_the_mandatory_substitution_input() -> None:
@@ -167,15 +172,18 @@ def test_both_flux_instances_require_the_produced_input_and_only_their_roots_dif
     ).read_bytes()
     assert _at(final, "spec", "sync", "path") == "infra/k8s/gitops/clusters/local"
     assert _at(bootstrap, "spec", "sync", "path") == "infra/k8s/gitops/clusters/local/bootstrap"
-    bootstrap["spec"]["sync"]["path"] = _at(final, "spec", "sync", "path")
+    _mapping(_at(bootstrap, "spec", "sync"))["path"] = _at(final, "spec", "sync", "path")
     assert bootstrap == final
     for instance in (final, _load(_RUNTIME / "flux-instance-bootstrap.yaml")):
         patches = _at(instance, "spec", "kustomize", "patches")
         assert isinstance(patches, list)
         assert len(patches) == 1
-        patch = yaml.safe_load(patches[0]["patch"])
-        post_build = next(item for item in patch if item["path"] == "/spec/postBuild")
-        assert post_build["value"]["substituteFrom"] == [
+        patch_entry = _mapping(patches[0])
+        patch = yaml.safe_load(str(patch_entry["patch"]))
+        assert isinstance(patch, list)
+        post_build = next(_mapping(item) for item in patch if _mapping(item).get("path") == "/spec/postBuild")
+        post_build_value = _mapping(post_build["value"])
+        assert post_build_value["substituteFrom"] == [
             {"kind": "ConfigMap", "name": "nohiki-verification-attempt", "optional": False}
         ]
 
