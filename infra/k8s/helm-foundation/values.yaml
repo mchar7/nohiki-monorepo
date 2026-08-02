@@ -52,13 +52,12 @@ managedClusterIssuer:
 # production defaults below. The operators watch all namespaces so they
 # reconcile the custom resources owned by the platform and observability stacks.
 
-# Provenance for the Gateway API standard CRDs vendored at
-# infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml and applied by the
-# dedicated pre-foundation Flux Kustomization. The sha256 below is the official
-# kubernetes-sigs/gateway-api release asset checksum.
+# Agentgateway v1.3.1 discovers the v1alpha2 TCP, TLS, and UDP Route APIs
+# served by the Gateway API v1.3.0 experimental channel. Flux applies this
+# official bundle before the foundation controllers.
 gatewayApi:
-  version: v1.6.0
-  sha256: a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d
+  version: v1.3.0
+  sha256: 3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8
 
 # kgateway control plane. The chart creates its default `kgateway` GatewayClass
 # at runtime and installs the controller in the foundation release namespace.

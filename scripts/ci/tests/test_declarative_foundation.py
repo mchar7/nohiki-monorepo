@@ -25,8 +25,8 @@ _IMMUTABLE_GATEWAY_INPUTS = {
 }
 _VENDORED_MARKER = b"# ---8<--- BEGIN VENDORED CONTENT ---8<---\n"
 
-_GATEWAY_API_VERSION = "v1.6.0"
-_GATEWAY_API_BUNDLE_EXPECTED_HEX = "a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d"
+_GATEWAY_API_VERSION = "v1.3.0"
+_GATEWAY_API_BUNDLE_EXPECTED_HEX = "3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8"
 _GATEWAY_DEPENDENCIES = {
     "kgateway-crds": ("v2.3.6", "oci://cr.kgateway.dev/kgateway-dev/charts"),
     "kgateway": ("v2.3.6", "oci://cr.kgateway.dev/kgateway-dev/charts"),
@@ -51,14 +51,20 @@ _GATEWAY_ARCHIVE_SHA256 = {
     "agentgateway-crds-v1.3.1.tgz": "4d66be934dac6d9ba1e7cf663fce33a0c8417fdc3613c145eb83b581a8fd1bf0",
     "agentgateway-v1.3.1.tgz": "4b27576722ed373c7d677f2252061a03fd2b550b761023d7642677f8bc2b65fc",
 }
-_STANDARD_CRDS = {
+_GATEWAY_API_CRDS = {
     "backendtlspolicies.gateway.networking.k8s.io",
     "gatewayclasses.gateway.networking.k8s.io",
     "gateways.gateway.networking.k8s.io",
     "grpcroutes.gateway.networking.k8s.io",
     "httproutes.gateway.networking.k8s.io",
-    "listenersets.gateway.networking.k8s.io",
     "referencegrants.gateway.networking.k8s.io",
+    "tcproutes.gateway.networking.k8s.io",
+    "tlsroutes.gateway.networking.k8s.io",
+    "udproutes.gateway.networking.k8s.io",
+    "xbackendtrafficpolicies.gateway.networking.x-k8s.io",
+    "xlistenersets.gateway.networking.x-k8s.io",
+}
+_AGENTGATEWAY_ROUTE_CRDS = {
     "tcproutes.gateway.networking.k8s.io",
     "tlsroutes.gateway.networking.k8s.io",
     "udproutes.gateway.networking.k8s.io",
@@ -147,7 +153,7 @@ def test_operator_wrapper_coordinates_locks_and_archives_are_exact(
     assert "operators/" in (_FOUNDATION_CHART / ".helmignore").read_text(encoding="utf-8").splitlines()
 
 
-def test_gateway_api_bundle_matches_upstream_standard_schema_and_digest() -> None:
+def test_gateway_api_bundle_matches_agentgateway_compatible_schema_and_digest() -> None:
     chart = _load(_FOUNDATION_CHART / "Chart.yaml")
     values = _load(_FOUNDATION_CHART / "values.yaml")
     assert chart["annotations"]["nohiki.io/gateway-api-version"] == _GATEWAY_API_VERSION
@@ -160,22 +166,22 @@ def test_gateway_api_bundle_matches_upstream_standard_schema_and_digest() -> Non
     header, marker, content = _GATEWAY_API_BUNDLE.read_bytes().partition(_VENDORED_MARKER)
     assert marker, "vendored Gateway API boundary marker is missing"
     assert hashlib.sha256(content).hexdigest() == _GATEWAY_API_BUNDLE_EXPECTED_HEX
+    assert b"experimental-install.yaml" in header
     assert _GATEWAY_API_VERSION.encode() in header
 
     documents = tuple(
         document for document in yaml.load_all(content, Loader=yaml.CSafeLoader) if isinstance(document, dict)
     )
-    assert {document.get("kind") for document in documents} == {
-        "CustomResourceDefinition",
-        "ValidatingAdmissionPolicy",
-        "ValidatingAdmissionPolicyBinding",
-    }
-    crds = [document for document in documents if document["kind"] == "CustomResourceDefinition"]
-    assert {document["metadata"]["name"] for document in crds} == _STANDARD_CRDS
-    for document in crds:
+    assert {document.get("kind") for document in documents} == {"CustomResourceDefinition"}
+    crds = {document["metadata"]["name"]: document for document in documents}
+    assert set(crds) == _GATEWAY_API_CRDS
+    for document in crds.values():
         annotations = document["metadata"]["annotations"]
         assert annotations["gateway.networking.k8s.io/bundle-version"] == _GATEWAY_API_VERSION
-        assert annotations["gateway.networking.k8s.io/channel"] == "standard"
+        assert annotations["gateway.networking.k8s.io/channel"] == "experimental"
+    for name in _AGENTGATEWAY_ROUTE_CRDS:
+        versions = crds[name]["spec"]["versions"]
+        assert any(version["name"] == "v1alpha2" and version["served"] is True for version in versions)
 
 
 def test_foundation_is_the_only_gateway_controller_and_crd_owner(
@@ -218,7 +224,7 @@ def test_foundation_is_the_only_gateway_controller_and_crd_owner(
     ]
     assert rendered_crd_names
     assert len(rendered_crd_names) == len(set(rendered_crd_names))
-    assert _STANDARD_CRDS.isdisjoint(rendered_crd_names)
+    assert _GATEWAY_API_CRDS.isdisjoint(rendered_crd_names)
     assert not (_FOUNDATION_CHART / "templates" / "gateway-api-crds.yaml").exists()
 
     imperative_gateway_scripts = [

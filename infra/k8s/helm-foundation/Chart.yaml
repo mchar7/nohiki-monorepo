@@ -3,17 +3,16 @@ name: nohiki-foundation
 description: >-
   Declarative cluster foundation for Nohiki. Owns cert-manager, kgateway,
   agentgateway, CloudNativePG, External Secrets, and OpenTelemetry operators
-  and their CRDs. Flux applies the pinned Gateway API standard CRDs in a
+  and their CRDs. Flux applies the pinned Gateway API experimental CRDs in a
   dedicated pre-foundation Kustomization before it reconciles this chart.
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
 annotations:
-  # Provenance for the vendored Gateway API standard CRDs applied by Flux from
-  # infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml. The sha256 is the
-  # checksum of the official v1.6.0 standard-install.yaml release asset.
-  nohiki.io/gateway-api-version: v1.6.0
-  nohiki.io/gateway-bundle-integrity: a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d
+  # Agentgateway v1.3.1 discovers the v1alpha2 TCP, TLS, and UDP Route APIs
+  # served by the Gateway API v1.3.0 experimental channel.
+  nohiki.io/gateway-api-version: v1.3.0
+  nohiki.io/gateway-bundle-integrity: 3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8
 
 
 dependencies:

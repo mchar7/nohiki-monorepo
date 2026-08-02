@@ -26,17 +26,18 @@ Source: [Gateway API Benchmarks](https://github.com/howardjohn/gateway-api-bench
 ## Installation
 
 Gateway components are **not installed imperatively**. Flux owns the vendored
-Gateway API standard CRDs `v1.6.0` at
+Gateway API experimental CRDs `v1.3.0` at
 `infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml`, whose payload is
 checksum-verified as
-`sha256:a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d`.
+`sha256:3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8`.
 The foundation chart at `infra/k8s/helm-foundation` pins kgateway CRDs and
 controller `v2.3.6` plus agentgateway CRDs and controller `v1.3.1` as locked
-Helm dependencies.
+Helm dependencies. The v1.3.0 experimental bundle serves the v1alpha2 TCP,
+TLS, and UDP Route APIs that agentgateway v1.3.1 discovers.
 
-Flux reconciles the standard Gateway API CRDs before the foundation
-infrastructure stack, then reconciles the platform stack. This single ownership
-chain applies every CRD before the controllers and routes that consume it.
+Flux reconciles the Gateway API CRDs before the foundation infrastructure stack,
+then reconciles the platform stack. This single ownership chain applies every
+CRD before the controllers and routes that consume it.
 
 To bring the whole stack up locally:
 

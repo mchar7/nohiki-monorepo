@@ -12,7 +12,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 _GITLEAKS = _ROOT / ".gitleaks.toml"
 _LEFTHOOK = _ROOT / "lefthook.yml"
 _JUSTFILE = _ROOT / "Justfile"
-_PUBLIC_CHECKSUM = "a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d"
+_PUBLIC_CHECKSUM = "3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8"
 _EXPECTED_RULE_REGEXES = {
     "openrouter-api-key": r"sk-or-v1-[a-zA-Z0-9]{64}",
     "anthropic-api-key": r"sk-ant-api[a-zA-Z0-9\-_]{90,}",

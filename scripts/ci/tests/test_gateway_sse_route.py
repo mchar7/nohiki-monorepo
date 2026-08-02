@@ -30,7 +30,8 @@ _FOUNDATION_CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm-foundation"
 _GATEWAY_API_CRDS = _REPOSITORY_ROOT / "infra" / "k8s" / "gitops" / "gateway-api-crds" / "gateway-api-crds.yaml"
 _KGATEWAY_CRDS = _FOUNDATION_CHART / "charts" / "kgateway-crds-v2.3.6.tgz"
 _GATEWAY_API_MARKER = b"# ---8<--- BEGIN VENDORED CONTENT ---8<---\n"
-_GATEWAY_API_EXPECTED_HEX = "a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d"
+_GATEWAY_API_VERSION = "v1.3.0"
+_GATEWAY_API_EXPECTED_HEX = "3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8"
 _KGATEWAY_CRDS_SHA256 = "d6b1d8bf0e2636bca6b8fb2b4a1525806fd1b4f9e84614c8a6a16eda585a119c"
 
 
@@ -50,14 +51,14 @@ def _crds() -> tuple[dict[str, Any], ...]:
     gateway_bundle = _GATEWAY_API_CRDS.read_bytes()
     gateway_header, marker, gateway_payload = gateway_bundle.partition(_GATEWAY_API_MARKER)
     assert marker, "vendored Gateway API bundle marker is missing"
-    assert b"version: v1.6.0" in gateway_header
+    assert f"version: {_GATEWAY_API_VERSION}".encode() in gateway_header
     assert hashlib.sha256(gateway_payload).hexdigest() == _GATEWAY_API_EXPECTED_HEX
     gateway_api = tuple(
         document
         for document in yaml.safe_load_all(gateway_payload.decode())
         if isinstance(document, dict) and document.get("kind") == "CustomResourceDefinition"
     )
-    assert gateway_api, "vendored Gateway API v1.6.0 bundle contains no CRDs"
+    assert gateway_api, f"vendored Gateway API {_GATEWAY_API_VERSION} bundle contains no CRDs"
 
     assert _KGATEWAY_CRDS.is_file(), (
         f"missing {_KGATEWAY_CRDS.name}; run `helm dependency build infra/k8s/helm-foundation`"

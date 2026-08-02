@@ -28,8 +28,8 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _DOWNLOAD = re.compile(r"\b(?:curl|wget)\b.*https://")
 
 _GATEWAY_API_CRDS = _REPOSITORY_ROOT / "infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml"
-_GATEWAY_API_VERSION = "v1.6.0"
-_GATEWAY_API_EXPECTED_HEX = "a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d"
+_GATEWAY_API_VERSION = "v1.3.0"
+_GATEWAY_API_EXPECTED_HEX = "3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8"
 _VENDOR_MARKER = b"# ---8<--- BEGIN VENDORED CONTENT ---8<---\n"
 
 
@@ -71,7 +71,7 @@ def test_vendored_gateway_api_crds_match_pinned_release_checksum() -> None:
     provenance = header.decode("utf-8")
     assert _GATEWAY_API_VERSION in provenance
     assert _GATEWAY_API_EXPECTED_HEX in provenance
-    assert f"releases/download/{_GATEWAY_API_VERSION}/standard-install.yaml" in provenance
+    assert f"releases/download/{_GATEWAY_API_VERSION}/experimental-install.yaml" in provenance
 
     # Bytes after the marker are the upstream asset verbatim, so their digest must match the pin.
     assert vendored, "no vendored CRD content after provenance marker"
