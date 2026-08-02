@@ -123,7 +123,6 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         "docker-lint": frozenset({"**/Dockerfile{,.*}", "Dockerfile", ".hadolint.yaml"}),
     },
     "pre-push": {
-        "internal-refs-range": frozenset(),
         "secrets-scan": frozenset(),
         "python-lint": frozenset(),
         "python-format": frozenset(),
@@ -283,9 +282,7 @@ _HOSTED_SELF_REFERENCE = frozenset(
         "flake.lock",
         ".github/workflows/checks.yml",
         ".github/actions/setup-ci/action.yml",
-        "scripts/ci/config/internal-reference-terms.toml",
         "scripts/ci/src/ci_checks/checks/gate.py",
-        "scripts/ci/src/ci_checks/checks/internal_refs.py",
         "scripts/ci/src/ci_checks/checks/tests.py",
     }
 )
@@ -620,8 +617,8 @@ def test_affected_test_selection_is_delegated_to_the_runner() -> None:
 
 
 def test_unconditional_hooks_declare_no_glob() -> None:
-    """Message and patch scanners inspect commits, not a file surface, so they carry no glob."""
-    for name in ("secrets-check", "internal-refs-range", "secrets-scan"):
+    """Secret scanners inspect commits, not a file surface, so they carry no glob."""
+    for name in ("secrets-check", "secrets-scan"):
         assert "glob" not in _job(name), f"{name} must stay unconditional"
     commands = _as_mapping(_as_mapping(_load_config()["commit-msg"])["commands"])
     for name, command in commands.items():
