@@ -1,0 +1,115 @@
+apiVersion: nohiki.io/v1alpha1
+kind: FluxRuntimeArtifactLock
+chart:
+  version: "0.55.0"
+  source: oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator
+  ociManifestPath: infra/k8s/flux-runtime/vendor/flux-operator-0.55.0.oci-manifest.json
+  ociManifestDigest: sha256:9e73c85b586f3649b317b215228ac35c1dd15a10dec87b8806f34bd7a22d42ae
+  tgzPath: infra/k8s/flux-runtime/vendor/flux-operator-0.55.0.tgz
+  tgzSha256: 351643075e97ec1a4d68ff8b0a1fb9d17ff5486b7bdbf877ec2dbbcafe3925a2
+generated:
+  operatorInstall:
+    path: infra/k8s/flux-runtime/operator-install.yaml
+    canonicalSha256: 4ed79be21eb91696178c194ad60c1f2457a6733dc5ba4e8fb9cf00b8ec2639fd
+    generator:
+      script: infra/k8s/flux-runtime/runtime-artifacts.py
+      scriptSha256: 06f9133c625f49d60a85b033e9984687d1c1ed759ca984c71b972169081da32a
+      binary: helm
+      version: v4.2.2
+      argv:
+        - infra/k8s/flux-runtime/runtime-artifacts.py
+        - generate-operator
+        - --output
+        - infra/k8s/flux-runtime/operator-install.yaml
+      inputSha256s:
+        chart: 351643075e97ec1a4d68ff8b0a1fb9d17ff5486b7bdbf877ec2dbbcafe3925a2
+        operatorImageIndex: 5221a2faf9c1e1b1d6212aa96f5c4df2fdc4977ae206f2636dd202b79583ffb5
+        values: 7fa5c539a7d14501a3a46a6756601476d3c1a8fb3693f4e9f6107e572cba2a8c
+      postRender:
+        operation: replace-exactly-once
+        from: ghcr.io/controlplaneio-fluxcd/flux-operator:v0.55.0
+        toDigestFrom: infra/k8s/flux-runtime/vendor/flux-operator-v0.55.0.oci-index.json
+  fallbackInstall:
+    path: infra/k8s/flux-runtime/fallback/install.yaml
+    canonicalSha256: 83514608d4358c0d44bd43b46fe3ba2973e7768195f2094a0c72ec6af86b955a
+    generator:
+      binary: flux
+      version: 2.9.2
+      argv:
+        - install
+        - --export
+        - --namespace=flux-system
+        - --components=source-controller,kustomize-controller,helm-controller,notification-controller
+        - --version=v2.9.2
+manifests:
+  attemptConfigMapProducer:
+    path: infra/k8s/flux-runtime/attempt-configmap.py
+    canonicalSha256: cd80f57f58a8f5e7f811bcca81775bcbad49789d401bb8e72c2b1343d2c691ca
+  bootstrapFluxInstance:
+    path: infra/k8s/flux-runtime/flux-instance-bootstrap.yaml
+    canonicalSha256: d163fd250496cc8c75bbbf09f09eb72a9e85097c855b0dae0888b162031a9fe8
+  finalFluxInstance:
+    path: infra/k8s/flux-runtime/flux-instance.yaml
+    canonicalSha256: e69aea364158f28f7711aa1faa6fc0c42be39bfff9077822cd65ebacd641f0e7
+  fallbackSync:
+    path: infra/k8s/flux-runtime/fallback/sync.yaml
+    canonicalSha256: 5feb2ed1fd50fa0e94ba3ea881fea1acb0535a854ec29e2278c6eb49d17d25a4
+  clusterBootstrapInstance:
+    path: infra/k8s/gitops/clusters/local/flux-instance-bootstrap.yaml
+    canonicalSha256: d163fd250496cc8c75bbbf09f09eb72a9e85097c855b0dae0888b162031a9fe8
+  clusterFinalInstance:
+    path: infra/k8s/gitops/clusters/local/flux-instance.yaml
+    canonicalSha256: e69aea364158f28f7711aa1faa6fc0c42be39bfff9077822cd65ebacd641f0e7
+  bootstrapRoot:
+    path: infra/k8s/gitops/clusters/local/bootstrap/kustomization.yaml
+    canonicalSha256: 59cbd68e9f656910a70b3c99c7bd1c4270d0a4cf58fe1dfd2c5fbd0b9fcf3efc
+  finalRoot:
+    path: infra/k8s/gitops/clusters/local/kustomization.yaml
+    canonicalSha256: a26f7443a8cd9c7f246a186fdda1b027f1c904b4a228f8a03c2dfe5095a2f3de
+policies:
+  offlineEgress:
+    path: infra/k8s/flux-runtime/offline-egress.nft
+    canonicalSha256: 9b7ee8d851246df462accd9630123868b2e09e22f239153de73a76ad6282c1a0
+images:
+  operator:
+    reference: ghcr.io/controlplaneio-fluxcd/flux-operator@sha256:5221a2faf9c1e1b1d6212aa96f5c4df2fdc4977ae206f2636dd202b79583ffb5
+    indexOrImageDigest: sha256:5221a2faf9c1e1b1d6212aa96f5c4df2fdc4977ae206f2636dd202b79583ffb5
+    platform: linux/amd64
+    platformManifestDigest: sha256:c8ec91f3d49e17f427e6939fce48caab41a7536c67527a6bcab1d9ced473f253
+    runtimeImageId: sha256:6f8584c2ccccc2d9ded932f4cc25167a3113154cac4b4ce63eb5a287ff22093a
+  sourceController:
+    reference: ghcr.io/fluxcd/source-controller@sha256:ff8f3c92f1bcb433e858c948040c3a3393fe73f5dd72048a4502bfaf0a4c26cd
+    indexOrImageDigest: sha256:ff8f3c92f1bcb433e858c948040c3a3393fe73f5dd72048a4502bfaf0a4c26cd
+    platform: linux/amd64
+    platformManifestDigest: sha256:c6c82b3182f48b833252c71aefa0741957ca18296612bc6d2b9b5fb276f926e4
+    runtimeImageId: sha256:769f056b8cbafa797aaeb1fc5376304af0be84628725ea238d0e105b58e01804
+  kustomizeController:
+    reference: ghcr.io/fluxcd/kustomize-controller@sha256:0203eb80743814f67bebb5f0b22c7db620bc461cc0b23732e0367a38fce04e4c
+    indexOrImageDigest: sha256:0203eb80743814f67bebb5f0b22c7db620bc461cc0b23732e0367a38fce04e4c
+    platform: linux/amd64
+    platformManifestDigest: sha256:0d2894fddab7beb686282ad259533aeb11e2665c13e542654796c9148176680d
+    runtimeImageId: sha256:215158add51498bf98eb72e28e57e2b98b70080be8d2142761bc8f3d0c4eb39e
+  helmController:
+    reference: ghcr.io/fluxcd/helm-controller@sha256:e17ab0e5885d80cebb9890663f85d59cd3866adebfc09a4d8bd2d512ef980bc4
+    indexOrImageDigest: sha256:e17ab0e5885d80cebb9890663f85d59cd3866adebfc09a4d8bd2d512ef980bc4
+    platform: linux/amd64
+    platformManifestDigest: sha256:c9eabdc5d482c7ddc7c118468733ad0eff9c6f2b23b0b9133c59efa07b66dce2
+    runtimeImageId: sha256:41c3eeb9bf8985836eb0821313c5c8044dcb3e01d6b2cda5f27167a639bdae66
+  notificationController:
+    reference: ghcr.io/fluxcd/notification-controller@sha256:9ce503e7bcb8493fafe2aaef0c2ac4396df4f6890256acf9cd444a2dcd2a69ed
+    indexOrImageDigest: sha256:9ce503e7bcb8493fafe2aaef0c2ac4396df4f6890256acf9cd444a2dcd2a69ed
+    platform: linux/amd64
+    platformManifestDigest: sha256:cb17eefffbc442412ba6f63336defd04c0fc387d5082d951998d1ff163a9180d
+    runtimeImageId: sha256:a3586bc94fb9e2691cc1e7a172a2804f0e2b7c641c82fd30e4c7376621bc8f07
+  registry:
+    reference: registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    indexOrImageDigest: sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    platform: linux/amd64
+    platformManifestDigest: sha256:46faa9a1ae6813194b53921a370f2f4f8c5e1aae228a89bceafef5847a6a3278
+    runtimeImageId: sha256:26b2eb03618e749084668eaff68cff8f81dda12d06ac641be7a6398b82a6f25b
+distribution:
+  version: "2.9.2"
+  kind: embedded
+  operatorImageDigest: sha256:5221a2faf9c1e1b1d6212aa96f5c4df2fdc4977ae206f2636dd202b79583ffb5
+  bootstrapFluxInstanceSha256: d163fd250496cc8c75bbbf09f09eb72a9e85097c855b0dae0888b162031a9fe8
+  finalFluxInstanceSha256: e69aea364158f28f7711aa1faa6fc0c42be39bfff9077822cd65ebacd641f0e7
