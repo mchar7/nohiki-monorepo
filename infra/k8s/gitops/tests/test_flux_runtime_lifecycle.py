@@ -204,6 +204,12 @@ def test_operator_install_requires_live_digest_and_observed_bootstrap(
         "wait_flux_instance",
         lambda _kube, path, revision: observed.append((path, revision)) or "flux-uid",
     )
+    roots: list[str] = []
+    monkeypatch.setattr(
+        runner,
+        "wait_root_kustomization",
+        lambda _kube, revision: roots.append(revision) or "source-revision",
+    )
     uid = runner.operator_install_once(
         tmp_path,
         tmp_path / "kubeconfig",
@@ -219,6 +225,7 @@ def test_operator_install_requires_live_digest_and_observed_bootstrap(
     assert any("jsonpath={.spec.template.spec.containers[0].image}" in argv for argv in calls)
     assert calls[-1][-3:] == ("apply", "-f", str(tmp_path / "bootstrap.yaml"))
     assert observed == [("infra/k8s/gitops/clusters/local/bootstrap", _REVISION)]
+    assert roots == [_REVISION]
 
 
 def test_finalize_applies_full_instance_and_observes_every_child_in_order(
@@ -269,11 +276,18 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
     )
     assert result["fluxInstanceUid"] == "flux-uid"
     final_apply = next(index for index, argv in enumerate(calls) if "apply" in argv)
-    waits = [argv for argv in calls[final_apply + 1 :] if "--for=condition=Ready=True" in argv]
-    assert [next(item for item in argv if item.startswith("kustomization/")) for argv in waits] == [
-        f"kustomization/{name}" for name in runner.FULL_CHILDREN
+    expected = ["flux-system", *runner.FULL_CHILDREN]
+    ready_waits = [argv for argv in calls[final_apply + 1 :] if "--for=condition=Ready=True" in argv]
+    generation_waits = [
+        argv for argv in calls[final_apply + 1 :] if any(item.startswith("--for=jsonpath=") for item in argv)
     ]
-    assert gets == len(runner.FULL_CHILDREN) + 2
+    assert [next(item for item in argv if item.startswith("kustomization/")) for argv in ready_waits] == [
+        f"kustomization/{name}" for name in expected
+    ]
+    assert [next(item for item in argv if item.startswith("kustomization/")) for argv in generation_waits] == [
+        f"kustomization/{name}" for name in expected
+    ]
+    assert gets == len(runner.FULL_CHILDREN) * 2 + 6
 
 
 def test_core_install_observes_root_readiness_and_revision(
@@ -287,16 +301,103 @@ def test_core_install_observes_root_readiness_and_revision(
         "run_command",
         lambda argv, **_: calls.append(argv) or _result(argv),
     )
+    roots: list[str] = []
+    monkeypatch.setattr(
+        runner,
+        "wait_root_kustomization",
+        lambda _kube, revision: roots.append(revision) or "source-revision",
+    )
+    runner.install_core_runtime(tmp_path / "kubeconfig", tmp_path / "sync.yaml", _REVISION)
+    assert calls[0][-3:] == ("apply", "-f", str(runner.FALLBACK_INSTALL))
+    assert calls[-1][-3:] == ("apply", "-f", str(tmp_path / "sync.yaml"))
+    assert roots == [_REVISION]
+
+
+def test_root_wait_requires_observed_generation_and_reviewed_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    states = iter(
+        (
+            {"metadata": {"generation": 7}},
+            {
+                "metadata": {"generation": 7},
+                "status": {
+                    "lastAppliedRevision": "refs/heads/test@sha1:" + _REVISION,
+                    "observedGeneration": 7,
+                },
+            },
+        )
+    )
+    monkeypatch.setattr(runner, "command_json", lambda *_args, **_kwargs: next(states))
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        runner,
+        "run_command",
+        lambda argv, **_: calls.append(argv) or _result(argv),
+    )
+    monkeypatch.setattr(
+        runner,
+        "flux_source_revision",
+        lambda *_: "refs/heads/test@sha1:" + _REVISION,
+    )
+    assert runner.wait_root_kustomization(tmp_path / "kubeconfig", _REVISION) == "refs/heads/test@sha1:" + _REVISION
+    assert any("--for=jsonpath={.status.observedGeneration}=7" in argv for argv in calls)
+    assert any("--for=condition=Ready=True" in argv for argv in calls)
+
+    stale_states = iter(
+        (
+            {"metadata": {"generation": 8}},
+            {
+                "metadata": {"generation": 8},
+                "status": {
+                    "lastAppliedRevision": "refs/heads/test@sha1:" + _REVISION,
+                    "observedGeneration": 7,
+                },
+            },
+        )
+    )
+    monkeypatch.setattr(runner, "command_json", lambda *_args, **_kwargs: next(stale_states))
+    with pytest.raises(runner.KindctlError, match="generation is stale"):
+        runner.wait_root_kustomization(tmp_path / "kubeconfig", _REVISION)
+
+
+def test_flux_instance_wait_requires_the_new_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    expected_path = "infra/k8s/gitops/clusters/local"
+    states = iter(
+        (
+            {
+                "metadata": {"generation": 4, "uid": "flux-uid"},
+                "spec": {"sync": {"path": expected_path}},
+            },
+            {
+                "metadata": {"generation": 4, "uid": "flux-uid"},
+                "spec": {"sync": {"path": expected_path}},
+                "status": {"observedGeneration": 4},
+            },
+        )
+    )
+    monkeypatch.setattr(runner, "command_json", lambda *_args, **_kwargs: next(states))
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        runner,
+        "run_command",
+        lambda argv, **_: calls.append(argv) or _result(argv),
+    )
     revisions: list[str] = []
     monkeypatch.setattr(
         runner,
         "flux_source_revision",
         lambda _kube, revision: revisions.append(revision) or "source-revision",
     )
-    runner.install_core_runtime(tmp_path / "kubeconfig", tmp_path / "sync.yaml", _REVISION)
-    assert calls[0][-3:] == ("apply", "-f", str(runner.FALLBACK_INSTALL))
-    assert calls[-2][-3:] == ("apply", "-f", str(tmp_path / "sync.yaml"))
-    assert "kustomization/flux-system" in calls[-1]
+    assert runner.wait_flux_instance(tmp_path / "kubeconfig", expected_path, _REVISION) == "flux-uid"
+    assert any("--for=jsonpath={.status.observedGeneration}=4" in argv for argv in calls)
+    assert any("--for=condition=Ready=True" in argv for argv in calls)
     assert revisions == [_REVISION]
 
 

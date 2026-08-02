@@ -54,18 +54,12 @@ manifests:
   fallbackSync:
     path: infra/k8s/flux-runtime/fallback/sync.yaml
     canonicalSha256: 5feb2ed1fd50fa0e94ba3ea881fea1acb0535a854ec29e2278c6eb49d17d25a4
-  clusterBootstrapInstance:
-    path: infra/k8s/gitops/clusters/local/flux-instance-bootstrap.yaml
-    canonicalSha256: d163fd250496cc8c75bbbf09f09eb72a9e85097c855b0dae0888b162031a9fe8
-  clusterFinalInstance:
-    path: infra/k8s/gitops/clusters/local/flux-instance.yaml
-    canonicalSha256: e69aea364158f28f7711aa1faa6fc0c42be39bfff9077822cd65ebacd641f0e7
   bootstrapRoot:
     path: infra/k8s/gitops/clusters/local/bootstrap/kustomization.yaml
     canonicalSha256: 59cbd68e9f656910a70b3c99c7bd1c4270d0a4cf58fe1dfd2c5fbd0b9fcf3efc
   finalRoot:
     path: infra/k8s/gitops/clusters/local/kustomization.yaml
-    canonicalSha256: a26f7443a8cd9c7f246a186fdda1b027f1c904b4a228f8a03c2dfe5095a2f3de
+    canonicalSha256: 44a46a1737b092c210f249615f50b1a8f3509f2eb118b4c9f9dbd25ea4c1aa85
 policies:
   offlineEgress:
     path: infra/k8s/flux-runtime/offline-egress.nft

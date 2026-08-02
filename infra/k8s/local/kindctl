@@ -837,6 +837,36 @@ def wait_flux_instance(
     expected_path: str,
     reviewed_sha: str,
 ) -> str:
+    initial = command_json(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "fluxinstance",
+            "flux",
+            "-o",
+            "json",
+        ),
+        timeout=15,
+    )
+    if initial.get("spec", {}).get("sync", {}).get("path") != expected_path:
+        raise KindctlError("live FluxInstance sync path did not transition")
+    generation = initial.get("metadata", {}).get("generation")
+    if isinstance(generation, bool) or not isinstance(generation, int):
+        raise KindctlError("live FluxInstance generation is absent")
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "wait",
+            f"--for=jsonpath={{.status.observedGeneration}}={generation}",
+            "fluxinstance/flux",
+            "--timeout=20m",
+        ),
+        timeout=1205,
+    )
     run_command(
         kube_args(
             kubeconfig,
@@ -864,11 +894,85 @@ def wait_flux_instance(
     )
     if instance.get("spec", {}).get("sync", {}).get("path") != expected_path:
         raise KindctlError("live FluxInstance sync path did not transition")
+    if instance.get("status", {}).get("observedGeneration") != generation:
+        raise KindctlError("live FluxInstance generation is stale")
     uid = str(instance.get("metadata", {}).get("uid", ""))
     if not uid:
         raise KindctlError("live FluxInstance UID is absent")
     flux_source_revision(kubeconfig, reviewed_sha)
     return uid
+
+
+def wait_kustomization(
+    kubeconfig: Path,
+    name: str,
+    timeout_seconds: int,
+    timeout_argument: str,
+) -> dict[str, Any]:
+    initial = command_json(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "kustomization",
+            name,
+            "-o",
+            "json",
+        ),
+        timeout=15,
+    )
+    generation = initial.get("metadata", {}).get("generation")
+    if isinstance(generation, bool) or not isinstance(generation, int):
+        raise KindctlError(f"Flux Kustomization generation is absent: {name}")
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "wait",
+            f"--for=jsonpath={{.status.observedGeneration}}={generation}",
+            f"kustomization/{name}",
+            f"--timeout={timeout_argument}",
+        ),
+        timeout=timeout_seconds + 5,
+    )
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "wait",
+            "--for=condition=Ready=True",
+            f"kustomization/{name}",
+            f"--timeout={timeout_argument}",
+        ),
+        timeout=timeout_seconds + 5,
+    )
+    observed = command_json(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "kustomization",
+            name,
+            "-o",
+            "json",
+        ),
+        timeout=15,
+    )
+    if observed.get("status", {}).get("observedGeneration") != generation:
+        raise KindctlError(f"Flux Kustomization generation is stale: {name}")
+    return observed
+
+
+def wait_root_kustomization(kubeconfig: Path, reviewed_sha: str) -> str:
+    state = wait_kustomization(kubeconfig, "flux-system", 1205, "20m")
+    source_revision = flux_source_revision(kubeconfig, reviewed_sha)
+    if state.get("status", {}).get("lastAppliedRevision") != source_revision:
+        raise KindctlError("Flux root revision is stale")
+    return source_revision
 
 
 def operator_install_once(
@@ -938,11 +1042,13 @@ def operator_install_once(
     )
     if instance.returncode != 0:
         return None
-    return wait_flux_instance(
+    instance_uid = wait_flux_instance(
         kubeconfig,
         "infra/k8s/gitops/clusters/local/bootstrap",
         reviewed_sha,
     )
+    wait_root_kustomization(kubeconfig, reviewed_sha)
+    return instance_uid
 
 
 def install_core_runtime(
@@ -973,19 +1079,7 @@ def install_core_runtime(
             timeout=305,
         )
     run_command(kube_args(kubeconfig, "apply", "-f", str(sync)), timeout=120)
-    run_command(
-        kube_args(
-            kubeconfig,
-            "-n",
-            "flux-system",
-            "wait",
-            "--for=condition=Ready=True",
-            "kustomization/flux-system",
-            "--timeout=20m",
-        ),
-        timeout=1205,
-    )
-    flux_source_revision(kubeconfig, reviewed_sha)
+    wait_root_kustomization(kubeconfig, reviewed_sha)
 
 
 def qualify_flux_runtime(
@@ -1119,6 +1213,7 @@ def finalize_flux_runtime(
         != "infra/k8s/gitops/clusters/local/bootstrap"
     ):
         raise KindctlError("final handoff did not begin from the bootstrap root")
+    wait_root_kustomization(kubeconfig, reviewed_sha)
     run_command(kube_args(kubeconfig, "apply", "-f", str(final)), timeout=120)
     after_uid = wait_flux_instance(
         kubeconfig,
@@ -1127,7 +1222,7 @@ def finalize_flux_runtime(
     )
     if not before_uid or after_uid != before_uid:
         raise KindctlError("final handoff replaced the FluxInstance")
-    source_revision = flux_source_revision(kubeconfig, reviewed_sha)
+    source_revision = wait_root_kustomization(kubeconfig, reviewed_sha)
     verification_deadline: float | None = None
     for child in FULL_CHILDREN:
         if child == "health-verification":
@@ -1138,35 +1233,12 @@ def finalize_flux_runtime(
         else:
             timeout_seconds = max(1, int(verification_deadline - time.monotonic()))
             timeout_argument = f"{timeout_seconds}s"
-        run_command(
-            kube_args(
-                kubeconfig,
-                "-n",
-                "flux-system",
-                "wait",
-                "--for=condition=Ready=True",
-                f"kustomization/{child}",
-                f"--timeout={timeout_argument}",
-            ),
-            timeout=timeout_seconds + 5,
+        state = wait_kustomization(
+            kubeconfig,
+            child,
+            timeout_seconds,
+            timeout_argument,
         )
-        state = command_json(
-            kube_args(
-                kubeconfig,
-                "-n",
-                "flux-system",
-                "get",
-                "kustomization",
-                child,
-                "-o",
-                "json",
-            ),
-            timeout=15,
-        )
-        if state.get("metadata", {}).get("generation") != state.get(
-            "status", {}
-        ).get("observedGeneration"):
-            raise KindctlError(f"Flux child generation is stale: {child}")
         if state.get("status", {}).get("lastAppliedRevision") != source_revision:
             raise KindctlError(f"Flux child revision is stale: {child}")
     return {

@@ -163,18 +163,22 @@ def test_attempt_configmap_producer_closes_the_mandatory_substitution_input() ->
     assert mismatched.returncode != 0
 
 
-def test_both_flux_instances_require_the_produced_input_and_only_their_roots_differ() -> None:
+def test_flux_instances_are_runtime_owned_and_git_roots_do_not_contain_them() -> None:
     final = _load(_RUNTIME / "flux-instance.yaml")
     bootstrap = _load(_RUNTIME / "flux-instance-bootstrap.yaml")
-    assert (_RUNTIME / "flux-instance.yaml").read_bytes() == (_CLUSTER / "flux-instance.yaml").read_bytes()
-    assert (_RUNTIME / "flux-instance-bootstrap.yaml").read_bytes() == (
-        _CLUSTER / "flux-instance-bootstrap.yaml"
-    ).read_bytes()
+    assert not (_CLUSTER / "flux-instance.yaml").exists()
+    assert not (_CLUSTER / "flux-instance-bootstrap.yaml").exists()
+    final_resources = _at(_load(_CLUSTER / "kustomization.yaml"), "resources")
+    bootstrap_resources = _at(_load(_CLUSTER / "bootstrap/kustomization.yaml"), "resources")
+    assert isinstance(final_resources, list)
+    assert isinstance(bootstrap_resources, list)
+    assert "flux-instance.yaml" not in final_resources
+    assert "flux-instance-bootstrap.yaml" not in bootstrap_resources
     assert _at(final, "spec", "sync", "path") == "infra/k8s/gitops/clusters/local"
     assert _at(bootstrap, "spec", "sync", "path") == "infra/k8s/gitops/clusters/local/bootstrap"
     _mapping(_at(bootstrap, "spec", "sync"))["path"] = _at(final, "spec", "sync", "path")
     assert bootstrap == final
-    for instance in (final, _load(_RUNTIME / "flux-instance-bootstrap.yaml")):
+    for instance in (final, bootstrap):
         patches = _at(instance, "spec", "kustomize", "patches")
         assert isinstance(patches, list)
         assert len(patches) == 1
@@ -201,7 +205,6 @@ def test_full_root_preserves_publication_and_ordered_verification_dependencies()
         "health.yaml",
         "verification-api.yaml",
         "verification-playwright.yaml",
-        "flux-instance.yaml",
     ]
     assert _at(_load(_CLUSTER / "infrastructure.yaml"), "spec", "dependsOn") == [{"name": "gateway-api-crds"}]
     assert _at(_load(_CLUSTER / "platform.yaml"), "spec", "dependsOn") == [
