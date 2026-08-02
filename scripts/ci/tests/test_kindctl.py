@@ -117,11 +117,19 @@ def _stub_create_acceptance(runner: ModuleType, monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(runner, "require_cluster_dns_ready", mark_dns_ready)
     monkeypatch.setattr(runner, "network_probe", require_ready_dns)
-    monkeypatch.setattr(
-        runner,
-        "storage_probe",
-        lambda _path: {"capacity": "64Mi"},
-    )
+    provisioner = {"ready": False}
+
+    def mark_provisioner_ready(_path: Path) -> None:
+        provisioner["ready"] = True
+
+    def require_ready_provisioner(_path: Path) -> dict[str, str]:
+        if not provisioner["ready"]:
+            message = "storage probe ran before provisioner recreation"
+            raise runner.KindctlError(message)
+        return {"capacity": "64Mi"}
+
+    monkeypatch.setattr(runner, "recreate_storage_provisioner", mark_provisioner_ready)
+    monkeypatch.setattr(runner, "storage_probe", require_ready_provisioner)
 
 
 def _attempt(tmp_path: Path, name: str = "attempt-1") -> Path:
@@ -408,6 +416,33 @@ def test_cluster_dns_gate_waits_for_rollout_and_every_coredns_pod(
         (*prefix, "wait", "--for=condition=Ready", "pod", "-l", "k8s-app=kube-dns", "--timeout=120s"),
     ]
     assert timeouts == [125, 125]
+
+
+def test_storage_provisioner_is_recreated_after_network_convergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    calls: list[tuple[str, ...]] = []
+    timeouts: list[int] = []
+
+    def fake_run(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(tuple(argv))
+        timeout = kwargs["timeout"]
+        assert isinstance(timeout, int)
+        timeouts.append(timeout)
+        return _completed(argv)
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    kubeconfig = tmp_path / "kubeconfig"
+    runner.recreate_storage_provisioner(kubeconfig)
+
+    prefix = ("kubectl", "--kubeconfig", str(kubeconfig), "-n", "local-path-storage")
+    assert calls == [
+        (*prefix, "rollout", "restart", "deployment/local-path-provisioner"),
+        (*prefix, "rollout", "status", "deployment/local-path-provisioner", "--timeout=120s"),
+    ]
+    assert timeouts == [30, 125]
 
 
 def test_node_pid_limit_must_be_a_recorded_positive_integer(monkeypatch: pytest.MonkeyPatch) -> None:
