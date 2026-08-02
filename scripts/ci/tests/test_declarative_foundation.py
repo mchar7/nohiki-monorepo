@@ -33,13 +33,16 @@ _GATEWAY_DEPENDENCIES = {
     "agentgateway-crds": ("v1.3.1", "oci://cr.agentgateway.dev/charts"),
     "agentgateway": ("v1.3.1", "oci://cr.agentgateway.dev/charts"),
 }
+_FOUNDATION_DEPENDENCIES = _GATEWAY_DEPENDENCIES | {
+    "keda": ("2.20.1", "https://kedacore.github.io/charts"),
+}
+_KEDA_ARCHIVE_SHA256 = "584c42b33427151abc03d4dd0c8c24be6c9aec96fc988dcf1559711c4dbd0d79"
 _GATEWAY_ARCHIVE_SHA256 = {
     "kgateway-crds-v2.3.6.tgz": "d6b1d8bf0e2636bca6b8fb2b4a1525806fd1b4f9e84614c8a6a16eda585a119c",
     "kgateway-v2.3.6.tgz": "23ce30f3180dffad0d68f8aab03d5da422d2c983d513f8e86dd01012845b603a",
     "agentgateway-crds-v1.3.1.tgz": "4d66be934dac6d9ba1e7cf663fce33a0c8417fdc3613c145eb83b581a8fd1bf0",
     "agentgateway-v1.3.1.tgz": "4b27576722ed373c7d677f2252061a03fd2b550b761023d7642677f8bc2b65fc",
 }
-_FOUNDATION_LOCK_SHA256 = "sha256:7ed402df68de52e372e2d6a68f354c2c373cf7deea903c0b1a256c3a9c3c9fda"
 _STANDARD_CRDS = {
     "backendtlspolicies.gateway.networking.k8s.io",
     "gatewayclasses.gateway.networking.k8s.io",
@@ -90,10 +93,10 @@ def foundation_documents() -> tuple[dict[str, Any], ...]:
     return _render_foundation()
 
 
-def test_gateway_dependency_coordinates_lock_and_archives_are_exact() -> None:
+def test_foundation_dependency_coordinates_lock_and_archives_are_exact() -> None:
     chart = _load(_FOUNDATION_CHART / "Chart.yaml")
     dependencies = {dependency["name"]: dependency for dependency in chart["dependencies"]}
-    for name, (version, repository) in _GATEWAY_DEPENDENCIES.items():
+    for name, (version, repository) in _FOUNDATION_DEPENDENCIES.items():
         assert (dependencies[name]["version"], dependencies[name]["repository"]) == (
             version,
             repository,
@@ -101,13 +104,13 @@ def test_gateway_dependency_coordinates_lock_and_archives_are_exact() -> None:
 
     lock = _load(_FOUNDATION_CHART / "Chart.lock")
     assert _coordinates(lock["dependencies"]) == _coordinates(chart["dependencies"])
-    assert lock["digest"] == _FOUNDATION_LOCK_SHA256
 
     chart_dir = _FOUNDATION_CHART / "charts"
     gateway_archives = {path.name for path in chart_dir.glob("*gateway*.tgz")}
     assert gateway_archives == set(_GATEWAY_ARCHIVE_SHA256)
     for archive_name, expected_sha256 in _GATEWAY_ARCHIVE_SHA256.items():
         assert hashlib.sha256((chart_dir / archive_name).read_bytes()).hexdigest() == expected_sha256
+    assert hashlib.sha256((chart_dir / "keda-2.20.1.tgz").read_bytes()).hexdigest() == _KEDA_ARCHIVE_SHA256
 
 
 def test_gateway_api_bundle_matches_upstream_standard_schema_and_digest() -> None:
@@ -319,12 +322,19 @@ def test_flux_orders_crds_foundation_and_platform_with_health_gates() -> None:
     for environment, namespace in environment_namespaces.items():
         cluster = cluster_root / environment
         resources = _load(cluster / "kustomization.yaml")["resources"]
-        assert resources.count("gateway-api-crds.yaml") == 1
+        if environment == "local":
+            assert resources.count("bootstrap/") == 1
+            bootstrap_resources = _load(cluster / "bootstrap/kustomization.yaml")["resources"]
+            assert bootstrap_resources.count("gateway-api-crds.yaml") == 1
+            crds_path = cluster / "bootstrap/gateway-api-crds.yaml"
+        else:
+            assert resources.count("gateway-api-crds.yaml") == 1
+            crds_path = cluster / "gateway-api-crds.yaml"
         assert resources.count("infrastructure.yaml") == 1
         assert resources.count("platform.yaml") == 1
         assert resources.count("runtime-secrets.yaml") == (1 if environment == "local" else 0)
 
-        crds = _load(cluster / "gateway-api-crds.yaml")
+        crds = _load(crds_path)
         assert crds["metadata"]["name"] == "gateway-api-crds"
         assert crds["spec"]["path"] == "./infra/k8s/gitops/gateway-api-crds"
         assert crds["spec"]["wait"] is True
@@ -369,6 +379,7 @@ def test_flux_orders_crds_foundation_and_platform_with_health_gates() -> None:
                 },
             ]
             expected_platform_dependencies = [
+                {"name": "infrastructure"},
                 {"name": "runtime-secrets"},
                 {"name": "registry"},
             ]

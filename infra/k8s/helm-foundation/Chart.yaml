@@ -50,6 +50,13 @@ dependencies:
     version: 0.29.0
     repository: https://cloudnative-pg.github.io/charts
 
+
+  # Core KEDA owns the ScaledObject CRDs and controllers used by the platform.
+  # Managed AKS keeps its Terraform-owned release, so only local enables this dependency.
+  - name: keda
+    version: 2.20.1
+    repository: https://kedacore.github.io/charts
+    condition: keda.enabled
   # External Secrets Operator + CRDs, moved out of the platform umbrella so the
   # foundation owns a single operator/CRD install everywhere (default kind
   # ordering applies the CRDs before the controller that consumes them). The

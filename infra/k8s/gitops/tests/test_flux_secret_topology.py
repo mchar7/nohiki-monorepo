@@ -522,7 +522,7 @@ def test_local_runtime_secrets_have_one_flux_owner_and_ordered_dependencies() ->
     assert runtime["spec"]["path"] == "./infra/k8s/gitops/secrets/local"
     assert runtime["spec"]["decryption"] == {
         "provider": "sops",
-        "secretRef": {"name": "sops-age"},
+        "secretRef": {"name": "flux-sops"},
     }
     assert runtime["spec"]["dependsOn"] == [{"name": "infrastructure"}]
     assert runtime["spec"]["healthChecks"] == [
@@ -546,6 +546,7 @@ def test_local_runtime_secrets_have_one_flux_owner_and_ordered_dependencies() ->
         },
     ]
     assert _stack("local", "platform")["spec"]["dependsOn"] == [
+        {"name": "infrastructure"},
         {"name": "runtime-secrets"},
         {"name": "registry"},
     ]
@@ -565,8 +566,8 @@ def test_local_runtime_kustomization_has_one_encrypted_secret_owner() -> None:
 def test_bootstrap_applies_only_the_snapshotted_age_trust_root_secret() -> None:
     bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
     created = re.findall(r"\bcreate secret generic\s+([^\s\\]+)", bootstrap)
-    assert created == ["sops-age"]
-    assert "bound_kubectl_with_age create secret generic sops-age" in bootstrap
+    assert created == ["flux-sops"]
+    assert "bound_kubectl_with_age create secret generic flux-sops" in bootstrap
     assert "--from-file=age.agekey=@AGEKEY@" in bootstrap
     assert '--from-file=age.agekey="${BOOTSTRAP_AGE_KEY}"' not in bootstrap
 

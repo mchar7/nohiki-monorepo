@@ -133,22 +133,22 @@ def test_flux_reconciles_secret_sources_before_consumers() -> None:
     ]
     cluster = _load(GITOPS / "clusters/local/kustomization.yaml")
     assert cluster["resources"] == [
-        "gateway-api-crds.yaml",
+        "bootstrap/",
         "infrastructure.yaml",
-        "registry.yaml",
         "runtime-secrets.yaml",
         "platform.yaml",
         "observability.yaml",
         "health.yaml",
         "verification-api.yaml",
         "verification-playwright.yaml",
+        "flux-instance.yaml",
     ]
     runtime = _load(GITOPS / "clusters/local/runtime-secrets.yaml")
     assert runtime["spec"]["dependsOn"] == [{"name": "infrastructure"}]
     assert runtime["spec"]["path"] == "./infra/k8s/gitops/secrets/local"
     assert runtime["spec"]["decryption"] == {
         "provider": "sops",
-        "secretRef": {"name": "sops-age"},
+        "secretRef": {"name": "flux-sops"},
     }
     assert runtime["spec"]["healthChecks"] == [
         {
@@ -171,6 +171,7 @@ def test_flux_reconciles_secret_sources_before_consumers() -> None:
         },
     ]
     assert _load(GITOPS / "clusters/local/platform.yaml")["spec"]["dependsOn"] == [
+        {"name": "infrastructure"},
         {"name": "runtime-secrets"},
         {"name": "registry"},
     ]
@@ -332,7 +333,7 @@ def test_bootstrap_protects_key_file_and_temporary_material() -> None:
     assert 'BOOTSTRAP_TMP_ROOT="$(mktemp -d)"' in text
     assert 'rm -rf -- "${BOOTSTRAP_TMP_ROOT}"' in text
     snapshot = 'BOOTSTRAP_AGE_KEY_SHA256="$(python3 "${SNAPSHOT_HELPER}" snapshot-age-key'
-    secret_create = text.index("create secret generic sops-age")
+    secret_create = text.index("create secret generic flux-sops")
     assert text.index(snapshot) < secret_create
     assert "readonly BOOTSTRAP_AGE_KEY BOOTSTRAP_AGE_KEY_SHA256" in text
     assert "pki_dir" not in text
@@ -342,10 +343,10 @@ def test_bootstrap_protects_key_file_and_temporary_material() -> None:
 
 def test_bootstrap_secret_apply_is_idempotent_and_silent() -> None:
     text = BOOTSTRAP.read_text(encoding="utf-8")
-    start = text.index("create secret generic sops-age")
+    start = text.index("create secret generic flux-sops")
     block = text[start : text.index("\n  printf", start)]
     assert "--from-file=age.agekey=@AGEKEY@" in block
-    assert "bound_kubectl_with_age create secret generic sops-age" in text
+    assert "bound_kubectl_with_age create secret generic flux-sops" in text
     assert '"${BOOTSTRAP_KUBECONFIG_SHA256}" @KUBECONFIG@' in text
     assert '"${BOOTSTRAP_AGE_KEY_SHA256}" @AGEKEY@ --' in text
     assert 'kubectl --kubeconfig=@KUBECONFIG@ --context="${BOOTSTRAP_CONTEXT}"' in text
