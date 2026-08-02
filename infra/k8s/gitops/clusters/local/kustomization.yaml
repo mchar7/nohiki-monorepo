@@ -9,4 +9,3 @@ resources:
   - health.yaml
   - verification-api.yaml
   - verification-playwright.yaml
-  - flux-instance.yaml

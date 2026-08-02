@@ -141,7 +141,6 @@ def test_flux_reconciles_secret_sources_before_consumers() -> None:
         "health.yaml",
         "verification-api.yaml",
         "verification-playwright.yaml",
-        "flux-instance.yaml",
     ]
     runtime = _load(GITOPS / "clusters/local/runtime-secrets.yaml")
     assert runtime["spec"]["dependsOn"] == [{"name": "infrastructure"}]
