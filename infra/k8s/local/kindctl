@@ -586,6 +586,32 @@ def require_cluster_dns_ready(kubeconfig: Path) -> None:
     )
 
 
+def recreate_storage_provisioner(kubeconfig: Path) -> None:
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "local-path-storage",
+            "rollout",
+            "restart",
+            "deployment/local-path-provisioner",
+        ),
+        timeout=30,
+    )
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "local-path-storage",
+            "rollout",
+            "status",
+            "deployment/local-path-provisioner",
+            "--timeout=120s",
+        ),
+        timeout=125,
+    )
+
+
 def require_node_pid_limits(nodes: Sequence[str]) -> dict[str, int]:
     limits: dict[str, int] = {}
     for node in nodes:
@@ -1425,6 +1451,7 @@ def create(attempt: Path) -> dict[str, Any]:
         cluster_uid, cluster_nodes = validate_cluster(kubeconfig)
         nodes = repair_nodes(kubeconfig)
         require_cluster_dns_ready(kubeconfig)
+        recreate_storage_provisioner(kubeconfig)
         pids_limits = require_node_pid_limits(cluster_nodes)
         require_storage_class(kubeconfig)
         network = network_probe(kubeconfig)
