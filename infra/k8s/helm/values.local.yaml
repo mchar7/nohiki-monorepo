@@ -4,6 +4,91 @@
 
 x-local-rustfs-endpoint: &localRustfsEndpoint nohiki-rustfs:9000
 x-local-rustfs-url: &localRustfsUrl http://nohiki-rustfs:9000
+x-local-object-storage-wait-image: &localObjectStorageWaitImage amazon/aws-cli:2.35.21@sha256:238583846e731f31c9848dae26c5a560769ff35c4c5368a4cb6be5816683e485
+x-local-object-storage-wait-script: &localObjectStorageWaitScript |
+  buckets="$1"
+  endpoint="$2"
+  max_attempts=60
+  for bucket in $buckets; do
+    attempt=1
+    while [ "$attempt" -le "$max_attempts" ]; do
+      if aws --endpoint-url "$endpoint" s3api head-bucket --bucket "$bucket" --region "$AWS_REGION" >/dev/null 2>&1; then
+        break
+      fi
+      if [ "$attempt" -eq "$max_attempts" ]; then
+        echo "Object-storage bucket $bucket was not ready after $max_attempts attempts" >&2
+        exit 1
+      fi
+      echo "Waiting for object-storage bucket $bucket (attempt $attempt/$max_attempts)"
+      attempt=$((attempt + 1))
+      sleep 2
+    done
+  done
+x-local-observability-storage-wait: &localObservabilityStorageWait
+  name: wait-for-object-storage
+  image: *localObjectStorageWaitImage
+  imagePullPolicy: IfNotPresent
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop: [ALL]
+  env:
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-storage-credentials
+          key: AWS_ACCESS_KEY_ID
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-storage-credentials
+          key: AWS_SECRET_ACCESS_KEY
+    - name: AWS_REGION
+      valueFrom:
+        secretKeyRef:
+          name: observability-storage-credentials
+          key: AWS_REGION
+    - name: AWS_EC2_METADATA_DISABLED
+      value: "true"
+  command: [/bin/sh, -ec]
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+x-local-tempo-storage-wait: &localTempoStorageWait
+  <<: *localObservabilityStorageWait
+  args:
+    - *localObjectStorageWaitScript
+    - wait-for-object-storage
+    - nohiki-tempo
+    - *localRustfsUrl
+x-local-mimir-storage-wait: &localMimirStorageWait
+  <<: *localObservabilityStorageWait
+  args:
+    - *localObjectStorageWaitScript
+    - wait-for-object-storage
+    - nohiki-mimir nohiki-mimir-blocks nohiki-mimir-alertmanager nohiki-mimir-ruler
+    - *localRustfsUrl
+x-local-loki-storage-wait: &localLokiStorageWait
+  <<: *localObservabilityStorageWait
+  args:
+    - *localObjectStorageWaitScript
+    - wait-for-object-storage
+    - nohiki-loki-chunks nohiki-loki-ruler nohiki-loki-admin
+    - *localRustfsUrl
+x-local-pyroscope-storage-wait: &localPyroscopeStorageWait
+  <<: *localObservabilityStorageWait
+  args:
+    - *localObjectStorageWaitScript
+    - wait-for-object-storage
+    - nohiki-pyroscope
+    - *localRustfsUrl
 # Single source of truth for the local image registry endpoint. `just k8s-push-images`
 # reads this exact value, so pushed tags and reconciler-rendered pulls cannot drift.
 x-local-registry: &localRegistry localhost:5000
@@ -441,6 +526,8 @@ mimir-distributed:
     enabled: false
   kafka:
     enabled: false
+  gateway:
+    initContainers: [*localMimirStorageWait]
   mimir:
     structuredConfig:
       ingest_storage:
@@ -478,24 +565,33 @@ mimir-distributed:
           secret_access_key: ${AWS_SECRET_ACCESS_KEY}
   distributor:
     replicas: 1
+    initContainers: [*localMimirStorageWait]
   ingester:
     replicas: 1
+    initContainers: [*localMimirStorageWait]
     zoneAwareReplication:
       enabled: false
   querier:
     replicas: 1
+    initContainers: [*localMimirStorageWait]
   query_frontend:
     replicas: 1
+    initContainers: [*localMimirStorageWait]
   store_gateway:
     replicas: 1
+    initContainers: [*localMimirStorageWait]
     zoneAwareReplication:
       enabled: false
   compactor:
     replicas: 1
+    initContainers: [*localMimirStorageWait]
   ruler:
     replicas: 1
+    initContainers: [*localMimirStorageWait]
 
 tempo-distributed:
+  memcached:
+    initContainers: [*localTempoStorageWait]
   traces:
     otlp:
       http:
@@ -526,14 +622,19 @@ tempo-distributed:
                 X-Scope-OrgID: nohiki
   distributor:
     replicas: 1
+    initContainers: [*localTempoStorageWait]
   ingester:
     replicas: 1
+    initContainers: [*localTempoStorageWait]
   querier:
     replicas: 1
+    initContainers: [*localTempoStorageWait]
   queryFrontend:
     replicas: 1
+    initContainers: [*localTempoStorageWait]
   compactor:
     replicas: 1
+    initContainers: [*localTempoStorageWait]
   metricsGenerator:
     replicas: 1
 
@@ -557,16 +658,19 @@ loki:
         s3ForcePathStyle: true
   write:
     replicas: 1
+    initContainers: [*localLokiStorageWait]
     extraEnvFrom:
       - secretRef:
           name: observability-storage-credentials
   read:
     replicas: 1
+    initContainers: [*localLokiStorageWait]
     extraEnvFrom:
       - secretRef:
           name: observability-storage-credentials
   backend:
     replicas: 1
+    initContainers: [*localLokiStorageWait]
     extraEnvFrom:
       - secretRef:
           name: observability-storage-credentials
@@ -588,6 +692,7 @@ pyroscope:
     extraEnvFrom:
       - secretRef:
           name: observability-storage-credentials
+    initContainers: [*localPyroscopeStorageWait]
   replicas: 1
   # Local override: base values.yaml pins alloy as tag+digest ("v1.12.2@sha256:...").
   # The grafana/alloy chart copies image.tag verbatim into the app.kubernetes.io/version

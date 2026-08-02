@@ -230,6 +230,7 @@ global:
   s3:
     endpoint: http://nohiki-rustfs:9000
     region: local
+    readinessImage: amazon/aws-cli:2.35.21@sha256:238583846e731f31c9848dae26c5a560769ff35c4c5368a4cb6be5816683e485
 
   # Qdrant configuration
   qdrant:
