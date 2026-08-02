@@ -291,13 +291,17 @@ def test_foundation_stack_waits_on_its_release_before_platform(cluster: str) -> 
     assert infrastructure["timeout"] == "10m"
     assert infrastructure["prune"] is True
     assert infrastructure["wait"] is False
+    release_names = ["nohiki-foundation", "nohiki-cloudnative-pg"]
+    if cluster == "local":
+        release_names.append("nohiki-keda")
     assert infrastructure["healthChecks"] == [
         {
             "apiVersion": "helm.toolkit.fluxcd.io/v2",
             "kind": "HelmRelease",
-            "name": "nohiki-foundation",
+            "name": name,
             "namespace": "flux-system",
         }
+        for name in release_names
     ]
 
     gateway = stack(cluster, "gateway-api-crds")["spec"]
@@ -376,11 +380,56 @@ def test_foundation_helmrelease_targets_the_foundation_namespace() -> None:
 
 
 @pytest.mark.parametrize("cluster", CLUSTER_ENV)
+def test_operator_releases_are_environment_scoped_and_use_split_charts(cluster: str) -> None:
+    env = CLUSTER_ENV[cluster]
+    rendered = documents(f"infra/k8s/gitops/infrastructure/{env}")
+    releases = {
+        document["metadata"]["name"]: document for document in rendered if document.get("kind") == "HelmRelease"
+    }
+    expected_names = {"nohiki-foundation", "nohiki-cloudnative-pg"}
+    if env == "local":
+        expected_names.add("nohiki-keda")
+    assert set(releases) == expected_names
+
+    expected_operators = {
+        "nohiki-cloudnative-pg": (
+            "cloudnative-pg",
+            "./infra/k8s/helm-foundation/operators/cloudnative-pg",
+        )
+    }
+    if env == "local":
+        expected_operators["nohiki-keda"] = (
+            "keda",
+            "./infra/k8s/helm-foundation/operators/keda",
+        )
+    for name, (release_name, chart) in expected_operators.items():
+        spec = releases[name]["spec"]
+        assert spec["releaseName"] == release_name
+        assert spec["targetNamespace"] == "nohiki-foundation"
+        assert spec["storageNamespace"] == "nohiki-foundation"
+        assert spec["chart"]["spec"]["chart"] == chart
+        assert spec["chart"]["spec"]["reconcileStrategy"] == "Revision"
+        assert spec["timeout"] == "10m"
+        assert spec["install"] == {
+            "createNamespace": True,
+            "crds": "Create",
+            "remediation": {"retries": 3, "remediateLastFailure": True},
+        }
+        assert spec["upgrade"] == {
+            "crds": "CreateReplace",
+            "cleanupOnFail": True,
+            "remediation": {"retries": 3, "remediateLastFailure": True},
+        }
+        assert spec["driftDetection"] == {"mode": "enabled"}
+        assert spec["maxHistory"] == 3
+
+
+@pytest.mark.parametrize("cluster", CLUSTER_ENV)
 def test_foundation_owns_environment_cert_manager_configuration(cluster: str) -> None:
     env = CLUSTER_ENV[cluster]
     spec = helmrelease(f"infra/k8s/gitops/infrastructure/{env}", "nohiki-foundation")["spec"]
     if env == "local":
-        assert spec["values"] == {"keda": {"enabled": True}}
+        assert "values" not in spec
         return
 
     if env == "prod":

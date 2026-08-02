@@ -345,13 +345,17 @@ def test_flux_orders_crds_foundation_and_platform_with_health_gates() -> None:
         assert infrastructure["spec"]["retryInterval"] == "2m"
         assert infrastructure["spec"]["timeout"] == "10m"
         assert infrastructure["spec"]["wait"] is False
+        release_names = ["nohiki-foundation", "nohiki-cloudnative-pg"]
+        if environment == "local":
+            release_names.append("nohiki-keda")
         assert infrastructure["spec"]["healthChecks"] == [
             {
                 "apiVersion": "helm.toolkit.fluxcd.io/v2",
                 "kind": "HelmRelease",
-                "name": "nohiki-foundation",
+                "name": name,
                 "namespace": "flux-system",
             }
+            for name in release_names
         ]
 
         expected_platform_dependencies = [{"name": "infrastructure"}]

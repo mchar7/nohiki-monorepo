@@ -1,0 +1,34 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nohiki-cloudnative-pg
+  namespace: flux-system
+spec:
+  interval: 10m
+  timeout: 10m
+  releaseName: cloudnative-pg
+  targetNamespace: nohiki-foundation
+  storageNamespace: nohiki-foundation
+  chart:
+    spec:
+      chart: ./infra/k8s/helm-foundation/operators/cloudnative-pg
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+      reconcileStrategy: Revision
+  install:
+    createNamespace: true
+    crds: Create
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+  upgrade:
+    crds: CreateReplace
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+  driftDetection:
+    mode: enabled
+  maxHistory: 3
