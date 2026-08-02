@@ -367,11 +367,9 @@ def test_chart_http_repositories_are_registered_exactly_before_dependency_build(
     workflow_script = "\n".join(str(step.get("run", "")) for step in _steps(job))
     expected_repositories = _http_chart_repositories()
     expected_aliases = {
-        "cloudnative-pg",
         "external-secrets",
         "opentelemetry",
         "strimzi",
-        "kedacore",
         "bitnami",
         "qdrant",
         "maikumori",

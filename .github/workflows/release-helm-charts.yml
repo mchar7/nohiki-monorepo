@@ -91,10 +91,8 @@ jobs:
       - name: Register Helm dependency repositories
         run: |
           set -euo pipefail
-          helm repo add cloudnative-pg https://cloudnative-pg.github.io/charts
           helm repo add external-secrets https://charts.external-secrets.io
           helm repo add opentelemetry https://open-telemetry.github.io/opentelemetry-helm-charts
-          helm repo add kedacore https://kedacore.github.io/charts
           helm repo add strimzi https://strimzi.io/charts/
           helm repo add bitnami https://charts.bitnami.com/bitnami
           helm repo add qdrant https://qdrant.github.io/qdrant-helm

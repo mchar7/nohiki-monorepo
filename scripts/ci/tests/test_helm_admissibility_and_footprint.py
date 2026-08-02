@@ -8,6 +8,9 @@ import yaml
 _ROOT = Path(__file__).resolve().parents[3]
 _PLATFORM = _ROOT / "infra" / "k8s" / "helm"
 _FOUNDATION = _ROOT / "infra" / "k8s" / "helm-foundation"
+_OPERATORS = _FOUNDATION / "operators"
+_KEDA = _OPERATORS / "keda"
+_CNPG = _OPERATORS / "cloudnative-pg"
 _PERSISTENT_WORKLOAD_KINDS = {"DaemonSet", "Deployment", "StatefulSet"}
 
 
@@ -16,16 +19,10 @@ def _render(
     *,
     namespace: str,
     values: Path | None = None,
-    set_values: tuple[str, ...] = (),
-    include_crds: bool = False,
 ) -> tuple[dict, ...]:
     command = ["helm", "template", chart.name, str(chart), "--namespace", namespace]
     if values is not None:
         command.extend(("--values", str(values)))
-    for value in set_values:
-        command.extend(("--set", value))
-    if include_crds:
-        command.append("--include-crds")
     rendered = subprocess.run(command, check=True, capture_output=True, text=True).stdout
     return tuple(document for document in yaml.safe_load_all(rendered) if isinstance(document, dict))
 
@@ -38,21 +35,33 @@ def _local_platform() -> tuple[dict, ...]:
     )
 
 
-def _local_foundation(*, include_crds: bool = False) -> tuple[dict, ...]:
+def _local_foundation() -> tuple[dict, ...]:
     return _render(
         _FOUNDATION,
         namespace="nohiki-foundation",
-        set_values=("keda.enabled=true",),
-        include_crds=include_crds,
     )
 
 
-def test_local_keda_resources_are_defined_by_the_foundation_dependency() -> None:
+def _local_keda() -> tuple[dict, ...]:
+    return _render(
+        _KEDA,
+        namespace="nohiki-foundation",
+    )
+
+
+def _local_cnpg() -> tuple[dict, ...]:
+    return _render(
+        _CNPG,
+        namespace="nohiki-foundation",
+    )
+
+
+def test_local_keda_resources_are_defined_by_the_pinned_operator_chart() -> None:
     platform = _local_platform()
-    foundation = _local_foundation(include_crds=True)
+    keda = _local_keda()
     defined_kinds = {
         document["spec"]["names"]["kind"]
-        for document in foundation
+        for document in keda
         if document.get("kind") == "CustomResourceDefinition" and document.get("spec", {}).get("group") == "keda.sh"
     }
     rendered_kinds = {
@@ -67,7 +76,7 @@ def test_local_keda_resources_are_defined_by_the_foundation_dependency() -> None
     )
     assert {
         document["metadata"]["name"]
-        for document in foundation
+        for document in keda
         if document.get("kind") == "Deployment" and document["metadata"]["name"].startswith("keda-")
     } == {
         "keda-admission-webhooks",
@@ -77,7 +86,7 @@ def test_local_keda_resources_are_defined_by_the_foundation_dependency() -> None
 
 
 def test_local_persistent_workload_containers_have_requests_and_limits() -> None:
-    documents = (*_local_foundation(), *_local_platform())
+    documents = (*_local_foundation(), *_local_keda(), *_local_cnpg(), *_local_platform())
     workloads = [document for document in documents if document.get("kind") in _PERSISTENT_WORKLOAD_KINDS]
     assert workloads
 
