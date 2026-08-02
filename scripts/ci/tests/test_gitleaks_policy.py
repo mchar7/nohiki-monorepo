@@ -12,7 +12,10 @@ _ROOT = Path(__file__).resolve().parents[3]
 _GITLEAKS = _ROOT / ".gitleaks.toml"
 _LEFTHOOK = _ROOT / "lefthook.yml"
 _JUSTFILE = _ROOT / "Justfile"
-_PUBLIC_CHECKSUM = "a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d"
+_PUBLIC_CHECKSUMS = (
+    "3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8",
+    "a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d",
+)
 _EXPECTED_RULE_REGEXES = {
     "openrouter-api-key": r"sk-or-v1-[a-zA-Z0-9]{64}",
     "anthropic-api-key": r"sk-ant-api[a-zA-Z0-9\-_]{90,}",
@@ -49,19 +52,21 @@ def test_gitleaks_defaults_and_exact_custom_rules_are_active() -> None:
         assert "allowlist" not in rule
 
 
-def test_gitleaks_allows_only_the_anchored_public_checksum() -> None:
+def test_gitleaks_allows_only_the_anchored_public_checksums() -> None:
     config = _load_toml(_GITLEAKS)
     allowlist = config["allowlist"]
+    expected_regexes = [rf"^{checksum}$" for checksum in _PUBLIC_CHECKSUMS]
 
     assert set(allowlist) == {"regexes"}
-    assert allowlist["regexes"] == [rf"^{_PUBLIC_CHECKSUM}$"]
+    assert allowlist["regexes"] == expected_regexes
 
-    matcher = re.compile(allowlist["regexes"][0])
-    assert matcher.fullmatch(_PUBLIC_CHECKSUM)
-    assert not matcher.search(f"prefix-{_PUBLIC_CHECKSUM}")
-    assert not matcher.search(f"{_PUBLIC_CHECKSUM}-suffix")
-    assert not matcher.search("0" * 64)
-    assert not matcher.search(_PUBLIC_CHECKSUM[:-1] + "0")
+    for checksum, regex in zip(_PUBLIC_CHECKSUMS, allowlist["regexes"], strict=True):
+        matcher = re.compile(regex)
+        assert matcher.fullmatch(checksum)
+        assert not matcher.search(f"prefix-{checksum}")
+        assert not matcher.search(f"{checksum}-suffix")
+        assert not matcher.search("0" * 64)
+        assert not matcher.search(checksum[:-1] + "0")
 
 
 def test_gitleaks_has_no_broad_or_scope_level_exemptions() -> None:
@@ -72,7 +77,7 @@ def test_gitleaks_has_no_broad_or_scope_level_exemptions() -> None:
         assert not _FORBIDDEN_EXEMPTION_KEYS.intersection(scope)
     assert all("allowlist" not in rule for rule in config["rules"])
 
-    assert config["allowlist"]["regexes"] == [rf"^{_PUBLIC_CHECKSUM}$"]
+    assert config["allowlist"]["regexes"] == [rf"^{checksum}$" for checksum in _PUBLIC_CHECKSUMS]
     assert all(rule["regex"] == _EXPECTED_RULE_REGEXES[rule["id"]] for rule in config["rules"])
 
 

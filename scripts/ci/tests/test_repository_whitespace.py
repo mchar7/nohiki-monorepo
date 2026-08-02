@@ -125,7 +125,7 @@ def test_whitespace_diagnostics_follow_git_attributes_and_reject_defects(
     vendored_bytes = (_ROOT / vendored_relative).read_bytes()
     (repository / vendored_relative).write_bytes(vendored_bytes)
     sibling = repository / vendored_relative.with_name("gateway-api-crds-sibling.yaml")
-    sibling.write_bytes(vendored_bytes)
+    sibling.write_bytes(vendored_bytes + b"bad trailing space  \n")
     (repository / "candidate.txt").write_bytes(b"bad trailing space  \n")
     (repository / "excess-eof-blank-lines.txt").write_bytes(b"clean\n\n\n")
 
