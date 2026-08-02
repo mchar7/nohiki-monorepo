@@ -168,8 +168,12 @@ def test_flux_instances_are_runtime_owned_and_git_roots_do_not_contain_them() ->
     bootstrap = _load(_RUNTIME / "flux-instance-bootstrap.yaml")
     assert not (_CLUSTER / "flux-instance.yaml").exists()
     assert not (_CLUSTER / "flux-instance-bootstrap.yaml").exists()
-    assert "flux-instance.yaml" not in _load(_CLUSTER / "kustomization.yaml")["resources"]
-    assert "flux-instance-bootstrap.yaml" not in _load(_CLUSTER / "bootstrap/kustomization.yaml")["resources"]
+    final_resources = _at(_load(_CLUSTER / "kustomization.yaml"), "resources")
+    bootstrap_resources = _at(_load(_CLUSTER / "bootstrap/kustomization.yaml"), "resources")
+    assert isinstance(final_resources, list)
+    assert isinstance(bootstrap_resources, list)
+    assert "flux-instance.yaml" not in final_resources
+    assert "flux-instance-bootstrap.yaml" not in bootstrap_resources
     assert _at(final, "spec", "sync", "path") == "infra/k8s/gitops/clusters/local"
     assert _at(bootstrap, "spec", "sync", "path") == "infra/k8s/gitops/clusters/local/bootstrap"
     _mapping(_at(bootstrap, "spec", "sync"))["path"] = _at(final, "spec", "sync", "path")
