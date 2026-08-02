@@ -133,7 +133,7 @@ valkey:
   metrics:
     image:
       tag: sha256-826966816fe3cec63edfb19d97424df415a5045189fba850862e20332ee201c1@sha256:826966816fe3cec63edfb19d97424df415a5045189fba850862e20332ee201c1
-  master:
+  primary:
     persistence:
       size: 1Gi
 
@@ -201,11 +201,9 @@ rustfs:
     enabled: false
   ingress:
     enabled: false
-  # Smaller storage for local
-  storageclass:
-    name: local-path
-    dataStorageSize: 2Gi
-    logStorageSize: 256Mi
+  persistence:
+    storageClass: local-path
+    size: 2Gi
   # No PDB for single replica
   pdb:
     create: false
@@ -227,9 +225,6 @@ qdrantInit:
     registry: *localRegistry
     pullPolicy: Always
 
-keda:
-  httpAddon:
-    enabled: false
 
 # First-party services and their DB-migration jobs share the one registry anchor; Always re-pulls the mutable dev tag.
 x-local-first-party-image: &localFirstPartyImage
@@ -535,11 +530,11 @@ tempo-distributed:
     replicas: 1
   querier:
     replicas: 1
-  query_frontend:
+  queryFrontend:
     replicas: 1
   compactor:
     replicas: 1
-  metrics_generator:
+  metricsGenerator:
     replicas: 1
 
 loki:

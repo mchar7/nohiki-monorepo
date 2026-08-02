@@ -96,3 +96,30 @@ def test_kafka_scaling_enablement_and_partition_limit_are_explicit() -> None:
     partition_count = base["global"]["kafka"]["partitionCount"]
     assert partition_count == base["kafkaCluster"]["config"]["numPartitions"] == 3
     assert {name for name in excluded if base[name]["scaling"]["excluded"]} == excluded
+
+
+def test_local_valkey_and_rustfs_claim_sizes_use_effective_chart_keys() -> None:
+    rendered = subprocess.run(
+        [
+            "helm",
+            "template",
+            "nohiki",
+            str(_HELM),
+            "--namespace",
+            "nohiki-local",
+            "--values",
+            str(_HELM / "values.local.yaml"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    claims = {
+        (document["metadata"]["name"], claim["metadata"]["name"]): claim["spec"]["resources"]["requests"]["storage"]
+        for document in yaml.safe_load_all(rendered)
+        if isinstance(document, dict) and document.get("kind") == "StatefulSet"
+        for claim in document["spec"].get("volumeClaimTemplates", [])
+    }
+
+    assert claims[("nohiki-valkey-primary", "valkey-data")] == "1Gi"
+    assert claims[("nohiki-rustfs", "data")] == "2Gi"

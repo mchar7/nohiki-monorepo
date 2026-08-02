@@ -174,7 +174,10 @@ def test_production_kafka_scalers_require_authenticated_tls(tmp_path: Path) -> N
     for scaler_name, trigger in kafka_triggers:
         assert mapping_at(trigger, "metadata").get("tls") == "enable", scaler_name
         assert mapping_at(trigger, "authenticationRef") == {"name": auth_name}, scaler_name
-    assert any(document.get("kind") == "HTTPScaledObject" for document in documents)
+    assert not any(
+        document.get("apiVersion", "").startswith("http.keda.sh/") or document.get("kind") == "HTTPInterceptorProxy"
+        for document in documents
+    )
     keda_installer = (_ROOT / "infra" / "terraform" / "keda.tf").read_text(encoding="utf-8")
     assert 'resource "helm_release" "keda"' in keda_installer
     assert 'count            = var.deployment_type == "aks" ? 1 : 0' in keda_installer
