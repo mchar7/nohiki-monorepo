@@ -11,6 +11,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+import yaml
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RUNNER = _ROOT / "infra/k8s/local/kindctl"
@@ -92,7 +93,11 @@ elif name == "systemd-run":
 def _stub_create_acceptance(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "preflight", lambda: None)
     monkeypatch.setattr(runner, "kind_modules_override", lambda: None)
-    monkeypatch.setattr(runner, "validate_cluster", lambda _path: ("cluster-uid", ["nohiki-control-plane"]))
+    monkeypatch.setattr(
+        runner,
+        "validate_cluster",
+        lambda _path: ("cluster-uid", ["nohiki-control-plane"], {"nohiki-control-plane": 250}),
+    )
     monkeypatch.setattr(
         runner,
         "repair_nodes",
@@ -138,22 +143,75 @@ def _attempt(tmp_path: Path, name: str = "attempt-1") -> Path:
     return attempt
 
 
-def test_kind_config_is_the_exact_pinned_single_node_contract() -> None:
-    assert (
-        _CONFIG.read_text(encoding="utf-8")
-        == """kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-networking:
-  apiServerAddress: "127.0.0.1"
-  disableDefaultCNI: false
-containerdConfigPatches:
-  - |-
-    [plugins."io.containerd.grpc.v1.cri".registry]
-      config_path = "/etc/containerd/certs.d"
-nodes:
-  - role: control-plane
-    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
-"""
+def test_kind_config_has_independently_sized_single_node_capacity() -> None:
+    configuration = yaml.safe_load(_CONFIG.read_text(encoding="utf-8"))
+    assert configuration["kind"] == "Cluster"
+    assert configuration["apiVersion"] == "kind.x-k8s.io/v1alpha4"
+    assert configuration["networking"] == {
+        "apiServerAddress": "127.0.0.1",
+        "disableDefaultCNI": False,
+    }
+    assert len(configuration["containerdConfigPatches"]) == 1
+    assert 'config_path = "/etc/containerd/certs.d"' in configuration["containerdConfigPatches"][0]
+    assert len(configuration["nodes"]) == 1
+    node = configuration["nodes"][0]
+    assert node["role"] == "control-plane"
+    assert "@sha256:" in node["image"]
+    kubelet_documents = [
+        yaml.safe_load(patch)
+        for patch in node["kubeadmConfigPatches"]
+        if yaml.safe_load(patch).get("kind") == "KubeletConfiguration"
+    ]
+    assert len(kubelet_documents) == 1
+    observed_running = 27
+    observed_pending = 70
+    doubled_observed_total = 2 * (observed_running + observed_pending)
+    required_capacity = ((doubled_observed_total + 9) // 10) * 10
+    assert kubelet_documents[0]["maxPods"] >= required_capacity
+
+
+@pytest.mark.parametrize(("capacity", "expected_capacity"), [(110, None), (211, 211)])
+def test_cluster_validation_observes_live_allocatable_pods(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capacity: int,
+    expected_capacity: int | None,
+) -> None:
+    runner = _load_runner()
+    kubeconfig = tmp_path / "kubeconfig"
+    monkeypatch.setattr(
+        runner,
+        "run_command",
+        lambda argv, **_kwargs: _completed(argv, stdout="kind-nohiki\n"),
+    )
+
+    def fake_json(argv: Sequence[str], **_kwargs: object) -> dict[str, Any]:
+        command = tuple(argv)
+        if "--raw=/version" in command:
+            return {"gitVersion": runner.KUBERNETES_VERSION}
+        if "nodes" in command:
+            return {
+                "items": [
+                    {
+                        "metadata": {"name": "nohiki-control-plane"},
+                        "status": {
+                            "allocatable": {"pods": str(capacity)},
+                            "conditions": [{"type": "Ready", "status": "True"}],
+                        },
+                    }
+                ]
+            }
+        return {"metadata": {"uid": "cluster-uid"}}
+
+    monkeypatch.setattr(runner, "command_json", fake_json)
+    if expected_capacity is None:
+        with pytest.raises(runner.KindctlError, match=f"allocatable Pods {capacity}"):
+            runner.validate_cluster(kubeconfig)
+        return
+    assert runner.validate_cluster(kubeconfig) == (
+        "cluster-uid",
+        ["nohiki-control-plane"],
+        {"nohiki-control-plane": expected_capacity},
     )
 
 

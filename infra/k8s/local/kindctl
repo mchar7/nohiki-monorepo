@@ -25,6 +25,7 @@ KIND_VERSION = "v0.32.0"
 FLUX_VERSION = "2.9.2"
 FLUX_OPERATOR_VERSION = "0.55.0"
 CREATE_TIMEOUT = 120
+MIN_NODE_POD_CAPACITY = 200
 REGISTRY_HOSTS = b'''server = "http://127.0.0.1:30500"
 
 [host."http://127.0.0.1:30500"]
@@ -509,7 +510,7 @@ def create_argv(kubeconfig: Path, provider_bin: Path | None = None) -> tuple[str
     )
 
 
-def validate_cluster(kubeconfig: Path) -> tuple[str, list[str]]:
+def validate_cluster(kubeconfig: Path) -> tuple[str, list[str], dict[str, int]]:
     context = run_command(kube_args(kubeconfig, "config", "current-context"), timeout=10).stdout.strip()
     if context != CONTEXT:
         raise KindctlError(f"unexpected kubeconfig context: {context}")
@@ -520,14 +521,25 @@ def validate_cluster(kubeconfig: Path) -> tuple[str, list[str]]:
     nodes = nodes_document.get("items", [])
     if len(nodes) != 1:
         raise KindctlError("cluster must contain exactly one node")
-    ready = next((condition for condition in nodes[0].get("status", {}).get("conditions", []) if condition.get("type") == "Ready"), None)
+    node = nodes[0]
+    ready = next((condition for condition in node.get("status", {}).get("conditions", []) if condition.get("type") == "Ready"), None)
     if ready is None or ready.get("status") != "True":
         raise KindctlError("the sole node must be Ready")
+    node_name = str(node.get("metadata", {}).get("name", ""))
+    raw_pod_capacity = node.get("status", {}).get("allocatable", {}).get("pods")
+    try:
+        pod_capacity = int(raw_pod_capacity)
+    except (TypeError, ValueError) as error:
+        raise KindctlError(f"node {node_name} allocatable Pods is invalid: {raw_pod_capacity}") from error
+    if pod_capacity < MIN_NODE_POD_CAPACITY:
+        raise KindctlError(
+            f"node {node_name} allocatable Pods {pod_capacity} is below required {MIN_NODE_POD_CAPACITY}"
+        )
     kube_system = command_json(kube_args(kubeconfig, "get", "namespace", "kube-system", "-o", "json"), timeout=15)
     uid = str(kube_system.get("metadata", {}).get("uid", ""))
     if not uid:
         raise KindctlError("kube-system UID is absent")
-    return uid, [str(nodes[0]["metadata"]["name"])]
+    return uid, [node_name], {node_name: pod_capacity}
 
 
 def repair_nodes(kubeconfig: Path) -> list[dict[str, str]]:
@@ -1532,7 +1544,7 @@ def create(attempt: Path) -> dict[str, Any]:
         os.close(descriptor)
         run_command(create_argv(kubeconfig, provider_bin), timeout=CREATE_TIMEOUT)
         validate_owned_kubeconfig(kubeconfig)
-        cluster_uid, cluster_nodes = validate_cluster(kubeconfig)
+        cluster_uid, cluster_nodes, pod_capacity = validate_cluster(kubeconfig)
         nodes = repair_nodes(kubeconfig)
         require_cluster_dns_ready(kubeconfig)
         recreate_storage_provisioner(kubeconfig)
@@ -1541,7 +1553,7 @@ def create(attempt: Path) -> dict[str, Any]:
         network = network_probe(kubeconfig)
         storage = storage_probe(kubeconfig)
         write_measurements(attempt, kubeconfig, cluster_uid, nodes, network, storage)
-        return {"nodePidsLimits": pids_limits}
+        return {"nodePidsLimits": pids_limits, "nodePodCapacity": pod_capacity}
     except BaseException as create_error:
         try:
             cleanup_cluster(attempt)
