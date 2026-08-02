@@ -723,14 +723,23 @@ def test_evaluate_infra_change_seeds_ci_checks() -> None:
         "scripts/ci/tests/fixtures/values.prod.identity.yaml",
         ".github/workflows/build-push.yml",
         ".github/workflows/cd_deploy-to-aks_nohiki.yml",
-        "infra/k8s/local/lifecycle.sh",
         "Justfile",
+        "infra/k8s/gitops/clusters/local/flux-instance.yaml",
+        "infra/k8s/gitops/install/bootstrap.sh",
+        "infra/k8s/local/kindctl",
+        "infra/k8s/local/kind.yaml",
+        "infra/k8s/local/lifecycle.sh",
     ],
 )
-def test_gitops_contract_inputs_select_gitops_contract_tests(path: str) -> None:
+def test_gitops_contract_inputs_select_gitops_contract_test_lane(path: str) -> None:
     packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate({path}, packages)
+    test_packages = selected_test_packages(decision, packages)
+    outputs = render_outputs(decision, test_packages, "pull_request")
 
-    assert "gitops-contract-tests" in evaluate({path}, packages).affected
+    assert not decision.unmatched
+    assert "gitops-contract-tests" in decision.affected
+    assert "gitops-contract-tests" in outputs["test_packages"].split(",")
 
 
 def test_evaluate_alembic_change_seeds_ci_checks() -> None:
