@@ -7,7 +7,6 @@
     "Justfile",
     "README.md",
     "flake.nix",
-    "infra/k8s/flux-runtime/",
     "infra/k8s/gitops/",
     "infra/k8s/helm/",
     "infra/k8s/kgateway/README.md",
