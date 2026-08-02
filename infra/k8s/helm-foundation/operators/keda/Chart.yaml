@@ -1,0 +1,10 @@
+apiVersion: v2
+name: nohiki-keda
+description: Pinned core KEDA operator and CRDs for Nohiki clusters
+type: application
+version: 0.1.0
+appVersion: "2.20.1"
+dependencies:
+  - name: keda
+    version: 2.20.1
+    repository: https://kedacore.github.io/charts

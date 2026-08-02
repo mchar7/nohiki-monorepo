@@ -33,10 +33,18 @@ _GATEWAY_DEPENDENCIES = {
     "agentgateway-crds": ("v1.3.1", "oci://cr.agentgateway.dev/charts"),
     "agentgateway": ("v1.3.1", "oci://cr.agentgateway.dev/charts"),
 }
-_FOUNDATION_DEPENDENCIES = _GATEWAY_DEPENDENCIES | {
-    "keda": ("2.20.1", "https://kedacore.github.io/charts"),
+_OPERATOR_DEPENDENCIES = {
+    "keda": (
+        "2.20.1",
+        "https://kedacore.github.io/charts",
+        "584c42b33427151abc03d4dd0c8c24be6c9aec96fc988dcf1559711c4dbd0d79",
+    ),
+    "cloudnative-pg": (
+        "0.29.0",
+        "https://cloudnative-pg.github.io/charts",
+        "668e065ff53508d58238788fd35b355a925060843629a951df0e6a9362e6d32f",
+    ),
 }
-_KEDA_ARCHIVE_SHA256 = "584c42b33427151abc03d4dd0c8c24be6c9aec96fc988dcf1559711c4dbd0d79"
 _GATEWAY_ARCHIVE_SHA256 = {
     "kgateway-crds-v2.3.6.tgz": "d6b1d8bf0e2636bca6b8fb2b4a1525806fd1b4f9e84614c8a6a16eda585a119c",
     "kgateway-v2.3.6.tgz": "23ce30f3180dffad0d68f8aab03d5da422d2c983d513f8e86dd01012845b603a",
@@ -96,7 +104,7 @@ def foundation_documents() -> tuple[dict[str, Any], ...]:
 def test_foundation_dependency_coordinates_lock_and_archives_are_exact() -> None:
     chart = _load(_FOUNDATION_CHART / "Chart.yaml")
     dependencies = {dependency["name"]: dependency for dependency in chart["dependencies"]}
-    for name, (version, repository) in _FOUNDATION_DEPENDENCIES.items():
+    for name, (version, repository) in _GATEWAY_DEPENDENCIES.items():
         assert (dependencies[name]["version"], dependencies[name]["repository"]) == (
             version,
             repository,
@@ -110,7 +118,33 @@ def test_foundation_dependency_coordinates_lock_and_archives_are_exact() -> None
     assert gateway_archives == set(_GATEWAY_ARCHIVE_SHA256)
     for archive_name, expected_sha256 in _GATEWAY_ARCHIVE_SHA256.items():
         assert hashlib.sha256((chart_dir / archive_name).read_bytes()).hexdigest() == expected_sha256
-    assert hashlib.sha256((chart_dir / "keda-2.20.1.tgz").read_bytes()).hexdigest() == _KEDA_ARCHIVE_SHA256
+
+
+@pytest.mark.parametrize(
+    ("name", "version", "repository", "expected_sha256"),
+    tuple((name, *coordinates) for name, coordinates in _OPERATOR_DEPENDENCIES.items()),
+)
+def test_operator_wrapper_coordinates_locks_and_archives_are_exact(
+    name: str,
+    version: str,
+    repository: str,
+    expected_sha256: str,
+) -> None:
+    wrapper = _FOUNDATION_CHART / "operators" / name
+    chart = _load(wrapper / "Chart.yaml")
+    lock = _load(wrapper / "Chart.lock")
+    expected_coordinates = [(name, version, repository)]
+
+    assert _coordinates(chart["dependencies"]) == expected_coordinates
+    assert _coordinates(lock["dependencies"]) == expected_coordinates
+    archive = wrapper / "charts" / f"{name}-{version}.tgz"
+    assert {path.name for path in (wrapper / "charts").glob("*.tgz")} == {archive.name}
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected_sha256
+    assert not (_FOUNDATION_CHART / "charts" / archive.name).exists()
+
+    foundation = _load(_FOUNDATION_CHART / "Chart.yaml")
+    assert name not in {dependency["name"] for dependency in foundation["dependencies"]}
+    assert "operators/" in (_FOUNDATION_CHART / ".helmignore").read_text(encoding="utf-8").splitlines()
 
 
 def test_gateway_api_bundle_matches_upstream_standard_schema_and_digest() -> None:

@@ -67,7 +67,7 @@ coverage.json
 *.lock
 *.lock.*
 
-# Allow only workspace-root lock files for reproducibility
+# Allow workspace and deployable chart root locks for reproducibility
 !/uv.lock
 !/flake.lock
 !/pnpm-lock.yaml
@@ -76,6 +76,8 @@ coverage.json
 !/infra/terraform/bootstrap/.terraform.lock.hcl
 !/infra/k8s/helm/Chart.lock
 !/infra/k8s/helm-foundation/Chart.lock
+!/infra/k8s/helm-foundation/operators/keda/Chart.lock
+!/infra/k8s/helm-foundation/operators/cloudnative-pg/Chart.lock
 
 # Editor directories and files - personal local settings only
 .idea/

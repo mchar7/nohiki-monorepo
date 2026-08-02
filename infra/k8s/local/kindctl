@@ -861,7 +861,7 @@ def wait_flux_instance(
             "-n",
             "flux-system",
             "wait",
-            f"--for=jsonpath={{.status.observedGeneration}}={generation}",
+            f'--for=jsonpath={{.status.conditions[?(@.type=="Ready")].observedGeneration}}={generation}',
             "fluxinstance/flux",
             "--timeout=20m",
         ),
@@ -894,7 +894,19 @@ def wait_flux_instance(
     )
     if instance.get("spec", {}).get("sync", {}).get("path") != expected_path:
         raise KindctlError("live FluxInstance sync path did not transition")
-    if instance.get("status", {}).get("observedGeneration") != generation:
+    status = instance.get("status", {})
+    conditions = status.get("conditions", []) if isinstance(status, dict) else []
+    ready = next(
+        (
+            condition
+            for condition in conditions
+            if isinstance(condition, dict)
+            and condition.get("type") == "Ready"
+            and condition.get("status") == "True"
+        ),
+        None,
+    )
+    if ready is None or ready.get("observedGeneration") != generation:
         raise KindctlError("live FluxInstance generation is stale")
     uid = str(instance.get("metadata", {}).get("uid", ""))
     if not uid:

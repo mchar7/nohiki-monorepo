@@ -14,17 +14,11 @@ dependencies:
 - name: agentgateway
   repository: oci://cr.agentgateway.dev/charts
   version: v1.3.1
-- name: cloudnative-pg
-  repository: https://cloudnative-pg.github.io/charts
-  version: 0.29.0
-- name: keda
-  repository: https://kedacore.github.io/charts
-  version: 2.20.1
 - name: external-secrets
   repository: https://charts.external-secrets.io
   version: 2.7.0
 - name: opentelemetry-operator
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.119.0
-digest: sha256:827680dadababe65891d49b69637778cb6069ab841d62d26868680291e302ccc
-generated: "2026-08-02T02:47:38.888863953-04:00"
+digest: sha256:83e1c615aec314b2c3857bd79e26f2d56c329cc8102880682173ced0213593fd
+generated: "2026-08-02T12:27:06.917288933-04:00"
