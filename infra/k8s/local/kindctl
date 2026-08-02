@@ -230,8 +230,10 @@ def command_record(command: str, attempt: Path) -> Iterator[dict[str, Any]]:
     directory = attempt / "commands"
     directory.mkdir(mode=0o700, exist_ok=True)
     output = directory / f"{command}.json"
-    if output.exists():
-        raise KindctlError(f"command output must be absent: {output}")
+    retry = 2
+    while output.exists():
+        output = directory / f"{command}-{retry}.json"
+        retry += 1
     record: dict[str, Any] = {
         "command": command,
         "startedAt": dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z"),
@@ -257,9 +259,9 @@ def preflight() -> None:
     for executable in ("kind", "kubectl", "helm", "kustomize", "flux", "flux-operator", "podman", "systemd-run"):
         if shutil.which(executable) is None:
             raise KindctlError(f"required executable is missing: {executable}")
-    exact_tool_version(("kind", "version"), r"\bv0\.32\.0\b", "kind")
-    exact_tool_version(("flux", "version", "--client"), r"\b2\.9\.2\b", "Flux")
-    exact_tool_version(("flux-operator", "version"), r"\b0\.55\.0\b", "Flux Operator")
+    exact_tool_version(("kind", "version"), rf"(?<![0-9.]){re.escape(KIND_VERSION)}(?![0-9.])", "kind")
+    exact_tool_version(("flux", "version", "--client"), rf"(?<![0-9.])v{re.escape(FLUX_VERSION)}(?![0-9.])", "Flux")
+    exact_tool_version(("flux-operator", "version", "--client"), rf"(?<![0-9.]){re.escape(FLUX_OPERATOR_VERSION)}(?![0-9.])", "Flux Operator")
     info = command_json(("podman", "info", "--format", "json"), timeout=15)
     host = info.get("host", {})
     if bool(host.get("security", {}).get("rootless")) is not True:
@@ -343,7 +345,27 @@ def network_attachments(document: dict[str, Any]) -> list[str]:
     return sorted(attachments)
 
 
-def collect_residue(kubeconfig: Path | None = None) -> dict[str, list[str]]:
+def current_lock_entries(root: Path, attempt: Path | None) -> set[str]:
+    if attempt is None:
+        return set()
+    owner_path = root / "lock-owner.json"
+    lock_path = root / "kindctl.lock"
+    if not owner_path.is_file() or owner_path.is_symlink() or not lock_path.is_file() or lock_path.is_symlink():
+        return set()
+    try:
+        owner = json.loads(owner_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return set()
+    if (
+        owner.get("attempt") != str(attempt)
+        or owner.get("pid") != os.getpid()
+        or not process_matches(owner)
+    ):
+        return set()
+    return {lock_path.name, owner_path.name}
+
+
+def collect_residue(kubeconfig: Path | None = None, active_attempt: Path | None = None) -> dict[str, list[str]]:
     clusters = [name for name in kind_clusters() if name == CLUSTER]
     contexts = [name for name in kube_contexts(kubeconfig) if name == CONTEXT]
     containers = podman_json(("podman", "ps", "-a", "--filter", f"label=io.x-k8s.kind.cluster={CLUSTER}", "--format", "json"))
@@ -368,7 +390,8 @@ def collect_residue(kubeconfig: Path | None = None) -> dict[str, list[str]]:
     except KindctlError:
         root = Path("/__nohiki_missing_runtime__")
     if root.exists():
-        proxy_state = sorted(path.name for path in root.iterdir())
+        ignored = current_lock_entries(root, active_attempt)
+        proxy_state = sorted(path.name for path in root.iterdir() if path.name not in ignored)
     api: list[str] = []
     if kubeconfig is not None and kubeconfig.exists():
         result = run_command((*kube_args(kubeconfig), "--request-timeout=2s", "get", "--raw=/version"), timeout=4, check=False)
@@ -385,8 +408,8 @@ def collect_residue(kubeconfig: Path | None = None) -> dict[str, list[str]]:
     }
 
 
-def require_no_residue(kubeconfig: Path | None = None) -> dict[str, list[str]]:
-    inventory = collect_residue(kubeconfig)
+def require_no_residue(kubeconfig: Path | None = None, active_attempt: Path | None = None) -> dict[str, list[str]]:
+    inventory = collect_residue(kubeconfig, active_attempt)
     nonempty = {key: value for key, value in inventory.items() if value}
     if nonempty:
         raise KindctlError(f"Nohiki cluster residue remains: {json.dumps(nonempty, sort_keys=True)}")
@@ -678,17 +701,19 @@ def validate_kubeconfig_binding(attempt: Path, kubeconfig: Path) -> None:
 def create(attempt: Path) -> dict[str, Any]:
     runtime = attempt / "runtime"
     kubeconfig = runtime / "kubeconfig"
-    if runtime.exists() or kubeconfig.exists():
-        raise KindctlError("runner-owned runtime and kubeconfig must be absent before create")
-    require_no_residue(kubeconfig)
+    measurements = (attempt / "runner-measurements.json", attempt / "runner-measurements.sha256.json")
+    if runtime.exists():
+        if any(path.exists() for path in measurements):
+            raise KindctlError("a completed runner attempt cannot be created again")
+        cleanup_cluster(attempt)
+    require_no_residue(kubeconfig, attempt)
     preflight()
     runtime.mkdir(mode=0o700)
     descriptor = os.open(kubeconfig, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     os.close(descriptor)
     try:
         run_command(create_argv(kubeconfig), timeout=CREATE_TIMEOUT)
-        if stat.S_IMODE(kubeconfig.stat().st_mode) != 0o600:
-            raise KindctlError("runner-owned kubeconfig must have mode 0600")
+        validate_owned_kubeconfig(kubeconfig)
         cluster_uid, cluster_nodes = validate_cluster(kubeconfig)
         nodes = repair_nodes(kubeconfig)
         pids_limits = require_node_pid_limits(cluster_nodes)
@@ -697,8 +722,11 @@ def create(attempt: Path) -> dict[str, Any]:
         storage = storage_probe(kubeconfig)
         write_measurements(attempt, kubeconfig, cluster_uid, nodes, network, storage)
         return {"nodePidsLimits": pids_limits}
-    except BaseException:
-        diagnostics(attempt, kubeconfig)
+    except BaseException as create_error:
+        try:
+            cleanup_cluster(attempt)
+        except BaseException as cleanup_error:
+            raise KindctlError(f"create failed ({create_error}); cleanup failed ({cleanup_error})") from cleanup_error
         raise
 
 
@@ -727,35 +755,101 @@ def diagnostics(attempt: Path | None, kubeconfig: Path | None) -> dict[str, Any]
     return document
 
 
-def delete(attempt: Path) -> None:
-    runtime = attempt / "runtime"
-    kubeconfig = runtime / "kubeconfig"
-    if not kubeconfig.is_file() or kubeconfig.is_symlink() or stat.S_IMODE(kubeconfig.stat().st_mode) != 0o600:
-        raise KindctlError("delete requires the runner-owned mode-0600 kubeconfig")
-    validate_kubeconfig_binding(attempt, kubeconfig)
-    diagnostics(attempt, kubeconfig)
-    argv = (
+def validate_runtime_dir(runtime: Path) -> None:
+    metadata = runtime.stat()
+    if (
+        not runtime.is_dir()
+        or runtime.is_symlink()
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise KindctlError("runner-owned runtime must be a user-owned mode-0700 directory")
+
+
+def validate_owned_kubeconfig(kubeconfig: Path) -> None:
+    metadata = kubeconfig.stat()
+    if (
+        not kubeconfig.is_file()
+        or kubeconfig.is_symlink()
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise KindctlError("runner-owned kubeconfig must be a user-owned mode-0600 file")
+
+
+def delete_argv(kubeconfig: Path) -> tuple[str, ...]:
+    return (
         "systemd-run", "--scope", "--user", "-p", "Delegate=yes", "env",
         "KIND_EXPERIMENTAL_PROVIDER=podman", f"KUBECONFIG={kubeconfig}",
         "kind", "delete", "cluster", "--name", CLUSTER, "--kubeconfig", str(kubeconfig),
     )
-    try:
-        run_command(argv, timeout=DELETE_TIMEOUT)
-    except BaseException:
-        diagnostics(attempt, kubeconfig)
-        raise
-    kubeconfig.unlink()
-    runtime.rmdir()
+
+
+def remove_unused_kind_network() -> None:
     remaining = [name for name in kind_clusters() if name != CLUSTER]
     network = run_command(("podman", "network", "inspect", "kind"), timeout=10, check=False)
-    if network.returncode == 0:
+    if network.returncode != 0:
+        return
+    try:
         documents = json.loads(network.stdout)
-        document = documents[0] if isinstance(documents, list) and documents else documents
-        attachments = network_attachments(document if isinstance(document, dict) else {})
-        if any(CLUSTER in item for item in attachments):
-            raise KindctlError("Nohiki endpoint remains attached to the kind network")
-        if not remaining and not attachments:
-            run_command(("podman", "network", "rm", "kind"), timeout=15)
+    except json.JSONDecodeError as error:
+        raise KindctlError("Podman kind network inspect returned malformed JSON") from error
+    document = documents[0] if isinstance(documents, list) and documents else documents
+    attachments = network_attachments(document if isinstance(document, dict) else {})
+    if any(CLUSTER in item for item in attachments):
+        raise KindctlError("Nohiki endpoint remains attached to the kind network")
+    if not remaining and not attachments:
+        run_command(("podman", "network", "rm", "kind"), timeout=15)
+
+
+def require_cluster_absent(kubeconfig: Path, attempt: Path) -> None:
+    inventory = collect_residue(kubeconfig, attempt)
+    inventory["contexts"] = []
+    nonempty = {key: value for key, value in inventory.items() if value}
+    if nonempty:
+        raise KindctlError(f"Nohiki cluster residue remains: {json.dumps(nonempty, sort_keys=True)}")
+
+
+def cleanup_cluster(attempt: Path) -> None:
+    runtime = attempt / "runtime"
+    kubeconfig = runtime / "kubeconfig"
+    if runtime.exists():
+        validate_runtime_dir(runtime)
+    if kubeconfig.exists():
+        validate_owned_kubeconfig(kubeconfig)
+    diagnostics(attempt, kubeconfig if kubeconfig.exists() else None)
+    if CLUSTER in kind_clusters():
+        if not kubeconfig.exists():
+            raise KindctlError("cannot delete the Nohiki cluster without its runner-owned kubeconfig")
+        try:
+            run_command(delete_argv(kubeconfig), timeout=DELETE_TIMEOUT)
+        except BaseException:
+            diagnostics(attempt, kubeconfig)
+            raise
+    remove_unused_kind_network()
+    if kubeconfig.exists():
+        require_cluster_absent(kubeconfig, attempt)
+    if runtime.exists():
+        shutil.rmtree(runtime)
+    require_no_residue(None, attempt)
+
+
+def delete(attempt: Path) -> None:
+    runtime = attempt / "runtime"
+    kubeconfig = runtime / "kubeconfig"
+    measurements = (attempt / "runner-measurements.json", attempt / "runner-measurements.sha256.json")
+    present_measurements = [path.exists() for path in measurements]
+    if any(present_measurements) and not all(present_measurements):
+        raise KindctlError("delete requires both runner measurement files or neither")
+    if runtime.exists():
+        validate_runtime_dir(runtime)
+    if kubeconfig.exists():
+        validate_owned_kubeconfig(kubeconfig)
+        if all(present_measurements):
+            validate_kubeconfig_binding(attempt, kubeconfig)
+    elif CLUSTER in kind_clusters():
+        raise KindctlError("cannot delete the Nohiki cluster without its runner-owned kubeconfig")
+    cleanup_cluster(attempt)
 
 
 def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
@@ -799,8 +893,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 delete(attempt)
             record["result"] = "passed"
-        if arguments.command == "delete":
-            require_no_residue(attempt / "runtime/kubeconfig")
     else:
         raise KindctlError(f"unsupported command: {arguments.command}")
     return 0
