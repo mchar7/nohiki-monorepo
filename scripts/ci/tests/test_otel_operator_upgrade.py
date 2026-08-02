@@ -296,9 +296,10 @@ def test_operator_renders_current_collector_crd_api(
         {
             "apiVersion": "helm.toolkit.fluxcd.io/v2",
             "kind": "HelmRelease",
-            "name": "nohiki-foundation",
+            "name": name,
             "namespace": "flux-system",
         }
+        for name in ("nohiki-foundation", "nohiki-cloudnative-pg")
     ]
     assert platform_spec.get("dependsOn") == [{"name": "infrastructure"}]
     assert observability_spec.get("dependsOn") == [{"name": "platform"}]
