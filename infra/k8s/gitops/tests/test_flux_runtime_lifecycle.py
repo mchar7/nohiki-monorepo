@@ -378,7 +378,15 @@ def test_flux_instance_wait_requires_the_new_generation(
             {
                 "metadata": {"generation": 4, "uid": "flux-uid"},
                 "spec": {"sync": {"path": expected_path}},
-                "status": {"observedGeneration": 4},
+                "status": {
+                    "conditions": [
+                        {
+                            "observedGeneration": 4,
+                            "status": "True",
+                            "type": "Ready",
+                        }
+                    ]
+                },
             },
         )
     )
@@ -396,9 +404,34 @@ def test_flux_instance_wait_requires_the_new_generation(
         lambda _kube, revision: revisions.append(revision) or "source-revision",
     )
     assert runner.wait_flux_instance(tmp_path / "kubeconfig", expected_path, _REVISION) == "flux-uid"
-    assert any("--for=jsonpath={.status.observedGeneration}=4" in argv for argv in calls)
+    assert any('--for=jsonpath={.status.conditions[?(@.type=="Ready")].observedGeneration}=4' in argv for argv in calls)
     assert any("--for=condition=Ready=True" in argv for argv in calls)
     assert revisions == [_REVISION]
+
+    stale_states = iter(
+        (
+            {
+                "metadata": {"generation": 5, "uid": "flux-uid"},
+                "spec": {"sync": {"path": expected_path}},
+            },
+            {
+                "metadata": {"generation": 5, "uid": "flux-uid"},
+                "spec": {"sync": {"path": expected_path}},
+                "status": {
+                    "conditions": [
+                        {
+                            "observedGeneration": 4,
+                            "status": "True",
+                            "type": "Ready",
+                        }
+                    ]
+                },
+            },
+        )
+    )
+    monkeypatch.setattr(runner, "command_json", lambda *_args, **_kwargs: next(stale_states))
+    with pytest.raises(runner.KindctlError, match="generation is stale"):
+        runner.wait_flux_instance(tmp_path / "kubeconfig", expected_path, _REVISION)
 
 
 def test_offline_policy_is_checked_loaded_observed_and_removed(
