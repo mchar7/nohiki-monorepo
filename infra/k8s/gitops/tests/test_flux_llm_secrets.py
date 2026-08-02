@@ -171,6 +171,7 @@ def test_flux_reconciles_secret_sources_before_consumers() -> None:
         },
     ]
     assert _load(GITOPS / "clusters/local/platform.yaml")["spec"]["dependsOn"] == [
+        {"name": "infrastructure"},
         {"name": "runtime-secrets"},
         {"name": "registry"},
     ]

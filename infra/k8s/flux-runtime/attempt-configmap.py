@@ -9,6 +9,7 @@ import re
 import sys
 
 ATTEMPT_SUFFIX = re.compile(r"a[0-9]{8}-[0-9a-f]{8}\Z")
+RUNTIME_BRANCH = re.compile(r"runtime-control/local/[a-z0-9][a-z0-9._-]*\Z")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -17,6 +18,7 @@ def main() -> int:
     """Validate attempt bindings and emit one canonical ConfigMap."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--attempt-suffix", required=True)
+    parser.add_argument("--runtime-control-branch", required=True)
     parser.add_argument("--source-head-sha", required=True)
     parser.add_argument("--source-reviewed-sha", required=True)
     parser.add_argument("--source-remote-sha", required=True)
@@ -24,6 +26,8 @@ def main() -> int:
     args = parser.parse_args()
     if ATTEMPT_SUFFIX.fullmatch(args.attempt_suffix) is None:
         parser.error("attempt suffix must be aNNNNNNNN-xxxxxxxx")
+    if RUNTIME_BRANCH.fullmatch(args.runtime_control_branch) is None:
+        parser.error("runtime-control branch is invalid")
     revisions = (args.source_head_sha, args.source_reviewed_sha, args.source_remote_sha)
     if any(SHA.fullmatch(value) is None for value in revisions) or len(set(revisions)) != 1:
         parser.error("source revisions must be the same full lowercase Git SHA")
@@ -34,6 +38,7 @@ def main() -> int:
         "data": {
             "NOHIKI_ARTIFACT_LOCK_SHA256": args.artifact_lock_sha256,
             "NOHIKI_ATTEMPT_SUFFIX": args.attempt_suffix,
+            "RUNTIME_CONTROL_BRANCH": args.runtime_control_branch,
             "NOHIKI_SOURCE_HEAD_SHA": args.source_head_sha,
             "NOHIKI_SOURCE_REMOTE_SHA": args.source_remote_sha,
             "NOHIKI_SOURCE_REVIEWED_SHA": args.source_reviewed_sha,

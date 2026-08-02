@@ -13,7 +13,7 @@ generated:
     canonicalSha256: 4ed79be21eb91696178c194ad60c1f2457a6733dc5ba4e8fb9cf00b8ec2639fd
     generator:
       script: infra/k8s/flux-runtime/runtime-artifacts.py
-      scriptSha256: 06f9133c625f49d60a85b033e9984687d1c1ed759ca984c71b972169081da32a
+      scriptSha256: 5f0f4b245d059b254f7dc5cbc3bdd849bed26f6d3b65dda37b7e464ae8f1a712
       binary: helm
       version: v4.2.2
       argv:
@@ -44,7 +44,7 @@ generated:
 manifests:
   attemptConfigMapProducer:
     path: infra/k8s/flux-runtime/attempt-configmap.py
-    canonicalSha256: cd80f57f58a8f5e7f811bcca81775bcbad49789d401bb8e72c2b1343d2c691ca
+    canonicalSha256: ed6946f92626fd12580ad8ec5186a0643d37f908bb5334f140036a3dfb0072e1
   bootstrapFluxInstance:
     path: infra/k8s/flux-runtime/flux-instance-bootstrap.yaml
     canonicalSha256: d163fd250496cc8c75bbbf09f09eb72a9e85097c855b0dae0888b162031a9fe8

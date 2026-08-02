@@ -546,6 +546,7 @@ def test_local_runtime_secrets_have_one_flux_owner_and_ordered_dependencies() ->
         },
     ]
     assert _stack("local", "platform")["spec"]["dependsOn"] == [
+        {"name": "infrastructure"},
         {"name": "runtime-secrets"},
         {"name": "registry"},
     ]

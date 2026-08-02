@@ -102,6 +102,8 @@ def test_attempt_configmap_producer_closes_the_mandatory_substitution_input() ->
             str(_CONFIGMAP),
             "--attempt-suffix",
             "a00000003-1234abcd",
+            "--runtime-control-branch",
+            "runtime-control/local/attempt-3",
             "--source-head-sha",
             revision,
             "--source-reviewed-sha",
@@ -122,6 +124,7 @@ def test_attempt_configmap_producer_closes_the_mandatory_substitution_input() ->
         "data": {
             "NOHIKI_ARTIFACT_LOCK_SHA256": lock_digest,
             "NOHIKI_ATTEMPT_SUFFIX": "a00000003-1234abcd",
+            "RUNTIME_CONTROL_BRANCH": "runtime-control/local/attempt-3",
             "NOHIKI_SOURCE_HEAD_SHA": revision,
             "NOHIKI_SOURCE_REMOTE_SHA": revision,
             "NOHIKI_SOURCE_REVIEWED_SHA": revision,
@@ -136,6 +139,8 @@ def test_attempt_configmap_producer_closes_the_mandatory_substitution_input() ->
             str(_CONFIGMAP),
             "--attempt-suffix",
             "a00000003-1234abcd",
+            "--runtime-control-branch",
+            "runtime-control/local/attempt-3",
             "--source-head-sha",
             revision,
             "--source-reviewed-sha",
@@ -192,6 +197,7 @@ def test_full_root_preserves_publication_and_ordered_verification_dependencies()
     ]
     assert _at(_load(_CLUSTER / "infrastructure.yaml"), "spec", "dependsOn") == [{"name": "gateway-api-crds"}]
     assert _at(_load(_CLUSTER / "platform.yaml"), "spec", "dependsOn") == [
+        {"name": "infrastructure"},
         {"name": "runtime-secrets"},
         {"name": "registry"},
     ]
