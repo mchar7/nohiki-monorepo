@@ -125,34 +125,14 @@ strimzi:
 kafkaCluster:
   enabled: false
 
-# KEDA with Kafka SASL auth for Azure Event Hubs
-keda:
-  httpAddon:
-    enabled: true
-    interceptorReplicas: 3
-    waitTimeout: "30s"
-  kafka:
-    authEnabled: true
-    sasl:
-      enabled: true
-      secretName: kafka-sasl-credentials
-    tls:
-      enabled: true
 
-# HTTP-exposed services (always-on, HA, HTTP KEDA scaling)
+# HTTP-exposed services (always-on, HA)
 
 user-auth-service:
   replicaCount: 2
   networkPolicy:
     allowGatewayIngress: true
     allowBffIngress: true
-  scaling:
-    enabled: true
-    type: http
-    minReplicas: 2
-    maxReplicas: 10
-    http:
-      targetPendingRequests: 50
   monitoring:
     enabled: true
   extraEnv:
@@ -185,13 +165,6 @@ bff-service:
   networkPolicy:
     allowGatewayIngress: true
     allowAuthEgress: true
-  scaling:
-    enabled: true
-    type: http
-    minReplicas: 2
-    maxReplicas: 10
-    http:
-      targetPendingRequests: 50
   monitoring:
     enabled: true
   resources:

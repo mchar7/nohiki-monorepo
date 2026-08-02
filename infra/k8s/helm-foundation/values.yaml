@@ -120,6 +120,40 @@ agentgateway:
   monitoring:
     enabled: false
 
+cloudnative-pg:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+keda:
+  enabled: false
+  resources:
+    operator:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    metricServer:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    webhooks:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
 # External Secrets Operator (ESO). Owned here so a single operator and CRD set
 # is installed in every environment; the platform chart owns only the
 # ClusterSecretStore and ExternalSecrets that this operator reconciles.
@@ -152,11 +186,25 @@ external-secrets:
     image:
       repository: ghcr.io/external-secrets/external-secrets
       tag: "v2.7.0@sha256:6615aaea8ff44924d9d7dbc99982a130c82913f7583e212fa3aeebc6dc21fbf9"
+    resources:
+      requests:
+        memory: 32Mi
+        cpu: 10m
+      limits:
+        memory: 128Mi
+        cpu: 100m
   certController:
     requeueInterval: "5m"
     image:
       repository: ghcr.io/external-secrets/external-secrets
       tag: "v2.7.0@sha256:6615aaea8ff44924d9d7dbc99982a130c82913f7583e212fa3aeebc6dc21fbf9"
+    resources:
+      requests:
+        memory: 32Mi
+        cpu: 10m
+      limits:
+        memory: 128Mi
+        cpu: 100m
   resources:
     requests:
       memory: 64Mi
@@ -184,6 +232,9 @@ opentelemetry-operator:
       requests:
         cpu: 50m
         memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   testFramework:
     image:
       repository: busybox

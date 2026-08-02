@@ -341,16 +341,27 @@ user-pref-service:
     kafka:
       topics:
         - name: user-pref.sys.skill-callback.v1
+          consumerGroup: user-pref-skill-completed-primary
         - name: user-pref.sys.embedding-callback.v1
+          consumerGroup: user-pref-embedding-callback-primary
         - name: user-pref.cmd.create-requested.v1
+          consumerGroup: user-pref-service-consumer-commands
         - name: user-pref.cmd.update-requested.v1
+          consumerGroup: user-pref-service-consumer-commands
         - name: user-pref.cmd.delete-requested.v1
+          consumerGroup: user-pref-service-consumer-commands
         - name: user-pref.cmd.attach-upload.v1
+          consumerGroup: user-pref-service-consumer-commands
         - name: user-pref.cmd.detach-upload.v1
+          consumerGroup: user-pref-service-consumer-commands
         - name: user-pref.cmd.settings-update-requested.v1
+          consumerGroup: user-pref-service-consumer-commands
         - name: user-pref.cmd.pref-importance-update-requested.v1
+          consumerGroup: user-pref-service-consumer-commands
         - name: user-upload.cdc.upload-deleted.v1
+          consumerGroup: user-pref-service-consumer
         - name: user-auth.cdc.account-deleted.v1
+          consumerGroup: user-pref-service-consumer
 
 user-upload-service:
   enabled: true
@@ -362,8 +373,11 @@ user-upload-service:
     kafka:
       topics:
         - name: user-auth.cdc.account-deleted.v1
+          consumerGroup: user-upload-service-consumer
         - name: user-upload.cmd.create-requested.v1
+          consumerGroup: user-upload-service-consumer-commands
         - name: user-upload.cmd.delete-requested.v1
+          consumerGroup: user-upload-service-consumer-commands
 
 user-entitlement-service:
   enabled: true
@@ -375,7 +389,9 @@ user-entitlement-service:
     kafka:
       topics:
         - name: user-auth.cdc.account-updated.v1
+          consumerGroup: user-entitlement-service-consumer
         - name: user-auth.cdc.account-deleted.v1
+          consumerGroup: user-entitlement-service-consumer
 
 # Job domain services
 job-ingest-discovery-service:
@@ -389,6 +405,7 @@ job-ingest-discovery-service:
     kafka:
       topics:
         - name: job-ingest.cmd.discovery-requested.v1
+          consumerGroup: job-ingest-discovery-service-consumer
 
 job-ingest-schedule-service:
   enabled: true
@@ -408,11 +425,17 @@ job-query-composition-service:
     kafka:
       topics:
         - name: user-pref.cdc.pref-created.v1
+          consumerGroup: job-query-composition-service-consumer
         - name: user-pref.cdc.pref-updated.v1
+          consumerGroup: job-query-composition-service-consumer
         - name: user-pref.cdc.pref-deleted.v1
+          consumerGroup: job-query-composition-service-consumer
         - name: user-entitlement.cdc.entitlement-changed.v1
+          consumerGroup: job-query-composition-service-consumer
         - name: user-auth.cdc.account-deleted.v1
+          consumerGroup: job-query-composition-service-consumer
         - name: user-auth.fct.activity.v1
+          consumerGroup: job-query-composition-service-consumer
 
 job-ingest-enrichment-service:
   enabled: true
@@ -431,9 +454,13 @@ job-storage-service:
     kafka:
       topics:
         - name: job-listing.cmd.backfill-requested.v1
+          consumerGroup: job-storage-service-consumer-backfill
         - name: job-ingest.fct.listing-discovered.v1
+          consumerGroup: job-storage-service-consumer
         - name: job-ingest.fct.enrichment-completed.v1
+          consumerGroup: job-storage-service-consumer
         - name: job-listing.cmd.snapshot-refresh-requested.v1
+          consumerGroup: job-storage-service-consumer-refresh
 
 job-correlation-evaluation-service:
   enabled: true
@@ -448,16 +475,19 @@ job-correlation-evaluation-service:
     kafka:
       topics:
         - name: job-correlation.sys.backfill-listings.v1
-        - name: job-correlation.cmd.feedback-recorded.v1
-        - name: job-correlation.cmd.training-export-requested.v1
-        - name: feedback.cmd.score-feedback-requested.v1
-        - name: feedback.cmd.score-adjustment-requested.v1
+          consumerGroup: job-correlation-evaluation-service-consumer-backfill-callback
         - name: job-listing.cdc.listing-created.v1
+          consumerGroup: job-correlation-evaluation-service-consumer
         - name: job-listing.cdc.listing-updated.v1
+          consumerGroup: job-correlation-evaluation-service-consumer
         - name: job-listing.cdc.listing-deleted.v1
+          consumerGroup: job-correlation-evaluation-service-consumer
         - name: user-pref.cdc.pref-created.v1
+          consumerGroup: job-correlation-evaluation-service-consumer-projection
         - name: user-pref.cdc.pref-updated.v1
+          consumerGroup: job-correlation-evaluation-service-consumer-projection
         - name: user-pref.cdc.pref-deleted.v1
+          consumerGroup: job-correlation-evaluation-service-consumer-projection
 
 # Doc domain services
 doc-template-service:
@@ -470,9 +500,13 @@ doc-template-service:
     kafka:
       topics:
         - name: doc-template.cmd.create-requested.v1
+          consumerGroup: doc-template-service-consumer-commands
         - name: doc-template.cmd.version-add-requested.v1
+          consumerGroup: doc-template-service-consumer-commands
         - name: doc-template.cmd.delete-requested.v1
+          consumerGroup: doc-template-service-consumer-commands
         - name: doc-template.cmd.render-requested.v1
+          consumerGroup: doc-template-service-consumer-commands
 
 doc-content-service:
   enabled: true
@@ -482,7 +516,9 @@ doc-content-service:
     kafka:
       topics:
         - name: doc-content.cmd.generation-requested.v1
+          consumerGroup: doc-content-service-consumer
         - name: job-correlation.cdc.correlation-evaluated.v1
+          consumerGroup: doc-content-service-consumer
 
 doc-process-service:
   enabled: true
@@ -492,6 +528,7 @@ doc-process-service:
     kafka:
       topics:
         - name: doc-process.cmd.processing-requested.v1
+          consumerGroup: doc-process-service-primary
 
 # ML services
 ml-gateway-service:
@@ -502,8 +539,11 @@ ml-gateway-service:
     kafka:
       topics:
         - name: ml.cmd.batch-embedding-requested.v1
+          consumerGroup: ml-gateway-batch-embedding-primary
         - name: ml.cmd.embedding-requested.v1
+          consumerGroup: ml-gateway-embedding-primary
         - name: ml.cmd.rerank-requested.v1
+          consumerGroup: ml-gateway-rerank-primary
 
 ml-compute-service:
   enabled: true
@@ -513,6 +553,7 @@ ml-compute-service:
     kafka:
       topics:
         - name: ml.sys.kubernetes-compute.v1
+          consumerGroup: ml-compute-service-consumer
 
 # Skill service
 skill-graph-service:
@@ -525,12 +566,19 @@ skill-graph-service:
     kafka:
       topics:
         - name: skill.sys.batch-embedding-callback.v1
+          consumerGroup: skill-graph-batch-embedding-callback-primary
         - name: skill.fct.skill-graph-seeded.v1
+          consumerGroup: skill-graph-bootstrap-seeded-primary
         - name: skill.fct.mention-created.v1
+          consumerGroup: skill-graph-service-mention-primary
         - name: skill.cmd.normalization-requested.v1
+          consumerGroup: skill-graph-service-normalization
         - name: skill.sys.normalization-embedding-callback.v1
+          consumerGroup: skill-normalization-embedding-primary
         - name: skill.fct.alias-learned.v1
+          consumerGroup: skill-graph-service-alias
         - name: skill.cmd.skill-proposed.v1
+          consumerGroup: skill-graph-service-proposed
 
 # Infrastructure services
 bff-service:
@@ -645,12 +693,6 @@ secretValues: {}
 # Never set this manually; populated automatically from data/config/semantic_representation_manifest.json.
 mlManifestContent: ""
 
-# KEDA Configuration
-keda:
-  httpAddon:
-    enabled: true
-    interceptorReplicas: 2
-    waitTimeout: "30s"
 
 # Infrastructure dependencies are enabled by environment overlays.
 
@@ -695,7 +737,7 @@ valkey:
     enabled: true
     serviceMonitor:
       enabled: false
-  master:
+  primary:
     persistence:
       size: 1Gi
     resources:
@@ -931,14 +973,35 @@ kube-prometheus-stack:
     image:
       tag: v2.18.0
       sha: sha256:1545919b72e3ae035454fc054131e8d0f14b42ef6fc5b2ad5c751cafa6b2130e
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
   prometheus-node-exporter:
     image:
       tag: v1.10.2
       digest: sha256:337ff1d356b68d39cef853e8c6345de11ce7556bb34cda8bd205bcf2ed30b565
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
   prometheusOperator:
     image:
       tag: v0.92.1
       sha: 7d9247d2351480fc74587e24681578f815f387bafb2ee7b86a852a94c4cd3774
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
     admissionWebhooks:
       patch:
         image:
@@ -996,6 +1059,9 @@ kube-prometheus-stack:
         requests:
           cpu: 10m
           memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
 
 grafana-operator:
   enabled: true
@@ -1005,6 +1071,9 @@ grafana-operator:
     requests:
       cpu: 50m
       memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
 
 mimir-distributed:
   enabled: true
@@ -1031,6 +1100,13 @@ mimir-distributed:
         registry: docker.io
         repository: nginxinc/nginx-unprivileged
         tag: 1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
   minio:
     image:
       tag: RELEASE.2024-12-18T13-15-44Z@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3
@@ -1073,42 +1149,63 @@ mimir-distributed:
       requests:
         cpu: 100m
         memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   ingester:
     replicas: 2
     resources:
       requests:
         cpu: 100m
         memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
   querier:
     replicas: 2
     resources:
       requests:
         cpu: 100m
         memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   query_frontend:
     replicas: 1
     resources:
       requests:
         cpu: 50m
         memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
   store_gateway:
     replicas: 2
     resources:
       requests:
         cpu: 50m
         memory: 256Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi
   compactor:
     replicas: 1
     resources:
       requests:
         cpu: 50m
         memory: 256Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi
   ruler:
     replicas: 1
     resources:
       requests:
         cpu: 50m
         memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
 
 tempo-distributed:
   enabled: true
@@ -1117,11 +1214,25 @@ tempo-distributed:
       registry: docker.io
       repository: memcached
       tag: 1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
   gateway:
     image:
       registry: docker.io
       repository: nginxinc/nginx-unprivileged
       tag: 1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
   global:
     image:
       registry: docker.io
@@ -1164,36 +1275,54 @@ tempo-distributed:
       requests:
         cpu: 100m
         memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   ingester:
     replicas: 2
     resources:
       requests:
         cpu: 100m
         memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
   querier:
     replicas: 2
     resources:
       requests:
         cpu: 100m
         memory: 256Mi
-  query_frontend:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  queryFrontend:
     replicas: 1
     resources:
       requests:
         cpu: 50m
         memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
   compactor:
     replicas: 1
     resources:
       requests:
         cpu: 50m
         memory: 256Mi
-  metrics_generator:
+      limits:
+        cpu: 250m
+        memory: 512Mi
+  metricsGenerator:
     replicas: 1
     resources:
       requests:
         cpu: 50m
         memory: 256Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi
 
 loki:
   enabled: true
@@ -1204,6 +1333,13 @@ loki:
       registry: docker.io
       repository: kiwigrid/k8s-sidecar
       tag: 1.30.9@sha256:8c06e1ba643a4625de14b2db65c356f5db6b1482a25fce4754380a2936207338
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
   chunksCache:
     image:
       repository: docker.io/memcached
@@ -1225,6 +1361,13 @@ loki:
       registry: docker.io
       repository: nginxinc/nginx-unprivileged
       tag: 1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
   lokiCanary:
     image:
       registry: docker.io
@@ -1264,18 +1407,27 @@ loki:
       requests:
         cpu: 100m
         memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   read:
     replicas: 2
     resources:
       requests:
         cpu: 100m
         memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   backend:
     replicas: 1
     resources:
       requests:
         cpu: 50m
         memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
 
 pyroscope:
   enabled: true
@@ -1288,12 +1440,27 @@ pyroscope:
       repository: grafana/alloy
       tag: v1.12.2
       digest: sha256:f94b1c82957accb77cd11385fd5e3600758ef1b1ab79557c97319ad28590735a
+    alloy:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
     configReloader:
       image:
         registry: quay.io
         repository: prometheus-operator/prometheus-config-reloader
         tag: v0.81.0
         digest: sha256:959d47672fbff2776a04ec62b8afcec89e8c036af84dc5fade50019dab212746
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
   pyroscope:
     image:
       repository: docker.io/grafana/pyroscope
@@ -1310,11 +1477,14 @@ pyroscope:
     extraEnvFrom:
       - secretRef:
           name: observability-storage-credentials
-  replicas: 1
-  resources:
-    requests:
-      cpu: 50m
-      memory: 256Mi
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
 
 opentelemetry-operator:
   # CRDs and operator lifecycle are owned by helm-foundation.
@@ -1340,6 +1510,9 @@ opentelemetry-operator:
       requests:
         cpu: 50m
         memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   testFramework:
     image:
       repository: busybox
