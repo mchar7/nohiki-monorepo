@@ -104,7 +104,19 @@ def _stub_create_acceptance(runner: ModuleType, monkeypatch: pytest.MonkeyPatch)
         lambda _nodes: {"nohiki-control-plane": 2048},
     )
     monkeypatch.setattr(runner, "require_storage_class", lambda _path: None)
-    monkeypatch.setattr(runner, "network_probe", lambda _path: {"dns": True})
+    dns = {"ready": False}
+
+    def mark_dns_ready(_path: Path) -> None:
+        dns["ready"] = True
+
+    def require_ready_dns(_path: Path) -> dict[str, bool]:
+        if not dns["ready"]:
+            message = "network probe ran before CoreDNS readiness"
+            raise runner.KindctlError(message)
+        return {"dns": True}
+
+    monkeypatch.setattr(runner, "require_cluster_dns_ready", mark_dns_ready)
+    monkeypatch.setattr(runner, "network_probe", require_ready_dns)
     monkeypatch.setattr(
         runner,
         "storage_probe",
@@ -369,6 +381,33 @@ def test_node_repair_finishes_every_sysctl_before_one_kindnet_restart(
     assert sum(call[-2:] == ("restart", "daemonset/kindnet") for call in calls) == 1
     assert [item["name"] for item in measurements] == ["node-a", "node-b"]
     assert all(item["arpIgnoreAll"] == item["arpIgnoreDefault"] == "0" for item in measurements)
+
+
+def test_cluster_dns_gate_waits_for_rollout_and_every_coredns_pod(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    calls: list[tuple[str, ...]] = []
+    timeouts: list[int] = []
+
+    def fake_run(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(tuple(argv))
+        timeout = kwargs["timeout"]
+        assert isinstance(timeout, int)
+        timeouts.append(timeout)
+        return _completed(argv)
+
+    monkeypatch.setattr(runner, "run_command", fake_run)
+    kubeconfig = tmp_path / "kubeconfig"
+    runner.require_cluster_dns_ready(kubeconfig)
+
+    prefix = ("kubectl", "--kubeconfig", str(kubeconfig), "-n", "kube-system")
+    assert calls == [
+        (*prefix, "rollout", "status", "deployment/coredns", "--timeout=120s"),
+        (*prefix, "wait", "--for=condition=Ready", "pod", "-l", "k8s-app=kube-dns", "--timeout=120s"),
+    ]
+    assert timeouts == [125, 125]
 
 
 def test_node_pid_limit_must_be_a_recorded_positive_integer(monkeypatch: pytest.MonkeyPatch) -> None:
