@@ -20,6 +20,8 @@ import pytest
 _SCRIPT = Path(__file__).resolve().parents[2] / "dev" / "install-hooks.sh"
 _SENTINEL = "installed-by-lefthook"
 
+_FLAKE = Path(__file__).resolve().parents[3] / "flake.nix"
+
 
 def _repository(tmp_path: Path) -> Path:
     repository = tmp_path / "repo"
@@ -142,3 +144,14 @@ def test_the_supported_recipe_routes_through_this_guard() -> None:
 
     assert "install-hooks.sh" in recipe, recipe
     assert "lefthook install" in recipe, recipe
+
+
+def test_development_shell_installs_cannot_replace_hardened_hooks() -> None:
+    install_lines = [
+        line.strip()
+        for line in _FLAKE.read_text(encoding="utf-8").splitlines()
+        if "corepack pnpm install --frozen-lockfile --silent" in line
+    ]
+
+    assert len(install_lines) == 2
+    assert all("env CI=true LEFTHOOK=0 corepack" in line for line in install_lines)

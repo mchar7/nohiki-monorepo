@@ -381,7 +381,7 @@ execute_bootstrap() {
     bound_kubectl apply -f - >/dev/null
 
   assert_bound_cluster_identity
-  bound_kubectl_with_age create secret generic sops-age -n "${GITOPS_NAMESPACE}" \
+  bound_kubectl_with_age create secret generic flux-sops -n "${GITOPS_NAMESPACE}" \
     --from-file=age.agekey=@AGEKEY@ --dry-run=client -o yaml |
     bound_kubectl apply -f - >/dev/null
 

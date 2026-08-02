@@ -201,7 +201,7 @@ def test_stack_dependency_dag(cluster: str) -> None:
     expected = {
         "gateway-api-crds": [],
         "infrastructure": ["gateway-api-crds"],
-        "platform": ["runtime-secrets", "registry"] if cluster == "local" else ["infrastructure"],
+        "platform": (["infrastructure", "runtime-secrets", "registry"] if cluster == "local" else ["infrastructure"]),
         "observability": ["platform"],
     }
     if cluster == "local":
@@ -307,7 +307,13 @@ def test_foundation_stack_waits_on_its_release_before_platform(cluster: str) -> 
     assert gateway["wait"] is True
 
     platform_dependencies = (
-        [{"name": "runtime-secrets"}, {"name": "registry"}] if cluster == "local" else [{"name": "infrastructure"}]
+        [
+            {"name": "infrastructure"},
+            {"name": "runtime-secrets"},
+            {"name": "registry"},
+        ]
+        if cluster == "local"
+        else [{"name": "infrastructure"}]
     )
     assert stack(cluster, "platform")["spec"]["dependsOn"] == platform_dependencies
     assert stack(cluster, "observability")["spec"]["dependsOn"] == [{"name": "platform"}]
@@ -374,7 +380,7 @@ def test_foundation_owns_environment_cert_manager_configuration(cluster: str) ->
     env = CLUSTER_ENV[cluster]
     spec = helmrelease(f"infra/k8s/gitops/infrastructure/{env}", "nohiki-foundation")["spec"]
     if env == "local":
-        assert "values" not in spec
+        assert spec["values"] == {"keda": {"enabled": True}}
         return
 
     if env == "prod":

@@ -356,12 +356,19 @@ def test_flux_orders_crds_foundation_and_platform_with_health_gates() -> None:
     for environment, namespace in environment_namespaces.items():
         cluster = cluster_root / environment
         resources = _load(cluster / "kustomization.yaml")["resources"]
-        assert resources.count("gateway-api-crds.yaml") == 1
+        if environment == "local":
+            assert resources.count("bootstrap/") == 1
+            bootstrap_resources = _load(cluster / "bootstrap/kustomization.yaml")["resources"]
+            assert bootstrap_resources.count("gateway-api-crds.yaml") == 1
+            crds_path = cluster / "bootstrap/gateway-api-crds.yaml"
+        else:
+            assert resources.count("gateway-api-crds.yaml") == 1
+            crds_path = cluster / "gateway-api-crds.yaml"
         assert resources.count("infrastructure.yaml") == 1
         assert resources.count("platform.yaml") == 1
         assert resources.count("runtime-secrets.yaml") == (1 if environment == "local" else 0)
 
-        crds = _load(cluster / "gateway-api-crds.yaml")
+        crds = _load(crds_path)
         assert crds["metadata"]["name"] == "gateway-api-crds"
         assert crds["spec"]["path"] == "./infra/k8s/gitops/gateway-api-crds"
         assert crds["spec"]["wait"] is True
@@ -406,6 +413,7 @@ def test_flux_orders_crds_foundation_and_platform_with_health_gates() -> None:
                 },
             ]
             expected_platform_dependencies = [
+                {"name": "infrastructure"},
                 {"name": "runtime-secrets"},
                 {"name": "registry"},
             ]

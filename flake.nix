@@ -356,7 +356,7 @@
           ${baseHook}
 
           if [ -f "pnpm-lock.yaml" ]; then
-            if ! scripts/dev/env-lock.sh exclusive node_modules -- corepack pnpm install --frozen-lockfile --silent; then
+            if ! scripts/dev/env-lock.sh exclusive node_modules -- env CI=true LEFTHOOK=0 corepack pnpm install --frozen-lockfile --silent; then
               echo "ERROR: pnpm install failed; refusing to use an incomplete frontend environment." >&2
               return 1
             fi
@@ -409,7 +409,7 @@
           };
           shellHook = ''
             if [ -f "pnpm-lock.yaml" ]; then
-              corepack pnpm install --frozen-lockfile --silent
+              env CI=true LEFTHOOK=0 corepack pnpm install --frozen-lockfile --silent
             fi
             echo "Frontend shell ready (Playwright browsers at $PLAYWRIGHT_BROWSERS_PATH)"
           '';
