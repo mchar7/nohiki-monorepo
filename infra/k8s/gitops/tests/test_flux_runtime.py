@@ -214,28 +214,78 @@ def test_full_root_preserves_publication_and_ordered_verification_dependencies()
     assert _at(_load(_CLUSTER / "verification-playwright.yaml"), "spec", "dependsOn") == [{"name": "api-verification"}]
 
 
-def test_offline_policy_is_accepted_by_the_real_nft_parser() -> None:
-    policy = _RUNTIME / "offline-egress.nft"
+def _nft_command(policy: Path, unshare: str | None) -> tuple[str, ...]:
     nft = shutil.which("nft")
     if nft is not None:
-        command = ("unshare", "--user", "--map-root-user", "--net", nft, "-c", "-f", str(policy))
-    else:
-        command = (
-            "nix",
-            "shell",
-            "nixpkgs#nftables",
-            "-c",
-            "unshare",
-            "--user",
-            "--map-root-user",
-            "--net",
-            "nft",
-            "-c",
-            "-f",
-            str(policy),
+        parser = (nft, "-c", "-f", str(policy))
+        if unshare is None:
+            return parser
+        return (unshare, "--user", "--map-root-user", "--net", *parser)
+    command = ("nix", "shell", "nixpkgs#nftables", "-c")
+    if unshare is None:
+        return (*command, "nft", "-c", "-f", str(policy))
+    return (
+        *command,
+        unshare,
+        "--user",
+        "--map-root-user",
+        "--net",
+        "nft",
+        "-c",
+        "-f",
+        str(policy),
+    )
+
+
+def _check_nft_policy(
+    policy: Path,
+    *,
+    unshare: str = "unshare",
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        _nft_command(policy, unshare),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    stderr = result.stderr.casefold()
+    if (
+        result.returncode != 0
+        and "unshare:" in stderr
+        and ("operation not permitted" in stderr or "permission denied" in stderr)
+    ):
+        return subprocess.run(
+            _nft_command(policy, None),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
-    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=120)
+    return result
+
+
+def test_offline_policy_is_accepted_by_the_real_nft_parser() -> None:
+    policy = _RUNTIME / "offline-egress.nft"
+    result = _check_nft_policy(policy)
     assert result.returncode == 0, result.stderr
     text = policy.read_text(encoding="utf-8")
     assert text.count("policy drop;") == 2
     assert text.count("counter reject") == 2
+
+
+def test_offline_policy_fallback_rejects_invalid_syntax(tmp_path: Path) -> None:
+    unshare_denied = tmp_path / "unshare-denied"
+    unshare_denied.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'unshare: write failed /proc/self/uid_map: Operation not permitted' >&2\nexit 1\n",
+        encoding="utf-8",
+    )
+    unshare_denied.chmod(0o700)
+    broken = tmp_path / "broken.nft"
+    broken.write_text(
+        (_RUNTIME / "offline-egress.nft").read_text(encoding="utf-8") + "\nthis is invalid\n",
+        encoding="utf-8",
+    )
+    result = _check_nft_policy(broken, unshare=str(unshare_denied))
+    assert result.returncode != 0
+    assert "syntax error" in result.stderr.casefold()
