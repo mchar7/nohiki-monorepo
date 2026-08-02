@@ -4,8 +4,11 @@
 [![Build](https://github.com/mchar7/nohiki-monorepo/actions/workflows/build-push.yml/badge.svg?branch=main)](https://github.com/mchar7/nohiki-monorepo/actions/workflows/build-push.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 
-Nohiki automates the job hunt. It scrapes postings, enriches them with LLM extraction, scores them against your
-profile with a learning-to-rank model, and generates tailored resumes and cover letters as rendered PDFs.
+**Discover, organize, track, tailor, and evaluate job opportunities in one workspace.**
+
+Use Nohiki to gather postings, extract structured details with an LLM, compare them with your target profile
+through learning-to-rank scoring, and prepare tailored resume and cover-letter PDFs. You review the evidence and
+every document, choose which roles to pursue, and submit each application yourself.
 
 The architectural bet: backend services exchange domain work **only through Kafka**. HTTP business APIs exist at
 two edges (the BFF and auth service, both behind Traefik). Other services use HTTP only for internal health and

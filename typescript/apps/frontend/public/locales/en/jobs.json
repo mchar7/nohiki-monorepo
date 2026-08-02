@@ -132,7 +132,7 @@
         "skills": "Skills",
         "workArrangement": "Work arrangement"
       },
-      "fitRanking": "Fit index {{score}} / 100",
+      "fitRanking": "Match score {{score}} / 100",
       "influence": {
         "negative": "Concern",
         "neutral": "Neutral",
@@ -143,7 +143,7 @@
       "unavailable": "Fit details are not available for this match."
     },
     "matchedAt": "Matched",
-    "score": "Fit index",
+    "score": "Match score",
     "totalMatches": "Total Matches",
     "stats": {
       "newThisWeek": "New This Week"
@@ -154,7 +154,7 @@
     "topMatchesDismiss": "Dismiss",
     "methodology": {
       "title": "How Matching Works",
-      "description": "We analyze your skills, experience, and preferences against job requirements using multi-stage AI scoring to find the best matches for you.",
+      "description": "Each job gets a match score built from structured filters, ranking models, and AI-assisted reranking. Inspect the breakdown and adjust it as you go.",
       "dismiss": "Got it"
     },
     "bulk": {
@@ -204,7 +204,7 @@
       "allTargets": "All Targets",
       "description": "Jobs matched to your job targets",
       "filterByTarget": "Filter by Target",
-      "minScore": "Minimum fit index",
+      "minScore": "Minimum match score",
       "title": "My Matches"
     }
   },

@@ -1,6 +1,6 @@
 apiVersion: v2
 name: job-ingest-enrichment-service
-description: LLM-based job data extraction service
+description: Job-listing extraction service using an LLM to structure details for discovery and evaluation
 type: application
 version: 0.1.0
 appVersion: "1.0.0"

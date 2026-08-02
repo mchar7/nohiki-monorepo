@@ -5,7 +5,7 @@ architecture, service patterns, code style, and testing practices.
 
 ## Project overview
 
-Nohiki is a job application automation platform built as an **event-driven microservices architecture**.
+Nohiki is a job-search workspace built as an **event-driven microservices architecture**.
 Services communicate ONLY via Kafka events. No HTTP/gRPC calls between internal services
 (except external dependencies like S3, Gotenberg, etc).
 

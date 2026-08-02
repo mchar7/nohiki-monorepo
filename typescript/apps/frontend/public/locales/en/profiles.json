@@ -51,8 +51,8 @@
   },
   "fields": {
     "autoTailorThreshold": {
-      "hint": "Automatically tailor resume for matches above this fit index. Leave empty to disable.",
-      "label": "Auto-Tailor Threshold"
+      "hint": "Drafts a tailored resume for jobs whose match score is above this value, ready for your review. Leave empty to disable.",
+      "label": "Resume Draft Threshold"
     },
     "experience": {
       "description": "Specify your experience level and preferred seniority.",
@@ -80,7 +80,7 @@
       "placeholder": "Add keyword to exclude..."
     },
     "notificationThreshold": {
-      "description": "Minimum fit index required to notify you about a job.",
+      "description": "Minimum match score required to notify you about a job.",
       "descriptions": {
         "excellent": "You'll only be notified about excellent matches",
         "good": "Recommended — you'll be notified about good matches",
@@ -89,7 +89,7 @@
       },
       "hint": "Notify on matches ≥ {{threshold}} / 100",
       "label": "Notification Threshold",
-      "tooltip": "Fit indices range from 0 to 100. Higher thresholds mean fewer but better quality notifications."
+      "tooltip": "Match scores range from 0 to 100. Higher thresholds mean fewer but better quality notifications."
     },
     "prefName": {
       "description": "Give this job search profile a name (e.g., 'Senior Frontend Role').",

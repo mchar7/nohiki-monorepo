@@ -17,7 +17,7 @@
       "title": "You're all caught up! 🎉"
     },
     "reviewMatches": {
-      "description": "New matches with a fit index of 70 / 100 or higher",
+      "description": "New matches with a match score of 70 / 100 or higher",
       "title": "Review {{count}} high-quality matches",
       "title_one": "Review {{count}} high-quality match"
     },

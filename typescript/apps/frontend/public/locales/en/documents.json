@@ -76,7 +76,7 @@
       "heading": "Select a job match",
       "description": "Optionally tailor this document to a specific job",
       "skip": "Skip - generate without tailoring",
-      "score": "Fit index: {{score}} / 100",
+      "score": "Match score: {{score}} / 100",
       "emptyTitle": "No matches found",
       "emptyDescription": "Generate a document without tailoring, or create matches first"
     },

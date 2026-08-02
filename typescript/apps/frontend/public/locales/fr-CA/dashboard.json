@@ -17,7 +17,7 @@
       "title": "Tout est à jour ! 🎉"
     },
     "reviewMatches": {
-      "description": "Nouvelles correspondances avec un indice d’adéquation de 70 / 100 ou plus",
+      "description": "Nouvelles correspondances avec un score de correspondance de 70 / 100 ou plus",
       "title": "Examiner {{count}} correspondances de qualité",
       "title_one": "Examiner {{count}} correspondance de qualité"
     },

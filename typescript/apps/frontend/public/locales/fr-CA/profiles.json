@@ -51,8 +51,8 @@
   },
   "fields": {
     "autoTailorThreshold": {
-      "hint": "Personnaliser automatiquement le CV pour les correspondances au-dessus de cet indice d’adéquation. Laissez vide pour désactiver.",
-      "label": "Seuil de personnalisation auto"
+      "hint": "Prépare un CV personnalisé pour les emplois dont le score de correspondance dépasse cette valeur, prêt pour votre examen. Laissez le champ vide pour désactiver cette fonction.",
+      "label": "Seuil de création du brouillon de CV"
     },
     "experience": {
       "description": "Précisez votre niveau d'expérience et l'ancienneté souhaitée.",
@@ -80,7 +80,7 @@
       "placeholder": "Ajouter un mot-clé à exclure..."
     },
     "notificationThreshold": {
-      "description": "Indice d’adéquation minimum requis pour vous notifier d'un emploi.",
+      "description": "Score de correspondance minimum requis pour vous aviser d’une offre d’emploi.",
       "descriptions": {
         "excellent": "Vous ne serez notifié que des correspondances excellentes",
         "good": "Recommandé — vous serez notifié des bonnes correspondances",
@@ -89,7 +89,7 @@
       },
       "hint": "Notifier pour les correspondances ≥ {{threshold}} / 100",
       "label": "Seuil de notification",
-      "tooltip": "Les indices d’adéquation vont de 0 à 100. Des seuils plus élevés signifient moins de notifications, mais de meilleure qualité."
+      "tooltip": "Les scores de correspondance vont de 0 à 100. Des seuils plus élevés signifient moins de notifications, mais de meilleure qualité."
     },
     "prefName": {
       "description": "Donnez un nom à ce profil de recherche (ex: 'Poste Développeur Senior').",

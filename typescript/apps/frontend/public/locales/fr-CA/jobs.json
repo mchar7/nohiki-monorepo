@@ -132,7 +132,7 @@
         "skills": "Compétences",
         "workArrangement": "Mode de travail"
       },
-      "fitRanking": "Indice d’adéquation {{score}} / 100",
+      "fitRanking": "Score de correspondance {{score}} / 100",
       "influence": {
         "negative": "Préoccupation",
         "neutral": "Neutre",
@@ -143,7 +143,7 @@
       "unavailable": "Les détails de l’adéquation ne sont pas disponibles pour cette correspondance."
     },
     "matchedAt": "Correspondance",
-    "score": "Indice d’adéquation",
+    "score": "Score de correspondance",
     "totalMatches": "Correspondances totales",
     "stats": {
       "newThisWeek": "Nouveaux cette semaine"
@@ -154,7 +154,7 @@
     "topMatchesDismiss": "Ignorer",
     "methodology": {
       "title": "Fonctionnement de la correspondance",
-      "description": "Nous analysons vos compétences, votre expérience et vos préférences par rapport aux exigences des postes grâce à un système de notation IA à plusieurs étapes pour trouver les meilleures correspondances pour vous.",
+      "description": "Chaque emploi reçoit un score de correspondance établi à partir de filtres structurés, de modèles de classement et d’un reclassement assisté par l’IA. Inspectez-en le détail et ajustez-le au fur et à mesure.",
       "dismiss": "Compris"
     },
     "bulk": {
@@ -204,7 +204,7 @@
       "allTargets": "Tous les profils",
       "description": "Emplois correspondant à vos profils cibles",
       "filterByTarget": "Filtrer par profil",
-      "minScore": "Indice d’adéquation minimum",
+      "minScore": "Score de correspondance minimum",
       "title": "Mes correspondances"
     }
   },

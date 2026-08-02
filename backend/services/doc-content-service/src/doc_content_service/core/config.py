@@ -33,7 +33,7 @@ class Settings(LLMMixin, KafkaMixin, S3Mixin, NohikiBaseSettings):
     service_name: str = "doc-content-service"
     service_version: str = "0.1.0"
     service_name_friendly: str = "Document Content Service"
-    service_desc_friendly: str = "Generate content using LLM with schemas"
+    service_desc_friendly: str = "Prepares schema-constrained job-application drafts with an LLM for user review"
 
     generation: GenerationSettings = Field(default_factory=GenerationSettings)
 

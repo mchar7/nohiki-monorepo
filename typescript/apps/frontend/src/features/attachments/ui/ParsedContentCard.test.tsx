@@ -9,7 +9,7 @@ describe('ParsedContentCard', () => {
     expect(screen.getByText('Document Analysis')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Automatic skill and experience extraction from your documents - coming soon',
+        'Extract skills and experience from your documents for review. Coming soon.',
       ),
     ).toBeInTheDocument();
   });

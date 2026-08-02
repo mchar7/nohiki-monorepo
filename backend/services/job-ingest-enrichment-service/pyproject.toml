@@ -2,7 +2,7 @@
 name = "job-ingest-enrichment-service"
 version = "0.1.0"
 license = "AGPL-3.0-only"
-description = "Processes raw job listings using LLM and publishes structured results"
+description = "Extracts structured details from job listings for evaluation, using an LLM, and publishes the results"
 requires-python = ">=3.14"
 dependencies = [
     "nohiki-core-settings==0.1.0",
