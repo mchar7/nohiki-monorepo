@@ -2,7 +2,7 @@ import json
 import os
 import re
 import subprocess
-import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -56,6 +56,35 @@ def _steps(job: WorkflowJob) -> list[WorkflowStep]:
     return steps
 
 
+def _run_workflow_step(
+    step: WorkflowStep,
+    *,
+    workflow_values: Mapping[str, str] | None = None,
+    runner_values: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    raw_environment = step.get("env", {})
+    assert isinstance(raw_environment, dict)
+    step_environment = {
+        str(name): str(value).lower() if isinstance(value, bool) else str(value)
+        for name, value in raw_environment.items()
+    }
+    if workflow_values is not None:
+        assert workflow_values.keys() <= step_environment.keys()
+        step_environment.update(workflow_values)
+    environment = {name: value for name, value in os.environ.items() if name not in {"PROJECT_ROOT", "VIRTUAL_ENV"}}
+    environment.update(step_environment)
+    if runner_values is not None:
+        environment.update(runner_values)
+    return subprocess.run(
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", str(step["run"])],
+        cwd=_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def _wall_budgets() -> dict[str, int]:
     return {
         "warm": WARM_WALL_BUDGET_SECONDS,
@@ -65,11 +94,9 @@ def _wall_budgets() -> dict[str, int]:
 
 def _protected_main_fan_in(worker_result: str) -> subprocess.CompletedProcess[str]:
     step = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Require every selected check")
-    return subprocess.run(
-        [sys.executable, str(_ROOT / str(step["run"]).split()[1]), "verdict", "checks"],
-        cwd=_ROOT,
-        env=os.environ
-        | {
+    return _run_workflow_step(
+        step,
+        workflow_values={
             "BROAD": "false",
             "CHANGES_RESULT": "success",
             "COMMIT_CLASS": "standard",
@@ -88,9 +115,6 @@ def _protected_main_fan_in(worker_result: str) -> subprocess.CompletedProcess[st
             "WORKER_RESULT": worker_result,
             "WORK_EXPECTED": "true",
         },
-        capture_output=True,
-        text=True,
-        check=False,
     )
 
 
@@ -360,7 +384,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
         "node_group_executed": ("${{ steps.setup-ci.outputs.node-group-executed == 'true' && 'true' || '' }}"),
         "commitlint_executed": ("${{ steps.commitlint-range.outcome == 'success' && 'true' || '' }}"),
         # Warmth publishes two names for one fact because '' cannot distinguish "this leg restored"
-        # from "this leg never reported", and S-90 makes the second case cold.
+        # from "this leg never reported"; an unreported run must be classified cold.
         "ready_cache_missed": ("${{ steps.setup-ci.outputs.ready-cache-hit != 'true' && 'true' || '' }}"),
         "ready_cache_hit": ("${{ steps.setup-ci.outputs.ready-cache-hit == 'true' && 'true' || '' }}"),
         "deadcode_cache_missed": (
@@ -408,11 +432,10 @@ def test_execution_attestations_are_not_scoped_to_one_commit_class() -> None:
     assert "needs.changes.outputs.standard == 'true'" not in container_expectation
     assert "needs.changes.outputs.broad == 'true'" not in container_expectation
 
-    # The Node expectation must track the same router flags the worker uses to request the
-    # group. Compared as sets: disjunct order carries no meaning and is not a contract.
     def referenced_flags(expression: str) -> set[str]:
         return set(re.findall(r"needs\.changes\.outputs\.(\w+)", expression))
 
+    # The expectation attests the same provisioning operation the worker requests.
     assert referenced_flags(str(env["NODE_GROUP_EXPECTED"])) == referenced_flags(
         str(_jobs()["worker"]["env"]["NODE_SETUP_SELECTED"])
     )
@@ -559,6 +582,58 @@ def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> No
     }
     assert marked
     assert all(name.startswith(f"{_CI_TESTS}/") for name in marked), marked
+
+
+def test_environment_selectors_contain_every_lane_that_invokes_the_environment() -> None:
+    worker = _jobs()["worker"]
+    setup = next(step for step in _steps(worker) if step.get("uses") == "./.github/actions/setup-ci")
+    lane_names = set(FLAG_NAMES) | {"commitlint_expected", "protected_main_smoke"}
+    selected_re = re.compile(r"needs\.changes\.outputs\.(\w+)\s*==\s*'true'")
+
+    def selected_lanes(expression: object) -> set[str]:
+        return lane_names & set(selected_re.findall(str(expression)))
+
+    clean_env = os.environ.copy()
+    clean_env.pop("VIRTUAL_ENV", None)
+    clean_env.pop("PROJECT_ROOT", None)
+    recipes = json.loads(
+        subprocess.run(
+            ["just", "--dump", "--dump-format", "json"],
+            cwd=_ROOT,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )["recipes"]
+
+    required = {"nix": set(), "node": set(), "full-node-workspace": set()}
+    for step in _steps(worker):
+        run = str(step.get("run", ""))
+        lanes = selected_lanes(step.get("if", ""))
+        if not run or not lanes:
+            continue
+
+        recipe = re.search(r"\bjust\s+([\w-]+)", run)
+        command_surface = run
+        if recipe is not None and recipe.group(1) in recipes:
+            command_surface += json.dumps(recipes[recipe.group(1)])
+
+        if "nix develop" in run:
+            required["nix"].update(lanes)
+        if "pnpm" in command_surface or "node_modules" in command_surface:
+            required["node"].update(lanes)
+        if "node_modules" in command_surface or "--filter" in command_surface:
+            required["full-node-workspace"].update(lanes)
+
+    selected = {
+        "nix": selected_lanes(worker["env"]["NIX_SETUP_SELECTED"]),
+        "node": selected_lanes(worker["env"]["NODE_SETUP_SELECTED"]),
+        "full-node-workspace": selected_lanes(setup["with"]["full-node-workspace"]),
+    }
+    missing = {name: sorted(lanes - selected[name]) for name, lanes in required.items()}
+    missing_message = "; ".join(f"{name}={','.join(names)}" for name, names in missing.items())
+    assert all(required[name] <= selected[name] for name in required), missing_message
 
 
 def test_skylos_cache_tests_run_only_where_the_private_analyzer_is_installed() -> None:
@@ -792,6 +867,142 @@ def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
     assert _wall_budgets() == {"warm": 600, "cold": 844}
     assert _jobs()["playwright-image"]["timeout-minutes"] == 9
     assert _jobs()["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+
+
+def test_guard_entrypoint_emits_the_parsed_workflow_output(tmp_path: Path) -> None:
+    step = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Derive worker guard")
+    output = tmp_path / "guard-output"
+
+    result = _run_workflow_step(
+        step,
+        workflow_values={"COMMIT_CLASS": "broad"},
+        runner_values={"GITHUB_OUTPUT": str(output)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert output.exists()
+    assert output.read_text(encoding="utf-8") == (f"worker_timeout_minutes={worker_timeout_minutes('broad')}\n")
+
+
+def test_summary_entrypoint_writes_the_parsed_workflow_report(tmp_path: Path) -> None:
+    step = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Open router summary")
+    summary = tmp_path / "summary.md"
+
+    result = _run_workflow_step(
+        step,
+        workflow_values={"EVENT_ACTION": "opened"},
+        runner_values={
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_RUN_ID": "42",
+            "GITHUB_SHA": "0123456789abcdef",
+            "GITHUB_STEP_SUMMARY": str(summary),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert summary.exists()
+    rendered = summary.read_text(encoding="utf-8")
+    assert rendered.startswith("## Router\n")
+    assert "| Run | `42` |" in rendered
+    assert "| Event | `pull_request` (`opened`) |" in rendered
+    assert "| Tested SHA | `0123456` |" in rendered
+
+
+def test_container_verdict_entrypoint_enforces_and_attests_the_parsed_step(tmp_path: Path) -> None:
+    step = next(step for step in _steps(_jobs()["worker"]) if step.get("name") == "Attest container contract execution")
+    output = tmp_path / "container-output"
+    successful_values = {
+        "BUILDX_OUTCOME": "success",
+        "FRONTEND_SMOKE_EXPECTED": "true",
+        "IMAGE_OUTCOME": "success",
+        "OTEL_EXPECTED": "false",
+        "OTEL_OUTCOME": "skipped",
+        "SMOKE_OUTCOME": "success",
+    }
+
+    succeeded = _run_workflow_step(
+        step,
+        workflow_values=successful_values,
+        runner_values={"GITHUB_OUTPUT": str(output)},
+    )
+
+    assert succeeded.returncode == 0, succeeded.stderr
+    assert output.exists()
+    assert output.read_text(encoding="utf-8") == "executed=true\n"
+
+    failed = _run_workflow_step(
+        step,
+        workflow_values=successful_values | {"IMAGE_OUTCOME": "failure"},
+        runner_values={"GITHUB_OUTPUT": str(tmp_path / "failed-container-output")},
+    )
+    assert failed.returncode == 1
+    assert failed.stderr == "frontend-image was selected but concluded failure\n"
+
+
+def test_accounting_entrypoint_enforces_the_parsed_workflow_wall_budget(tmp_path: Path) -> None:
+    step = next(step for step in _steps(_jobs()["checks"]) if step.get("name") == "Report workflow accounting")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+
+if any("/jobs?" in argument for argument in sys.argv):
+    print(json.dumps([{"jobs": []}]))
+else:
+    started = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(
+        seconds=int(os.environ["FAKE_CONTROLLABLE_SECONDS"])
+    )
+    print(json.dumps({"run_started_at": started.isoformat().replace("+00:00", "Z")}))
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    workflow_values = {
+        "COMMIT_CLASS": "standard",
+        "WORKER_DEADCODE_CACHE_HIT": "true",
+        "WORKER_DEADCODE_CACHE_MISSED": "",
+        "WORKER_READY_CACHE_HIT": "true",
+        "WORKER_READY_CACHE_MISSED": "",
+    }
+    runner_environment = {
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+    }
+    below_summary = tmp_path / "below-summary.md"
+
+    below = _run_workflow_step(
+        step,
+        workflow_values=workflow_values,
+        runner_values=runner_environment
+        | {
+            "FAKE_CONTROLLABLE_SECONDS": str(WARM_WALL_BUDGET_SECONDS - 10),
+            "GITHUB_STEP_SUMMARY": str(below_summary),
+        },
+    )
+
+    assert below.returncode == 0, below.stderr
+    below_report = below_summary.read_text(encoding="utf-8")
+    assert f"| Wall budget seconds | {WARM_WALL_BUDGET_SECONDS} |" in below_report
+    assert "| Wall budget class | warm |" in below_report
+
+    breached_summary = tmp_path / "breached-summary.md"
+    breached = _run_workflow_step(
+        step,
+        workflow_values=workflow_values,
+        runner_values=runner_environment
+        | {
+            "FAKE_CONTROLLABLE_SECONDS": str(WARM_WALL_BUDGET_SECONDS),
+            "GITHUB_STEP_SUMMARY": str(breached_summary),
+        },
+    )
+
+    assert breached.returncode == 1
+    assert "wall budget breached: class=warm observed_controllable=" in breached.stderr
+    assert f"budget<{WARM_WALL_BUDGET_SECONDS}s" in breached.stderr
 
 
 def test_runtime_accounting_starts_at_the_first_non_skipped_job() -> None:

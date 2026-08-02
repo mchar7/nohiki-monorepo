@@ -198,23 +198,27 @@ def _rules(raw: object, field: str, *, allow_empty: bool) -> tuple[str, ...]:
     return tuple(rules)
 
 
-def _canonical_registry_reference(reference: str) -> tuple[str, str, str]:
+def split_registry_pin(reference: str) -> tuple[str, str, str]:
+    """Return the original name, tagless repository, and digest of a registry pin."""
     tagged, separator, digest = reference.rpartition("@")
     if not separator:
         msg = f"base image {reference!r} is not digest pinned"
         raise InventoryError(msg)
-    last_component = tagged.rsplit("/", maxsplit=1)[-1]
-    if ":" in last_component:
-        repository, tag = tagged.rsplit(":", maxsplit=1)
-        tag_suffix = f":{tag}"
-    else:
-        repository, tag_suffix = tagged, ""
+    head, tag_separator, candidate = tagged.rpartition(":")
+    # A colon only introduces a tag in the final path component; otherwise
+    # it is a registry port (registry.example:5000/team/image).
+    repository = head if tag_separator and "/" not in candidate else tagged
+    return tagged, repository, digest
+
+
+def _canonical_registry_reference(reference: str) -> tuple[str, str, str]:
+    _, repository, digest = split_registry_pin(reference)
     first_component = repository.split("/", maxsplit=1)[0]
     if "/" not in repository:
         repository = f"docker.io/library/{repository}"
     elif "." not in first_component and ":" not in first_component and first_component != "localhost":
         repository = f"docker.io/{repository}"
-    return f"{repository}{tag_suffix}@{digest}", repository, digest
+    return f"{repository}@{digest}", repository, digest
 
 
 def _base_images(text: str, mirror_root: str) -> tuple[VendoredBaseImage, ...]:

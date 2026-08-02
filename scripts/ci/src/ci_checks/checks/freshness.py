@@ -2,10 +2,9 @@
 
 Registries garbage-collect manifests when tags are re-pushed and release
 CDNs delete old artifacts, so a digest-pinned reference or a checksum-pinned
-download can silently stop resolving. This check probes every pinned
-reference in tracked Dockerfiles -- ``FROM``, registry ``COPY --from``, and
-``ADD --checksum`` URLs -- and fails when one is dead, surfacing rot on a
-schedule instead of inside a release build.
+download can silently stop resolving. This check probes every pin in tracked
+Dockerfiles and the checked-in production image overlay, surfacing rot on a
+schedule instead of making the offline unit gate depend on registry availability.
 
 Requires ``skopeo`` (provided by ``devShells.ci``).
 """
@@ -21,9 +20,11 @@ from dataclasses import dataclass
 from http import HTTPStatus
 
 import typer
+import yaml
 from rich.console import Console
 from rich.table import Table
 
+from ci_checks.core.image_inventory import split_registry_pin
 from ci_checks.core.packages import REPO_ROOT
 
 # FROM [--platform=...] ref and COPY [--flag ...] --from=ref, both pinned as
@@ -42,6 +43,8 @@ _CHECKSUM_PIN_RE = re.compile(
 )
 
 _URL_TIMEOUT_SECONDS = 30
+_PRODUCTION_DIGEST_OVERLAY = "infra/k8s/helm/values.prod.digests.yaml"
+_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +58,7 @@ class PinProbe:
 
 
 def _tracked_dockerfiles() -> list[str]:
-    """Return repo-relative paths of every tracked Dockerfile.
+    """Return repo-relative paths of every tracked Dockerfile and the production digest overlay.
 
     Returns:
         Sorted unique paths reported by git.
@@ -64,7 +67,7 @@ def _tracked_dockerfiles() -> list[str]:
         RuntimeError: If git fails; callers must not treat that as "no pins".
     """
     result = subprocess.run(
-        ["git", "ls-files", "--", "Dockerfile*", "**/Dockerfile*"],
+        ["git", "ls-files", "--", "Dockerfile*", "**/Dockerfile*", _PRODUCTION_DIGEST_OVERLAY],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,
@@ -77,18 +80,35 @@ def _tracked_dockerfiles() -> list[str]:
 
 
 def collect_pins(dockerfiles: list[str]) -> dict[str, list[str]]:
-    """Map each pinned reference to the Dockerfiles using it.
+    """Map each pinned reference to its tracked source files.
 
     Args:
-        dockerfiles: Repo-relative Dockerfile paths.
+        dockerfiles: Repo-relative Dockerfile paths, optionally including the
+            checked-in production digest overlay.
 
     Returns:
         Pinned reference -> sorted using files. A reference is either a
         ``name[:tag]@sha256:...`` registry pin or a checksum-pinned URL.
+
+    Raises:
+        RuntimeError: If the production digest overlay has an invalid shape.
     """
     pins: dict[str, list[str]] = {}
     for path in dockerfiles:
         text = (REPO_ROOT / path).read_text(encoding="utf-8")
+        if path == _PRODUCTION_DIGEST_OVERLAY:
+            values = yaml.safe_load(text)
+            global_values = values.get("global") if isinstance(values, dict) else None
+            digests = global_values.get("imageDigests") if isinstance(global_values, dict) else None
+            if not isinstance(digests, dict):
+                msg = "global.imageDigests must be a mapping"
+                raise RuntimeError(msg)
+            for repository, digest in digests.items():
+                if not isinstance(repository, str) or not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
+                    msg = f"invalid production image digest: {repository!r}: {digest!r}"
+                    raise RuntimeError(msg)
+                pins.setdefault(f"{repository}@{digest}", []).append(path)
+            continue
         for pattern in (_REGISTRY_PIN_RE, _CHECKSUM_PIN_RE):
             for match in pattern.finditer(text):
                 pins.setdefault(match.group("ref"), []).append(path)
@@ -154,15 +174,10 @@ def probe_pin(ref: str) -> PinProbe:
     """
     if ref.startswith(("http://", "https://")):
         return _probe_url(ref)
-    tagged, _, digest = ref.partition("@")
-    head, sep, candidate = tagged.rpartition(":")
-    # A colon only introduces a tag in the final path component; otherwise
-    # it is a registry port (registry.example:5000/team/image).
-    tag = candidate if sep and "/" not in candidate else ""
-    bare = head if tag else tagged
+    tagged, bare, digest = split_registry_pin(ref)
     pinned = _skopeo(["inspect", "--raw", f"docker://{bare}@{digest}"])
     tag_digest = ""
-    if tag:
+    if tagged != bare:
         current = _skopeo(["inspect", "--format", "{{.Digest}}", f"docker://{tagged}"])
         tag_digest = current.stdout.strip() if current.returncode == 0 else ""
     detail = "" if pinned.returncode == 0 else pinned.stderr.strip().splitlines()[-1][:200]
