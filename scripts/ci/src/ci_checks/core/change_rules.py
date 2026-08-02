@@ -148,10 +148,8 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(
         (
             "scripts/ci/src/ci_checks/checks/gate.py",
-            "scripts/ci/src/ci_checks/checks/internal_refs.py",
             # The runner controls every package's test invocation.
             "scripts/ci/src/ci_checks/checks/tests.py",
-            "scripts/ci/config/internal-reference-terms.toml",
         ),
         flags=BROAD_PYTHON_FLAGS,
         packages=("ci-checks",),

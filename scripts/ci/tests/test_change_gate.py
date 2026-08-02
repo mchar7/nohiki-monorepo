@@ -150,10 +150,8 @@ def test_evaluate_fails_closed_for_unmatched_and_broad_policy_files(
         (".github/workflows/checks.yml", CommitClass.BROAD),
         ("scripts/ci/src/ci_checks/core/change_rules.py", CommitClass.BROAD),
         ("scripts/ci/src/ci_checks/checks/gate.py", CommitClass.BROAD),
-        ("scripts/ci/src/ci_checks/checks/internal_refs.py", CommitClass.BROAD),
         ("scripts/ci/src/ci_checks/checks/tests.py", CommitClass.BROAD),
         ("scripts/ci/src/ci_checks/core/repository.py", CommitClass.STANDARD),
-        ("scripts/ci/config/internal-reference-terms.toml", CommitClass.BROAD),
     ],
 )
 def test_commit_class_boundaries(path: str, expected: CommitClass) -> None:
