@@ -5,6 +5,7 @@ metadata:
   namespace: flux-system
 spec:
   dependsOn:
+    - name: infrastructure
     - name: runtime-secrets
     - name: registry
   interval: 10m

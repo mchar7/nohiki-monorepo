@@ -16,7 +16,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Literal, Sequence
 
 CLUSTER = "nohiki"
 CONTEXT = "kind-nohiki"
@@ -35,6 +35,36 @@ DELETE_TIMEOUT = 120
 REPO_ROOT = Path(__file__).absolute().parents[3]
 CONFIG = REPO_ROOT / "infra/k8s/local/kind.yaml"
 OBSERVER = REPO_ROOT / "infra/k8s/local/observer.py"
+FLUX_RUNTIME = REPO_ROOT / "infra/k8s/flux-runtime"
+OPERATOR_INSTALL = FLUX_RUNTIME / "operator-install.yaml"
+BOOTSTRAP_INSTANCE = FLUX_RUNTIME / "flux-instance-bootstrap.yaml"
+FINAL_INSTANCE = FLUX_RUNTIME / "flux-instance.yaml"
+FALLBACK_INSTALL = FLUX_RUNTIME / "fallback/install.yaml"
+FALLBACK_SYNC = FLUX_RUNTIME / "fallback/sync.yaml"
+ARTIFACT_TOOL = FLUX_RUNTIME / "runtime-artifacts.py"
+ATTEMPT_CONFIGMAP = FLUX_RUNTIME / "attempt-configmap.py"
+ARTIFACT_LOCK = FLUX_RUNTIME / "artifacts.lock.yaml"
+OFFLINE_EGRESS = FLUX_RUNTIME / "offline-egress.nft"
+FULL_CHILDREN = (
+    "gateway-api-crds",
+    "registry",
+    "infrastructure",
+    "runtime-secrets",
+    "platform",
+    "observability",
+    "health-verification",
+    "api-verification",
+    "playwright-verification",
+)
+RUNTIME_BRANCH = re.compile(r"runtime-control/local/[a-z0-9][a-z0-9._-]*\Z")
+REVIEWED_SHA = re.compile(r"[0-9a-f]{40}\Z")
+BRANCH_SENTINEL = "${RUNTIME_CONTROL_BRANCH}"
+OPERATOR_CRDS = (
+    "fluxinstances.fluxcd.controlplane.io",
+    "fluxreports.fluxcd.controlplane.io",
+    "resourcesetinputproviders.fluxcd.controlplane.io",
+    "resourcesets.fluxcd.controlplane.io",
+)
 
 
 class KindctlError(RuntimeError):
@@ -508,6 +538,599 @@ def install_registry_hosts(kubeconfig: Path, nodes: Sequence[str]) -> str:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
 
+def validate_runtime_control(branch: str, reviewed_sha: str) -> None:
+    if RUNTIME_BRANCH.fullmatch(branch) is None:
+        raise KindctlError("NOHIKI_RUNTIME_CONTROL_BRANCH is not an approved local runtime-control branch")
+    if REVIEWED_SHA.fullmatch(reviewed_sha) is None:
+        raise KindctlError("NOHIKI_REVIEWED_TOPIC_SHA must be a full lowercase Git SHA")
+    current_branch = run_command(("git", "branch", "--show-current"), timeout=10).stdout.strip()
+    local_sha = run_command(("git", "rev-parse", "HEAD"), timeout=10).stdout.strip()
+    if current_branch != branch or local_sha != reviewed_sha:
+        raise KindctlError("local branch and HEAD must equal the reviewed runtime-control source")
+    reference = f"refs/heads/{branch}"
+    remote = run_command(("git", "ls-remote", "--exit-code", "--heads", "origin", reference), timeout=30).stdout
+    if remote != f"{reviewed_sha}\t{reference}\n":
+        raise KindctlError("remote runtime-control branch does not equal the reviewed SHA")
+
+
+def render_branch_manifest(source: Path, branch: str, destination: Path) -> str:
+    if not source.is_file() or source.is_symlink() or source.resolve() != source:
+        raise KindctlError(f"runtime manifest must be a canonical regular file: {source}")
+    committed = source.read_text(encoding="utf-8")
+    if committed.count(BRANCH_SENTINEL) != 1:
+        raise KindctlError(f"runtime manifest must contain exactly one branch sentinel: {source}")
+    rendered = committed.replace(BRANCH_SENTINEL, branch)
+    if BRANCH_SENTINEL in rendered or rendered.replace(branch, BRANCH_SENTINEL, 1) != committed:
+        raise KindctlError(f"runtime manifest changed outside its branch sentinel: {source}")
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(descriptor, rendered.encode())
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return hashlib.sha256(rendered.encode()).hexdigest()
+
+
+def runtime_binding(attempt: Path, kubeconfig: Path) -> tuple[dict[str, Any], str]:
+    validate_kubeconfig_binding(attempt, kubeconfig)
+    measurements_data = (attempt / "runner-measurements.json").read_bytes()
+    measurements = json.loads(measurements_data)
+    if not isinstance(measurements, dict) or canonical_bytes(measurements) != measurements_data:
+        raise KindctlError("runner measurements are not canonical")
+    context = run_command(
+        kube_args(kubeconfig, "config", "current-context"),
+        timeout=10,
+    ).stdout.strip()
+    recorded = measurements.get("cluster", {})
+    if context != CONTEXT or recorded.get("context") != CONTEXT:
+        raise KindctlError("kubeconfig does not target the runner context")
+    namespace = command_json(
+        kube_args(kubeconfig, "get", "namespace", "kube-system", "-o", "json"),
+        timeout=15,
+    )
+    live_uid = str(namespace.get("metadata", {}).get("uid", ""))
+    if not live_uid or live_uid != recorded.get("uid"):
+        raise KindctlError("kubeconfig does not target the just-created cluster")
+    return measurements, live_uid
+
+
+def verify_runtime_artifacts() -> dict[str, str]:
+    result = run_command(
+        (
+            "uv",
+            "run",
+            "--project",
+            "infra/k8s/gitops",
+            "python",
+            str(ARTIFACT_TOOL),
+            "verify",
+        ),
+        timeout=90,
+    )
+    try:
+        record = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise KindctlError("Flux artifact verifier did not return JSON") from error
+    if (
+        not isinstance(record, dict)
+        or record.get("artifactLockSha256") != sha256_file(ARTIFACT_LOCK)
+    ):
+        raise KindctlError("Flux artifact verification is not bound to the committed lock")
+    return {str(key): str(value) for key, value in record.items()}
+
+
+def apply_attempt_configmap(
+    attempt: Path,
+    kubeconfig: Path,
+    branch: str,
+    reviewed_sha: str,
+    measurements: dict[str, Any],
+    cluster_uid: str,
+    lock_sha: str,
+) -> dict[str, str]:
+    attempt_number = measurements.get("attempt")
+    if (
+        isinstance(attempt_number, bool)
+        or not isinstance(attempt_number, int)
+        or attempt_number < 1
+    ):
+        raise KindctlError("attempt number is invalid")
+    suffix = f"a{attempt_number:08d}-{cluster_uid.replace('-', '')[:8]}"
+    result = run_command(
+        (
+            "uv",
+            "run",
+            "--project",
+            "infra/k8s/gitops",
+            "python",
+            str(ATTEMPT_CONFIGMAP),
+            "--attempt-suffix",
+            suffix,
+            "--runtime-control-branch",
+            branch,
+            "--source-head-sha",
+            reviewed_sha,
+            "--source-reviewed-sha",
+            reviewed_sha,
+            "--source-remote-sha",
+            reviewed_sha,
+            "--artifact-lock-sha256",
+            lock_sha,
+        ),
+        timeout=15,
+    )
+    expected = json.loads(result.stdout)
+    runtime_binding(attempt, kubeconfig)
+    namespace = {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"name": "flux-system"},
+    }
+    run_command(
+        kube_args(kubeconfig, "apply", "-f", "-"),
+        input_text=canonical_bytes(namespace).decode(),
+        timeout=30,
+    )
+    run_command(
+        kube_args(kubeconfig, "apply", "-f", "-"),
+        input_text=result.stdout,
+        timeout=30,
+    )
+    observed = command_json(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "configmap",
+            "nohiki-verification-attempt",
+            "-o",
+            "json",
+        ),
+        timeout=15,
+    )
+    if observed.get("data") != expected.get("data"):
+        raise KindctlError("mandatory Flux post-build ConfigMap was not observed")
+    metadata = observed.get("metadata", {})
+    uid = str(metadata.get("uid", ""))
+    resource_version = str(metadata.get("resourceVersion", ""))
+    if not uid or not resource_version:
+        raise KindctlError("mandatory Flux post-build ConfigMap identity is absent")
+    return {
+        "configMapResourceVersion": resource_version,
+        "configMapSha256": hashlib.sha256(canonical_bytes(expected)).hexdigest(),
+        "configMapUid": uid,
+    }
+
+
+def flux_source_revision(kubeconfig: Path, reviewed_sha: str) -> str:
+    revision = run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "gitrepository",
+            "flux-system",
+            "-o",
+            "jsonpath={.status.artifact.revision}",
+        ),
+        timeout=15,
+    ).stdout
+    if not revision.endswith(f"sha1:{reviewed_sha}"):
+        raise KindctlError("Flux source did not reach the reviewed revision")
+    return revision
+
+
+def wait_flux_instance(
+    kubeconfig: Path,
+    expected_path: str,
+    reviewed_sha: str,
+) -> str:
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "wait",
+            "--for=condition=Ready=True",
+            "fluxinstance/flux",
+            "--timeout=20m",
+        ),
+        timeout=1205,
+    )
+    instance = command_json(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "fluxinstance",
+            "flux",
+            "-o",
+            "json",
+        ),
+        timeout=15,
+    )
+    if instance.get("spec", {}).get("sync", {}).get("path") != expected_path:
+        raise KindctlError("live FluxInstance sync path did not transition")
+    uid = str(instance.get("metadata", {}).get("uid", ""))
+    if not uid:
+        raise KindctlError("live FluxInstance UID is absent")
+    flux_source_revision(kubeconfig, reviewed_sha)
+    return uid
+
+
+def operator_install_once(
+    attempt: Path,
+    kubeconfig: Path,
+    bootstrap: Path,
+    reviewed_sha: str,
+    expected_digest: str,
+) -> str | None:
+    runtime_binding(attempt, kubeconfig)
+    applied = run_command(
+        kube_args(kubeconfig, "apply", "-f", str(OPERATOR_INSTALL)),
+        timeout=120,
+        check=False,
+    )
+    if applied.returncode != 0:
+        return None
+    for crd in OPERATOR_CRDS:
+        established = run_command(
+            kube_args(
+                kubeconfig,
+                "wait",
+                "--for=condition=Established",
+                f"crd/{crd}",
+                "--timeout=120s",
+            ),
+            timeout=125,
+            check=False,
+        )
+        if established.returncode != 0:
+            return None
+    available = run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "wait",
+            "--for=condition=Available",
+            "deployment/flux-operator",
+            "--timeout=300s",
+        ),
+        timeout=305,
+        check=False,
+    )
+    if available.returncode != 0:
+        return None
+    live_image = run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "deployment",
+            "flux-operator",
+            "-o",
+            "jsonpath={.spec.template.spec.containers[0].image}",
+        ),
+        timeout=15,
+    ).stdout
+    if "@sha256:" not in live_image or not live_image.endswith(expected_digest):
+        raise KindctlError("live Flux Operator image is not the verified digest")
+    runtime_binding(attempt, kubeconfig)
+    instance = run_command(
+        kube_args(kubeconfig, "apply", "-f", str(bootstrap)),
+        timeout=120,
+        check=False,
+    )
+    if instance.returncode != 0:
+        return None
+    return wait_flux_instance(
+        kubeconfig,
+        "infra/k8s/gitops/clusters/local/bootstrap",
+        reviewed_sha,
+    )
+
+
+def install_core_runtime(
+    kubeconfig: Path,
+    sync: Path,
+    reviewed_sha: str,
+) -> None:
+    run_command(
+        kube_args(kubeconfig, "apply", "-f", str(FALLBACK_INSTALL)),
+        timeout=120,
+    )
+    for deployment in (
+        "source-controller",
+        "kustomize-controller",
+        "helm-controller",
+        "notification-controller",
+    ):
+        run_command(
+            kube_args(
+                kubeconfig,
+                "-n",
+                "flux-system",
+                "wait",
+                "--for=condition=Available",
+                f"deployment/{deployment}",
+                "--timeout=300s",
+            ),
+            timeout=305,
+        )
+    run_command(kube_args(kubeconfig, "apply", "-f", str(sync)), timeout=120)
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "wait",
+            "--for=condition=Ready=True",
+            "kustomization/flux-system",
+            "--timeout=20m",
+        ),
+        timeout=1205,
+    )
+    flux_source_revision(kubeconfig, reviewed_sha)
+
+
+def qualify_flux_runtime(
+    kubeconfig: Path,
+    attempt: Path,
+    direction: Literal["operator-to-core", "core-to-operator"],
+) -> dict[str, str]:
+    branch = os.environ.get("NOHIKI_RUNTIME_CONTROL_BRANCH", "")
+    reviewed_sha = os.environ.get("NOHIKI_REVIEWED_TOPIC_SHA", "")
+    validate_runtime_control(branch, reviewed_sha)
+    measurements, cluster_uid = runtime_binding(attempt, kubeconfig)
+    artifacts = verify_runtime_artifacts()
+    configmap = apply_attempt_configmap(
+        attempt,
+        kubeconfig,
+        branch,
+        reviewed_sha,
+        measurements,
+        cluster_uid,
+        artifacts["artifactLockSha256"],
+    )
+    render_root = attempt / "runtime" / "flux-rendered"
+    bootstrap = render_root / "flux-instance-bootstrap.yaml"
+    sync = render_root / "fallback-sync.yaml"
+    bootstrap_hash = render_branch_manifest(BOOTSTRAP_INSTANCE, branch, bootstrap)
+    sync_hash = render_branch_manifest(FALLBACK_SYNC, branch, sync)
+
+    def select_core() -> None:
+        install_core_runtime(kubeconfig, sync, reviewed_sha)
+
+    if direction == "core-to-operator":
+        select_core()
+    instance_uid = operator_install_once(
+        attempt,
+        kubeconfig,
+        bootstrap,
+        reviewed_sha,
+        artifacts["operatorImageDigest"],
+    )
+    if instance_uid is None:
+        select_core()
+        selected = "core"
+        instance_uid = ""
+    else:
+        selected = "operator"
+    return {
+        "bootstrapFluxInstanceUid": instance_uid,
+        "bootstrapSha256": bootstrap_hash,
+        **configmap,
+        "direction": direction,
+        "selected": selected,
+        "syncSha256": sync_hash,
+    }
+
+
+def validate_publication_record(
+    attempt: Path,
+    path: Path,
+    reviewed_sha: str,
+) -> dict[str, Any]:
+    if path != attempt / "publication.json" or path.resolve() != path:
+        raise KindctlError("publication record is not the canonical attempt path")
+    data = path.read_bytes()
+    sidecar_data = (attempt / "publication.sha256.json").read_bytes()
+    record = json.loads(data)
+    sidecar = json.loads(sidecar_data)
+    if not isinstance(record, dict) or canonical_bytes(record) != data:
+        raise KindctlError("publication record is not canonical")
+    if (
+        not isinstance(sidecar, dict)
+        or canonical_bytes(sidecar) != sidecar_data
+        or sidecar.get("sha256") != hashlib.sha256(data).hexdigest()
+    ):
+        raise KindctlError("publication sidecar does not bind its record")
+    if (
+        record.get("sourceSha") != reviewed_sha
+        or record.get("publicationSha") != reviewed_sha
+        or record.get("remoteSha") != reviewed_sha
+        or record.get("lockSha256") != sha256_file(ARTIFACT_LOCK)
+    ):
+        raise KindctlError(
+            "publication record does not bind the reviewed source and runtime lock"
+        )
+    return record
+
+
+def finalize_flux_runtime(
+    kubeconfig: Path,
+    attempt: Path,
+    publication_record: Path,
+) -> dict[str, str]:
+    branch = os.environ.get("NOHIKI_RUNTIME_CONTROL_BRANCH", "")
+    reviewed_sha = os.environ.get("NOHIKI_REVIEWED_TOPIC_SHA", "")
+    validate_runtime_control(branch, reviewed_sha)
+    validate_publication_record(attempt, publication_record, reviewed_sha)
+    runtime_binding(attempt, kubeconfig)
+    configmap = command_json(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "configmap",
+            "nohiki-verification-attempt",
+            "-o",
+            "json",
+        ),
+        timeout=15,
+    )
+    if not configmap.get("metadata", {}).get("uid"):
+        raise KindctlError("mandatory Flux post-build ConfigMap is absent")
+    render_root = attempt / "runtime" / "flux-rendered"
+    final = render_root / "flux-instance.yaml"
+    final_hash = render_branch_manifest(FINAL_INSTANCE, branch, final)
+    before = command_json(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "fluxinstance",
+            "flux",
+            "-o",
+            "json",
+        ),
+        timeout=15,
+    )
+    before_uid = str(before.get("metadata", {}).get("uid", ""))
+    if (
+        before.get("spec", {}).get("sync", {}).get("path")
+        != "infra/k8s/gitops/clusters/local/bootstrap"
+    ):
+        raise KindctlError("final handoff did not begin from the bootstrap root")
+    run_command(kube_args(kubeconfig, "apply", "-f", str(final)), timeout=120)
+    after_uid = wait_flux_instance(
+        kubeconfig,
+        "infra/k8s/gitops/clusters/local",
+        reviewed_sha,
+    )
+    if not before_uid or after_uid != before_uid:
+        raise KindctlError("final handoff replaced the FluxInstance")
+    source_revision = flux_source_revision(kubeconfig, reviewed_sha)
+    verification_deadline: float | None = None
+    for child in FULL_CHILDREN:
+        if child == "health-verification":
+            verification_deadline = time.monotonic() + 3600
+        if verification_deadline is None:
+            timeout_seconds = 1205
+            timeout_argument = "20m"
+        else:
+            timeout_seconds = max(1, int(verification_deadline - time.monotonic()))
+            timeout_argument = f"{timeout_seconds}s"
+        run_command(
+            kube_args(
+                kubeconfig,
+                "-n",
+                "flux-system",
+                "wait",
+                "--for=condition=Ready=True",
+                f"kustomization/{child}",
+                f"--timeout={timeout_argument}",
+            ),
+            timeout=timeout_seconds + 5,
+        )
+        state = command_json(
+            kube_args(
+                kubeconfig,
+                "-n",
+                "flux-system",
+                "get",
+                "kustomization",
+                child,
+                "-o",
+                "json",
+            ),
+            timeout=15,
+        )
+        if state.get("metadata", {}).get("generation") != state.get(
+            "status", {}
+        ).get("observedGeneration"):
+            raise KindctlError(f"Flux child generation is stale: {child}")
+        if state.get("status", {}).get("lastAppliedRevision") != source_revision:
+            raise KindctlError(f"Flux child revision is stale: {child}")
+    return {
+        "finalSha256": final_hash,
+        "fluxInstanceUid": after_uid,
+        "sourceRevision": source_revision,
+    }
+
+
+def qualify_offline_policy(kubeconfig: Path, attempt: Path) -> dict[str, str]:
+    runtime_binding(attempt, kubeconfig)
+    nodes = [
+        line
+        for line in run_command(
+            ("kind", "get", "nodes", "--name", CLUSTER),
+            env=provider_environment(kubeconfig),
+            timeout=15,
+        ).stdout.splitlines()
+        if line
+    ]
+    if not nodes:
+        raise KindctlError("kind returned no nodes for offline qualification")
+    policy = OFFLINE_EGRESS.read_text(encoding="utf-8")
+    loaded: list[str] = []
+    try:
+        for node in nodes:
+            run_command(
+                ("podman", "exec", "-i", node, "nft", "-c", "-f", "-"),
+                input_text=policy,
+                timeout=15,
+            )
+            run_command(
+                ("podman", "exec", "-i", node, "nft", "-f", "-"),
+                input_text=policy,
+                timeout=15,
+            )
+            loaded.append(node)
+            observed = run_command(
+                (
+                    "podman",
+                    "exec",
+                    node,
+                    "nft",
+                    "-a",
+                    "list",
+                    "table",
+                    "inet",
+                    "nohiki_offline",
+                ),
+                timeout=15,
+            ).stdout
+            if observed.count("policy drop") != 2 or observed.count("counter") < 2:
+                raise KindctlError(f"offline policy was not observed on {node}")
+        return {"nodes": ",".join(nodes), "policySha256": sha256_file(OFFLINE_EGRESS)}
+    finally:
+        for node in loaded:
+            removed = run_command(
+                (
+                    "podman",
+                    "exec",
+                    node,
+                    "nft",
+                    "delete",
+                    "table",
+                    "inet",
+                    "nohiki_offline",
+                ),
+                timeout=15,
+                check=False,
+            )
+            if removed.returncode != 0:
+                raise KindctlError(f"offline policy cleanup failed on {node}")
+
 
 
 
@@ -741,6 +1364,10 @@ def diagnostics(attempt: Path | None, kubeconfig: Path | None) -> dict[str, Any]
             kube_args(kubeconfig, "get", "nodes", "-o", "wide"),
             kube_args(kubeconfig, "get", "pods", "-A", "-o", "wide"),
             kube_args(kubeconfig, "get", "events", "-A", "--sort-by=.lastTimestamp"),
+            kube_args(kubeconfig, "-n", "flux-system", "get", "fluxinstances,fluxreports", "-o", "wide"),
+            kube_args(kubeconfig, "-n", "flux-system", "get", "gitrepositories,kustomizations", "-o", "wide"),
+            kube_args(kubeconfig, "-n", "flux-system", "get", "deployments", "-o", "wide"),
+            kube_args(kubeconfig, "get", "pvc", "-A", "-o", "wide"),
         ))
     entries = []
     for argv in commands:
@@ -863,6 +1490,15 @@ def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
     observe_parser.add_argument("observer_args", nargs=argparse.REMAINDER)
     subparsers.add_parser("delete")
     subparsers.add_parser("residue")
+    runtime_parser = subparsers.add_parser("flux-runtime")
+    runtime_parser.add_argument(
+        "--direction",
+        choices=("operator-to-core", "core-to-operator"),
+        required=True,
+    )
+    finalize_parser = subparsers.add_parser("flux-finalize")
+    finalize_parser.add_argument("--publication-record", type=Path, required=True)
+    subparsers.add_parser("flux-offline")
     return parser.parse_args(argv)
 
 
@@ -884,14 +1520,42 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif arguments.command == "residue":
         kubeconfig = (attempt / "runtime/kubeconfig") if attempt else None
         print(json.dumps(require_no_residue(kubeconfig), sort_keys=True))
-    elif arguments.command in {"create", "delete"}:
+    elif arguments.command in {
+        "create",
+        "delete",
+        "flux-runtime",
+        "flux-finalize",
+        "flux-offline",
+    }:
         if attempt is None:
             raise KindctlError(f"{arguments.command} requires --attempt-dir")
-        with mutation_lock(arguments.command, attempt), command_record(arguments.command, attempt) as record:
+        with mutation_lock(arguments.command, attempt), command_record(
+            arguments.command,
+            attempt,
+        ) as record:
+            kubeconfig = attempt / "runtime/kubeconfig"
             if arguments.command == "create":
                 record.update(create(attempt))
-            else:
+            elif arguments.command == "delete":
                 delete(attempt)
+            elif arguments.command == "flux-runtime":
+                record.update(
+                    qualify_flux_runtime(
+                        kubeconfig,
+                        attempt,
+                        arguments.direction,
+                    )
+                )
+            elif arguments.command == "flux-finalize":
+                record.update(
+                    finalize_flux_runtime(
+                        kubeconfig,
+                        attempt,
+                        arguments.publication_record,
+                    )
+                )
+            else:
+                record.update(qualify_offline_policy(kubeconfig, attempt))
             record["result"] = "passed"
     else:
         raise KindctlError(f"unsupported command: {arguments.command}")

@@ -1,0 +1,9 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nohiki-foundation
+  namespace: flux-system
+spec:
+  values:
+    keda:
+      enabled: true
