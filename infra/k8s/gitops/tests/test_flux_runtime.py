@@ -214,78 +214,66 @@ def test_full_root_preserves_publication_and_ordered_verification_dependencies()
     assert _at(_load(_CLUSTER / "verification-playwright.yaml"), "spec", "dependsOn") == [{"name": "api-verification"}]
 
 
-def _nft_command(policy: Path, unshare: str | None) -> tuple[str, ...]:
+def _nft_candidates() -> list[tuple[str, ...]]:
     nft = shutil.which("nft")
     if nft is not None:
-        parser = (nft, "-c", "-f", str(policy))
-        if unshare is None:
-            return parser
-        return (unshare, "--user", "--map-root-user", "--net", *parser)
-    command = ("nix", "shell", "nixpkgs#nftables", "-c")
-    if unshare is None:
-        return (*command, "nft", "-c", "-f", str(policy))
-    return (
-        *command,
-        unshare,
-        "--user",
-        "--map-root-user",
-        "--net",
-        "nft",
-        "-c",
-        "-f",
-        str(policy),
-    )
+        return [
+            ("unshare", "--user", "--map-root-user", "--net", nft),
+            (nft,),
+            ("sudo", "-n", nft),
+        ]
+    nix = ("nix", "shell", "nixpkgs#nftables", "-c")
+    return [
+        (*nix, "unshare", "--user", "--map-root-user", "--net", "nft"),
+        (*nix, "nft"),
+        (*nix, "sudo", "-n", "nft"),
+    ]
 
 
-def _check_nft_policy(
+def _run_nft_parser(
+    candidate: tuple[str, ...],
     policy: Path,
-    *,
-    unshare: str = "unshare",
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        _nft_command(policy, unshare),
+    return subprocess.run(
+        (*candidate, "-c", "-f", str(policy)),
         check=False,
         capture_output=True,
         text=True,
         timeout=120,
     )
-    stderr = result.stderr.casefold()
-    if (
-        result.returncode != 0
-        and "unshare:" in stderr
-        and ("operation not permitted" in stderr or "permission denied" in stderr)
-    ):
-        return subprocess.run(
-            _nft_command(policy, None),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-    return result
 
 
-def test_offline_policy_is_accepted_by_the_real_nft_parser() -> None:
+def _select_nft_parser(probe: Path) -> tuple[str, ...]:
+    failures: list[str] = []
+    for candidate in _nft_candidates():
+        result = _run_nft_parser(candidate, probe)
+        if result.returncode == 0:
+            return candidate
+        failures.append(f"{' '.join(candidate)}: {result.stderr.strip()}")
+    raise AssertionError("no nft check-mode runner passed its capability probe:\n" + "\n".join(failures))
+
+
+def _nft_probe(tmp_path: Path) -> tuple[str, ...]:
+    probe = tmp_path / "probe.nft"
+    probe.write_text("table inet nohiki_probe {\n}\n", encoding="utf-8")
+    return _select_nft_parser(probe)
+
+
+def test_offline_policy_is_accepted_by_the_real_nft_parser(tmp_path: Path) -> None:
     policy = _RUNTIME / "offline-egress.nft"
-    result = _check_nft_policy(policy)
+    result = _run_nft_parser(_nft_probe(tmp_path), policy)
     assert result.returncode == 0, result.stderr
     text = policy.read_text(encoding="utf-8")
     assert text.count("policy drop;") == 2
     assert text.count("counter reject") == 2
 
 
-def test_offline_policy_fallback_rejects_invalid_syntax(tmp_path: Path) -> None:
-    unshare_denied = tmp_path / "unshare-denied"
-    unshare_denied.write_text(
-        "#!/bin/sh\nprintf '%s\\n' 'unshare: write failed /proc/self/uid_map: Operation not permitted' >&2\nexit 1\n",
-        encoding="utf-8",
-    )
-    unshare_denied.chmod(0o700)
+def test_offline_policy_selected_parser_rejects_invalid_syntax(tmp_path: Path) -> None:
     broken = tmp_path / "broken.nft"
     broken.write_text(
         (_RUNTIME / "offline-egress.nft").read_text(encoding="utf-8") + "\nthis is invalid\n",
         encoding="utf-8",
     )
-    result = _check_nft_policy(broken, unshare=str(unshare_denied))
+    result = _run_nft_parser(_nft_probe(tmp_path), broken)
     assert result.returncode != 0
     assert "syntax error" in result.stderr.casefold()
