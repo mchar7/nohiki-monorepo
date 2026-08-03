@@ -136,6 +136,22 @@ just k8s-diagnostics-local     # print read-only, redacted diagnostics
 just k8s-factory-reset-local   # invoke the guarded fresh-cluster reset authority
 ```
 
+The guarded image artifact carrier is a required predecessor to a reviewed
+no-write publication. Run `just k8s-publish-local-images` from a reviewed
+`runtime-control/local/*` branch whose local and remote heads are identical.
+The carrier builds and publishes the local image set, then pushes an
+artifact-only successor commit containing
+`infra/k8s/gitops/platform/local/image-digests.values.yaml`. Review that
+successor as a new source boundary before starting the acceptance campaign.
+The campaign producer must run with `--no-git-write` at the successor commit
+and proves that a fresh publication renders byte-identical digest values.
+
+The checked-in `publish-required` value with an empty digest map remains the
+valid unpublished sentinel for a tree whose carrier has not run. The
+acceptance producer rejects that sentinel before cluster binding or image
+build work and names the carrier predecessor; it never converts the sentinel
+or carries old digests forward.
+
 Bootstrap uses upstream `flux bootstrap github`, but the lifecycle guard permits
 it only against reviewed, pristine runtime-control and cluster state. A completed
 or partial bootstrap refuses a second run; use `k8s-reconcile-local` for normal

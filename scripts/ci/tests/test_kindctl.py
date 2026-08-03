@@ -738,11 +738,34 @@ def _stub_publication_inputs(
         ("ARTIFACT_LOCK", artifact_lock),
     ):
         monkeypatch.setattr(runner, name, value)
+    prepared_digest_values = (
+        json.dumps(
+            {
+                "global": {
+                    "imageDigests": {"service": "sha256:" + "2" * 64},
+                    "imageTag": "immutable",
+                },
+                "imageFoundation": {
+                    "images": {
+                        "service": {
+                            "digest": "sha256:" + "2" * 64,
+                            "tag": "sha256-" + "3" * 64,
+                        }
+                    },
+                    "registry": "localhost:5000",
+                    "schemaVersion": 1,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
     reviewed_root = tmp_path / "reviewed"
     for path, content in (
         (image_foundation, "helper\n"),
         (image_inventory, '{"schemaVersion":1}\n'),
-        (digest_values, '{"reviewed":true}\n'),
+        (digest_values, prepared_digest_values),
         (artifact_lock, "lock\n"),
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -866,6 +889,36 @@ def test_publish_produces_the_attempt_owned_finalize_record(
         if any(item in {"build", "publish", "render-values"} for item in call)
     ]
     assert effects == ["build", "publish", "render-values"]
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "",
+        """# Generated only by the guarded local image publication command.
+global:
+  imageTag: publish-required
+  imageDigests: {}
+""",
+    ],
+)
+def test_publish_requires_prepared_digest_artifact_before_cluster_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact: str,
+) -> None:
+    runner, attempt, kubeconfig, calls = _stub_publication_inputs(tmp_path, monkeypatch)
+    runner.DIGEST_VALUES.write_text(artifact, encoding="utf-8")
+    monkeypatch.setattr(
+        runner,
+        "runtime_binding",
+        lambda *_: pytest.fail("runtime binding preceded the artifact precondition"),
+    )
+
+    with pytest.raises(runner.KindctlError, match="guarded local image artifact carrier"):
+        runner.publish_images(kubeconfig, attempt, no_git_write=True)
+
+    assert not any(effect in call for call in calls for effect in ("build", "publish", "render-values"))
 
 
 @pytest.mark.parametrize(
