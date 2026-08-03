@@ -1067,6 +1067,13 @@ def test_app_inventory_uses_captured_values_after_live_chart_replacement(
     assert {document["metadata"]["name"] for document in documents} == provisioner._expected_names(contract)
 
 
+def _frozen_timestamps(metadata: os.stat_result) -> os.stat_result:
+    """Return metadata whose timestamps never advance, as a coarse-granularity filesystem does."""
+    fields = list(metadata[:10])
+    fields[7:10] = [0, 0, 0]
+    return os.stat_result(fields, {"st_atime_ns": 0, "st_mtime_ns": 0, "st_ctime_ns": 0})
+
+
 @pytest.mark.parametrize("mutation", ["content", "permissions", "size"])
 def test_descriptor_read_rejects_file_mutation_before_eof(
     tmp_path: Path,
@@ -1079,6 +1086,7 @@ def test_descriptor_read_rejects_file_mutation_before_eof(
     path.write_bytes(b"A" * 131_072)
     path.chmod(0o600)
     original_read = validator.os.read
+    original_fstat = validator.os.fstat
     mutated = False
 
     def mutate_after_first_chunk(descriptor: int, size: int) -> bytes:
@@ -1096,6 +1104,40 @@ def test_descriptor_read_rejects_file_mutation_before_eof(
         return chunk
 
     monkeypatch.setattr(validator.os, "read", mutate_after_first_chunk)
+    # Detection must not depend on the filesystem's timestamp granularity: a same-size rewrite
+    # advances st_mtime_ns/st_ctime_ns by less than one tick on a coarse-timestamp host, so the
+    # timestamps are pinned here to keep every parametrization deterministic everywhere.
+    monkeypatch.setattr(
+        validator.os,
+        "fstat",
+        lambda descriptor: _frozen_timestamps(original_fstat(descriptor)),
+    )
+
+    with pytest.raises(validator.ValidationError):
+        validator._read_regular_file(path, "synthetic source")
+
+
+def test_descriptor_read_rejects_a_metadata_only_change_before_eof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    secret_modules: tuple[ModuleType, ModuleType],
+) -> None:
+    validator, _ = secret_modules
+    path = tmp_path / "retimed-source"
+    path.write_bytes(b"A" * 131_072)
+    path.chmod(0o600)
+    original_read = validator.os.read
+    retimed = False
+
+    def retime_after_first_chunk(descriptor: int, size: int) -> bytes:
+        nonlocal retimed
+        chunk = original_read(descriptor, size)
+        if chunk and not retimed:
+            retimed = True
+            os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        return chunk
+
+    monkeypatch.setattr(validator.os, "read", retime_after_first_chunk)
 
     with pytest.raises(validator.ValidationError):
         validator._read_regular_file(path, "synthetic source")
