@@ -345,9 +345,7 @@
       "ownership": [
         ".dockerignore",
         "backend/libs/",
-        "backend/services/",
         "pyproject.toml",
-        "scripts/ci/",
         "scripts/util/health_check/",
         "uv.lock"
       ],

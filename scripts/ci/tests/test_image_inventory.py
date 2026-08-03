@@ -153,6 +153,84 @@ def _is_copied(package_path: Path, sources: set[Path]) -> bool:
     return any(package_path == source or package_path.is_relative_to(source) for source in sources)
 
 
+def _sync_targets(dockerfile: Path) -> dict[str, set[str]]:
+    """Return package names and extras selected by uv sync instructions."""
+    targets: dict[str, set[str]] = {}
+    instructions = dockerfile.read_text(encoding="utf-8").replace("\\\n", " ").splitlines()
+    for instruction in instructions:
+        if "uv sync " not in instruction:
+            continue
+        fields = shlex.split(instruction.strip())
+        if "uv" not in fields or "sync" not in fields:
+            continue
+        if "--package" in fields:
+            target = fields[fields.index("--package") + 1]
+        elif "--project" in fields:
+            project = _ROOT / fields[fields.index("--project") + 1] / "pyproject.toml"
+            with project.open("rb") as project_file:
+                target = tomllib.load(project_file)["project"]["name"]
+        else:
+            continue
+        extras = {fields[index + 1] for index, field in enumerate(fields[:-1]) if field == "--extra"}
+        targets.setdefault(target, set()).update(extras)
+    return targets
+
+
+def _locked_closure(
+    targets: dict[str, set[str]],
+    packages: dict[str, dict[str, object]],
+) -> set[str]:
+    """Return the selected packages' runtime closure from uv.lock."""
+    requested_extras = {name: set(extras) for name, extras in targets.items()}
+    pending = list(targets)
+    visited_extras: dict[str, set[str]] = {}
+    closure: set[str] = set()
+    while pending:
+        name = pending.pop()
+        package = packages[name]
+        extras = requested_extras.get(name, set())
+        if name in closure and extras <= visited_extras[name]:
+            continue
+        closure.add(name)
+        visited_extras.setdefault(name, set()).update(extras)
+        raw_dependencies = package.get("dependencies", [])
+        dependencies = (
+            [dependency for dependency in raw_dependencies if isinstance(dependency, dict)]
+            if isinstance(raw_dependencies, list)
+            else []
+        )
+        optional = package.get("optional-dependencies", {})
+        if isinstance(optional, dict):
+            for extra in extras:
+                extra_dependencies = optional.get(extra, [])
+                if isinstance(extra_dependencies, list):
+                    dependencies.extend(dependency for dependency in extra_dependencies if isinstance(dependency, dict))
+        for dependency in dependencies:
+            dependency_name = dependency.get("name")
+            if not isinstance(dependency_name, str):
+                continue
+            dependency_extras = dependency.get("extra", dependency.get("extras", []))
+            if isinstance(dependency_extras, str):
+                requested_extras.setdefault(dependency_name, set()).add(dependency_extras)
+            elif isinstance(dependency_extras, list):
+                requested_extras.setdefault(dependency_name, set()).update(
+                    extra for extra in dependency_extras if isinstance(extra, str)
+                )
+            pending.append(dependency_name)
+    return closure
+
+
+def _git_or_ssh_source(source: object) -> str | None:
+    if not isinstance(source, dict):
+        return None
+    for kind, location in source.items():
+        if not isinstance(location, str):
+            continue
+        if kind == "git" or location.startswith(("git+", "ssh://")):
+            return location
+    return None
+
+
 def test_canonical_inventory_has_exactly_three_top_level_keys_at_version_three() -> None:
     data = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
     assert set(data) == TOP_LEVEL_KEYS
@@ -189,6 +267,47 @@ def test_python_image_contexts_include_each_copied_members_workspace_sources(
             if dependency not in copied
         )
         assert not missing, f"{record.name} omits workspace source dependencies: {missing}"
+
+
+def test_uv_publication_image_closures_have_no_git_or_ssh_sources(
+    inventory: ImageInventory,
+) -> None:
+    with (_ROOT / "uv.lock").open("rb") as lock_file:
+        locked_packages = {package["name"]: package for package in tomllib.load(lock_file)["package"]}
+    workspace_packages = load_packages_with_deps(Scope.ALL)
+
+    for record in inventory.images:
+        if record.lockfile != "uv.lock":
+            continue
+        dockerfile = _ROOT / record.dockerfile
+        targets = _sync_targets(dockerfile)
+        assert targets, f"{record.name} has no package-scoped uv sync"
+        closure = _locked_closure(targets, locked_packages)
+        locked_remotes = sorted(
+            f"{name}: {remote}"
+            for name in closure
+            if (remote := _git_or_ssh_source(locked_packages[name].get("source"))) is not None
+        )
+
+        context = (_ROOT / record.context).resolve()
+        sources = _copy_sources_before_sync(dockerfile)
+        copied = (
+            package
+            for package in workspace_packages.values()
+            if package.path.is_relative_to(context) and _is_copied(package.path.relative_to(context), sources)
+        )
+        copied_remotes: list[str] = []
+        for package in copied:
+            with (package.path / "pyproject.toml").open("rb") as project_file:
+                source_table = tomllib.load(project_file).get("tool", {}).get("uv", {}).get("sources", {})
+            copied_remotes.extend(
+                f"{package.name} -> {name}: {remote}"
+                for name, source in source_table.items()
+                if (remote := _git_or_ssh_source(source)) is not None
+            )
+
+        assert not locked_remotes, f"{record.name} locked runtime closure uses remote VCS sources: {locked_remotes}"
+        assert not copied_remotes, f"{record.name} copied workspace uses remote VCS sources: {sorted(copied_remotes)}"
 
 
 def test_canonical_inventory_declares_twenty_seven_unique_ordered_records(inventory: ImageInventory) -> None:
@@ -502,8 +621,8 @@ def test_a_frontend_only_source_path_selects_frontend_alone(inventory: ImageInve
         "scripts/ci/pyproject.toml",
     ],
 )
-def test_scripts_ci_paths_select_the_health_runner(inventory: ImageInventory, path: str) -> None:
-    assert affected_images({path}, inventory) == ("health-runner",)
+def test_scripts_ci_paths_fail_closed_to_every_image(inventory: ImageInventory, path: str) -> None:
+    assert affected_images({path}, inventory) == inventory.names
 
 
 def test_common_python_manifests_fan_out_to_every_python_image(inventory: ImageInventory) -> None:
@@ -511,11 +630,8 @@ def test_common_python_manifests_fan_out_to_every_python_image(inventory: ImageI
         assert affected_images({manifest}, inventory) == _PYTHON_ROWS, manifest
 
 
-def test_a_backend_service_change_selects_that_service_and_the_health_runner(inventory: ImageInventory) -> None:
-    assert affected_images({"backend/services/bff-service/src/bff_service/main.py"}, inventory) == (
-        "bff-service",
-        "health-runner",
-    )
+def test_a_backend_service_change_selects_only_that_service(inventory: ImageInventory) -> None:
+    assert affected_images({"backend/services/bff-service/src/bff_service/main.py"}, inventory) == ("bff-service",)
 
 
 def test_a_health_check_source_change_selects_health_and_the_api_runner(inventory: ImageInventory) -> None:

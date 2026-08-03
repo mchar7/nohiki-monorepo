@@ -44,14 +44,9 @@
 # CI, tests, docs, and dev tools not needed in service images
 docs/
 scripts/
-# The health image also uses the root context; expose only its two package trees.
+# The health image also uses the root context; expose only its runtime package tree.
 !scripts/
 scripts/*
-!scripts/ci/
-scripts/ci/*
-!scripts/ci/pyproject.toml
-!scripts/ci/src/
-!scripts/ci/src/**
 !scripts/util/
 scripts/util/*
 !scripts/util/health_check/

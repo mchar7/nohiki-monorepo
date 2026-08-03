@@ -5,15 +5,13 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016
 WORKDIR /workspace
 COPY pyproject.toml uv.lock ./
 COPY backend/libs ./backend/libs/
-COPY backend/services ./backend/services/
-COPY scripts/ci ./scripts/ci/
 COPY scripts/util/health_check ./scripts/util/health_check/
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_NO_INSTALLER_METADATA=1
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --package health-check --no-dev --no-editable
+    uv sync --frozen --package health-check --no-dev --no-editable
 
 FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1
 ADD --chmod=0555 --checksum=sha256:ab60ca5f0fd60c1eb81b52909e67060e3ba0bd27e55a8ac147cbc2172ff14212 \
