@@ -180,6 +180,35 @@ def _open_directory(path: Path, label: str) -> int:
     return descriptor
 
 
+def _read_descriptor(descriptor: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = _MAX_FILE_BYTES + 1
+    while remaining:
+        chunk = os.read(descriptor, min(65536, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _read_confirmed(descriptor: int, before: os.stat_result, label: str) -> tuple[bytes, os.stat_result]:
+    """Read an already validated descriptor twice so no mutation can pass as unchanged."""
+    raw = _read_descriptor(descriptor)
+    if len(raw) > _MAX_FILE_BYTES:
+        _fail(label, "exceeds the maximum supported size")
+    # A same-size rewrite leaves every metadata field except the timestamps untouched, and the
+    # timestamps only advance when the filesystem's granularity is finer than the read window
+    # (1s on small-inode ext4, one clock tick on a coarse-timestamp kernel), so the bytes
+    # themselves are confirmed by reading the same descriptor a second time.
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    confirmation = _read_descriptor(descriptor)
+    after = os.fstat(descriptor)
+    if _metadata_identity(before) != _metadata_identity(after) or len(raw) != after.st_size or confirmation != raw:
+        _fail(label, "changed while being read")
+    return raw, after
+
+
 def _read_regular_file(path: Path, label: str) -> tuple[bytes, os.stat_result]:
     parent_descriptor = _open_directory(path.parent, label)
     try:
@@ -204,39 +233,7 @@ def _read_regular_file(path: Path, label: str) -> tuple[bytes, os.stat_result]:
                 _fail(label, "changed while being opened")
             if not stat.S_ISREG(before.st_mode):
                 _fail(label, "must be a regular file")
-            chunks: list[bytes] = []
-            remaining = _MAX_FILE_BYTES + 1
-            while remaining:
-                chunk = os.read(descriptor, min(65536, remaining))
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            raw = b"".join(chunks)
-            if len(raw) > _MAX_FILE_BYTES:
-                _fail(label, "exceeds the maximum supported size")
-            after = os.fstat(descriptor)
-            before_identity = (
-                before.st_dev,
-                before.st_ino,
-                before.st_uid,
-                stat.S_IMODE(before.st_mode),
-                before.st_size,
-                before.st_ctime_ns,
-                before.st_mtime_ns,
-            )
-            after_identity = (
-                after.st_dev,
-                after.st_ino,
-                after.st_uid,
-                stat.S_IMODE(after.st_mode),
-                after.st_size,
-                after.st_ctime_ns,
-                after.st_mtime_ns,
-            )
-            if before_identity != after_identity or len(raw) != after.st_size:
-                _fail(label, "changed while being read")
-            return raw, after
+            return _read_confirmed(descriptor, before, label)
         finally:
             os.close(descriptor)
     finally:
@@ -390,21 +387,7 @@ def _read_source_file(parent_descriptor: int, name: str, label: str) -> tuple[by
             before.st_ino,
         ) or not stat.S_ISREG(before.st_mode):
             _fail(label, "changed while being opened or is not a regular file")
-        chunks: list[bytes] = []
-        remaining = _MAX_FILE_BYTES + 1
-        while remaining:
-            chunk = os.read(descriptor, min(65536, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        raw = b"".join(chunks)
-        if len(raw) > _MAX_FILE_BYTES:
-            _fail(label, "exceeds the maximum supported size")
-        after = os.fstat(descriptor)
-        if _metadata_identity(before) != _metadata_identity(after) or len(raw) != after.st_size:
-            _fail(label, "changed while being read")
-        return raw, after
+        return _read_confirmed(descriptor, before, label)
     finally:
         os.close(descriptor)
 
