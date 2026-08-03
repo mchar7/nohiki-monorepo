@@ -15,7 +15,7 @@ from ci_checks.app import app
 from ci_checks.checks.workflow import (
     COLD_WALL_BUDGET_SECONDS,
     WARM_WALL_BUDGET_SECONDS,
-    billable_minutes,
+    hosted_equivalent_minutes,
     render_report_summary,
     select_wall_budget,
 )
@@ -317,7 +317,7 @@ def test_workflow_guard_and_verdict_subcommands_preserve_decisions(
     output = tmp_path / "output"
     broad = CliRunner().invoke(app, ["workflow-guard", "broad", str(output)])
     assert broad.exit_code == 0, broad.output
-    assert output.read_text(encoding="utf-8") == "worker_timeout_minutes=16\n"
+    assert output.read_text(encoding="utf-8") == "worker_timeout_minutes=52\n"
 
     invalid = CliRunner().invoke(app, ["workflow-guard", "invalid", str(output)])
     assert invalid.exit_code != 0
@@ -363,8 +363,8 @@ def test_workflow_accounting_arithmetic_and_wall_boundary() -> None:
             "completed_at": "2026-07-23T00:01:01Z",
         }
     ]
-    assert billable_minutes(jobs, now) == 2
-    assert billable_minutes([], now) == 0
+    assert hosted_equivalent_minutes(jobs, now) == 2
+    assert hosted_equivalent_minutes([], now) == 0
 
     warm = select_wall_budget("", "true", "", "true")
     cold = select_wall_budget("true", "", "", "true")

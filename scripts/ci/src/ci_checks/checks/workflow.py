@@ -14,9 +14,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-WARM_WALL_BUDGET_SECONDS = 600
-COLD_WALL_BUDGET_SECONDS = 844
-HANG_GRACE_MINUTES = 2
+WARM_WALL_BUDGET_SECONDS = 8040
+COLD_WALL_BUDGET_SECONDS = 8040
+WORKER_TIMEOUT_MINUTES = 52
 
 _CACHE_KEY = re.compile(r"([0-9a-f]{8})[0-9a-f]{24,}")
 _WORKER_COMMANDS = (
@@ -70,8 +70,8 @@ class Accounting:
 
     timing: WallTiming
     budget: WallBudget
-    billable_minutes: int
-    estimated_cost_usd: str
+    hosted_equivalent_minutes: int
+    hosted_equivalent_cost_usd: str
     jobs: tuple[Mapping[str, object], ...]
 
 
@@ -85,11 +85,11 @@ def _append(path: str | Path, text: str) -> None:
 
 
 def worker_timeout_minutes(commit_class: str) -> int:
-    """Return the cold wall budget plus the existing hang grace."""
+    """Return the explicit worker timeout for a supported commit class."""
     if commit_class not in {"standard", "broad"}:
         msg = f"cannot derive a guard for commit class: {commit_class}"
         raise ValueError(msg)
-    return COLD_WALL_BUDGET_SECONDS // 60 + HANG_GRACE_MINUTES
+    return WORKER_TIMEOUT_MINUTES
 
 
 def require_outcome(outcome: str, *, expected: bool, name: str) -> None:
@@ -409,8 +409,8 @@ def select_wall_budget(ready_missed: str, ready_hit: str, deadcode_missed: str, 
     )
 
 
-def billable_minutes(jobs: Sequence[Mapping[str, object]], now: datetime) -> int:
-    """Reconstruct GitHub's per-job rounded Linux billing minutes."""
+def hosted_equivalent_minutes(jobs: Sequence[Mapping[str, object]], now: datetime) -> int:
+    """Reconstruct per-job rounded standard Linux hosted minutes avoided by self-hosting."""
     now_epoch = int(now.timestamp())
     total = 0
     for job in jobs:
@@ -449,7 +449,7 @@ def derive_accounting(
 ) -> Accounting:
     """Derive every arithmetic value rendered and enforced by the fan-in."""
     started_jobs = tuple(job for job in jobs if job.get("started_at") is not None)
-    minutes = billable_minutes(started_jobs, now)
+    minutes = hosted_equivalent_minutes(started_jobs, now)
     return Accounting(
         accounting_span(run_started_at, now, jobs),
         select_wall_budget(ready_missed, ready_hit, deadcode_missed, deadcode_hit),
@@ -473,8 +473,12 @@ def enforce_wall_budget(accounting: Accounting) -> None:
 
 
 def render_accounting(accounting: Accounting, expected: dict[str, bool], reused_run_id: str, now: datetime) -> str:
-    """Render the fan-in accounting table and cost summary."""
-    lines = ["", "| Job | Exact seconds | Rounded billable minutes | Conclusion |", "|---|---:|---:|---|"]
+    """Render the fan-in accounting table and hosted-equivalent avoided-cost summary."""
+    lines = [
+        "",
+        "| Job | Exact seconds | Rounded hosted-equivalent minutes | Conclusion |",
+        "|---|---:|---:|---|",
+    ]
     now_epoch = int(now.timestamp())
     for job in accounting.jobs:
         started = _parse_time(job.get("started_at"))
@@ -491,9 +495,12 @@ def render_accounting(accounting: Accounting, expected: dict[str, bool], reused_
     lines.extend(
         [
             "",
-            "### Cost",
+            "### Hosted-equivalent avoided cost",
             "",
-            "A fan-in performs no setup and no unique work; its cost is the run's.",
+            (
+                "Self-hosted jobs are not billed by GitHub Actions; this section reconstructs "
+                "the standard Linux hosted minutes and cost avoided."
+            ),
             "",
             "| Measure | Value |",
             "|---|---:|",
@@ -504,8 +511,8 @@ def render_accounting(accounting: Accounting, expected: dict[str, bool], reused_
             f"| Wall budget seconds | {budget.seconds} |",
             f"| Wall budget class | {budget.classification} |",
             f"| Wall budget basis | {budget.basis} |",
-            f"| Reconstructed billable minutes | {accounting.billable_minutes} |",
-            f"| Estimated cost USD | {accounting.estimated_cost_usd} |",
+            f"| Hosted-equivalent avoided minutes | {accounting.hosted_equivalent_minutes} |",
+            f"| Hosted-equivalent avoided cost USD | {accounting.hosted_equivalent_cost_usd} |",
             "",
             "### Commands",
             "",

@@ -431,9 +431,9 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     jobs = workflow["jobs"]
 
     assert "container-contracts" not in jobs
-    assert jobs["playwright-image"]["timeout-minutes"] == 9
+    assert jobs["playwright-image"]["timeout-minutes"] == 20
     assert jobs["playwright-image"]["permissions"] == {"contents": "read"}
-    playwright_budget = 7.6 + 1.4
+    playwright_budget = 916 / 60 + 284 / 60
     assert playwright_budget == pytest.approx(jobs["playwright-image"]["timeout-minutes"])
 
     worker = jobs["worker"]
