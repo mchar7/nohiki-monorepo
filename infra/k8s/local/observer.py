@@ -21,6 +21,7 @@ CLUSTER = "nohiki"
 CONTEXT = "kind-nohiki"
 BRANCH = re.compile(r"runtime-control/local/[a-z0-9][a-z0-9._-]*\Z")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 PHASE = re.compile(r"[a-z0-9][a-z0-9._/-]*\Z")
 NODE_KEYS = {"arpIgnoreAll", "arpIgnoreDefault", "containerId", "hostsSha256", "name", "startTime"}
 SECRET_KEYS = {"keyNames", "name", "namespace", "resourceVersion", "sourceFileSha256", "type", "uid"}
@@ -133,6 +134,8 @@ def _validate_nodes(nodes: object) -> None:
             _fail("runner measurement node keys are not closed")
         if not all(isinstance(node[key], str) for key in NODE_KEYS):
             _fail("runner measurement node values must be strings")
+        if SHA256.fullmatch(node["hostsSha256"]) is None:
+            _fail("runner measurement node hostsSha256 must be a full lowercase SHA-256")
 
 
 def _validate_secrets(secrets: object) -> None:

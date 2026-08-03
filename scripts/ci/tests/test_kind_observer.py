@@ -234,6 +234,26 @@ def test_measurements_and_sidecar_are_canonical_closed_and_attempt_bound(tmp_pat
         observer.read_canonical_json(measurement_path)
 
 
+def test_measurements_reject_empty_registry_hosts_hash(tmp_path: Path) -> None:
+    observer = _load_observer()
+    measurement = _measurement(tmp_path / "kubeconfig")
+    measurement["nodes"] = [
+        {
+            "arpIgnoreAll": "0",
+            "arpIgnoreDefault": "0",
+            "containerId": "container-id",
+            "hostsSha256": "",
+            "name": "nohiki-control-plane",
+            "startTime": "start-time",
+        }
+    ]
+    with pytest.raises(observer.ObservationError, match="hostsSha256"):
+        observer.validate_measurements(measurement, 1)
+
+    measurement["nodes"][0]["hostsSha256"] = "a" * 64
+    observer.validate_measurements(measurement, 1)
+
+
 def test_secret_material_is_rejected_before_emission() -> None:
     observer = _load_observer()
     for value in (
@@ -255,7 +275,7 @@ def test_node_container_identity_mismatch_contradicts_runner(
             "arpIgnoreAll": "0",
             "arpIgnoreDefault": "0",
             "containerId": "expected-id",
-            "hostsSha256": "",
+            "hostsSha256": "a" * 64,
             "name": "nohiki-control-plane",
             "startTime": "expected-start",
         }

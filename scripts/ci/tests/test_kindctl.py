@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.machinery
 import importlib.util
 import json
@@ -103,6 +104,11 @@ def _stub_create_acceptance(runner: ModuleType, monkeypatch: pytest.MonkeyPatch)
         runner,
         "repair_nodes",
         lambda _path: [{"name": "nohiki-control-plane"}],
+    )
+    monkeypatch.setattr(
+        runner,
+        "install_registry_hosts",
+        lambda _path, _nodes: hashlib.sha256(runner.REGISTRY_HOSTS).hexdigest(),
     )
     monkeypatch.setattr(
         runner,
@@ -321,7 +327,25 @@ Path({json.dumps(str(log))}).write_text(json.dumps(sys.argv[1:]), encoding="utf-
     )
 
     observed = json.loads(log.read_text(encoding="utf-8"))
-    assert observed == ["create", "--volume", f"{modules}:/lib/modules:ro", "node"]
+    assert observed == [
+        "create",
+        "--pids-limit=16384",
+        "--volume",
+        f"{modules}:/lib/modules:ro",
+        "node",
+    ]
+    pid_only_runtime = tmp_path / "pid-only-runtime"
+    pid_only_runtime.mkdir(mode=0o700)
+    pid_only_bin = runner.install_kind_provider_wrapper(pid_only_runtime, None)
+    pid_only_path = runner.create_argv(runtime / "kubeconfig", pid_only_bin)
+    pid_only_assignment = next(value for value in pid_only_path if value.startswith("PATH="))
+    pid_only_environment = os.environ | {"PATH": pid_only_assignment.removeprefix("PATH=")}
+    subprocess.run(["podman", "run", "node"], check=True, env=pid_only_environment)
+    assert json.loads(log.read_text(encoding="utf-8")) == [
+        "run",
+        "--pids-limit=16384",
+        "node",
+    ]
 
 
 def test_preflight_accepts_pinned_client_outputs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -379,6 +403,7 @@ def test_create_executes_the_scoped_command_under_its_own_lock(
         "env",
         "KIND_EXPERIMENTAL_PROVIDER=podman",
         f"KUBECONFIG={kubeconfig}",
+        f"PATH={attempt}/runtime/provider-bin:{os.environ['PATH']}",
         "kind",
         "create",
         "cluster",
@@ -393,7 +418,13 @@ def test_create_executes_the_scoped_command_under_its_own_lock(
     ]
     assert state.exists()
     assert json.loads((attempt / "commands/create.json").read_text())["result"] == "passed"
-    assert (attempt / "runner-measurements.json").is_file()
+    measurements = json.loads((attempt / "runner-measurements.json").read_text())
+    assert measurements["nodes"] == [
+        {
+            "hostsSha256": hashlib.sha256(runner.REGISTRY_HOSTS).hexdigest(),
+            "name": "nohiki-control-plane",
+        }
+    ]
     runner.main(["--attempt-dir", str(attempt), "delete"])
 
 
@@ -504,20 +535,22 @@ def test_storage_provisioner_is_recreated_after_network_convergence(
     assert timeouts == [30, 125]
 
 
-def test_node_pid_limit_must_be_a_recorded_positive_integer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_node_pid_limit_must_cover_failed_campaign_process_census(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runner = _load_runner()
     monkeypatch.setattr(
         runner,
         "command_json",
-        lambda *_args, **_kwargs: [{"HostConfig": {"PidsLimit": 2048}}],
+        lambda *_args, **_kwargs: [{"HostConfig": {"PidsLimit": 16384}}],
     )
-    assert runner.require_node_pid_limits(["nohiki-control-plane"]) == {"nohiki-control-plane": 2048}
+    assert runner.require_node_pid_limits(["nohiki-control-plane"]) == {"nohiki-control-plane": 16384}
     monkeypatch.setattr(
         runner,
         "command_json",
-        lambda *_args, **_kwargs: [{"HostConfig": {"PidsLimit": 0}}],
+        lambda *_args, **_kwargs: [{"HostConfig": {"PidsLimit": 8192}}],
     )
-    with pytest.raises(runner.KindctlError, match="positive integer"):
+    with pytest.raises(runner.KindctlError, match="at least 16384"):
         runner.require_node_pid_limits(["nohiki-control-plane"])
 
 
@@ -552,6 +585,19 @@ def test_registry_hosts_copy_uses_exact_bytes_mode_hash_and_annotation(
   skip_verify = true
 """
     )
+
+
+def test_registry_hosts_measurement_rejects_empty_or_mismatched_content() -> None:
+    runner = _load_runner()
+    node = {"hostsSha256": "", "name": "nohiki-control-plane"}
+    with pytest.raises(runner.KindctlError, match="empty or does not match"):
+        runner.record_registry_hosts([node], ["nohiki-control-plane"], "")
+    with pytest.raises(runner.KindctlError, match="empty or does not match"):
+        runner.record_registry_hosts([node], ["nohiki-control-plane"], "b" * 64)
+
+    expected_hash = hashlib.sha256(runner.REGISTRY_HOSTS).hexdigest()
+    runner.record_registry_hosts([node], ["nohiki-control-plane"], expected_hash)
+    assert node["hostsSha256"] == expected_hash
 
 
 def test_storage_probe_reuses_the_bound_claim_and_requires_pv_deletion(
