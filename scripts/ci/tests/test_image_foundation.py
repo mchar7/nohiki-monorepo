@@ -509,9 +509,20 @@ def test_local_helmrelease_consumes_stable_committed_digest_values() -> None:
             ],
         }
     ]
-    sentinel = _mapping_at(_load_yaml(_DIGEST_VALUES), "global")
-    assert sentinel["imageTag"] == "publish-required"
-    assert sentinel["imageDigests"] == {}
+    values = _load_yaml(_DIGEST_VALUES)
+    global_values = _mapping_at(values, "global")
+    digest_map = _mapping_at(global_values, "imageDigests")
+    if digest_map:
+        assert global_values["imageTag"] == "immutable"
+        assert set(digest_map) == set(_local_names())
+        assert all(re.fullmatch(r"sha256:[0-9a-f]{64}", _string(digest)) for digest in digest_map.values())
+        foundation = _mapping_at(values, "imageFoundation")
+        assert foundation["schemaVersion"] == 1
+        assert foundation["registry"] == _REGISTRY_NAME
+        assert set(_mapping(foundation["images"])) == set(_local_names())
+    else:
+        assert global_values["imageTag"] == "publish-required"
+        assert "imageFoundation" not in values
 
 
 def test_publish_git_write_is_guarded_to_reviewed_digest_artifact() -> None:
@@ -526,7 +537,7 @@ def test_publish_git_write_is_guarded_to_reviewed_digest_artifact() -> None:
     assert '[[ "$remote" == "$reviewed" ]]' in publish
     assert '[[ "$path" == "$artifact" ]]' in publish
     assert 'git add -- "$artifact"' in publish
-    assert 'git commit -m "chore(k8s): publish local image digests" -- "$artifact"' in publish
+    assert 'git commit -m "chore(kind): publish local image digests" -- "$artifact"' in publish
     assert "git diff --cached --name-only" in publish
     assert 'git diff-tree --no-commit-id --name-only -r "$after"' in publish
     assert '--force-with-lease="refs/heads/$branch:$reviewed"' in publish

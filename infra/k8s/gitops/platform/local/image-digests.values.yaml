@@ -1,10 +1,144 @@
-# Generated only by the guarded local image publication command.
-# The unpublished sentinel prevents mutable first-party image fallback.
-global:
-  imageTag: publish-required
-  nohikiImage:
-    registry: localhost:5000
-    owner: ""
-    repositoryName: ""
-    pullPolicy: IfNotPresent
-  imageDigests: {}
+{
+  "global": {
+    "imageDigests": {
+      "api-verification-runner": "sha256:40ca6f6d6d7142eb710db7a27b080531656e9a7d2fe6e92458f4e0b324c4523d",
+      "bff-service": "sha256:dac73c19e97c36eec88a15a2494e5912790992150fe073f079ea77c801a66b33",
+      "doc-content-service": "sha256:52211a332b42a3bea19770324b0b914b3863e33377af9908abe98421d266a729",
+      "doc-process-service": "sha256:299f83cc82083f00db3e315f26415ab4f0d6695e45a43fb09c6f2faa8e12965b",
+      "doc-template-service": "sha256:dd82e967e7a48587ddb03da110f310d42e6bc3c852990d503f78e34d0f1f7686",
+      "frontend": "sha256:b89a7fd44c4fb4ef469d18bc198fb60eccff552c81c65b8130fc0898dcd33c35",
+      "health-runner": "sha256:659a06fd4f9153e98b4b59efb7327a7bf341f5724caa57c62127e5663d02c576",
+      "job-correlation-evaluation-service": "sha256:0100be515e753292aaed1bed386c159f083e6d713b5cb615ea532aacc8825930",
+      "job-ingest-discovery-service": "sha256:335f8f9e504479923e0670becb5a070a7b4162018a5b9d490a9069f6c05bd944",
+      "job-ingest-enrichment-service": "sha256:e99d7ace6eacf39aa29cfe79e01fefedf8567b72585a2bb943777dfa1593d2a5",
+      "job-ingest-schedule-service": "sha256:5cb57aae8bc3974655ead9a81511958748bfcb2269eba574721b92c75da455a1",
+      "job-query-composition-service": "sha256:0b9d71f84e752e8cd1dc010ba98c56d766fc624d5742cfe7eaae83a43d3df486",
+      "job-storage-service": "sha256:e34db34209021a380ce65c69cfb3f8f3afd68a511964d8871457f73a66aa17b0",
+      "ml-compute-service": "sha256:a9d77f26fee72b96f379d0244593b845a744bc4d69d52fdfa799df5379e34121",
+      "ml-gateway-service": "sha256:e8f931a5ad74bc71cd7a70275a2f1d9b8e7dd07b863f11b5a90b23bda1082ecd",
+      "notification-service": "sha256:2bbd7f9cadb1744e0a6c340593370ed82be1c8133b4d22bbc8828b4aa2b76e5d",
+      "playwright-verification-runner": "sha256:eb2cf92b48fd362d7a8da9e4adfc97d7a63f5597f7a8093b8bb2c375196cc9de",
+      "qdrant-init": "sha256:8ea2014781d72da280a09d05831821896b82d4c2eb19ed75047d6f9c90b99cb9",
+      "skill-graph-service": "sha256:c36c5e238098692ca05d5550377207b8ef75396efdecec6b0ff25971a0a0ceab",
+      "snapshot-refresh-job": "sha256:4915d3d4474aca155f46f0b0f07f9a2ed76218e40f5caa873349b4495db11b1e",
+      "sys-tick-job": "sha256:1753e28af08171ad183762d9478fac6887def7ebedd7d13283dd4ba78941be10",
+      "user-auth-service": "sha256:ae20033d94058ee4c86624c7f30bf82b452a0fd1d28a5816e2f2e49bafc50334",
+      "user-entitlement-service": "sha256:81ec01d51aa98d9a928064191aa2c88a41a76f077744029e869c862f798d9ef1",
+      "user-pref-service": "sha256:85b672da9cf14c8725dcd914b6e492ca88606b6ed9cd4483f25bc2c2de9d33f9",
+      "user-upload-service": "sha256:4a6bfb2b9175c29e5f4fb98cc51d02ffcf5b0a4bc6b5f735d0cc8741a71ba823"
+    },
+    "imageTag": "immutable",
+    "nohikiImage": {
+      "owner": "",
+      "pullPolicy": "IfNotPresent",
+      "registry": "localhost:5000",
+      "repositoryName": ""
+    }
+  },
+  "imageFoundation": {
+    "images": {
+      "api-verification-runner": {
+        "digest": "sha256:40ca6f6d6d7142eb710db7a27b080531656e9a7d2fe6e92458f4e0b324c4523d",
+        "tag": "sha256-7ae07d800f82bb5f08bc33b59d85169b27d56f8354e15f34512480db0b42daed"
+      },
+      "bff-service": {
+        "digest": "sha256:dac73c19e97c36eec88a15a2494e5912790992150fe073f079ea77c801a66b33",
+        "tag": "sha256-ba662816d99fe50071b43bd53be3ee8bdcb672c61343c6283d472b5a44281288"
+      },
+      "doc-content-service": {
+        "digest": "sha256:52211a332b42a3bea19770324b0b914b3863e33377af9908abe98421d266a729",
+        "tag": "sha256-69ab4cdc8d6170f04797ac838106d7bbd3c113f9b2a2177b660cc21ac5d964e1"
+      },
+      "doc-process-service": {
+        "digest": "sha256:299f83cc82083f00db3e315f26415ab4f0d6695e45a43fb09c6f2faa8e12965b",
+        "tag": "sha256-384353e3b9674a1c99f4849475ecacef14643314096bbcab1fd4d1ea41235a28"
+      },
+      "doc-template-service": {
+        "digest": "sha256:dd82e967e7a48587ddb03da110f310d42e6bc3c852990d503f78e34d0f1f7686",
+        "tag": "sha256-6f4784db1673a69eefbe44b18272fe3c378392efb67efc3893c1cb8ffaaa1ece"
+      },
+      "frontend": {
+        "digest": "sha256:b89a7fd44c4fb4ef469d18bc198fb60eccff552c81c65b8130fc0898dcd33c35",
+        "tag": "sha256-b693f6ce90a463aee25231dd16cc76669ffb7536f9f74d5decc3a898ff202ba1"
+      },
+      "health-runner": {
+        "digest": "sha256:659a06fd4f9153e98b4b59efb7327a7bf341f5724caa57c62127e5663d02c576",
+        "tag": "sha256-f6ba7caef0e55affc3c367498e1eecc0f142941b2b8f6bf53758facb3b8a908f"
+      },
+      "job-correlation-evaluation-service": {
+        "digest": "sha256:0100be515e753292aaed1bed386c159f083e6d713b5cb615ea532aacc8825930",
+        "tag": "sha256-3173038074ecd9d0209eebce72c9f182e33b9d279430d2bd2b6857c0fbc39e3a"
+      },
+      "job-ingest-discovery-service": {
+        "digest": "sha256:335f8f9e504479923e0670becb5a070a7b4162018a5b9d490a9069f6c05bd944",
+        "tag": "sha256-29414dec8acaedde11c7350b7d7ddc41bf8e011a82bd5a3557a4e669da2994a9"
+      },
+      "job-ingest-enrichment-service": {
+        "digest": "sha256:e99d7ace6eacf39aa29cfe79e01fefedf8567b72585a2bb943777dfa1593d2a5",
+        "tag": "sha256-2a379216fdafe798c64e2b943a3f1f96d69e707fbb8c7f166295bccaf702edc3"
+      },
+      "job-ingest-schedule-service": {
+        "digest": "sha256:5cb57aae8bc3974655ead9a81511958748bfcb2269eba574721b92c75da455a1",
+        "tag": "sha256-e7a0437f17c13f23671f7fec47d8f0aa6e06f10185f4182a785484d38a970a34"
+      },
+      "job-query-composition-service": {
+        "digest": "sha256:0b9d71f84e752e8cd1dc010ba98c56d766fc624d5742cfe7eaae83a43d3df486",
+        "tag": "sha256-097143062d2e597bcbc89e88524df6a3f967baafacdfba5574764c53cb02f3ba"
+      },
+      "job-storage-service": {
+        "digest": "sha256:e34db34209021a380ce65c69cfb3f8f3afd68a511964d8871457f73a66aa17b0",
+        "tag": "sha256-94581460cd1d42c4ad5a2b677a6c14e9d94696288356af378665c4a885e6c3e0"
+      },
+      "ml-compute-service": {
+        "digest": "sha256:a9d77f26fee72b96f379d0244593b845a744bc4d69d52fdfa799df5379e34121",
+        "tag": "sha256-729d6871fadc4aa5797753ef6f8119bbe5106601294cd9d2f632c3bd04e2ad1a"
+      },
+      "ml-gateway-service": {
+        "digest": "sha256:e8f931a5ad74bc71cd7a70275a2f1d9b8e7dd07b863f11b5a90b23bda1082ecd",
+        "tag": "sha256-e3e9f971ae5407e06ebe6b08ee8a56284b3abead2846b272b8f53dac3506661b"
+      },
+      "notification-service": {
+        "digest": "sha256:2bbd7f9cadb1744e0a6c340593370ed82be1c8133b4d22bbc8828b4aa2b76e5d",
+        "tag": "sha256-8fa98c1f88cc47cbb31beb263e10e7a612b4c07201443a6bd3e90055cd676af7"
+      },
+      "playwright-verification-runner": {
+        "digest": "sha256:eb2cf92b48fd362d7a8da9e4adfc97d7a63f5597f7a8093b8bb2c375196cc9de",
+        "tag": "sha256-ff69cf5bac2c3c6a4858dacb40d44b0d76754721c226cc9e985a0ef3a569427a"
+      },
+      "qdrant-init": {
+        "digest": "sha256:8ea2014781d72da280a09d05831821896b82d4c2eb19ed75047d6f9c90b99cb9",
+        "tag": "sha256-0a7dd0fb31183b45baa683aac7f22cfbbc39fbbcd10344510ecbb74b7b0104c6"
+      },
+      "skill-graph-service": {
+        "digest": "sha256:c36c5e238098692ca05d5550377207b8ef75396efdecec6b0ff25971a0a0ceab",
+        "tag": "sha256-f55bbbc0b79238b911e2f7a7e0204b58d2d49b11334fce975709adb069114541"
+      },
+      "snapshot-refresh-job": {
+        "digest": "sha256:4915d3d4474aca155f46f0b0f07f9a2ed76218e40f5caa873349b4495db11b1e",
+        "tag": "sha256-c518bbd92a360431b7d4d35208f9114bfc203a273fd9c48ca15dcc7f2dc31819"
+      },
+      "sys-tick-job": {
+        "digest": "sha256:1753e28af08171ad183762d9478fac6887def7ebedd7d13283dd4ba78941be10",
+        "tag": "sha256-206d272179679918d5b4b3a206803615aa4df65b5a5a4b5527d4063d5594538b"
+      },
+      "user-auth-service": {
+        "digest": "sha256:ae20033d94058ee4c86624c7f30bf82b452a0fd1d28a5816e2f2e49bafc50334",
+        "tag": "sha256-067b159b9e9028ccac01739a5dbd070936bdbe1914ecef5455b8617caef8a08c"
+      },
+      "user-entitlement-service": {
+        "digest": "sha256:81ec01d51aa98d9a928064191aa2c88a41a76f077744029e869c862f798d9ef1",
+        "tag": "sha256-0420f13f4219e83d4b1820ad548bf25befb6e89ed4ece8aea97a090a6f7547c9"
+      },
+      "user-pref-service": {
+        "digest": "sha256:85b672da9cf14c8725dcd914b6e492ca88606b6ed9cd4483f25bc2c2de9d33f9",
+        "tag": "sha256-0bd5036659ee89fb902695d9d3704144132dee8ea8477339ad197cfcbd915999"
+      },
+      "user-upload-service": {
+        "digest": "sha256:4a6bfb2b9175c29e5f4fb98cc51d02ffcf5b0a4bc6b5f735d0cc8741a71ba823",
+        "tag": "sha256-59a5142fb44cc16cccfea582728a9fb5e6daa7e027379b28295ed61c7dd770ea"
+      }
+    },
+    "registry": "localhost:5000",
+    "schemaVersion": 1
+  }
+}

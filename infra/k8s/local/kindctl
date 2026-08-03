@@ -1173,6 +1173,29 @@ def require_publication_input(path: Path, label: str) -> None:
     if not path.is_file() or path.is_symlink() or path.resolve() != path:
         raise KindctlError(f"{label} must be a canonical regular file")
 
+def require_prepared_digest_artifact(path: Path) -> None:
+    try:
+        document = json.loads(path.read_bytes())
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        document = None
+    global_values = document.get("global") if isinstance(document, dict) else None
+    foundation = document.get("imageFoundation") if isinstance(document, dict) else None
+    image_digests = global_values.get("imageDigests") if isinstance(global_values, dict) else None
+    images = foundation.get("images") if isinstance(foundation, dict) else None
+    if (
+        not isinstance(global_values, dict)
+        or global_values.get("imageTag") != "immutable"
+        or not isinstance(image_digests, dict)
+        or not image_digests
+        or not isinstance(images, dict)
+        or not images
+    ):
+        raise KindctlError(
+            "reviewed image digest artifact is unpublished or empty; run the guarded local "
+            "image artifact carrier (`infra/k8s/local/lifecycle.sh publish`) and review its "
+            "artifact-only successor commit before --no-git-write publication"
+        )
+
 
 def require_clean_publication_source(root: Path | None = None) -> None:
     source_root = REPO_ROOT if root is None else root
@@ -1341,8 +1364,10 @@ def publish_images(
     branch = os.environ.get("NOHIKI_RUNTIME_CONTROL_BRANCH", "")
     reviewed_sha = os.environ.get("NOHIKI_REVIEWED_TOPIC_SHA", "")
     validate_runtime_control(branch, reviewed_sha)
-    measurements, cluster_uid = runtime_binding(attempt, kubeconfig)
     require_clean_publication_source()
+    require_publication_input(DIGEST_VALUES, "reviewed image digest artifact")
+    require_prepared_digest_artifact(DIGEST_VALUES)
+    measurements, cluster_uid = runtime_binding(attempt, kubeconfig)
     source_paths = {
         "helper": IMAGE_FOUNDATION.relative_to(REPO_ROOT),
         "inventory": IMAGE_INVENTORY.relative_to(REPO_ROOT),
