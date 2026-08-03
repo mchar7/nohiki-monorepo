@@ -29,12 +29,7 @@ spec:
     - {apiVersion: apps/v1, kind: Deployment, name: loki-read, namespace: nohiki}
     - {apiVersion: apps/v1, kind: StatefulSet, name: loki-backend, namespace: nohiki}
     - {apiVersion: apps/v1, kind: StatefulSet, name: loki-write, namespace: nohiki}
-    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-compactor, namespace: nohiki}
-    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-distributor, namespace: nohiki}
-    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-querier, namespace: nohiki}
-    - {apiVersion: apps/v1, kind: Deployment, name: nohiki-tempo-query-frontend, namespace: nohiki}
-    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-tempo-ingester, namespace: nohiki}
-    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-tempo-memcached, namespace: nohiki}
+    - {apiVersion: apps/v1, kind: StatefulSet, name: nohiki-tempo, namespace: nohiki}
     - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-distributor, namespace: nohiki}
     - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-gateway, namespace: nohiki}
     - {apiVersion: apps/v1, kind: Deployment, name: nohiki-mimir-querier, namespace: nohiki}
