@@ -2181,7 +2181,7 @@ def test_record_holds_the_declaration_ordered_owner_union_for_a_service_diff(
 
     assert exit_code == 0, output
     assert record.read_text(encoding="utf-8") == (
-        f'{{"head_sha":"{_RECORD_HEAD_SHA}","images":["notification-service","health-runner"]}}\n'
+        f'{{"head_sha":"{_RECORD_HEAD_SHA}","images":["notification-service"]}}\n'
     )
 
 

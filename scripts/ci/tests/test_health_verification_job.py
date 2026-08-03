@@ -187,9 +187,9 @@ def test_health_image_is_inventory_owned_and_digest_rendered() -> None:
     assert health.lockfile == "uv.lock"
     assert health.build_args == ""
     assert health.timeout == 16
-    # scripts/util/health_check/Dockerfile COPYs backend/services and scripts/ci into the image.
-    assert "scripts/ci/" in health.ownership
-    assert "backend/services/" in health.ownership
+    assert "backend/libs/" in health.ownership
+    assert "backend/services/" not in health.ownership
+    assert "scripts/ci/" not in health.ownership
 
     container = _container()
     assert container["image"] == f"localhost:5000/health-runner:immutable@{_DIGEST}"
