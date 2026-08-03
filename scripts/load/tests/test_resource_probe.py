@@ -90,6 +90,34 @@ def test_pod_summary_preserves_resource_and_oom_evidence_without_env() -> None:
     assert "must-not-leak" not in repr(summarized)
 
 
+def test_workload_state_uses_controller_specific_fields() -> None:
+    assert resource_probe.workload_state(
+        "DaemonSet",
+        {},
+        {
+            "desiredNumberScheduled": 3,
+            "currentNumberScheduled": 2,
+            "numberReady": 1,
+            "numberAvailable": 1,
+        },
+    ) == {"available": 1, "current": 2, "desired": 3, "ready": 1}
+    assert resource_probe.workload_state(
+        "Job",
+        {"completions": 2},
+        {"active": 1, "failed": 0, "ready": 1, "succeeded": 1},
+    ) == {"active": 1, "desired": 2, "failed": 0, "ready": 1, "succeeded": 1}
+    assert resource_probe.workload_state(
+        "CronJob",
+        {"schedule": "0 * * * *", "suspend": True},
+        {"active": [{"name": "run"}], "lastScheduleTime": "2026-08-02T10:00:00Z"},
+    ) == {
+        "active": 1,
+        "lastScheduleTime": "2026-08-02T10:00:00Z",
+        "schedule": "0 * * * *",
+        "suspended": True,
+    }
+
+
 def test_usage_distributions_report_high_water_and_nearest_rank() -> None:
     def point(memory: int, cpu: int) -> dict[str, object]:
         return {
@@ -122,6 +150,22 @@ def test_usage_distributions_report_high_water_and_nearest_rank() -> None:
     ]
 
 
+def test_write_all_retries_partial_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    chunks: list[bytes] = []
+
+    def partial_write(_descriptor: int, remaining: memoryview) -> int:
+        written = min(2, len(remaining))
+        chunks.append(bytes(remaining[:written]))
+        return written
+
+    monkeypatch.setattr(resource_probe.os, "write", partial_write)
+
+    resource_probe.write_all(7, b"abcdef")
+
+    assert b"".join(chunks) == b"abcdef"
+    assert len(chunks) == 3
+
+
 def test_write_json_is_private_and_refuses_overwrite(tmp_path: Path) -> None:
     output = tmp_path / "evidence.json"
     resource_probe.write_json(output, {"kind": "test"})
@@ -131,8 +175,16 @@ def test_write_json_is_private_and_refuses_overwrite(tmp_path: Path) -> None:
         resource_probe.write_json(output, {"kind": "replacement"})
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), 0.0, -1.0])
+def test_sampling_rejects_non_finite_or_non_positive_values(value: float) -> None:
+    args = argparse.Namespace(duration_seconds=value, interval_seconds=1.0)
+
+    with pytest.raises(resource_probe.ProbeError, match="must be positive"):
+        resource_probe.validate_sampling_args(args)
+
+
 def test_capture_rejects_non_kind_context_before_any_cluster_call() -> None:
     args = argparse.Namespace(context="production", namespace=None)
 
-    with pytest.raises(resource_probe.ProbeError, match="local kind"):
+    with pytest.raises(resource_probe.ProbeError, match="kind-nohiki"):
         resource_probe.capture(args)

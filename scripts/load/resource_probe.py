@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -16,6 +17,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_VERSION = "nohiki.io/v1alpha1"
@@ -150,6 +152,43 @@ def kubectl_json(context: str, resources: str, namespace: str | None, *, optiona
 def kubectl_raw_json(context: str, path: str, *, optional: bool = False) -> JsonObject:
     """Read one Kubernetes API path from the named local kind context."""
     return command_json(("kubectl", "--context", context, "get", "--raw", path), allow_failure=optional)
+
+
+def validate_local_context(context: str) -> None:
+    """Bind the requested context to the repository's loopback kind cluster."""
+    if context != "kind-nohiki":
+        message = "--context must be kind-nohiki"
+        raise ProbeError(message)
+    config = command_json(("kubectl", "--context", context, "config", "view", "--minify", "--raw", "-o", "json"))
+    clusters = list_at(config, "clusters")
+    if len(clusters) != 1:
+        message = "kind-nohiki context must resolve to exactly one cluster"
+        raise ProbeError(message)
+    cluster_entry = require_object(clusters[0], "cluster entry")
+    cluster = object_at(cluster_entry, "cluster")
+    server = string_at(cluster, "server")
+    hostname = urlparse(server).hostname
+    try:
+        loopback = hostname == "localhost" or (hostname is not None and ipaddress.ip_address(hostname).is_loopback)
+    except ValueError:
+        loopback = False
+    if cluster_entry.get("name") != "kind-nohiki" or not loopback:
+        message = "kind-nohiki context must resolve to the loopback kind-nohiki API"
+        raise ProbeError(message)
+
+
+def validate_local_nodes(document: Mapping[str, object]) -> None:
+    """Reject a loopback proxy that does not expose the expected local kind nodes."""
+    items = list_at(document, "items")
+    if not items:
+        message = "kind-nohiki returned no nodes"
+        raise ProbeError(message)
+    for raw in items:
+        node = require_object(raw, "node")
+        name = string_at(metadata(node), "name")
+        if not name.startswith("nohiki-"):
+            message = f"unexpected node in kind-nohiki context: {name}"
+            raise ProbeError(message)
 
 
 def metadata(item: Mapping[str, object]) -> JsonObject:
@@ -302,12 +341,48 @@ def pod_template(item: Mapping[str, object]) -> JsonObject:
     return object_at(spec, "template")
 
 
+def workload_state(kind: str, spec: Mapping[str, object], status: Mapping[str, object]) -> JsonObject:
+    """Normalize controller-specific replica and completion state."""
+    if kind in {"Deployment", "StatefulSet"}:
+        return {
+            "available": status.get("availableReplicas"),
+            "current": status.get("currentReplicas"),
+            "desired": spec.get("replicas"),
+            "ready": status.get("readyReplicas"),
+        }
+    if kind == "DaemonSet":
+        return {
+            "available": status.get("numberAvailable"),
+            "current": status.get("currentNumberScheduled"),
+            "desired": status.get("desiredNumberScheduled"),
+            "ready": status.get("numberReady"),
+        }
+    if kind == "Job":
+        return {
+            "active": status.get("active"),
+            "desired": spec.get("completions", 1),
+            "failed": status.get("failed"),
+            "ready": status.get("ready"),
+            "succeeded": status.get("succeeded"),
+        }
+    if kind == "CronJob":
+        return {
+            "active": len(list_at(status, "active")),
+            "lastScheduleTime": status.get("lastScheduleTime"),
+            "schedule": spec.get("schedule"),
+            "suspended": spec.get("suspend", False),
+        }
+    message = f"unsupported workload kind: {kind}"
+    raise ProbeError(message)
+
+
 def summarize_workloads(document: Mapping[str, object]) -> JsonList:
     """Summarize desired state and declared resources for every workload controller."""
     result: JsonList = []
     for raw in list_at(document, "items"):
         item = require_object(raw, "workload")
         item_meta = metadata(item)
+        kind = string_at(item, "kind")
         spec = object_at(item, "spec")
         status = object_at(item, "status")
         template_spec = object_at(pod_template(item), "spec")
@@ -332,14 +407,11 @@ def summarize_workloads(document: Mapping[str, object]) -> JsonList:
                 )
         result.append(
             {
-                "available": status.get("availableReplicas"),
                 "containers": containers,
-                "current": status.get("currentReplicas"),
-                "desired": spec.get("replicas"),
-                "kind": item.get("kind"),
+                "kind": kind,
                 "name": item_meta.get("name"),
                 "namespace": item_meta.get("namespace"),
-                "ready": status.get("readyReplicas"),
+                "state": workload_state(kind, spec, status),
             }
         )
     return sorted(
@@ -463,15 +535,14 @@ def summarize_scalers(document: Mapping[str, object]) -> JsonList:
 def capture(args: argparse.Namespace) -> JsonObject:
     """Capture one lifecycle-state evidence point."""
     context = str(args.context)
-    if not context.startswith("kind-"):
-        message = "--context must name a local kind context"
-        raise ProbeError(message)
+    validate_local_context(context)
     namespace = str(args.namespace) if args.namespace else None
     nodes = kubectl_json(context, "nodes", None)
+    validate_local_nodes(nodes)
     pods = kubectl_json(context, "pods", namespace)
     workloads = kubectl_json(context, "deployments,statefulsets,daemonsets,jobs,cronjobs", namespace)
-    pod_metrics = kubectl_raw_json(context, "/apis/metrics.k8s.io/v1beta1/pods", optional=True)
-    node_metrics = kubectl_raw_json(context, "/apis/metrics.k8s.io/v1beta1/nodes", optional=True)
+    pod_metrics = kubectl_raw_json(context, "/apis/metrics.k8s.io/v1beta1/pods")
+    node_metrics = kubectl_raw_json(context, "/apis/metrics.k8s.io/v1beta1/nodes")
     hpas = kubectl_json(context, "horizontalpodautoscalers.autoscaling", namespace, optional=True)
     scaled_objects = kubectl_json(context, "scaledobjects.keda.sh", namespace, optional=True)
     return {
@@ -547,13 +618,24 @@ def usage_distributions(points: Sequence[Mapping[str, object]]) -> JsonList:
     return result
 
 
+def write_all(descriptor: int, data: bytes) -> None:
+    """Write every evidence byte or fail on a stalled filesystem write."""
+    remaining = memoryview(data)
+    while remaining:
+        written = os.write(descriptor, remaining)
+        if written <= 0:
+            message = "filesystem write made no progress"
+            raise ProbeError(message)
+        remaining = remaining[written:]
+
+
 def write_json(path: Path, document: object) -> None:
     """Create a private evidence file without overwriting a prior trial."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     data = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode()
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
-        os.write(descriptor, data)
+        write_all(descriptor, data)
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
@@ -587,7 +669,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def validate_sampling_args(args: argparse.Namespace) -> None:
     """Reject sampling intervals that cannot produce a bounded evidence series."""
-    if args.duration_seconds <= 0 or args.interval_seconds <= 0:
+    values = (args.duration_seconds, args.interval_seconds)
+    if not all(math.isfinite(value) and value > 0 for value in values):
         message = "sample duration and interval must be positive"
         raise ProbeError(message)
 
