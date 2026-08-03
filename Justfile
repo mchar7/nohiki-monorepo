@@ -603,6 +603,19 @@ kustomize-validate env="local":
 
 kustomize-validate-all: (kustomize-validate "local") (kustomize-validate "staging") (kustomize-validate "prod")
 
+# Validate the local load and resource-measurement substrate without sending traffic.
+load-check:
+    k6 inspect scripts/load/k6/scenarios/smoke.js
+    {{ env_lock }} shared venv -- uv run --no-sync pytest -q scripts/load/tests/test_resource_probe.py
+
+# Capture one complete-cluster resource point from an explicit local kind context.
+load-resource-capture output phase tier fixture_version:
+    scripts/load/resource_probe.py capture --context "{{ k8s_local_context }}" --phase "{{ phase }}" --tier "{{ tier }}" --fixture-version "{{ fixture_version }}" --output "{{ output }}"
+
+# Capture repeated complete-cluster points and resource distributions.
+load-resource-sample output phase tier fixture_version duration_seconds="60" interval_seconds="5":
+    scripts/load/resource_probe.py sample --context "{{ k8s_local_context }}" --phase "{{ phase }}" --tier "{{ tier }}" --fixture-version "{{ fixture_version }}" --duration-seconds "{{ duration_seconds }}" --interval-seconds "{{ interval_seconds }}" --output "{{ output }}"
+
 # AST explorer
 
 ast-events:

@@ -133,6 +133,8 @@ test_mig_failures.txt
 infra/compose/.nohiki-compose-*
 # Benchmark results
 scripts/benchmark/results/
+# Local load-test and resource evidence
+scripts/load/results/
 
 # MLflow tracking artifacts
 mlruns/
