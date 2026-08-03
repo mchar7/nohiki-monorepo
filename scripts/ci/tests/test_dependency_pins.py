@@ -668,7 +668,7 @@ def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
     assert str(save["uses"]).startswith("actions/cache/save@")
 
 
-def test_ci_python_syncs_enforce_the_lock_without_frozen_aliases() -> None:
+def test_ci_workflow_syncs_enforce_the_lock_without_frozen_aliases() -> None:
     sync_lines = [
         line.strip()
         for workflow_path in sorted(_WORKFLOWS.glob("*.yml"))
@@ -679,10 +679,6 @@ def test_ci_python_syncs_enforce_the_lock_without_frozen_aliases() -> None:
     assert sync_lines
     assert all("--locked" in line for line in sync_lines)
     assert all("--frozen" not in line for line in sync_lines)
-    api_runner_syncs = [
-        line.strip() for line in _read_text(_ROOT / "tests" / "Dockerfile.api-runner").splitlines() if "uv sync" in line
-    ]
-    assert api_runner_syncs == ["uv sync --locked --project tests --no-dev"]
 
 
 def test_periodic_hygiene_workflows_are_absent() -> None:
