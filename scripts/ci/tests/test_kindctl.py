@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.machinery
 import importlib.util
 import json
@@ -683,3 +684,290 @@ def test_delete_converges_populated_runtime_and_is_idempotent(
     delete_events = [event for event in events if "delete" in event]
     assert len(delete_events) == 1
     assert json.loads((attempt / "commands/delete-2.json").read_text())["result"] == "passed"
+
+
+def test_runtime_control_git_queries_are_repository_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    branch = "runtime-control/local/test"
+    revision = "1" * 40
+    calls: list[tuple[str, ...]] = []
+
+    def run(
+        argv: Sequence[str],
+        **_: object,
+    ) -> subprocess.CompletedProcess[str]:
+        call = tuple(argv)
+        calls.append(call)
+        if "branch" in call:
+            return _completed(argv, stdout=branch + "\n")
+        if "rev-parse" in call:
+            return _completed(argv, stdout=revision + "\n")
+        return _completed(
+            argv,
+            stdout=f"{revision}\trefs/heads/{branch}\n",
+        )
+
+    monkeypatch.setattr(runner, "run_command", run)
+
+    runner.validate_runtime_control(branch, revision)
+
+    assert calls
+    assert all(call[:3] == ("git", "-C", str(runner.REPO_ROOT)) for call in calls)
+
+
+def _stub_publication_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    changed: str = "",
+    untracked: str = "",
+    rendered: str | None = None,
+) -> tuple[ModuleType, Path, Path, list[tuple[str, ...]]]:
+    runner = _load_runner()
+    monkeypatch.setattr(runner, "REPO_ROOT", tmp_path)
+    image_foundation = tmp_path / "infra/k8s/local/image_foundation.py"
+    image_inventory = tmp_path / "infra/k8s/local/images.json"
+    digest_values = tmp_path / "infra/k8s/gitops/platform/local/image-digests.values.yaml"
+    artifact_lock = tmp_path / "infra/k8s/flux-runtime/artifacts.lock.yaml"
+    for name, value in (
+        ("IMAGE_FOUNDATION", image_foundation),
+        ("IMAGE_INVENTORY", image_inventory),
+        ("DIGEST_VALUES", digest_values),
+        ("ARTIFACT_LOCK", artifact_lock),
+    ):
+        monkeypatch.setattr(runner, name, value)
+    reviewed_root = tmp_path / "reviewed"
+    for path, content in (
+        (image_foundation, "helper\n"),
+        (image_inventory, '{"schemaVersion":1}\n'),
+        (digest_values, '{"reviewed":true}\n'),
+        (artifact_lock, "lock\n"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        reviewed_path = reviewed_root / path.relative_to(tmp_path)
+        reviewed_path.parent.mkdir(parents=True, exist_ok=True)
+        reviewed_path.write_text(content, encoding="utf-8")
+
+    attempt = _attempt(tmp_path)
+    kubeconfig = attempt / "runtime/kubeconfig"
+    revision = "1" * 40
+    cluster_uid = "1234abcd-0000"
+    lock_sha = runner.sha256_file(runner.ARTIFACT_LOCK)
+    expected_data = {
+        "NOHIKI_ARTIFACT_LOCK_SHA256": lock_sha,
+        "NOHIKI_ATTEMPT_SUFFIX": "a00000001-1234abcd",
+        "RUNTIME_CONTROL_BRANCH": "runtime-control/local/test",
+        "NOHIKI_SOURCE_HEAD_SHA": revision,
+        "NOHIKI_SOURCE_REMOTE_SHA": revision,
+        "NOHIKI_SOURCE_REVIEWED_SHA": revision,
+    }
+    monkeypatch.setenv("NOHIKI_RUNTIME_CONTROL_BRANCH", "runtime-control/local/test")
+    monkeypatch.setenv("NOHIKI_REVIEWED_TOPIC_SHA", revision)
+    monkeypatch.setattr(runner, "validate_runtime_control", lambda *_: None)
+    monkeypatch.setattr(
+        runner,
+        "reviewed_publication_source",
+        lambda *_: contextlib.nullcontext(reviewed_root),
+    )
+    monkeypatch.setattr(
+        runner,
+        "runtime_binding",
+        lambda *_: ({"attempt": 1}, cluster_uid),
+    )
+    monkeypatch.setattr(
+        runner,
+        "command_json",
+        lambda *_args, **_kwargs: {
+            "data": expected_data,
+            "metadata": {"uid": "configmap-uid"},
+        },
+    )
+    source_revision = "refs/heads/test@sha1:" + revision
+    monkeypatch.setattr(runner, "flux_source_revision", lambda *_: source_revision)
+    monkeypatch.setattr(
+        runner,
+        "wait_kustomization",
+        lambda *_: {"status": {"lastAppliedRevision": source_revision}},
+    )
+
+    digest_document = {
+        "images": {
+            "service": {
+                "digest": "sha256:" + "2" * 64,
+                "tag": "sha256-" + "3" * 64,
+            }
+        },
+        "registry": "localhost:5000",
+        "schemaVersion": 1,
+    }
+    calls: list[tuple[str, ...]] = []
+
+    def run(
+        argv: Sequence[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        call = tuple(argv)
+        calls.append(call)
+        if call[0] == "git" and "diff" in call:
+            return _completed(argv, stdout=changed)
+        if call[0] == "git" and "ls-files" in call:
+            return _completed(argv, stdout=untracked)
+        if call[0] == "uv":
+            environment = kwargs.get("env")
+            assert isinstance(environment, dict)
+            assert str(reviewed_root) in call[3]
+            assert environment.get("KUBECONFIG") == str(kubeconfig)
+        if "publish" in call:
+            digest_path = Path(call[call.index("--digests") + 1])
+            digest_path.write_text(json.dumps(digest_document), encoding="utf-8")
+        if "render-values" in call:
+            return _completed(
+                argv,
+                stdout=rendered if rendered is not None else runner.DIGEST_VALUES.read_text(encoding="utf-8"),
+            )
+        return _completed(argv)
+
+    monkeypatch.setattr(runner, "run_command", run)
+    return runner, attempt, kubeconfig, calls
+
+
+def test_publish_produces_the_attempt_owned_finalize_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, attempt, kubeconfig, calls = _stub_publication_inputs(
+        tmp_path,
+        monkeypatch,
+    )
+
+    summary = runner.publish_images(kubeconfig, attempt, no_git_write=True)
+
+    record = runner.validate_publication_record(
+        attempt,
+        attempt / "publication.json",
+        "1" * 40,
+    )
+    assert record["gitWrite"] is False
+    assert record["selectedNames"] == ["service"]
+    assert record["images"]["service"] == {
+        "buildId": "sha256:" + "3" * 64,
+        "digest": "sha256:" + "2" * 64,
+        "tag": "sha256-" + "3" * 64,
+    }
+    assert record["clusterUid"] == "1234abcd-0000"
+    assert record["configMapUid"] == "configmap-uid"
+    assert summary["imageCount"] == 1
+    effects = [
+        next(item for item in call if item in {"build", "publish", "render-values"})
+        for call in calls
+        if any(item in {"build", "publish", "render-values"} for item in call)
+    ]
+    assert effects == ["build", "publish", "render-values"]
+
+
+@pytest.mark.parametrize(
+    ("changed", "untracked", "rendered", "message"),
+    [
+        (
+            "tracked.txt\n",
+            "",
+            None,
+            "clean reviewed worktree",
+        ),
+        (
+            "",
+            "untracked.txt\n",
+            None,
+            "clean reviewed worktree",
+        ),
+        (
+            "",
+            "",
+            '{"different":true}\n',
+            "does not match the reviewed image digest artifact",
+        ),
+    ],
+)
+def test_publish_fails_closed_without_writing_a_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    changed: str,
+    untracked: str,
+    rendered: str | None,
+    message: str,
+) -> None:
+    runner, attempt, kubeconfig, _calls = _stub_publication_inputs(
+        tmp_path,
+        monkeypatch,
+        changed=changed,
+        untracked=untracked,
+        rendered=rendered,
+    )
+
+    with pytest.raises(runner.KindctlError, match=message):
+        runner.publish_images(kubeconfig, attempt, no_git_write=True)
+
+    assert not (attempt / "publication.json").exists()
+    assert not (attempt / "publication.sha256.json").exists()
+
+
+def test_publish_refuses_a_stale_attempt_configmap_before_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, attempt, kubeconfig, calls = _stub_publication_inputs(
+        tmp_path,
+        monkeypatch,
+    )
+    monkeypatch.setattr(
+        runner,
+        "command_json",
+        lambda *_args, **_kwargs: {
+            "data": {},
+            "metadata": {"uid": "configmap-uid"},
+        },
+    )
+
+    with pytest.raises(runner.KindctlError, match="does not bind this publication"):
+        runner.publish_images(kubeconfig, attempt, no_git_write=True)
+
+    assert not any("build" in call for call in calls)
+
+
+def test_publish_readback_guard_detects_removed_production_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, attempt, kubeconfig, _calls = _stub_publication_inputs(
+        tmp_path,
+        monkeypatch,
+    )
+    monkeypatch.setattr(runner, "write_publication_output", lambda *_: None)
+
+    with pytest.raises(runner.KindctlError, match="mode-0600 regular files"):
+        runner.publish_images(kubeconfig, attempt, no_git_write=True)
+
+
+def test_publish_requires_explicit_no_git_write_before_any_precondition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        runner,
+        "validate_runtime_control",
+        lambda *args: calls.append(args),
+    )
+
+    with pytest.raises(runner.KindctlError, match="requires --no-git-write"):
+        runner.publish_images(
+            tmp_path / "kubeconfig",
+            tmp_path,
+            no_git_write=False,
+        )
+
+    assert calls == []
