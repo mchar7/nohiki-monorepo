@@ -18,7 +18,7 @@ concurrency:
 jobs:
   changes:
     name: Router
-    runs-on: [self-hosted, linux, x64, nohiki]
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       actions: read
@@ -670,7 +670,7 @@ jobs:
     name: Title policy
     needs: [changes]
     if: needs.changes.outputs.title_only == 'true'
-    runs-on: [self-hosted, linux, x64, nohiki]
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -725,7 +725,7 @@ jobs:
       - worker
       - playwright-image
       - title-policy
-    runs-on: [self-hosted, linux, x64, nohiki]
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       actions: read
