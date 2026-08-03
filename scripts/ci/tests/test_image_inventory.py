@@ -2,8 +2,10 @@
 
 import json
 import os
+import shlex
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
@@ -29,6 +31,7 @@ from ci_checks.core.image_inventory import (
     vendored_base_images,
     write_affected_record,
 )
+from ci_checks.core.packages import Scope, load_packages_with_deps
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CLI = _ROOT / "scripts" / "ci" / "image_matrix.py"
@@ -128,11 +131,64 @@ def _cli(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _copy_sources_before_sync(dockerfile: Path) -> set[Path]:
+    """Return build-context sources copied before the workspace sync."""
+    sources: set[Path] = set()
+    for line in dockerfile.read_text(encoding="utf-8").replace("\\\n", " ").splitlines():
+        stripped = line.strip()
+        if "uv sync " in stripped:
+            break
+        if not stripped.startswith("COPY "):
+            continue
+        fields = shlex.split(stripped)
+        options = [field for field in fields[1:] if field.startswith("--")]
+        if any(option.startswith("--from=") for option in options):
+            continue
+        operands = [field for field in fields[1:] if not field.startswith("--")]
+        sources.update(Path(source.rstrip("/")) for source in operands[:-1])
+    return sources
+
+
+def _is_copied(package_path: Path, sources: set[Path]) -> bool:
+    return any(package_path == source or package_path.is_relative_to(source) for source in sources)
+
+
 def test_canonical_inventory_has_exactly_three_top_level_keys_at_version_three() -> None:
     data = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
     assert set(data) == TOP_LEVEL_KEYS
     assert data["schema_version"] == SCHEMA_VERSION == 3
     assert {image["class"] for image in data["images"]} == IMAGE_CLASSES
+
+
+def test_python_image_contexts_include_each_copied_members_workspace_sources(
+    inventory: ImageInventory,
+) -> None:
+    with (_ROOT / "pyproject.toml").open("rb") as project_file:
+        root_project = tomllib.load(project_file)
+    workspace_sources = {
+        name
+        for name, source in root_project["tool"]["uv"]["sources"].items()
+        if isinstance(source, dict) and source.get("workspace") is True
+    }
+    packages = load_packages_with_deps(Scope.ALL)
+
+    for record in inventory.images:
+        if record.lockfile != "uv.lock":
+            continue
+        context = (_ROOT / record.context).resolve()
+        sources = _copy_sources_before_sync(_ROOT / record.dockerfile)
+        copied = {
+            name
+            for name, package in packages.items()
+            if package.path.is_relative_to(context) and _is_copied(package.path.relative_to(context), sources)
+        }
+        missing = sorted(
+            f"{name} -> {dependency}"
+            for name in copied
+            for dependency in packages[name].deps & workspace_sources
+            if dependency not in copied
+        )
+        assert not missing, f"{record.name} omits workspace source dependencies: {missing}"
 
 
 def test_canonical_inventory_declares_twenty_seven_unique_ordered_records(inventory: ImageInventory) -> None:
