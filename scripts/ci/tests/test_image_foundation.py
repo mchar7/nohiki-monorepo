@@ -526,7 +526,7 @@ def test_publish_git_write_is_guarded_to_reviewed_digest_artifact() -> None:
     assert '[[ "$remote" == "$reviewed" ]]' in publish
     assert '[[ "$path" == "$artifact" ]]' in publish
     assert 'git add -- "$artifact"' in publish
-    assert 'git commit -m "chore(k8s): publish local image digests" -- "$artifact"' in publish
+    assert 'git commit -m "chore(kind): publish local image digests" -- "$artifact"' in publish
     assert "git diff --cached --name-only" in publish
     assert 'git diff-tree --no-commit-id --name-only -r "$after"' in publish
     assert '--force-with-lease="refs/heads/$branch:$reviewed"' in publish
