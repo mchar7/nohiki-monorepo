@@ -53,7 +53,7 @@ manifests:
     canonicalSha256: e69aea364158f28f7711aa1faa6fc0c42be39bfff9077822cd65ebacd641f0e7
   fallbackSync:
     path: infra/k8s/flux-runtime/fallback/sync.yaml
-    canonicalSha256: 5feb2ed1fd50fa0e94ba3ea881fea1acb0535a854ec29e2278c6eb49d17d25a4
+    canonicalSha256: f8c189102f4142972904aa5dc417dc8dfd728c118d6378f300af4191c01d8ccf
   bootstrapRoot:
     path: infra/k8s/gitops/clusters/local/bootstrap/kustomization.yaml
     canonicalSha256: 59cbd68e9f656910a70b3c99c7bd1c4270d0a4cf58fe1dfd2c5fbd0b9fcf3efc

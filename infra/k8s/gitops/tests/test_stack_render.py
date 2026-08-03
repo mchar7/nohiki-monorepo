@@ -379,6 +379,18 @@ def test_foundation_helmrelease_targets_the_foundation_namespace() -> None:
         assert values_files == (["infra/k8s/helm/values.prod.identity.yaml"] if env == "prod" else [])
 
 
+def test_every_production_infrastructure_release_uses_the_promotion_source() -> None:
+    releases = {
+        document["metadata"]["name"]: document
+        for document in documents("infra/k8s/gitops/infrastructure/prod")
+        if document.get("kind") == "HelmRelease"
+    }
+    assert {name: release["spec"]["chart"]["spec"]["sourceRef"] for name, release in releases.items()} == {
+        "nohiki-cloudnative-pg": {"kind": "GitRepository", "name": RELEASE_SOURCE, "namespace": "flux-system"},
+        "nohiki-foundation": {"kind": "GitRepository", "name": RELEASE_SOURCE, "namespace": "flux-system"},
+    }
+
+
 @pytest.mark.parametrize("cluster", CLUSTER_ENV)
 def test_operator_releases_are_environment_scoped_and_use_split_charts(cluster: str) -> None:
     env = CLUSTER_ENV[cluster]
