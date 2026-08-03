@@ -133,7 +133,7 @@ publish() {
     install -m 0644 "$tmp_values" "$artifact"
     git add -- "$artifact"
     [[ "$(git diff --cached --name-only)" == "$artifact" ]] || fail "staged path allowlist violation"
-    git commit -m "chore(k8s): publish local image digests" -- "$artifact"
+    git commit -m "chore(kind): publish local image digests" -- "$artifact"
     after="$(git rev-parse HEAD)"
     [[ "$(git diff-tree --no-commit-id --name-only -r "$after")" == "$artifact" ]] || \
         fail "publish commit changed a path outside the digest artifact"
