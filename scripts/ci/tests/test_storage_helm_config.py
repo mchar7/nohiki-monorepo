@@ -3,6 +3,7 @@
 import re
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import yaml
 from helm_test_utils import runtime_eso_args
@@ -156,7 +157,7 @@ def test_local_s3_consumers_wait_for_declared_rustfs_buckets() -> None:
     bucket_init = bucket_job["spec"]["template"]["spec"]["containers"][0]
     declared_buckets = set(re.findall(r'ensure_bucket "([^"]+)"', "\n".join(bucket_init["command"])))
 
-    consumers: dict[str, tuple[dict[str, object], set[str]]] = {}
+    consumers: dict[str, tuple[dict[str, Any], set[str]]] = {}
     for document in documents:
         if document.get("kind") not in {"DaemonSet", "Deployment", "StatefulSet"}:
             continue

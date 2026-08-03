@@ -299,15 +299,23 @@ def test_loki_and_cache_images_are_aligned_without_config_changes() -> None:
             pass
         case _:
             pytest.fail("observability values must contain the expected image and tenancy fields")
+    match tempo:
+        case {
+            "image": {"tag": str(tempo_tag)},
+            "config": {"multitenancy_enabled": tempo_multitenancy},
+        }:
+            pass
+        case _:
+            pytest.fail("Tempo values must contain the expected image and tenancy fields")
     cache_tags = {chunks_cache_tag, results_cache_tag, memcached_tag}
 
     assert loki_tag.split("@", 1)[0] == canary_tag.split("@", 1)[0]
     assert cache_tags == {"1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7"}
-    assert _PINNED_TAG.fullmatch(mapping_at(tempo, "image")["tag"])
+    assert _PINNED_TAG.fullmatch(tempo_tag)
     assert deployment_mode == "SimpleScalable"
     assert auth_enabled is True
     assert mimir_multitenancy is True
-    assert mapping_at(tempo, "config")["multitenancy_enabled"] is True
+    assert tempo_multitenancy is True
 
 
 def test_compose_and_chart_runtime_images_are_exactly_aligned() -> None:
