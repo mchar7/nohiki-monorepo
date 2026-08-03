@@ -46,6 +46,12 @@ ARTIFACT_TOOL = FLUX_RUNTIME / "runtime-artifacts.py"
 ATTEMPT_CONFIGMAP = FLUX_RUNTIME / "attempt-configmap.py"
 ARTIFACT_LOCK = FLUX_RUNTIME / "artifacts.lock.yaml"
 OFFLINE_EGRESS = FLUX_RUNTIME / "offline-egress.nft"
+IMAGE_FOUNDATION = REPO_ROOT / "infra/k8s/local/image_foundation.py"
+IMAGE_INVENTORY = REPO_ROOT / "infra/k8s/local/images.json"
+DIGEST_VALUES = REPO_ROOT / "infra/k8s/gitops/platform/local/image-digests.values.yaml"
+PUBLICATION_TIMEOUT = 420 * 60
+IMAGE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+IMAGE_TAG = re.compile(r"sha256-[0-9a-f]{64}\Z")
 FULL_CHILDREN = (
     "gateway-api-crds",
     "registry",
@@ -664,12 +670,16 @@ def validate_runtime_control(branch: str, reviewed_sha: str) -> None:
         raise KindctlError("NOHIKI_RUNTIME_CONTROL_BRANCH is not an approved local runtime-control branch")
     if REVIEWED_SHA.fullmatch(reviewed_sha) is None:
         raise KindctlError("NOHIKI_REVIEWED_TOPIC_SHA must be a full lowercase Git SHA")
-    current_branch = run_command(("git", "branch", "--show-current"), timeout=10).stdout.strip()
-    local_sha = run_command(("git", "rev-parse", "HEAD"), timeout=10).stdout.strip()
+    git = ("git", "-C", str(REPO_ROOT))
+    current_branch = run_command((*git, "branch", "--show-current"), timeout=10).stdout.strip()
+    local_sha = run_command((*git, "rev-parse", "HEAD"), timeout=10).stdout.strip()
     if current_branch != branch or local_sha != reviewed_sha:
         raise KindctlError("local branch and HEAD must equal the reviewed runtime-control source")
     reference = f"refs/heads/{branch}"
-    remote = run_command(("git", "ls-remote", "--exit-code", "--heads", "origin", reference), timeout=30).stdout
+    remote = run_command(
+        (*git, "ls-remote", "--exit-code", "--heads", "origin", reference),
+        timeout=30,
+    ).stdout
     if remote != f"{reviewed_sha}\t{reference}\n":
         raise KindctlError("remote runtime-control branch does not equal the reviewed SHA")
 
@@ -1159,6 +1169,326 @@ def qualify_flux_runtime(
     }
 
 
+def require_publication_input(path: Path, label: str) -> None:
+    if not path.is_file() or path.is_symlink() or path.resolve() != path:
+        raise KindctlError(f"{label} must be a canonical regular file")
+
+
+def require_clean_publication_source(root: Path | None = None) -> None:
+    source_root = REPO_ROOT if root is None else root
+    git = ("git", "-C", str(source_root))
+    changed = {
+        path
+        for result in (
+            run_command((*git, "diff", "--name-only", "HEAD", "--"), timeout=15),
+            run_command((*git, "ls-files", "--others", "--exclude-standard"), timeout=15),
+        )
+        for path in result.stdout.splitlines()
+        if path
+    }
+    if changed:
+        raise KindctlError(
+            f"publication requires a clean reviewed worktree; changed={sorted(changed)}"
+        )
+
+
+@contextlib.contextmanager
+def reviewed_publication_source(
+    attempt: Path,
+    reviewed_sha: str,
+) -> Iterator[Path]:
+    destination = attempt / "publication-source"
+    if destination.exists() or destination.is_symlink():
+        raise KindctlError("reviewed publication source path already exists")
+    git = ("git", "-C", str(REPO_ROOT))
+    added = run_command(
+        (*git, "worktree", "add", "--detach", "--quiet", str(destination), reviewed_sha),
+        timeout=120,
+        check=False,
+    )
+    if added.returncode != 0:
+        run_command(
+            (*git, "worktree", "remove", "--force", str(destination)),
+            timeout=30,
+            check=False,
+        )
+        raise KindctlError("could not materialize the reviewed publication source")
+    try:
+        observed_sha = run_command(
+            ("git", "-C", str(destination), "rev-parse", "HEAD"),
+            timeout=10,
+        ).stdout.strip()
+        if observed_sha != reviewed_sha:
+            raise KindctlError("materialized publication source is not the reviewed SHA")
+        require_clean_publication_source(destination)
+        yield destination
+        final_sha = run_command(
+            ("git", "-C", str(destination), "rev-parse", "HEAD"),
+            timeout=10,
+        ).stdout.strip()
+        if final_sha != reviewed_sha:
+            raise KindctlError("reviewed publication source changed during publication")
+        require_clean_publication_source(destination)
+    finally:
+        removed = run_command(
+            (*git, "worktree", "remove", "--force", str(destination)),
+            timeout=120,
+            check=False,
+        )
+        if removed.returncode != 0:
+            raise KindctlError("could not remove the attempt-owned publication source")
+
+
+def publication_configmap_binding(
+    kubeconfig: Path,
+    branch: str,
+    reviewed_sha: str,
+    attempt_number: object,
+    cluster_uid: str,
+    lock_sha: str,
+) -> str:
+    if (
+        isinstance(attempt_number, bool)
+        or not isinstance(attempt_number, int)
+        or attempt_number < 1
+    ):
+        raise KindctlError("publication attempt number is invalid")
+    suffix = f"a{attempt_number:08d}-{cluster_uid.replace('-', '')[:8]}"
+    expected_data = {
+        "NOHIKI_ARTIFACT_LOCK_SHA256": lock_sha,
+        "NOHIKI_ATTEMPT_SUFFIX": suffix,
+        "RUNTIME_CONTROL_BRANCH": branch,
+        "NOHIKI_SOURCE_HEAD_SHA": reviewed_sha,
+        "NOHIKI_SOURCE_REMOTE_SHA": reviewed_sha,
+        "NOHIKI_SOURCE_REVIEWED_SHA": reviewed_sha,
+    }
+    configmap = command_json(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "get",
+            "configmap",
+            "nohiki-verification-attempt",
+            "-o",
+            "json",
+        ),
+        timeout=15,
+    )
+    uid = str(configmap.get("metadata", {}).get("uid", ""))
+    if not uid or configmap.get("data") != expected_data:
+        raise KindctlError(
+            "mandatory Flux post-build ConfigMap does not bind this publication attempt"
+        )
+    return uid
+
+
+def publication_images(path: Path) -> dict[str, dict[str, str]]:
+    try:
+        document = json.loads(path.read_bytes())
+    except (OSError, json.JSONDecodeError) as error:
+        raise KindctlError("image publication did not produce valid digest JSON") from error
+    if not isinstance(document, dict):
+        raise KindctlError("image publication digest contract is invalid")
+    entries = document.get("images")
+    if (
+        document.get("schemaVersion") != 1
+        or document.get("registry") != "localhost:5000"
+        or not isinstance(entries, dict)
+        or not entries
+    ):
+        raise KindctlError("image publication digest contract is invalid")
+    images: dict[str, dict[str, str]] = {}
+    for name, entry in entries.items():
+        if (
+            not isinstance(name, str)
+            or not isinstance(entry, dict)
+            or not isinstance(entry.get("digest"), str)
+            or IMAGE_DIGEST.fullmatch(entry["digest"]) is None
+            or not isinstance(entry.get("tag"), str)
+            or IMAGE_TAG.fullmatch(entry["tag"]) is None
+        ):
+            raise KindctlError("image publication digest entry is invalid")
+        images[name] = {
+            "buildId": f"sha256:{entry['tag'].removeprefix('sha256-')}",
+            "digest": entry["digest"],
+            "tag": entry["tag"],
+        }
+    return images
+
+
+def write_publication_output(attempt: Path, record: dict[str, Any]) -> None:
+    output = attempt / "publication.json"
+    sidecar = attempt / "publication.sha256.json"
+    write_exclusive(output, record)
+    write_exclusive(sidecar, {"sha256": sha256_file(output)})
+
+
+def publish_images(
+    kubeconfig: Path,
+    attempt: Path,
+    no_git_write: bool,
+) -> dict[str, Any]:
+    if not no_git_write:
+        raise KindctlError(
+            "publish requires --no-git-write because flux-finalize accepts only the reviewed source"
+        )
+    output = attempt / "publication.json"
+    sidecar = attempt / "publication.sha256.json"
+    if any(path.exists() or path.is_symlink() for path in (output, sidecar)):
+        raise KindctlError("publication output already exists for this attempt")
+
+    branch = os.environ.get("NOHIKI_RUNTIME_CONTROL_BRANCH", "")
+    reviewed_sha = os.environ.get("NOHIKI_REVIEWED_TOPIC_SHA", "")
+    validate_runtime_control(branch, reviewed_sha)
+    measurements, cluster_uid = runtime_binding(attempt, kubeconfig)
+    require_clean_publication_source()
+    source_paths = {
+        "helper": IMAGE_FOUNDATION.relative_to(REPO_ROOT),
+        "inventory": IMAGE_INVENTORY.relative_to(REPO_ROOT),
+        "artifact": DIGEST_VALUES.relative_to(REPO_ROOT),
+        "lock": ARTIFACT_LOCK.relative_to(REPO_ROOT),
+    }
+
+    started_at = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
+    environment = provider_environment(kubeconfig)
+    with reviewed_publication_source(attempt, reviewed_sha) as source_root:
+        image_foundation = source_root / source_paths["helper"]
+        image_inventory = source_root / source_paths["inventory"]
+        digest_values = source_root / source_paths["artifact"]
+        artifact_lock = source_root / source_paths["lock"]
+        for path, label in (
+            (image_foundation, "image publication helper"),
+            (image_inventory, "image inventory"),
+            (digest_values, "reviewed image digest artifact"),
+            (artifact_lock, "runtime artifact lock"),
+        ):
+            require_publication_input(path, label)
+        lock_sha = sha256_file(artifact_lock)
+        configmap_uid = publication_configmap_binding(
+            kubeconfig,
+            branch,
+            reviewed_sha,
+            measurements.get("attempt"),
+            cluster_uid,
+            lock_sha,
+        )
+        source_revision = flux_source_revision(kubeconfig, reviewed_sha)
+        registry = wait_kustomization(kubeconfig, "registry", 1205, "20m")
+        if registry.get("status", {}).get("lastAppliedRevision") != source_revision:
+            raise KindctlError(
+                "registry Kustomization is not at the reviewed source revision"
+            )
+
+        with tempfile.TemporaryDirectory(
+            prefix=".publication-",
+            dir=attempt,
+        ) as temporary:
+            digest_path = Path(temporary) / "digests.json"
+            run_command(
+                (
+                    "uv",
+                    "run",
+                    "python",
+                    str(image_foundation),
+                    "build",
+                    "--runtime",
+                    "podman",
+                ),
+                timeout=PUBLICATION_TIMEOUT,
+                env=environment,
+            )
+            built_at = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
+            run_command(
+                (
+                    "uv",
+                    "run",
+                    "python",
+                    str(image_foundation),
+                    "publish",
+                    "--runtime",
+                    "podman",
+                    "--digests",
+                    str(digest_path),
+                ),
+                timeout=PUBLICATION_TIMEOUT,
+                env=environment,
+            )
+            rendered = run_command(
+                (
+                    "uv",
+                    "run",
+                    "python",
+                    str(image_foundation),
+                    "render-values",
+                    "--digests",
+                    str(digest_path),
+                ),
+                timeout=90,
+                env=environment,
+            ).stdout.encode()
+            if rendered != digest_values.read_bytes():
+                raise KindctlError(
+                    "--no-git-write publication does not match the reviewed image digest artifact"
+                )
+            images = publication_images(digest_path)
+
+        record: dict[str, Any] = {
+            "apiVersion": "nohiki.io/v1alpha1",
+            "artifact": {
+                "path": str(source_paths["artifact"]),
+                "sha256": sha256_file(digest_values),
+            },
+            "attempt": {
+                "directory": str(attempt),
+                "number": measurements["attempt"],
+            },
+            "branch": branch,
+            "buildCompletedAt": built_at,
+            "clusterUid": cluster_uid,
+            "configMapUid": configmap_uid,
+            "finishedAt": dt.datetime.now(dt.UTC).isoformat().replace(
+                "+00:00",
+                "Z",
+            ),
+            "gitWrite": False,
+            "images": images,
+            "inventorySha256": sha256_file(image_inventory),
+            "kind": "KindImagePublication",
+            "lockSha256": lock_sha,
+            "publicationSha": reviewed_sha,
+            "remoteSha": reviewed_sha,
+            "schemaVersion": 1,
+            "selectedNames": sorted(images),
+            "sourceRevision": source_revision,
+            "sourceSha": reviewed_sha,
+            "startedAt": started_at,
+        }
+    validate_runtime_control(branch, reviewed_sha)
+    require_clean_publication_source()
+    if (
+        publication_configmap_binding(
+            kubeconfig,
+            branch,
+            reviewed_sha,
+            measurements.get("attempt"),
+            cluster_uid,
+            lock_sha,
+        )
+        != configmap_uid
+    ):
+        raise KindctlError("attempt ConfigMap changed during image publication")
+    write_publication_output(attempt, record)
+    observed = validate_publication_record(attempt, output, reviewed_sha)
+    if observed != record:
+        raise KindctlError("publication record readback changed after production")
+    return {
+        "artifactSha256": record["artifact"]["sha256"],
+        "imageCount": len(images),
+        "publicationRecordSha256": sha256_file(output),
+    }
+
+
 def validate_publication_record(
     attempt: Path,
     path: Path,
@@ -1166,10 +1496,25 @@ def validate_publication_record(
 ) -> dict[str, Any]:
     if path != attempt / "publication.json" or path.resolve() != path:
         raise KindctlError("publication record is not the canonical attempt path")
+    sidecar_path = attempt / "publication.sha256.json"
+    if any(
+        candidate.is_symlink()
+        or not candidate.is_file()
+        or candidate.resolve() != candidate
+        or candidate.stat().st_uid != os.getuid()
+        or stat.S_IMODE(candidate.stat().st_mode) != 0o600
+        for candidate in (path, sidecar_path)
+    ):
+        raise KindctlError(
+            "publication record and sidecar must be user-owned mode-0600 regular files"
+        )
     data = path.read_bytes()
-    sidecar_data = (attempt / "publication.sha256.json").read_bytes()
-    record = json.loads(data)
-    sidecar = json.loads(sidecar_data)
+    sidecar_data = sidecar_path.read_bytes()
+    try:
+        record = json.loads(data)
+        sidecar = json.loads(sidecar_data)
+    except json.JSONDecodeError as error:
+        raise KindctlError("publication record or sidecar is malformed") from error
     if not isinstance(record, dict) or canonical_bytes(record) != data:
         raise KindctlError("publication record is not canonical")
     if (
@@ -1198,23 +1543,23 @@ def finalize_flux_runtime(
     branch = os.environ.get("NOHIKI_RUNTIME_CONTROL_BRANCH", "")
     reviewed_sha = os.environ.get("NOHIKI_REVIEWED_TOPIC_SHA", "")
     validate_runtime_control(branch, reviewed_sha)
-    validate_publication_record(attempt, publication_record, reviewed_sha)
-    runtime_binding(attempt, kubeconfig)
-    configmap = command_json(
-        kube_args(
-            kubeconfig,
-            "-n",
-            "flux-system",
-            "get",
-            "configmap",
-            "nohiki-verification-attempt",
-            "-o",
-            "json",
-        ),
-        timeout=15,
+    record = validate_publication_record(attempt, publication_record, reviewed_sha)
+    measurements, cluster_uid = runtime_binding(attempt, kubeconfig)
+    configmap_uid = publication_configmap_binding(
+        kubeconfig,
+        branch,
+        reviewed_sha,
+        measurements.get("attempt"),
+        cluster_uid,
+        sha256_file(ARTIFACT_LOCK),
     )
-    if not configmap.get("metadata", {}).get("uid"):
-        raise KindctlError("mandatory Flux post-build ConfigMap is absent")
+    if (
+        record.get("clusterUid") != cluster_uid
+        or record.get("configMapUid") != configmap_uid
+    ):
+        raise KindctlError(
+            "publication record does not bind the live attempt ConfigMap and cluster"
+        )
     render_root = attempt / "runtime" / "flux-rendered"
     final = render_root / "flux-instance.yaml"
     final_hash = render_branch_manifest(FINAL_INSTANCE, branch, final)
@@ -1699,6 +2044,8 @@ def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
     observe_parser.add_argument("observer_args", nargs=argparse.REMAINDER)
     subparsers.add_parser("delete")
     subparsers.add_parser("residue")
+    publish_parser = subparsers.add_parser("publish")
+    publish_parser.add_argument("--no-git-write", action="store_true")
     runtime_parser = subparsers.add_parser("flux-runtime")
     runtime_parser.add_argument(
         "--direction",
@@ -1732,6 +2079,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif arguments.command in {
         "create",
         "delete",
+        "publish",
         "flux-runtime",
         "flux-finalize",
         "flux-offline",
@@ -1747,6 +2095,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 record.update(create(attempt))
             elif arguments.command == "delete":
                 delete(attempt)
+            elif arguments.command == "publish":
+                record.update(
+                    publish_images(
+                        kubeconfig,
+                        attempt,
+                        no_git_write=arguments.no_git_write,
+                    )
+                )
             elif arguments.command == "flux-runtime":
                 record.update(
                     qualify_flux_runtime(

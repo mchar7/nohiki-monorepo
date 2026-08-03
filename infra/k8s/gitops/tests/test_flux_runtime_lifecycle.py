@@ -62,6 +62,11 @@ def test_runtime_commands_reach_their_effectful_entrypoints(
     monkeypatch.setattr(runner, "command_record", command_record)
     monkeypatch.setattr(
         runner,
+        "publish_images",
+        lambda *_args, **kwargs: calls.append(("publish", kwargs["no_git_write"])) or {},
+    )
+    monkeypatch.setattr(
+        runner,
         "qualify_flux_runtime",
         lambda *_args: calls.append(("runtime", _args[-1])) or {},
     )
@@ -76,10 +81,12 @@ def test_runtime_commands_reach_their_effectful_entrypoints(
         lambda *_args: calls.append(("offline", None)) or {},
     )
     attempt_args = ("--attempt-dir", str(tmp_path))
+    assert runner.main((*attempt_args, "publish", "--no-git-write")) == 0
     assert runner.main((*attempt_args, "flux-runtime", "--direction", "operator-to-core")) == 0
     publication = tmp_path / "publication.json"
     assert runner.main((*attempt_args, "flux-finalize", "--publication-record", str(publication))) == 0
     assert runner.main((*attempt_args, "flux-offline")) == 0
+    assert ("publish", True) in calls
     assert ("runtime", "operator-to-core") in calls
     assert ("finalize", publication) in calls
     assert ("offline", None) in calls
@@ -236,8 +243,25 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
     monkeypatch.setenv("NOHIKI_RUNTIME_CONTROL_BRANCH", "runtime-control/local/test")
     monkeypatch.setenv("NOHIKI_REVIEWED_TOPIC_SHA", _REVISION)
     monkeypatch.setattr(runner, "validate_runtime_control", lambda *_: None)
-    monkeypatch.setattr(runner, "validate_publication_record", lambda *_: {})
-    monkeypatch.setattr(runner, "runtime_binding", lambda *_: ({}, "cluster-uid"))
+    monkeypatch.setattr(
+        runner,
+        "validate_publication_record",
+        lambda *_: {
+            "clusterUid": "cluster-uid",
+            "configMapUid": "configmap-uid",
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "runtime_binding",
+        lambda *_: ({"attempt": 4}, "cluster-uid"),
+    )
+    bindings: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        runner,
+        "publication_configmap_binding",
+        lambda *args: bindings.append(args) or "configmap-uid",
+    )
     monkeypatch.setattr(runner, "render_branch_manifest", lambda *_: "4" * 64)
     monkeypatch.setattr(runner, "flux_source_revision", lambda *_: "refs/heads/test@sha1:" + _REVISION)
     monkeypatch.setattr(runner, "wait_flux_instance", lambda *_: "flux-uid")
@@ -254,7 +278,7 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
         nonlocal gets
         gets += 1
         if "configmap" in argv:
-            return {"metadata": {"uid": "configmap-uid"}}
+            pytest.fail("finalize must use the exact ConfigMap binding guard")
         if "fluxinstance" in argv:
             return {
                 "metadata": {"uid": "flux-uid"},
@@ -287,7 +311,44 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
     assert [next(item for item in argv if item.startswith("kustomization/")) for argv in generation_waits] == [
         f"kustomization/{name}" for name in expected
     ]
-    assert gets == len(runner.FULL_CHILDREN) * 2 + 6
+    assert bindings
+    assert bindings[0][3:5] == (4, "cluster-uid")
+    assert gets == len(runner.FULL_CHILDREN) * 2 + 5
+
+
+def test_finalize_rejects_a_replaced_attempt_configmap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    monkeypatch.setenv("NOHIKI_RUNTIME_CONTROL_BRANCH", "runtime-control/local/test")
+    monkeypatch.setenv("NOHIKI_REVIEWED_TOPIC_SHA", _REVISION)
+    monkeypatch.setattr(runner, "validate_runtime_control", lambda *_: None)
+    monkeypatch.setattr(
+        runner,
+        "validate_publication_record",
+        lambda *_: {
+            "clusterUid": "cluster-uid",
+            "configMapUid": "recorded-configmap",
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "runtime_binding",
+        lambda *_: ({"attempt": 4}, "cluster-uid"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "publication_configmap_binding",
+        lambda *_: "replacement-configmap",
+    )
+
+    with pytest.raises(runner.KindctlError, match="live attempt ConfigMap"):
+        runner.finalize_flux_runtime(
+            tmp_path / "kubeconfig",
+            tmp_path,
+            tmp_path / "publication.json",
+        )
 
 
 def test_core_install_observes_root_readiness_and_revision(
