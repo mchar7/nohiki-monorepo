@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tempo-monolithic.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tempo-monolithic.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "tempo-monolithic.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 3200
+      targetPort: http
+    - name: grpc
+      port: 9095
+      targetPort: grpc
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tempo-monolithic.fullname" . }}-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tempo-monolithic.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "tempo-monolithic.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: grpc
+      port: 9095
+      targetPort: grpc

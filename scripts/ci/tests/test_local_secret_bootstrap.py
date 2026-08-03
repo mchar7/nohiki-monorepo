@@ -1508,7 +1508,7 @@ def test_local_object_store_consumers_use_the_single_storage_secret() -> None:
     local = load_mapping(LOCAL_VALUES)
     reference = [{"secretRef": {"name": "observability-storage-credentials"}}]
     assert mapping_at(base, "mimir-distributed", "global")["extraEnvFrom"] == reference
-    assert mapping_at(base, "tempo-distributed", "global")["extraEnvFrom"] == reference
+    assert mapping_at(base, "tempo")["extraEnvFrom"] == reference
     assert mapping_at(local, "loki", "write")["extraEnvFrom"] == reference
     assert mapping_at(local, "loki", "read")["extraEnvFrom"] == reference
     assert mapping_at(local, "loki", "backend")["extraEnvFrom"] == reference

@@ -57,20 +57,21 @@ _UPGRADED_IMAGE_COUNTS = {
     "docker.io/grafana/loki:3.6.12@sha256:2483b71b28b15dee230f85512cae2b20c4b5f6e98a6eabe686cbccfa5ea3ba4a": 3,
     "docker.io/grafana/loki-canary:3.6.12@sha256:1e9bfcff38679ecf9de4e3492050c81b6c64e64421ac13d9a4f936b7d1836179": 1,
     "docker.io/grafana/mimir:3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d": 15,
-    "docker.io/grafana/tempo:2.9.3@sha256:0d355cc7d9d23f93641a999fd9432084acf647f7731c732ed80f7b9a122ec85b": 5,
-    "docker.io/memcached:1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7": 3,
+    "docker.io/grafana/tempo:2.9.3@sha256:0d355cc7d9d23f93641a999fd9432084acf647f7731c732ed80f7b9a122ec85b": 1,
+    "docker.io/memcached:1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7": 2,
     "docker.io/prom/memcached-exporter:v0.15.5@sha256:92a6ad5a3d3e2dffc75efd4e18d1470fa5703dd79b6bace53fe11312b634578e": 2,  # noqa: E501
 }
 _LOCAL_DISABLED_IMAGES = {
     "docker.io/grafana/loki-canary:3.6.12@sha256:1e9bfcff38679ecf9de4e3492050c81b6c64e64421ac13d9a4f936b7d1836179",
     "docker.io/prom/memcached-exporter:v0.15.5@sha256:92a6ad5a3d3e2dffc75efd4e18d1470fa5703dd79b6bace53fe11312b634578e",
+    "docker.io/memcached:1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7",
 }
 _LOCAL_IMAGE_COUNTS = {
     "docker.io/grafana/loki:3.6.12@sha256:2483b71b28b15dee230f85512cae2b20c4b5f6e98a6eabe686cbccfa5ea3ba4a": 3,
     "docker.io/grafana/loki-canary:3.6.12@sha256:1e9bfcff38679ecf9de4e3492050c81b6c64e64421ac13d9a4f936b7d1836179": 0,
     "docker.io/grafana/mimir:3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d": 8,
-    "docker.io/grafana/tempo:2.9.3@sha256:0d355cc7d9d23f93641a999fd9432084acf647f7731c732ed80f7b9a122ec85b": 5,
-    "docker.io/memcached:1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7": 1,
+    "docker.io/grafana/tempo:2.9.3@sha256:0d355cc7d9d23f93641a999fd9432084acf647f7731c732ed80f7b9a122ec85b": 1,
+    "docker.io/memcached:1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7": 0,
     "docker.io/prom/memcached-exporter:v0.15.5@sha256:92a6ad5a3d3e2dffc75efd4e18d1470fa5703dd79b6bace53fe11312b634578e": 0,  # noqa: E501
 }
 _EXPECTED_SCAN_FINDINGS = {
@@ -282,6 +283,7 @@ def test_local_mimir_and_loki_disable_replica_amplification() -> None:
 
 def test_loki_and_cache_images_are_aligned_without_config_changes() -> None:
     values = load_mapping(_CHART / "values.yaml")
+    tempo = load_mapping(_CHART / "charts" / "tempo-monolithic" / "values.yaml")
     match values:
         case {
             "loki": {
@@ -292,20 +294,24 @@ def test_loki_and_cache_images_are_aligned_without_config_changes() -> None:
                 "memcached": {"image": {"tag": str(memcached_tag)}},
                 "deploymentMode": deployment_mode,
             },
-            "tempo-distributed": {
-                "memcached": {"image": {"tag": str(tempo_cache_tag)}},
-                "tempo": {"structuredConfig": {"multitenancy_enabled": tempo_multitenancy}},
-            },
             "mimir-distributed": {"mimir": {"structuredConfig": {"multitenancy_enabled": mimir_multitenancy}}},
         }:
             pass
         case _:
             pytest.fail("observability values must contain the expected image and tenancy fields")
+    match tempo:
+        case {
+            "image": {"tag": str(tempo_tag)},
+            "config": {"multitenancy_enabled": tempo_multitenancy},
+        }:
+            pass
+        case _:
+            pytest.fail("Tempo values must contain the expected image and tenancy fields")
     cache_tags = {chunks_cache_tag, results_cache_tag, memcached_tag}
 
     assert loki_tag.split("@", 1)[0] == canary_tag.split("@", 1)[0]
     assert cache_tags == {"1.6.45-alpine@sha256:c29847751abb41f4c268c84fb3087fee05d4edcbda44409ccb5086e26148e8a7"}
-    assert tempo_cache_tag == next(iter(cache_tags))
+    assert _PINNED_TAG.fullmatch(tempo_tag)
     assert deployment_mode == "SimpleScalable"
     assert auth_enabled is True
     assert mimir_multitenancy is True

@@ -174,6 +174,77 @@ capabilities:
 {{- end }}
 
 {{/*
+Wait for an in-cluster object-storage bucket before starting an S3-backed service.
+*/}}
+{{- define "nohiki-common.objectStorageInitContainer" -}}
+{{- $global := .Values.global | default dict }}
+{{- $globalS3 := $global.s3 | default dict }}
+{{- $serviceS3 := .Values.s3 | default dict }}
+{{- if and ($serviceS3.enabled | default false) (eq ($globalS3.endpoint | default "") "http://nohiki-rustfs:9000") }}
+{{- $secrets := $global.secrets | default dict }}
+{{- $readinessImage := required "global.s3.readinessImage is required for an in-cluster S3 consumer" $globalS3.readinessImage }}
+- name: wait-for-object-storage
+  image: {{ printf "%s:%s" (required "global.s3.readinessImage.repository is required" $readinessImage.repository) (required "global.s3.readinessImage.tag is required" $readinessImage.tag) | quote }}
+  imagePullPolicy: IfNotPresent
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop:
+        - ALL
+  env:
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: {{ $secrets.s3SecretName | default "nohiki-s3-credentials" }}
+          key: access_key
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: {{ $secrets.s3SecretName | default "nohiki-s3-credentials" }}
+          key: secret_key
+    - name: AWS_REGION
+      value: {{ $globalS3.region | default "local" | quote }}
+    - name: AWS_EC2_METADATA_DISABLED
+      value: "true"
+    - name: S3_ENDPOINT
+      value: {{ $globalS3.endpoint | quote }}
+    - name: S3_BUCKETS
+      value: {{ required "s3.bucket is required for an in-cluster S3 consumer" $serviceS3.bucket | quote }}
+  command:
+    - /bin/sh
+    - -ec
+  args:
+    - |
+      max_attempts=60
+      for bucket in $S3_BUCKETS; do
+        attempt=1
+        while [ "$attempt" -le "$max_attempts" ]; do
+          if aws --endpoint-url "$S3_ENDPOINT" s3api head-bucket --bucket "$bucket" --region "$AWS_REGION" >/dev/null 2>&1; then
+            break
+          fi
+          if [ "$attempt" -eq "$max_attempts" ]; then
+            echo "Object-storage bucket $bucket was not ready after $max_attempts attempts" >&2
+            exit 1
+          fi
+          echo "Waiting for object-storage bucket $bucket (attempt $attempt/$max_attempts)"
+          attempt=$((attempt + 1))
+          sleep 2
+        done
+      done
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+{{- end }}
+{{- end }}
+
+{{/*
 All init containers (user-defined + system-generated).
 Combines .Values.initContainers with auto-generated wait-for containers.
 */}}
@@ -183,6 +254,8 @@ Combines .Values.initContainers with auto-generated wait-for containers.
 {{- with .Values.initContainers }}
 {{- $initContainers = concat $initContainers . }}
 {{- end }}
+{{- $objectStorageInitContainer := include "nohiki-common.objectStorageInitContainer" . | fromYamlArray }}
+{{- $initContainers = concat $initContainers $objectStorageInitContainer }}
 {{- /* Output combined init containers */}}
 {{- if $initContainers }}
 {{- toYaml $initContainers }}

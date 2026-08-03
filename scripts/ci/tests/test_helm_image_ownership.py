@@ -6,15 +6,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
-from _documents import load_jsonc, load_mapping
+from _documents import load_jsonc, load_mapping, mapping_at
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RENOVATE = _ROOT / ".github" / "renovate.json5"
 _MAIN_VALUES = Path("infra/k8s/helm/values.yaml")
 _PRODUCTION_DIGESTS = Path("infra/k8s/helm/values.prod.digests.yaml")
+_LOCAL_VALUES = Path("infra/k8s/helm/values.local.yaml")
 _HELM_ROOTS = (_ROOT / "infra" / "k8s" / "helm", _ROOT / "infra" / "k8s" / "helm-foundation")
 _PINNED_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}@sha256:[0-9a-f]{64}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
 _CANONICAL_SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 
 type _Location = tuple[str | int, ...]
@@ -149,6 +151,13 @@ def _owners(site: _ImageSite) -> frozenset[_Owner]:
             owners.add("inherited")
     if site.location[-2:] == ("global", "imageTag"):
         owners.add("inherited")
+    if (
+        site.path == _LOCAL_VALUES
+        and isinstance(site.value, str)
+        and _PINNED_IMAGE.fullmatch(site.value) is not None
+        and ("initContainers" in site.location or any("storage-wait" in str(part) for part in site.location))
+    ):
+        owners.add("inherited")
     return frozenset(owners)
 
 
@@ -195,6 +204,22 @@ def test_every_helm_image_site_has_exactly_one_owner() -> None:
     assert sites, "no Helm image sites discovered"
     failures = [f"{_description(site)} has owners {sorted(_owners(site))}" for site in sites if len(_owners(site)) != 1]
     assert not failures, "every Helm image site must have exactly one owner:\n" + "\n".join(failures)
+
+
+def test_local_init_container_images_inherit_the_canonical_readiness_pin() -> None:
+    main_values = load_mapping(_ROOT / _MAIN_VALUES)
+    readiness_image = cast(dict[str, str], mapping_at(main_values, "global", "s3", "readinessImage"))
+    expected = f"{readiness_image['repository']}:{readiness_image['tag']}"
+    inherited_sites = [
+        site
+        for site in _image_sites()
+        if site.path == _LOCAL_VALUES
+        and isinstance(site.value, str)
+        and _PINNED_IMAGE.fullmatch(site.value) is not None
+        and "inherited" in _owners(site)
+    ]
+    assert inherited_sites
+    assert {site.value for site in inherited_sites} == {expected}
 
 
 def test_manual_pairs_are_exactly_the_helm_values_dependencies_renovate_excludes() -> None:

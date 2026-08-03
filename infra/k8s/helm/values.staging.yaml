@@ -278,33 +278,20 @@ mimir-distributed:
   ruler:
     replicas: 1
 
-tempo-distributed:
-  tempo:
-    structuredConfig:
+tempo:
+  config:
+    storage:
+      trace:
+        backend: azure
+        azure:
+          storage_account_name: nohikistagingobs
+          container_name: nohiki-staging-tempo
+    metrics_generator:
       storage:
-        trace:
-          backend: azure
-          azure:
-            storage_account_name: nohikistagingobs
-            container_name: nohiki-staging-tempo
-      metrics_generator:
-        storage:
-          remote_write:
-            - url: http://nohiki-mimir-nginx.nohiki-staging.svc:80/api/v1/push
-              headers:
-                X-Scope-OrgID: nohiki
-  distributor:
-    replicas: 2
-  ingester:
-    replicas: 2
-  querier:
-    replicas: 2
-  query_frontend:
-    replicas: 1
-  compactor:
-    replicas: 1
-  metrics_generator:
-    replicas: 1
+        remote_write:
+          - url: http://nohiki-mimir-nginx.nohiki-staging.svc:80/api/v1/push
+            headers:
+              X-Scope-OrgID: nohiki
 
 loki:
   loki:
