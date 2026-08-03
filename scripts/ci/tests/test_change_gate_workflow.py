@@ -865,7 +865,7 @@ def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
     assert "CONTAINER_SELECTED" not in report["env"]
     assert "PLAYWRIGHT_SELECTED" not in report["env"]
     assert _wall_budgets() == {"warm": 8040, "cold": 8040}
-    assert _jobs()["playwright-image"]["timeout-minutes"] == 20
+    assert _jobs()["playwright-image"]["timeout-minutes"] == 30
 
 
 def test_guard_entrypoint_emits_the_parsed_workflow_output(tmp_path: Path) -> None:

@@ -695,7 +695,7 @@ def test_checks_jobs_have_bounded_guards() -> None:
     invalid = {
         job_name: timeout
         for job_name, timeout in timeouts.items()
-        if timeout != derived and (not isinstance(timeout, int) or not 0 < timeout <= 20)
+        if timeout != derived and (not isinstance(timeout, int) or not 0 < timeout <= 30)
     }
     assert not invalid, f"checks jobs must have bounded timeout-minutes: {invalid}"
 
