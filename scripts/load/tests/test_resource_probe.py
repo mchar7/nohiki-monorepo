@@ -77,12 +77,16 @@ def test_pod_summary_preserves_resource_and_oom_evidence_without_env() -> None:
     summarized = resource_probe.summarize_pods(pods, metrics)
 
     assert len(summarized) == 1
-    pod = summarized[0]
-    container = pod["containers"][0]
-    assert container["requests"]["memoryBytes"] == 64 * 1024**2
-    assert container["usage"]["memoryBytes"] == 96 * 1024**2
+    pod = resource_probe.require_object(summarized[0], "pod")
+    containers = resource_probe.list_at(pod, "containers")
+    container = resource_probe.require_object(containers[0], "container")
+    requests = resource_probe.object_at(container, "requests")
+    usage = resource_probe.object_at(container, "usage")
+    termination = resource_probe.object_at(container, "lastTermination")
+    assert requests["memoryBytes"] == 64 * 1024**2
+    assert usage["memoryBytes"] == 96 * 1024**2
     assert container["missingCpuLimit"] is True
-    assert container["lastTermination"]["reason"] == "OOMKilled"
+    assert termination["reason"] == "OOMKilled"
     assert "must-not-leak" not in repr(summarized)
 
 
