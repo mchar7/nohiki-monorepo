@@ -113,6 +113,20 @@ def _request(url: str) -> tuple[int, bytes, str]:
         connection.close()
 
 
+def _daemon_host() -> str | None:
+    """Hostname of a remote container daemon, or None when the daemon is local.
+
+    Under a remote daemon (dind on the self-hosted runners), published ports bind
+    in the daemon's network namespace, so loopback publishing and loopback probing
+    both name the wrong namespace.
+    """
+    endpoint = os.environ.get("DOCKER_HOST", "")
+    parsed = urllib.parse.urlsplit(endpoint)
+    if parsed.scheme in {"tcp", "http", "https"} and parsed.hostname:
+        return parsed.hostname
+    return None
+
+
 def _wait_for_http(runtime: str, container: str, url: str) -> tuple[int, bytes, str]:
     parsed = urllib.parse.urlsplit(url)
     assert parsed.hostname is not None
@@ -206,7 +220,7 @@ def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
                 "--env",
                 f"BFF_UPSTREAM=http://{upstream}:8081",
                 "--publish",
-                "127.0.0.1::8080",
+                "127.0.0.1::8080" if _daemon_host() is None else "8080",
                 image,
             ],
             check=True,
@@ -219,8 +233,8 @@ def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
             capture_output=True,
             text=True,
         ).stdout.strip()
-        port = port_output.rsplit(":", maxsplit=1)[1]
-        origin = f"http://127.0.0.1:{port}"
+        port = port_output.splitlines()[0].rsplit(":", maxsplit=1)[1]
+        origin = f"http://{_daemon_host() or '127.0.0.1'}:{port}"
         assert _wait_for_http(runtime, frontend, f"{origin}/healthz") == (
             200,
             b"",
