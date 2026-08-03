@@ -192,6 +192,7 @@
           just
           git
           jq
+          k6
           yq-go
           curl
           ripgrep # Deterministic Skylos grep verification
