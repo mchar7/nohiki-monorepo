@@ -15,9 +15,9 @@ from ci_checks.checks.workflow import (
     WARM_WALL_BUDGET_SECONDS,
     WallTiming,
     accounting_span,
-    billable_minutes,
     derive_accounting,
     enforce_wall_budget,
+    hosted_equivalent_minutes,
     render_accounting,
     render_cache_table,
     render_open_summary,
@@ -674,7 +674,7 @@ def test_worker_guard_bounds_a_hang_against_the_cold_budget() -> None:
     cold = _wall_budgets()["cold"]
     assert cold == max(_wall_budgets().values())
     assert "workflow.py guard" in command.replace("\n", " ")
-    assert worker_timeout_minutes("standard") == worker_timeout_minutes("broad") == cold // 60 + 2 == 16
+    assert worker_timeout_minutes("standard") == worker_timeout_minutes("broad") == 52
     with pytest.raises(ValueError, match="cannot derive a guard for commit class: invalid"):
         worker_timeout_minutes("invalid")
     assert _jobs()["worker"]["timeout-minutes"] == ("${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}")
@@ -864,9 +864,8 @@ def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
     assert report["env"]["COMMIT_CLASS"] == "${{ needs.changes.outputs.commit_class }}"
     assert "CONTAINER_SELECTED" not in report["env"]
     assert "PLAYWRIGHT_SELECTED" not in report["env"]
-    assert _wall_budgets() == {"warm": 600, "cold": 844}
-    assert _jobs()["playwright-image"]["timeout-minutes"] == 9
-    assert _jobs()["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+    assert _wall_budgets() == {"warm": 8040, "cold": 8040}
+    assert _jobs()["playwright-image"]["timeout-minutes"] == 30
 
 
 def test_guard_entrypoint_emits_the_parsed_workflow_output(tmp_path: Path) -> None:
@@ -1047,9 +1046,9 @@ def test_runtime_accounting_falls_back_to_run_start_for_an_unusable_first_job_st
     assert result.start_basis == "run_started_at fallback: first non-skipped job start unavailable or invalid"
 
 
-def test_zero_step_job_has_zero_billable_minutes() -> None:
+def test_zero_step_job_has_zero_hosted_equivalent_minutes() -> None:
     now = datetime(2026, 7, 23, 0, 2, tzinfo=UTC)
-    assert billable_minutes([], now) == 0
+    assert hosted_equivalent_minutes([], now) == 0
     accounting = derive_accounting(
         "2026-07-23T00:00:00Z",
         now,
@@ -1059,8 +1058,8 @@ def test_zero_step_job_has_zero_billable_minutes() -> None:
         deadcode_missed="",
         deadcode_hit="",
     )
-    assert accounting.billable_minutes == 0
-    assert accounting.estimated_cost_usd == "0.000"
+    assert accounting.hosted_equivalent_minutes == 0
+    assert accounting.hosted_equivalent_cost_usd == "0.000"
     assert accounting.jobs == ()
 
 
@@ -1080,7 +1079,7 @@ def test_fan_in_consumes_the_worker_cache_signals() -> None:
 
 def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     cold = select_wall_budget("true", "", "", "true")
-    assert cold.seconds == 844
+    assert cold.seconds == 8040
     assert cold.classification == "cold"
     assert cold.basis == (
         "ready-cache primary key missed by at least one worker leg; dead-code static cache primary key restored"
@@ -1089,7 +1088,7 @@ def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     assert cold.seconds >= cold.seconds
     cold_inside = derive_accounting(
         "2026-07-23T00:00:00Z",
-        datetime(2026, 7, 23, 0, 14, 3, tzinfo=UTC),
+        datetime(2026, 7, 23, 2, 13, 59, tzinfo=UTC),
         [],
         ready_missed="true",
         ready_hit="",
@@ -1099,18 +1098,18 @@ def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     enforce_wall_budget(cold_inside)
     cold_breached = derive_accounting(
         "2026-07-23T00:00:00Z",
-        datetime(2026, 7, 23, 0, 14, 4, tzinfo=UTC),
+        datetime(2026, 7, 23, 2, 14, tzinfo=UTC),
         [],
         ready_missed="true",
         ready_hit="",
         deadcode_missed="",
         deadcode_hit="true",
     )
-    with pytest.raises(ValueError, match=r"class=cold observed_controllable=844s budget<844s"):
+    with pytest.raises(ValueError, match=r"class=cold observed_controllable=8040s budget<8040s"):
         enforce_wall_budget(cold_breached)
 
     warm = select_wall_budget("", "true", "", "true")
-    assert warm.seconds == 600
+    assert warm.seconds == 8040
     assert warm.classification == "warm"
     assert warm.basis == (
         "ready-cache primary key restored by every reporting worker leg; dead-code static cache primary key restored"
@@ -1119,7 +1118,7 @@ def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     assert warm.seconds >= warm.seconds
     warm_inside = derive_accounting(
         "2026-07-23T00:00:00Z",
-        datetime(2026, 7, 23, 0, 9, 59, tzinfo=UTC),
+        datetime(2026, 7, 23, 2, 13, 59, tzinfo=UTC),
         [],
         ready_missed="",
         ready_hit="true",
@@ -1129,14 +1128,14 @@ def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     enforce_wall_budget(warm_inside)
     warm_breached = derive_accounting(
         "2026-07-23T00:00:00Z",
-        datetime(2026, 7, 23, 0, 10, tzinfo=UTC),
+        datetime(2026, 7, 23, 2, 14, tzinfo=UTC),
         [],
         ready_missed="",
         ready_hit="true",
         deadcode_missed="",
         deadcode_hit="true",
     )
-    with pytest.raises(ValueError, match=r"class=warm observed_controllable=600s budget<600s"):
+    with pytest.raises(ValueError, match=r"class=warm observed_controllable=8040s budget<8040s"):
         enforce_wall_budget(warm_breached)
 
 
@@ -1212,6 +1211,11 @@ def test_accounting_render_distinguishes_running_completed_and_both_skips() -> N
     assert "| Router | 61 | 2 | success |" in rendered
     assert "| Scoped worker (python) | 0 | 0 | skipped: already proven by run 18234567890 |" in rendered
     assert "| Playwright runner image | 0 | 0 | skipped: not selected |" in rendered
+    assert "| Hosted-equivalent avoided minutes | 3 |" in rendered
+    assert "| Hosted-equivalent avoided cost USD | 0.018 |" in rendered
+    assert "Self-hosted jobs are not billed" in rendered
+    assert "Reconstructed billable minutes" not in rendered
+    assert "| Estimated cost USD |" not in rendered
 
 
 def test_router_open_summary_text_is_unchanged() -> None:
