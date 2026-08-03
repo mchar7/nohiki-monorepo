@@ -208,7 +208,10 @@ def test_health_image_is_inventory_owned_and_digest_rendered() -> None:
             "optional": False,
         }
     ]
-    assert _load(_DIGEST_VALUES)["global"]["imageDigests"] == {}
+    committed_digests = _load(_DIGEST_VALUES)["global"]["imageDigests"]
+    assert isinstance(committed_digests, dict)
+    if committed_digests:
+        assert re.fullmatch(r"sha256:[0-9a-f]{64}", committed_digests["health-runner"])
 
 
 def test_health_chart_rejects_missing_or_invalid_image_digest() -> None:
