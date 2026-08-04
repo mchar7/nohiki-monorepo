@@ -17,7 +17,7 @@ on:
         description: "Type the selected environment name to confirm destruction"
 jobs:
   cleanup-environment:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: github.event_name == 'workflow_dispatch'
     environment: ${{ inputs.environment }}
     env:

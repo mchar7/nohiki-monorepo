@@ -38,7 +38,7 @@ on:
 
 jobs:
   check-context:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       WF_RUN_HEAD_BRANCH: "${{ github.event.workflow_run.head_branch }}"
       WF_RUN_PR_BASE_REF: "${{ github.event.workflow_run.pull_requests[0].base.ref }}"
@@ -115,7 +115,7 @@ jobs:
 
   prepare-deployment:
     needs: [ check-context ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: needs.check-context.outputs.should_deploy == 'true'
     permissions:
       deployments: write
@@ -180,7 +180,7 @@ jobs:
 
   deploy-to-aks:
     needs: [ prepare-deployment ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -381,7 +381,7 @@ jobs:
   promote-production-runtime:
     needs: [ prepare-deployment, deploy-to-aks ]
     if: needs.prepare-deployment.outputs.env_name == 'prod'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -417,7 +417,7 @@ jobs:
 
   activate-production-runtime:
     if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.head.ref == 'bot/update-production-runtime' || github.event.pull_request.head.ref == 'bot/update-production-image-digests')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -528,7 +528,7 @@ jobs:
           delete-branch: true
   report-pr-status:
     needs: [ prepare-deployment, deploy-to-aks ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       statuses: write # To create commit statuses for PRs
       deployments: write # To update GitHub Deployment status
