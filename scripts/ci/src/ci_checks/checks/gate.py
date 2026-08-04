@@ -25,6 +25,7 @@ from ci_checks.core.change_gate import (
     selected_test_packages,
 )
 from ci_checks.core.change_rules import FLAG_NAMES
+from ci_checks.core.display import GATE_LABELS
 from ci_checks.core.image_inventory import affected_images, load_inventory, write_affected_record
 from ci_checks.core.packages import REPO_ROOT, Scope, load_packages_with_deps
 
@@ -60,6 +61,11 @@ def _append(path: Path | None, text: str) -> None:
     if path is not None:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(text)
+
+
+def _label_output(outputs: dict[str, str]) -> str:
+    labels = [{"name": name, "color": color, "active": outputs[flag]} for flag, (name, color) in GATE_LABELS.items()]
+    return json.dumps(labels, separators=(",", ":"))
 
 
 _EVIDENCE_ARTIFACT = "checks-attestation"
@@ -607,9 +613,10 @@ def gate_cmd(
 
     selected_tests = selected_test_packages(decision, packages)
     outputs = render_outputs(decision, selected_tests, event)
+    emitted_outputs = outputs | {"labels": _label_output(outputs)}
     _append(
         github_output,
-        "".join(f"{key}={value}\n" for key, value in outputs.items()),
+        "".join(f"{key}={value}\n" for key, value in emitted_outputs.items()),
     )
     text = render_summary(
         decision,
