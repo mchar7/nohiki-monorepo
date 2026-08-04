@@ -641,7 +641,7 @@ def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
     cache_inputs = cast(dict[str, object], restore["with"])
     assert cache_inputs["path"] == "${{ github.workspace }}/.skylos"
     key = str(cache_inputs["key"])
-    assert key.startswith("skylos-static-v4-")
+    assert key.startswith("skylos-static-v5-")
     reusability_fields = set(re.findall(r"\$\{\{\s*(.*?)\s*\}\}", key))
     assert reusability_fields == {
         "runner.os",
@@ -658,7 +658,10 @@ def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
         "inputs.head-sha",
     )
     assert all(identifier not in key for identifier in per_commit_identifiers)
-    assert "restore-keys" not in cache_inputs
+    assert cache_inputs["restore-keys"] == (
+        "skylos-static-v5-${{ runner.os }}-${{ hashFiles('uv.lock') }}-"
+        "${{ inputs.commit-class }}-${{ steps.skylos-cache-identity.outputs.scope-paths }}-"
+    )
     assert str(restore["uses"]).startswith("actions/cache/restore@")
 
     worker = _workflow_jobs(_CHECKS)["worker"]
