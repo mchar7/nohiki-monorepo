@@ -31,15 +31,12 @@ from the last N days and streams them back in batches via the callback topic.
 ### Events Consumed
 
 - **`JOB_INGEST_LISTING_DISCOVERED`** (`job-ingest.fct.listing-discovered.v1`, `ListingDiscovered`):
-  The first signal from the ingest pipeline. The handler extracts the URL and `content_hash` from
-  the raw scraped data and runs pre-enrichment deduplication: if the URL is new, it inserts a
-  skeleton record and publishes `job-listing.fct.accepted.v1` to trigger LLM enrichment; if the
-  URL exists but the content hash changed, it updates the hash and re-triggers enrichment; if the
-  URL exists with the same hash and embeddings are present, it publishes
-  `job-listing.fct.duplicate-detected.v1` and stops. Consumer group: `settings.kafka.consumer_group`
-  (default, configured via `KAFKA__CONSUMER_GROUP`). Idempotent via `UNIQUE` constraint on
-  `listing_url` -- concurrent inserts for the same URL raise `IntegrityError` and are safely
-  discarded.
+  The first signal from the ingest pipeline. The handler records or reuses an in-flight ingest
+  saga for the listing URL. New sagas publish `job-listing.fct.accepted.v1` to trigger enrichment;
+  repeated deliveries reuse the saga, and event IDs prevent processing the same delivery twice.
+  Consumer group: `settings.kafka.consumer_group` (default, configured via
+  `KAFKA__CONSUMER_GROUP`). A partial unique index on the listing URL makes concurrent saga inserts
+  idempotent.
 
 - **`JOB_INGEST_ENRICHMENT_COMPLETED`** (`job-ingest.fct.enrichment-completed.v1`, `EnrichmentCompleted`):
   Carries the LLM-enriched `StoredListing` proto: structured skills, seniority, work arrangement,
@@ -64,11 +61,6 @@ from the last N days and streams them back in batches via the callback topic.
   new or its content changed. This event is consumed by job-ingest-enrichment-service to trigger
   LLM enrichment of the listing.
 
-- **`job-listing.fct.duplicate-detected.v1`** (`DuplicateDetected`): Published via the transactional
-  outbox when an incoming discovered listing matches an already-stored, already-enriched record
-  (same URL, same `raw_content_hash`, embeddings present). Carries the existing `ListingSnapshot`
-  so downstream consumers can reference the canonical record without re-querying.
-
 - **`job-listing.cdc.listing-created.v1`** (`ListingCreated`): Published via the transactional
   outbox after an enriched listing is banked (whether new or updated, the `was_updated` flag
   distinguishes). Carries the full `ListingSnapshot` including pre-computed embeddings and
@@ -90,8 +82,8 @@ from the last N days and streams them back in batches via the callback topic.
 
 ### Notable Patterns
 
-**Transactional outbox**: All CDC and fact events (`listing-accepted`, `duplicate-detected`,
-`listing-created`, `listing-updated`, `listing-deleted`) are written to the `outbox` table in the
+**Transactional outbox**: CDC and fact events (`listing-accepted`, `listing-created`,
+`listing-updated`, `listing-deleted`) are written to the `outbox` table in the
 same database transaction as the domain row change. Debezium's PostgreSQL connector reads the WAL
 and publishes to Kafka. This guarantees exactly-once delivery even if the service crashes after
 committing.

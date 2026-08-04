@@ -211,8 +211,7 @@ Canonical job listing lifecycle events. Consumed by `bff-service`, `job-correlat
 | `ListingUpdated` | Event | `listings.cdc.listing-updated.v1` |
 | `ListingDeleted` | Event | `listings.cdc.listing-deleted.v1` |
 | `ListingAccepted` | Event | `job-listing.fct.accepted.v1` |
-| `DuplicateDetected` | Event | `listings.fct.duplicate-detected.v1` |
-| `ListingSnapshot` | Snapshot | Embedded in `ListingCreated`, `ListingUpdated`, `DuplicateDetected` |
+| `ListingSnapshot` | Snapshot | Embedded in `ListingCreated` and `ListingUpdated` |
 | `ListingNotificationSnapshot` | Snapshot | Minimal listing data for notification templates |
 | `BackfillRequested` | Command | `job-listing.cmd.backfill-requested.v1` |
 | `BackfillCallback` | Callback | Dynamic (from `CommandHeader.callback_topic`) |

@@ -3,11 +3,6 @@
 Publishers are available at module level for use by services.
 Handlers are imported lazily in start_event_consumer() to avoid circular imports
 with services that need publishers.
-
-``publish_duplicate_detected_event`` has no in-tree caller today; it is kept
-exported because the ``DuplicateDetected`` topic is part of the listings
-domain contract, and re-introducing the publish path should not require
-importing from a private path.
 """
 
 from nohiki_observability import get_logger
@@ -18,7 +13,6 @@ from job_storage_service.events.publishers import (
     OutboxContext,
     PublishContext,
     build_listing_snapshot,
-    publish_duplicate_detected_event,
     publish_listing_accepted_event,
     publish_listing_created_event,
     publish_listing_deleted_event,
@@ -29,7 +23,6 @@ __all__ = [
     "OutboxContext",
     "PublishContext",
     "build_listing_snapshot",
-    "publish_duplicate_detected_event",
     "publish_listing_accepted_event",
     "publish_listing_created_event",
     "publish_listing_deleted_event",

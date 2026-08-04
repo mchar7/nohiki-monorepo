@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from nohiki.common.v1 import (
@@ -14,7 +14,6 @@ from nohiki.common.v1 import (
     Location,
 )
 from nohiki.job.listing.v1 import (
-    DuplicateDetected,
     ListingAccepted,
     ListingCreated,
     ListingDeleted,
@@ -204,45 +203,6 @@ async def publish_listing_accepted_event(
     )
     logger.debug(
         "Published listing accepted event via outbox",
-        listing_id=ctx.listing_id,
-        correlation_id=ctx.correlation_id,
-    )
-
-
-async def publish_duplicate_detected_event(
-    ctx: PublishContext,
-    existing_job: Listing,
-) -> None:
-    """Publish duplicate detected event via outbox pattern."""
-    updated_listing_ref = ListingReference(
-        listing_url=ctx.listing_reference.listing_url,
-        listing_id=ctx.listing_id,
-        external_listing_id=ctx.listing_reference.external_listing_id,
-        source=ctx.listing_reference.source,
-    )
-
-    existing_snapshot = build_listing_snapshot(existing_job)
-
-    event = DuplicateDetected(
-        metadata=create_event_metadata(settings.service_name, ctx.correlation_id),
-        listing=updated_listing_ref,
-        existing_listing_id=ctx.listing_id,
-        first_seen_at=datetime.now(UTC),
-        existing_listing_snapshot=existing_snapshot,
-    )
-
-    await ctx.outbox.write_event(
-        db=ctx.db,
-        params=OutboxEventParams(
-            aggregate_type=AGGREGATE_TYPE,
-            aggregate_id=ctx.listing_id,
-            event_type=Topics.JOB_LISTING_DUPLICATE_DETECTED,
-            correlation_id=ctx.correlation_id,
-        ),
-        event=event,
-    )
-    logger.debug(
-        "Published duplicate detected event via outbox",
         listing_id=ctx.listing_id,
         correlation_id=ctx.correlation_id,
     )

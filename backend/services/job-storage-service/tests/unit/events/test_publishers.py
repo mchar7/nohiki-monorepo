@@ -12,7 +12,6 @@ from job_storage_service.events.publishers import (
     PublishContext,
     _truncate_description,
     build_listing_snapshot,
-    publish_duplicate_detected_event,
     publish_listing_accepted_event,
     publish_listing_created_event,
     publish_listing_deleted_event,
@@ -502,38 +501,6 @@ class TestPublishContext:
         call = mock_outbox.write_event.await_args
         assert call is not None
         assert call.kwargs["params"].correlation_id is None
-
-
-class TestPublishDuplicateDetectedEvent:
-    """Tests for publish_duplicate_detected_event async function."""
-
-    @pytest.mark.asyncio
-    async def test_publishes_event(self, sample_listing: Listing) -> None:
-        """Test publishing duplicate detected event."""
-        mock_db = create_mock_session()
-        mock_outbox = MagicMock()
-        mock_outbox.write_event = AsyncMock()
-
-        listing_ref = ListingReference(
-            listing_url="https://example.com/job/123",
-            listing_id="listing-123",
-            external_listing_id="ext-123",
-            source=JobBoardSource.INDEED,
-        )
-
-        ctx = PublishContext(
-            db=mock_db,
-            outbox=mock_outbox,
-            listing_id="listing-123",
-            listing_reference=listing_ref,
-            correlation_id="corr-456",
-        )
-
-        with patch("job_storage_service.events.publishers.get_settings") as mock_settings:
-            mock_settings.return_value.service_name = "job-storage-service"
-            await publish_duplicate_detected_event(ctx, sample_listing)
-
-        mock_outbox.write_event.assert_awaited_once()
 
 
 class TestPublishListingCreatedEvent:
