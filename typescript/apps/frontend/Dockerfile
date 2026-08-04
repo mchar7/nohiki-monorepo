@@ -1,5 +1,5 @@
-# syntax=docker/dockerfile:1.16@sha256:e2dd261f92e4b763d789984f6eab84be66ab4f5f08052316d8eb8f173593acf7
-FROM docker.io/library/node:26.5.0-alpine@sha256:c9f02360d2bc66e709b300214395588acd2d3603f600db8141117e67c0faf4ff AS build
+# syntax=docker/dockerfile:1.26@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+FROM docker.io/library/node:26.5.1-alpine@sha256:221f4d1edb150c0ddf3c61c1f053cd3a59ee0fe42f54cb687a7db24e97da6c46 AS build
 
 WORKDIR /workspace
 
@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 RUN pnpm --filter nohiki-frontend build
 
-FROM docker.io/library/caddy:2.10.2-alpine@sha256:d8c17a862962def15cde69863a3a463f25a2664942eafd7bdbf050e9c3116b83 AS runtime
+FROM docker.io/library/caddy:2.11.4-alpine@sha256:98eb57d882ccd5213d1688764db10c1ca2c58a1ca3a6717a3411ad798f7a423a AS runtime
 
 COPY --chmod=0444 typescript/apps/frontend/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /workspace/typescript/apps/frontend/dist /srv
