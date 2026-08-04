@@ -141,9 +141,18 @@ pre-commit:
 # Phased execution: typecheck -> tests -> hygiene
 pre-push:
   jobs:
+    - skip:
+        - run: test "${NOHIKI_GATE_ACTIVE:-0}" = 1
+      run: |
+        exec scripts/dev/env-lock.sh gate pre-push -- \
+          scripts/dev/test-run.sh gate -- \
+          env NOHIKI_GATE_ACTIVE=1 lefthook run pre-push
+
     # Scan only the commits being pushed. Whole-history scans include unrelated worktree branches.
     # No glob: secrets can appear in any file type, so path filtering would create blind spots.
     - name: secrets-scan
+      skip: &unless_gate_active
+        - run: test "${NOHIKI_GATE_ACTIVE:-0}" != 1
       run: |
         set -eu
         refs=$(cat)
@@ -164,7 +173,8 @@ pre-push:
         fi
 
     # Phase 1: Static checks (parallel)
-    - group:
+    - skip: *unless_gate_active
+      group:
         parallel: true
         jobs:
           - name: python-lint
@@ -234,7 +244,8 @@ pre-push:
     # Phase 2: Unit Tests (parallel, runs after typecheck)
     # Uses package-aware runner to avoid pytest plugin collisions
     # Skips: integration, e2e, requires_docker markers
-    - group:
+    - skip: *unless_gate_active
+      group:
         parallel: true
         jobs:
           # No glob: `ci-checks tests affected` is the single authority on which packages a
@@ -293,7 +304,8 @@ pre-push:
             run: just edge-test
 
     # Phase 3: Code Hygiene (parallel, runs after tests)
-    - group:
+    - skip: *unless_gate_active
+      group:
         parallel: true
         jobs:
           - name: deadcode
@@ -367,6 +379,7 @@ pre-push:
 
     # Phase 4: Generated API artifacts
     - name: api-schema-freshness
+      skip: *unless_gate_active
       # Library entries are the transitive dependency closure of the two exporter
       # services, mirroring the hosted reverse-dependency selection.
       glob:
@@ -395,6 +408,7 @@ pre-push:
       run: just api-schema-check
 
     - name: image-matrix-parity
+      skip: *unless_gate_active
       glob:
         - "Justfile"
         - ".github/workflows/build-push.yml"
@@ -405,6 +419,7 @@ pre-push:
 
     # Phase 5: Proto Breaking Changes
     - name: proto-breaking
+      skip: *unless_gate_active
       glob:
         - "proto/*.proto"
         - "proto/**/*.proto"

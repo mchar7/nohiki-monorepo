@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -71,6 +72,19 @@ def test_development_sync_shape_is_identical() -> None:
     assert len(flake_syncs) == 1
     assert all(_DEV_SYNC_SHAPE in line for line in [*just_syncs, *flake_syncs])
     assert "--locked" in flake_syncs[0]
+
+
+def test_prepush_gate_envelopes_every_phase() -> None:
+    config = yaml.safe_load((_ROOT / "lefthook.yml").read_text(encoding="utf-8"))
+    jobs = config["pre-push"]["jobs"]
+    envelope = jobs[0]
+    inactive_skip = [{"run": 'test "${NOHIKI_GATE_ACTIVE:-0}" != 1'}]
+
+    assert envelope["skip"] == [{"run": 'test "${NOHIKI_GATE_ACTIVE:-0}" = 1'}]
+    assert "scripts/dev/env-lock.sh gate pre-push --" in envelope["run"]
+    assert "scripts/dev/test-run.sh gate --" in envelope["run"]
+    assert "env NOHIKI_GATE_ACTIVE=1 lefthook run pre-push" in envelope["run"]
+    assert all(phase["skip"] == inactive_skip for phase in jobs[1:])
 
 
 def test_nested_lock_invocation_is_reentrant() -> None:
@@ -142,3 +156,163 @@ def test_test_run_requests_oom_priority_for_probe_and_test_process(
     assert invocations[1].startswith(f"-n 900 -- {sys.executable} -c ")
     assert result.stdout == "passed\n"
     assert result.stderr == ""
+
+
+def test_machine_gate_serializes_worktrees_and_reports_holder(tmp_path: Path) -> None:
+    wrapper = _ROOT / "scripts/dev/env-lock.sh"
+    release = tmp_path / "release"
+    env = os.environ | {
+        "XDG_RUNTIME_DIR": str(tmp_path),
+        "NOHIKI_GATE_LOCK_TIMEOUT": "30",
+    }
+    holder = subprocess.Popen(
+        [
+            wrapper,
+            "gate",
+            "pre-push",
+            "--",
+            sys.executable,
+            "-c",
+            "import sys, time; from pathlib import Path\n"
+            "release = Path(sys.argv[1])\n"
+            "while not release.exists(): time.sleep(0.01)",
+            str(release),
+        ],
+        env=env,
+    )
+    holder_file = tmp_path / "nohiki-gates" / "pre-push.holder"
+    deadline = time.monotonic() + 30
+    while not holder_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert holder_file.exists()
+
+    queue_log = tmp_path / "queue.log"
+    with queue_log.open("w", encoding="utf-8") as stderr:
+        waiter = subprocess.Popen(
+            [wrapper, "gate", "pre-push", "--", sys.executable, "-c", "print('second')"],
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            text=True,
+            env=env,
+        )
+        deadline = time.monotonic() + 30
+        while queue_log.stat().st_size == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert queue_log.stat().st_size > 0
+        assert waiter.poll() is None
+        release.touch()
+        stdout, _ = waiter.communicate(timeout=30)
+
+    assert holder.wait(timeout=30) == 0
+    assert waiter.returncode == 0
+    assert stdout == "second\n"
+    queued = queue_log.read_text(encoding="utf-8")
+    assert "pre-push gate queued: holder pid=" in queued
+    assert f"worktree={_ROOT}" in queued
+
+
+def test_machine_gate_wait_is_bounded(tmp_path: Path) -> None:
+    wrapper = _ROOT / "scripts/dev/env-lock.sh"
+    release = tmp_path / "release"
+    holder_env = os.environ | {"XDG_RUNTIME_DIR": str(tmp_path)}
+    holder = subprocess.Popen(
+        [
+            wrapper,
+            "gate",
+            "pre-push",
+            "--",
+            sys.executable,
+            "-c",
+            "import sys, time; from pathlib import Path\n"
+            "release = Path(sys.argv[1])\n"
+            "while not release.exists(): time.sleep(0.01)",
+            str(release),
+        ],
+        env=holder_env,
+    )
+    holder_file = tmp_path / "nohiki-gates" / "pre-push.holder"
+    deadline = time.monotonic() + 30
+    while not holder_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert holder_file.exists()
+
+    waiter = subprocess.run(
+        [wrapper, "gate", "pre-push", "--", "true"],
+        capture_output=True,
+        check=False,
+        text=True,
+        env=holder_env | {"NOHIKI_GATE_LOCK_TIMEOUT": "0"},
+    )
+    assert waiter.returncode == 75
+    assert "timed out after 0s" in waiter.stderr
+    release.touch()
+    assert holder.wait(timeout=30) == 0
+
+
+def test_gate_scope_falls_back_when_user_systemd_is_unavailable(tmp_path: Path) -> None:
+    systemd_run = tmp_path / "systemd-run"
+    systemd_run.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    systemd_run.chmod(0o755)
+    result = subprocess.run(
+        [
+            _ROOT / "scripts/dev/test-run.sh",
+            "gate",
+            "--",
+            sys.executable,
+            "-c",
+            "print('plain')",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "NOHIKI_TEST_NPROC": "20",
+        },
+    )
+    assert result.stdout == "plain\n"
+    assert "systemd user scope unavailable; using plain execution" in result.stderr
+
+
+def test_gate_workers_follow_effective_cgroup_quota(tmp_path: Path) -> None:
+    cgroup = tmp_path / "cgroup"
+    scope = cgroup / "user.slice" / "gate.scope"
+    scope.mkdir(parents=True)
+    (cgroup / "cpu.max").write_text("max 100000\n", encoding="utf-8")
+    (cgroup / "user.slice" / "cpu.max").write_text("800000 100000\n", encoding="utf-8")
+    (scope / "cpu.max").write_text("250000 100000\n", encoding="utf-8")
+    env = os.environ | {
+        "NOHIKI_TEST_NPROC": "20",
+        "NOHIKI_TEST_CGROUP_ROOT": str(cgroup),
+        "NOHIKI_TEST_CGROUP_PATH": "/user.slice/gate.scope",
+    }
+
+    workers = subprocess.run(
+        [_ROOT / "scripts/dev/test-run.sh", "workers"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    bounded = subprocess.run(
+        [
+            _ROOT / "scripts/dev/test-run.sh",
+            "gate-body",
+            "--",
+            sys.executable,
+            "-c",
+            (
+                "import os; print(os.environ['NOHIKI_GATE_CPUS']); "
+                "print(os.environ['NOHIKI_NIX_MAX_JOBS']); "
+                "print(os.environ['NOHIKI_NIX_CORES'])"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert workers.stdout == "2\n"
+    assert bounded.stdout == "2\n2\n1\n"
