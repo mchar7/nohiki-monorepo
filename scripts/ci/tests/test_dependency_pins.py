@@ -147,6 +147,25 @@ def test_workflow_checkouts_do_not_persist_credentials() -> None:
     assert not missing, f"checkout credentials persisted in read-only jobs: {missing}"
 
 
+def test_workflow_runner_labels_are_explicitly_versioned_or_approved_self_hosted() -> None:
+    failures: list[str] = []
+    workflow_paths = sorted((*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")))
+    for path in workflow_paths:
+        for job_name, job in _workflow_jobs(path).items():
+            runs_on = job.get("runs-on")
+            if runs_on is None or runs_on == ["self-hosted", "linux", "x64", "nohiki"]:
+                continue
+            if isinstance(runs_on, str) and (
+                re.fullmatch(r"\$\{\{.+}}", runs_on) or re.fullmatch(r"(?:ubuntu|windows|macos)-\d+(?:\.\d+)*", runs_on)
+            ):
+                continue
+            failures.append(f"{path.relative_to(_ROOT)}:{job_name}: {runs_on!r}")
+
+    assert not failures, "workflow runner labels must be versioned or approved self-hosted labels:\n" + "\n".join(
+        failures
+    )
+
+
 @cache
 def _python_dockerfiles() -> tuple[Path, ...]:
     return tuple(
