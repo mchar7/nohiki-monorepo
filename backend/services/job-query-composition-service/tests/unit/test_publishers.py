@@ -63,6 +63,18 @@ class TestPublishQueryCreated:
         assert event.locations[0].country == CountryCode.USA
         assert event.locations[0].city == "NYC"
 
+    @pytest.mark.asyncio
+    async def test_rejects_legacy_single_location_object(self) -> None:
+        """A bare location object is not accepted as canonical list storage."""
+        mock_query = _make_mock_query()
+        mock_query.locations = mock_query.locations[0]
+        mock_outbox = AsyncMock()
+
+        with pytest.raises(AttributeError):
+            await publish_query_created(create_mock_session(), mock_outbox, mock_query)
+
+        mock_outbox.write_event.assert_not_awaited()
+
 
 def _make_mock_query() -> MagicMock:
     """Create a mock DBIngestionQuery for publisher tests."""

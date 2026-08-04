@@ -32,8 +32,10 @@ def upgrade() -> None:
     op.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}")
 
     notification_channel_enum = postgresql.ENUM(
+        "UNSPECIFIED",
         "EMAIL",
-        "PUSH_API",
+        "SMS",
+        "PUSH_WEB",
         name="notification_channel_enum",
         schema=SCHEMA_NAME,
         create_type=False,

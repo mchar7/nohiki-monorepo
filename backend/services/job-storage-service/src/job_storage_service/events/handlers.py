@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 from nohiki.common.v1 import ProcessingStatus
 from nohiki.job.ingest.v1 import EnrichmentCompleted, ListingDiscovered
@@ -43,11 +44,12 @@ async def handle_job_raw_found(message: ListingDiscovered, context: MessageConte
     discovered_at = message.discovered_at
     discovered_data = message.discovered_data
     correlation_id = metadata.correlation_id
+    query_id = UUID(message.query_id)
 
     logger.info(
         "Processing discovered listing",
         listing_url=listing.listing_url,
-        query_id=message.query_id,
+        query_id=query_id,
         correlation_id=correlation_id,
     )
 
@@ -70,7 +72,7 @@ async def handle_job_raw_found(message: ListingDiscovered, context: MessageConte
     store_service = JobStoreService()
 
     raw_job_ctx = RawJobContext(
-        correlation_id=correlation_id or "",
+        correlation_id=correlation_id,
         discovered_at=discovered_at or datetime.now(UTC),
     )
 
@@ -80,7 +82,7 @@ async def handle_job_raw_found(message: ListingDiscovered, context: MessageConte
             discovered=discovered_data,
             listing_reference=listing,
             context=raw_job_ctx,
-            query_id=message.query_id or "",
+            query_id=query_id,
         )
     except IntegrityError:
         # Partial unique index race: another consumer inserted the same URL

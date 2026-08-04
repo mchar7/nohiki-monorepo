@@ -1,4 +1,4 @@
-"""Fresh-schema regression for canonical query uniqueness migration."""
+"""Fresh-schema regression for canonical query location persistence."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from job_query_composition_service.db.models import IngestionQuery as DBIngestionQuery
 from sqlalchemy.exc import IntegrityError
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
@@ -25,11 +26,11 @@ def _config(sync_url: str) -> Config:
     return config
 
 
-def test_fresh_upgrade_enforces_direct_keyword_location_uniqueness(
+def test_fresh_upgrade_enforces_canonical_location_shape_and_uniqueness(
     postgres_container: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The initial schema enforces column-backed uniqueness and rejects an exact duplicate."""
+    """The initial schema requires a location array and rejects an exact duplicate."""
     sync_url = postgres_container.replace("postgresql+asyncpg://", "postgresql+psycopg://")
     monkeypatch.setenv("DATABASE_URL", sync_url)
     engine = sa.create_engine(sync_url)
@@ -47,6 +48,13 @@ def test_fresh_upgrade_enforces_direct_keyword_location_uniqueness(
     assert canonical_index["unique"] is True
     assert canonical_index["column_names"] == ["search_keywords", "locations"]
 
+    model_check = next(
+        constraint
+        for constraint in DBIngestionQuery.__table__.constraints
+        if constraint.name == "chk_locations_json_array"
+    )
+    assert str(model_check.sqltext) == "locations IS JSON ARRAY"
+
     insert = sa.text(
         f"""
         INSERT INTO {_SCHEMA}.ingestion_queries (id, search_keywords, locations)
@@ -58,5 +66,10 @@ def test_fresh_upgrade_enforces_direct_keyword_location_uniqueness(
         connection.execute(insert, {"id": uuid.uuid4(), "locations": locations})
     with pytest.raises(IntegrityError), engine.begin() as connection:
         connection.execute(insert, {"id": uuid.uuid4(), "locations": locations})
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            insert,
+            {"id": uuid.uuid4(), "locations": '{"country":"USA","city":"new york"}'},
+        )
 
     engine.dispose()

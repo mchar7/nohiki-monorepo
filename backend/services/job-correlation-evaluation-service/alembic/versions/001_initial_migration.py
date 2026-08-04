@@ -89,7 +89,6 @@ def upgrade() -> None:
 
             -- Correlation data
             correlation_score INTEGER,
-            correlation_reasoning JSONB,
             correlation_status {SCHEMA_NAME}.correlation_status_enum NOT NULL DEFAULT 'pending',
             user_feedback {SCHEMA_NAME}.user_feedback_enum,
 

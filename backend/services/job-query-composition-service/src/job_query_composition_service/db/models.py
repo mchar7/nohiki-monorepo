@@ -63,6 +63,7 @@ class IngestionQuery(RepresentableMixin, IdMixin, CreatedAtMixin, UpdatedAtMixin
 
     __tablename__ = "ingestion_queries"
     __table_args__ = (
+        sa.CheckConstraint("locations IS JSON ARRAY", name="chk_locations_json_array"),
         sa.UniqueConstraint(
             "search_keywords",
             "locations",
@@ -73,7 +74,7 @@ class IngestionQuery(RepresentableMixin, IdMixin, CreatedAtMixin, UpdatedAtMixin
 
     # Deduplication key (immutable once created)
     search_keywords: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False)
-    locations: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    locations: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
 
     # Directly stored aggregates (recomputed on change)
     # NOTE: DB stores enum strings, Python uses proto enums via property accessors

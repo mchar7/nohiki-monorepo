@@ -51,11 +51,6 @@ class TestMatchRecordRepositoryRealDB:
             listing_id=str(uuid.uuid4()),
             listing_url="https://example.com/job/123",
             score=85,
-            breakdown={
-                "ml_score": 85,
-                "ml_confidence": 0.92,
-                "scoring_method": "ml_pipeline",
-            },
             feature_schema_version="v5.0.0",
             role_relevance_raw=0.0,
             ranking_index=0.0,
@@ -135,7 +130,6 @@ class TestMatchRecordRepositoryRealDB:
                 listing_id=listing_id,
                 listing_url=f"https://example.com/job/{i}",
                 score=80 + i,
-                breakdown={"ml_score": 80 + i},
                 feature_schema_version="v5.0.0",
                 role_relevance_raw=0.0,
                 ranking_index=0.0,
@@ -172,7 +166,6 @@ class TestCorrelationRepositoryRealDB:
             user_id=uuid.uuid4(),
             listing_url="https://example.com/job/test",
             correlation_score=75,
-            correlation_reasoning={"test": "data"},
             correlation_status=CorrelationStatus.PENDING,
             feature_schema_version="v5.0.0",
         )

@@ -46,17 +46,13 @@ message SearchPrefSnapshot {
   // User's commute preferences (transit modes, max time) for location scoring
   optional nohiki.common.v1.CommutePreferences commute_preferences = 22;
 
-  // REQUIRED - Experience preferences (for L2R EXPERIENCE features 6-10)
+  // OPTIONAL - Experience preferences (for L2R EXPERIENCE features 6-10)
   // Groups experience_years + seniority_levels for cohesive domain modeling
-  nohiki.common.v1.ExperiencePreference experience_preference = 17 [
-    (buf.validate.field).required = true
-  ];
+  optional nohiki.common.v1.ExperiencePreference experience_preference = 17;
 
-  // REQUIRED - Salary preferences (for L2R SALARY features 11-13)
-  // Used to compute salary alignment in L2R model
-  nohiki.common.v1.SalaryPreference salary_preference = 19 [
-    (buf.validate.field).required = true
-  ];
+  // OPTIONAL - Salary preferences (for L2R SALARY features 11-13)
+  // Used to compute salary alignment in L2R model when provided
+  optional nohiki.common.v1.SalaryPreference salary_preference = 19;
 
   // OPTIONAL - Feature importance preferences (for personalized scoring)
   // User-specified weights indicating how much each factor matters to them.

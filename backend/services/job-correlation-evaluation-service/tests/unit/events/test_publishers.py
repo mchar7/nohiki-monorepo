@@ -157,7 +157,6 @@ class TestPublishCorrelationEvaluated:
             listing_id="listing-456",
             listing_url="https://example.com/job",
             score=80,
-            breakdown={},
             feature_schema_version="test",
             role_relevance_raw=81.5,
             ranking_index=0.8,

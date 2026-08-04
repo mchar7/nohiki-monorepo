@@ -25,7 +25,6 @@ class TestJobMatchResult:
             listing_id="listing-456",
             listing_url="https://example.com/job",
             score=85,
-            breakdown={"keyword_match": 0.8},
             feature_schema_version="v5.0.0",
             feature_vector=(0.5, 0.6, 0.7),
             role_relevance_raw=0.0,
@@ -268,7 +267,6 @@ class TestJobMatcherServiceMatchJobWithActiveProfiles:
             listing_id=str(mock_job.id),
             listing_url="https://example.com/job",
             score=75,
-            breakdown={},
             feature_schema_version="v5.0.0",
             feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
             role_relevance_raw=0.0,
@@ -421,40 +419,6 @@ class TestJobMatcherServiceMLScoring:
         results = service._convert_ml_results([ml_result], listings_by_id, mock_profile)
 
         assert len(results) == 0
-
-    def test_build_match_result_creates_correct_breakdown(self) -> None:
-        """Test _build_match_result creates correct breakdown dict."""
-        from job_correlation_evaluation_service.services.matcher_service import (
-            JobMatcherService,
-        )
-        from job_correlation_evaluation_service.services.scoring_service import (
-            MLScoringResult,
-        )
-
-        service = JobMatcherService()
-
-        listing_id = str(uuid4())
-        mock_listing = MagicMock()
-        mock_listing.listing_url = "https://example.com/job"
-        listings_by_id = {listing_id: mock_listing}
-
-        mock_profile = MagicMock()
-        mock_profile.id = str(uuid4())
-
-        ml_result = MLScoringResult(
-            score=90,
-            is_disqualified=False,
-            disqualification_reason=None,
-            feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
-        )
-
-        result = service._build_match_result(ml_result, listing_id, listings_by_id, mock_profile)
-
-        assert result.score == 90
-        assert result.pref_id == mock_profile.id
-        assert result.listing_id == listing_id
-        assert result.breakdown == {}
-        assert result.feature_vector == (0.1, 0.2, 0.3, 0.4, 0.5)
 
     @pytest.mark.asyncio
     async def test_score_listings_batch_returns_empty_on_no_results(self) -> None:
@@ -729,38 +693,6 @@ class TestJobMatcherServiceScoreSingle:
         result = service._score_single(mock_job, "job-123", mock_profile)
 
         assert result is None
-
-
-class TestJobMatcherServiceBuildMatchResultFromML:
-    """Tests for _build_match_result_from_ml method."""
-
-    def test_omits_non_finite_and_missing_public_scores(self) -> None:
-        """Only finite normalized public dimensions are exposed."""
-        from job_correlation_evaluation_service.services.matcher_service import (
-            JobMatcherService,
-        )
-        from job_correlation_evaluation_service.services.scoring_service import (
-            MLScoringResult,
-        )
-
-        service = JobMatcherService()
-        mock_profile = MagicMock(id=str(uuid4()))
-        ml_result = MLScoringResult(
-            score=85,
-            is_disqualified=False,
-            disqualification_reason=None,
-            feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
-        )
-
-        result = service._build_match_result_from_ml(mock_profile, "job-123", "https://example.com/job", ml_result)
-
-        assert result.score == 85
-        assert result.breakdown == {}
-        assert "ml_confidence" not in result.breakdown
-        assert "rerank_score" not in result.breakdown
-        assert "skills_cosine_sim" not in result.breakdown
-        assert "feature_importances" not in result.breakdown
-        assert result.feature_vector == (0.1, 0.2, 0.3, 0.4, 0.5)
 
 
 class TestJobMatcherServiceMatchListingsToProfile:
@@ -1146,7 +1078,6 @@ class TestJobMatcherServiceBackfillRescoring:
                 listing_id=str(listing_ids[0]),
                 listing_url=listings[0].listing_url,
                 score=91,
-                breakdown={},
                 feature_schema_version="v-next",
                 role_relevance_raw=0.9,
                 ranking_index=1.0,
@@ -1158,7 +1089,6 @@ class TestJobMatcherServiceBackfillRescoring:
                 listing_id=str(listing_ids[1]),
                 listing_url=listings[1].listing_url,
                 score=0,
-                breakdown={},
                 feature_schema_version="v-next",
                 role_relevance_raw=0.0,
                 ranking_index=0.0,
@@ -1256,7 +1186,6 @@ class TestJobMatcherServiceBackfillRescoring:
             listing_id=str(enriched_id),
             listing_url=listings[0].listing_url,
             score=93,
-            breakdown={},
             feature_schema_version="v-next",
             role_relevance_raw=0.9,
             ranking_index=1.0,

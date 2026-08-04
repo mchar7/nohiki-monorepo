@@ -54,9 +54,6 @@ notification pipeline, and the L2R training data export.
 - **`correlation_score`** (`INTEGER`): The final calibrated match score as an integer in
   `[0, 100]`. Derived from the LightGBM raw score → isotonic calibration → multiply by 100 →
   round. `NULL` on rows that are `PENDING` (created but not yet scored).
-- **`correlation_reasoning`** (`JSONB`): Score breakdown map. Contains `ml_score`,
-  `ml_confidence`, `ml_explanation` (SHAP-derived human-readable string), `scoring_method`,
-  and a nested `feature_importances` map of the 32 raw feature values keyed by feature name.
 - **`correlation_status`** (`correlation_status_enum`): State machine field. Valid values and
   transitions are defined below. Default: `pending`.
 - **`user_feedback`** (`user_feedback_enum`): Optional explicit feedback from the user.

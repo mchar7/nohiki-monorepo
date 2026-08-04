@@ -12,8 +12,6 @@ relationships, occupation-to-skill links, governance staging, and supporting ana
 | `skill_alias` | Surface-form variations that resolve to a canonical `skill_node` |
 | `skill_relationship` | Directed, typed edges between canonical skills (adjacency list) |
 | `proposed_skill` | Governance staging for skills proposed by LLM extraction |
-| `user_skill` | Per-user skill proficiencies with provenance and evidence |
-| `skill_match_log` | Append-only audit log of every normalization match decision |
 | `skill_seed_provenance` | Links each canonical skill to its origin in a named taxonomy source |
 | `seed_batch_record` | Tracks per-source, per-version seeding lifecycle and cumulative statistics |
 | `occupation_skill_relation` | Curated ESCO occupation-to-skill associations (essential / optional / mentioned) |
@@ -238,8 +236,8 @@ two separate rows.
 
 #### Purpose
 
-Staging area for skills that failed normalization with `NO_MATCH` and were subsequently proposed
-by `job-ingest-enrichment-service` via `skill.cmd.skill-proposed.v1`. A proposal accumulates
+Staging area for skills that could not be resolved to a canonical skill and were subsequently
+proposed by `job-ingest-enrichment-service` via `skill.cmd.skill-proposed.v1`. A proposal accumulates
 evidence from multiple job listings before entering the canonical skill registry.
 
 #### Key Columns
@@ -291,92 +289,6 @@ evidence from multiple job listings before entering the canonical skill registry
   The same transaction inserts the `skill_node`, inserts alias rows, and writes
   `skill.fct.skill-created.v1` to the outbox.
 - **Never deleted** during normal operation: proposal history is retained as audit trail.
-
----
-
-### `user_skill`
-
-#### Purpose
-
-Records a user's association with a canonical skill, including their proficiency level and how
-that proficiency was established. The skill IDs stored here are UUIDs from `skill_node` (no FK
-to an external `users` table: user identity is cross-schema by UUID only).
-
-#### Key Columns
-
-- **`id`** (`UUID`): UUIDv7 primary key.
-- **`user_id`** (`UUID`): References `user_auth_schema.users.id` (no FK constraint: cross-schema).
-- **`skill_id`** (`UUID`): References `skill_graph_schema.skill_node.id` (FK `ON DELETE CASCADE`).
-- **`proficiency_level`** (`SMALLINT`): 0-4 scale. 0 = unspecified, 1 = beginner, 2 = intermediate,
-  3 = advanced, 4 = expert. A CHECK constraint enforces the range.
-- **`proficiency_source`** (`VARCHAR(20)`): How the proficiency was established: `"declared"`
-  (user-stated), `"resume_extracted"`, `"job_extracted"`, or `"inferred"`.
-- **`provenance`** (`SMALLINT`): 0-4 origin code mirroring the source taxonomy.
-  0 = unspecified, 1 = user_declared, 2 = resume_extracted, 3 = job_extracted, 4 = inferred.
-- **`evidence`** (`JSONB`): Array of evidence items supporting the proficiency claim.
-  Structure: `[{"source": str, "description": str, "confidence": float}, ...]`.
-
-#### Indexes
-
-- **`ix_user_skill_user_id`** (`user_id`): Primary query path -- "all skills for a user."
-- **`ix_user_skill_skill_id`** (`skill_id`): Supports reverse query -- "all users who have
-  this skill" (used by correlation features).
-- **`ix_user_skill_proficiency`** (`proficiency_level`): Supports proficiency-filtered queries.
-
-#### Constraints & Invariants
-
-- **UNIQUE** on `(user_id, skill_id)`: One proficiency record per user-skill pair.
-- **CHECK** `proficiency_level BETWEEN 0 AND 4` and `provenance BETWEEN 0 AND 4`.
-
-#### Data Lifecycle
-
-- **Created or updated** when user preferences declare skills or when resume extraction
-  normalizes skills from an uploaded document.
-- **Deleted** via CASCADE if the linked `skill_node` is removed (schema drop only).
-
----
-
-### `skill_match_log`
-
-#### Purpose
-
-Append-only audit log capturing every normalization decision: the raw input text, which
-canonical skill it matched (or NULL for `NO_MATCH`), the match method, and similarity scores.
-Used for threshold calibration, analytics on normalization quality, and debugging false positives.
-
-#### Key Columns
-
-- **`id`** (`UUID`) + **`created_at`** (`TIMESTAMPTZ`): Composite primary key required by
-  PostgreSQL range partitioning. The table is partitioned `BY RANGE (created_at)` with a
-  default partition (`skill_match_log_default`). Monthly or quarterly child partitions can be
-  attached to control growth without schema changes.
-- **`source_text`** (`VARCHAR(200)`): The raw input string that was normalized.
-- **`matched_skill_id`** (`UUID`): References `skill_node.id` (FK `ON DELETE SET NULL`).
-  NULL for `NO_MATCH` results.
-- **`match_type`** (`VARCHAR(20)`): The normalization stage that produced the match:
-  `"exact"`, `"alias"`, `"jaccard"`, `"semantic"`, or `"no_match"`.
-- **`raw_similarity`** (`FLOAT`): The raw score from the matching algorithm (Jaccard coefficient
-  or Qdrant cosine similarity). NULL for exact and alias matches.
-- **`calibrated_confidence`** (`FLOAT`): Post-threshold confidence value. NULL for exact/alias
-  matches where confidence is implicitly 1.0.
-- **`source_entity_type`** (`VARCHAR(20)`): Type of the entity that requested normalization
-  (`"job"` or `"profile"`).
-- **`source_entity_id`** (`UUID`): ID of the specific job listing or profile that triggered
-  the normalization request.
-
-#### Indexes
-
-- **`ix_skill_match_log_created`** (`created_at`): Supports time-range analytics queries and
-  partition pruning.
-- **`ix_skill_match_log_type`** (`match_type`): Supports filtering by match method for
-  threshold calibration (e.g., "all semantic matches in the last 7 days").
-- **`ix_skill_match_log_skill`** (`matched_skill_id`): Supports queries aggregating match
-  frequency per canonical skill.
-
-#### Data Lifecycle
-
-- **Created** (insert-only) after each normalization decision. No updates or deletes.
-- Old partitions can be detached and archived without affecting the active partition.
 
 ---
 

@@ -56,7 +56,7 @@ _saga_repo: SagaRepository[ListingIngestSaga] = SagaRepository(ListingIngestSaga
 class RawJobContext:
     """Context information for processing raw jobs."""
 
-    correlation_id: str
+    correlation_id: str | None
     discovered_at: datetime
 
 
@@ -383,7 +383,7 @@ class JobStoreService:
         listing_reference: ListingReference,
         context: RawJobContext,
         *,
-        query_id: str = "",
+        query_id: UUID,
     ) -> _SagaIngestResult:
         """Accept a discovered listing into the in-flight saga ledger.
 
@@ -418,7 +418,7 @@ class JobStoreService:
                     external_listing_id=listing_reference.external_listing_id or discovered.external_id or None,
                     job_board_source=source,
                     query_id=query_id,
-                    correlation_id=context.correlation_id,
+                    correlation_id=UUID(context.correlation_id) if context.correlation_id else None,
                     content_hash=content_hash,
                     discovered_data=discovered.to_dict(),
                     discovered_at=context.discovered_at,

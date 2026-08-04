@@ -26,7 +26,6 @@ depends_on: str | Sequence[str] | None = None
 
 SCHEMA_NAME = "job_schedule_schema"
 NOW_DEFAULT = sa.func.now()
-EMPTY_VARCHAR_ARRAY = sa.text("ARRAY[]::varchar[]")
 
 
 def upgrade() -> None:
@@ -34,7 +33,10 @@ def upgrade() -> None:
     op.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}")
 
     work_arrangement_enum = postgresql.ENUM(
-        "UNSPECIFIED", "ON_SITE", "HYBRID", "REMOTE",
+        "UNSPECIFIED",
+        "ON_SITE",
+        "HYBRID",
+        "REMOTE",
         name="work_arrangement_enum",
         schema=SCHEMA_NAME,
         create_type=False,
@@ -42,8 +44,14 @@ def upgrade() -> None:
     work_arrangement_enum.create(op.get_bind(), checkfirst=True)
 
     job_board_source_enum = postgresql.ENUM(
-        "UNSPECIFIED", "INDEED", "LINKEDIN", "ZIPRECRUITER",
-        "GOOGLE", "GLASSDOOR", "BAYT", "NAUKRI",
+        "UNSPECIFIED",
+        "INDEED",
+        "LINKEDIN",
+        "ZIPRECRUITER",
+        "GOOGLE",
+        "GLASSDOOR",
+        "BAYT",
+        "NAUKRI",
         "COMPANY_WEBSITE",
         name="job_board_source_enum",
         schema=SCHEMA_NAME,
@@ -64,12 +72,6 @@ def upgrade() -> None:
             postgresql.ARRAY(work_arrangement_enum),
             nullable=False,
             server_default=sa.text("ARRAY[]::job_schedule_schema.work_arrangement_enum[]"),
-        ),
-        sa.Column(
-            "remote_preferences",
-            postgresql.ARRAY(sa.String()),
-            nullable=False,
-            server_default=EMPTY_VARCHAR_ARRAY,
         ),
         sa.Column(
             "sources",
@@ -93,6 +95,14 @@ def upgrade() -> None:
         # IS JSON constraint for JSONB validation
         sa.CheckConstraint("locations IS JSON ARRAY", name="chk_locations_json_array"),
         sa.CheckConstraint(
+            "hours_old BETWEEN 1 AND 168",
+            name="ck_schedule_hours_old_range",
+        ),
+        sa.CheckConstraint(
+            "results_wanted BETWEEN 1 AND 100",
+            name="ck_schedule_results_wanted_range",
+        ),
+        sa.CheckConstraint(
             "frequency > INTERVAL '0 seconds'",
             name="ck_schedule_frequency_positive",
         ),
@@ -110,9 +120,7 @@ def upgrade() -> None:
     )
 
     # Hash index for is_active equality lookups
-    op.execute(
-        f"CREATE INDEX idx_schedules_active_hash ON {SCHEMA_NAME}.ingestion_schedules USING HASH (is_active)"
-    )
+    op.execute(f"CREATE INDEX idx_schedules_active_hash ON {SCHEMA_NAME}.ingestion_schedules USING HASH (is_active)")
 
     # BRIN index on created_at for time-range queries (schedules are append-mostly)
     op.execute(
@@ -128,7 +136,6 @@ def upgrade() -> None:
 
     op.execute(get_create_processed_events_sql(SCHEMA_NAME))
     op.execute(get_create_processed_events_index_sql(SCHEMA_NAME))
-
 
 
 def downgrade() -> None:

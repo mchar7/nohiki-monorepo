@@ -101,7 +101,6 @@ async def handle_query_created(
             for loc in message.locations
         ],
         work_arrangements=[wa for wa in message.work_arrangements if wa != WorkArrangement.UNSPECIFIED],
-        remote_preferences=[],
         sources=[src for src in message.sources if src != JobBoardSource.UNSPECIFIED],
         frequency=frequency,
         is_active=message.is_active,
@@ -165,7 +164,6 @@ async def handle_query_updated(
                 for loc in message.locations
             ],
             work_arrangements=[wa for wa in message.work_arrangements if wa != WorkArrangement.UNSPECIFIED],
-            remote_preferences=[],
             sources=[src for src in message.sources if src != JobBoardSource.UNSPECIFIED],
             frequency=frequency,
             is_active=message.is_active,
@@ -192,7 +190,6 @@ async def handle_query_updated(
         for loc in message.locations
     ]
     schedule.work_arrangements = [wa for wa in message.work_arrangements if wa != WorkArrangement.UNSPECIFIED]
-    schedule.remote_preferences = []
     schedule.sources = [src for src in message.sources if src != JobBoardSource.UNSPECIFIED]
     schedule.frequency = _validated_frequency(message.frequency_seconds)
     schedule.is_active = message.is_active

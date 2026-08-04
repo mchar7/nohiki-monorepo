@@ -130,8 +130,7 @@ these user-level defaults are applied instead.
 
 #### Key Columns
 
-- **`id`** (`UUID`): UUIDv7 primary key, generated server-side by the BFF migration (`gen_random_uuid()`
-  at migration time, `uuidv7()` in production).
+- **`id`** (`UUID`): UUIDv7 primary key, generated server-side with `uuidv7()`.
 - **`user_id`** (`UUID`): UNIQUE. References `user_auth_schema.accounts.id` (no FK constraint).
   Indexed and uniqueness-constrained so each user has exactly one settings row.
 - **`default_feature_importance`** (`JSONB`, nullable): Six-dimensional importance weights at the

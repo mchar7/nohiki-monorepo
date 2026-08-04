@@ -13,6 +13,9 @@ from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import MessageContext
 from sqlalchemy.exc import IntegrityError
 
+_DISCOVERY_CORRELATION_ID = "018f47a0-2f24-7c31-a5d2-9b0e6f4c8123"
+_QUERY_ID = "018f47a0-3010-7d42-b6e3-ac1f705d9234"
+
 
 def _make_context(
     *,
@@ -32,9 +35,9 @@ def _make_context(
 
 def _make_discovered_message(
     *,
-    correlation_id: str = "corr-123",
+    correlation_id: str | None = _DISCOVERY_CORRELATION_ID,
     listing_url: str = "https://example.com/job/1",
-    query_id: str = "query-1",
+    query_id: str = _QUERY_ID,
 ) -> MagicMock:
     """Build a mock ListingDiscovered message."""
     msg = MagicMock()
@@ -92,11 +95,14 @@ class TestHandleJobRawFound:
             await handle_job_raw_found(message, context)
 
             mock_service.handle_discovered_listing.assert_called_once()
+            call_kwargs = mock_service.handle_discovered_listing.call_args.kwargs
+            assert call_kwargs["query_id"] == uuid.UUID(_QUERY_ID)
+            assert call_kwargs["context"].correlation_id == _DISCOVERY_CORRELATION_ID
             mock_logger.info.assert_any_call(
                 "Saga accepted (new in-flight ingest)",
                 saga_id=str(saga_id),
                 listing_url="https://example.com/job/1",
-                correlation_id="corr-123",
+                correlation_id=_DISCOVERY_CORRELATION_ID,
             )
 
     @pytest.mark.asyncio
@@ -127,7 +133,7 @@ class TestHandleJobRawFound:
                 "Saga existed (in-flight ingest reused)",
                 saga_id=str(saga_id),
                 listing_url="https://example.com/job/1",
-                correlation_id="corr-123",
+                correlation_id=_DISCOVERY_CORRELATION_ID,
             )
 
     @pytest.mark.asyncio
@@ -154,7 +160,7 @@ class TestHandleJobRawFound:
             mock_logger.info.assert_any_call(
                 "Saga insert race detected; treating as duplicate",
                 listing_url="https://example.com/job/1",
-                correlation_id="corr-123",
+                correlation_id=_DISCOVERY_CORRELATION_ID,
             )
 
 

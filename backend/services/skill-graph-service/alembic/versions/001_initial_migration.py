@@ -38,7 +38,6 @@ def upgrade() -> None:
     """Create skill graph schema and all tables."""
     op.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}")
 
-
     # ════════════════════════════════════════════════════════════════════════════
     # skill_node table (canonical skills)
     # ════════════════════════════════════════════════════════════════════════════
@@ -241,105 +240,6 @@ def upgrade() -> None:
     op.execute(f"""
         CREATE INDEX IF NOT EXISTS ix_proposed_skill_count
         ON {SCHEMA_NAME}.proposed_skill (proposal_count DESC)
-    """)
-
-    # ════════════════════════════════════════════════════════════════════════════
-    # user_skill table (user skill proficiencies)
-    # ════════════════════════════════════════════════════════════════════════════
-    op.execute(f"""
-        CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.user_skill (
-            id UUID PRIMARY KEY DEFAULT uuidv7(),
-            user_id UUID NOT NULL,
-            skill_id UUID NOT NULL
-                REFERENCES {SCHEMA_NAME}.skill_node(id) ON DELETE CASCADE,
-
-            -- Proficiency (0=unspecified, 1=beginner, 2=intermediate, 3=advanced, 4=expert)
-            proficiency_level SMALLINT NOT NULL DEFAULT 0
-                CHECK (proficiency_level >= 0 AND proficiency_level <= 4),
-            proficiency_source VARCHAR(20) NOT NULL DEFAULT 'declared',
-
-            -- Provenance (0=unspecified, 1=user_declared, 2=resume_extracted, 3=job_extracted, 4=inferred)
-            provenance SMALLINT NOT NULL DEFAULT 0
-                CHECK (provenance >= 0 AND provenance <= 4),
-            provenance_confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-
-            -- Timestamps
-            declared_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
-            last_verified_at TIMESTAMPTZ,
-
-            -- Evidence (JSONB array of source/description/confidence)
-            evidence JSONB DEFAULT '[]'::jsonb,
-
-            created_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
-
-            UNIQUE(user_id, skill_id)
-        )
-    """)
-
-    op.execute(f"""
-        CREATE INDEX IF NOT EXISTS ix_user_skill_user_id
-        ON {SCHEMA_NAME}.user_skill (user_id)
-    """)
-    op.execute(f"""
-        CREATE INDEX IF NOT EXISTS ix_user_skill_skill_id
-        ON {SCHEMA_NAME}.user_skill (skill_id)
-    """)
-    op.execute(f"""
-        CREATE INDEX IF NOT EXISTS ix_user_skill_proficiency
-        ON {SCHEMA_NAME}.user_skill (proficiency_level)
-    """)
-
-    # ════════════════════════════════════════════════════════════════════════════
-    # skill_match_log table (analytics, partitioned)
-    # ════════════════════════════════════════════════════════════════════════════
-    op.execute(f"""
-        CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.skill_match_log (
-            id UUID NOT NULL DEFAULT uuidv7(),
-
-            -- Match details
-            source_text VARCHAR(200) NOT NULL,
-            matched_skill_id UUID
-                REFERENCES {SCHEMA_NAME}.skill_node(id) ON DELETE SET NULL,
-
-            -- Match method
-            match_type VARCHAR(20) NOT NULL,
-
-            -- Scores
-            raw_similarity DOUBLE PRECISION,
-            calibrated_confidence DOUBLE PRECISION,
-
-            -- Context
-            provenance VARCHAR(20) NOT NULL,
-            source_entity_type VARCHAR(20) NOT NULL,
-            source_entity_id UUID NOT NULL,
-            context_hint VARCHAR(100),
-
-            -- Timestamps
-            created_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
-
-            -- Composite PK required for partitioned tables
-            PRIMARY KEY (id, created_at)
-        ) PARTITION BY RANGE (created_at)
-    """)
-
-    # Create default partition for skill_match_log
-    op.execute(f"""
-        CREATE TABLE {SCHEMA_NAME}.skill_match_log_default
-        PARTITION OF {SCHEMA_NAME}.skill_match_log DEFAULT
-    """)
-
-    op.execute(f"""
-        CREATE INDEX IF NOT EXISTS ix_skill_match_log_created
-        ON {SCHEMA_NAME}.skill_match_log (created_at)
-    """)
-    op.execute(f"""
-        CREATE INDEX IF NOT EXISTS ix_skill_match_log_type
-        ON {SCHEMA_NAME}.skill_match_log (match_type)
-    """)
-    op.execute(f"""
-        CREATE INDEX IF NOT EXISTS ix_skill_match_log_skill
-        ON {SCHEMA_NAME}.skill_match_log (matched_skill_id)
     """)
 
     # ════════════════════════════════════════════════════════════════════════════

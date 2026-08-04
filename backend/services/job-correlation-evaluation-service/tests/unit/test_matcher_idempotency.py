@@ -32,7 +32,6 @@ def _make_match_result(
     result.listing_id = listing_id or str(uuid.uuid4())
     result.listing_url = "https://example.com/job/1"
     result.score = score
-    result.breakdown = {"semantic": 0.8, "keyword": 0.9}
     result.status = CorrelationStatus.EVALUATED
     result.evaluated_at = datetime.now(UTC)
     result.feature_vector = (0.5, 0.6, 0.7)

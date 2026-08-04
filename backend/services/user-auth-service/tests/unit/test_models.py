@@ -28,6 +28,11 @@ class TestAccountModel:
         assert account.last_name == "User"
         # Note: is_active and is_verified defaults are set by DB, not in Python
 
+    def test_account_name_column_lengths_match_proto(self) -> None:
+        """Account names accept every proto-valid value."""
+        assert Account.__table__.c.first_name.type.length == 100
+        assert Account.__table__.c.last_name.type.length == 100
+
     def test_account_repr(self) -> None:
         """Test Account __repr__ method."""
         account = Account(

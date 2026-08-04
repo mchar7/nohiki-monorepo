@@ -37,7 +37,10 @@ def upgrade() -> None:
     op.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}")
 
     work_arrangement_enum = postgresql.ENUM(
-        "UNSPECIFIED", "ON_SITE", "HYBRID", "REMOTE",
+        "UNSPECIFIED",
+        "ON_SITE",
+        "HYBRID",
+        "REMOTE",
         name="work_arrangement_enum",
         schema=SCHEMA_NAME,
         create_type=False,
@@ -45,8 +48,14 @@ def upgrade() -> None:
     work_arrangement_enum.create(op.get_bind(), checkfirst=True)
 
     job_board_source_enum = postgresql.ENUM(
-        "UNSPECIFIED", "INDEED", "LINKEDIN", "ZIPRECRUITER",
-        "GOOGLE", "GLASSDOOR", "BAYT", "NAUKRI",
+        "UNSPECIFIED",
+        "INDEED",
+        "LINKEDIN",
+        "ZIPRECRUITER",
+        "GOOGLE",
+        "GLASSDOOR",
+        "BAYT",
+        "NAUKRI",
         "COMPANY_WEBSITE",
         name="job_board_source_enum",
         schema=SCHEMA_NAME,
@@ -90,6 +99,7 @@ def upgrade() -> None:
             "locations",
             name="uq_ingestion_queries_canonical",
         ),
+        sa.CheckConstraint("locations IS JSON ARRAY", name="chk_locations_json_array"),
         schema=SCHEMA_NAME,
     )
 
@@ -151,9 +161,5 @@ def downgrade() -> None:
     op.drop_table("outbox", schema=SCHEMA_NAME)
     op.drop_table("query_contributors", schema=SCHEMA_NAME)
     op.drop_table("ingestion_queries", schema=SCHEMA_NAME)
-    postgresql.ENUM(name="job_board_source_enum", schema=SCHEMA_NAME).drop(
-        op.get_bind(), checkfirst=True
-    )
-    postgresql.ENUM(name="work_arrangement_enum", schema=SCHEMA_NAME).drop(
-        op.get_bind(), checkfirst=True
-    )
+    postgresql.ENUM(name="job_board_source_enum", schema=SCHEMA_NAME).drop(op.get_bind(), checkfirst=True)
+    postgresql.ENUM(name="work_arrangement_enum", schema=SCHEMA_NAME).drop(op.get_bind(), checkfirst=True)

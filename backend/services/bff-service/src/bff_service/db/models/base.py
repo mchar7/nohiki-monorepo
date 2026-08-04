@@ -9,7 +9,7 @@ from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import DeclarativeBase
 
 SQL_NOW = sa.text("now()")
-SQL_GEN_UUID = sa.text("gen_random_uuid()")
+SQL_GEN_UUID = sa.text("uuidv7()")
 SCHEMA_NAME = "bff_schema"
 
 WorkArrangementEnum = SQLEnum(

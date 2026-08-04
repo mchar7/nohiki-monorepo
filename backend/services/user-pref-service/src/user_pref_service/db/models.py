@@ -65,14 +65,16 @@ class SearchPref(BaseEntity, Base):
     __repr_fields__ = ("id", "pref_name", "user_id")
 
     __tablename__ = "search_prefs"
-    __table_args__ = ({"schema": SCHEMA_NAME},)
+    __table_args__ = (
+        sa.CheckConstraint("cardinality(search_keywords) > 0", name="chk_search_keywords_nonempty"),
+        sa.CheckConstraint("cardinality(work_arrangements) > 0", name="chk_work_arrangements_nonempty"),
+        {"schema": SCHEMA_NAME},
+    )
 
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(), nullable=False, index=True)
 
     pref_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    search_keywords: Mapped[list[str]] = mapped_column(
-        ARRAY(String(100)), nullable=False, server_default=SQL_EMPTY_VARCHAR_ARRAY
-    )
+    search_keywords: Mapped[list[str]] = mapped_column(ARRAY(String(100)), nullable=False)
     disallowed_keywords: Mapped[list[str]] = mapped_column(
         ARRAY(String(100)), nullable=False, server_default=SQL_EMPTY_VARCHAR_ARRAY
     )
@@ -90,7 +92,6 @@ class SearchPref(BaseEntity, Base):
     work_arrangements: Mapped[list[WorkArrangement]] = mapped_column(
         ARRAY(WorkArrangementEnum),
         nullable=False,
-        server_default=sa.text(f"ARRAY[]::{SCHEMA_NAME}.work_arrangement_enum[]"),
     )
 
     experience_years: Mapped[int | None] = mapped_column(Integer, nullable=True)

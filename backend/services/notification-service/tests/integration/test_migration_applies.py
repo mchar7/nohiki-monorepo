@@ -59,6 +59,32 @@ async def migrated_schema(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("migrated_schema")
+async def test_notification_channel_enum_matches_canonical_contract(
+    async_engine: AsyncEngine,
+) -> None:
+    """The baseline persists every canonical notification channel and no obsolete labels."""
+    async with async_engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT e.enumlabel FROM pg_enum e "
+                "JOIN pg_type t ON t.oid = e.enumtypid "
+                "JOIN pg_namespace n ON n.oid = t.typnamespace "
+                "WHERE n.nspname = :schema AND t.typname = 'notification_channel_enum' "
+                "ORDER BY e.enumsortorder"
+            ),
+            {"schema": _SCHEMA},
+        )
+
+    assert [row.enumlabel for row in result.all()] == [
+        "UNSPECIFIED",
+        "EMAIL",
+        "SMS",
+        "PUSH_WEB",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("migrated_schema")
 async def test_messages_carries_the_expiry_column(async_engine: AsyncEngine) -> None:
     """`expires_at` exists as a nullable timestamptz, as the sweep expects."""
     async with async_engine.connect() as conn:

@@ -42,14 +42,14 @@ class TestDiscoveredListingIdempotency:
         listing.listing_url = "https://example.com/job/1"
 
         metadata = MagicMock()
-        metadata.correlation_id = "corr-1"
+        metadata.correlation_id = "00000000-0000-4000-8000-000000000001"
 
         message = MagicMock()
         message.listing = listing
         message.metadata = metadata
         message.discovered_at = MagicMock()
         message.discovered_data = MagicMock()
-        message.query_id = "q-1"
+        message.query_id = "00000000-0000-4000-8000-000000000002"
 
         mock_db = create_mock_session()
         context = _make_context(db_session=mock_db)
@@ -75,14 +75,14 @@ class TestDiscoveredListingIdempotency:
         listing.listing_url = "https://example.com/job/2"
 
         metadata = MagicMock()
-        metadata.correlation_id = "corr-2"
+        metadata.correlation_id = "00000000-0000-4000-8000-000000000003"
 
         message = MagicMock()
         message.listing = listing
         message.metadata = metadata
         message.discovered_at = MagicMock()
         message.discovered_data = MagicMock()
-        message.query_id = "q-2"
+        message.query_id = "00000000-0000-4000-8000-000000000004"
 
         mock_db = create_mock_session()
         context = _make_context(db_session=mock_db)

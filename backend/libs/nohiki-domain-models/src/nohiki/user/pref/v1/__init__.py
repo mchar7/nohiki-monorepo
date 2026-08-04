@@ -649,7 +649,7 @@ class SearchPrefSnapshot(betterproto2.Message):
         betterproto2.field(17, betterproto2.TYPE_MESSAGE, optional=True)
     )
     """
-    REQUIRED - Experience preferences (for L2R EXPERIENCE features 6-10)
+    OPTIONAL - Experience preferences (for L2R EXPERIENCE features 6-10)
     Groups experience_years + seniority_levels for cohesive domain modeling
     """
 
@@ -657,8 +657,8 @@ class SearchPrefSnapshot(betterproto2.Message):
         19, betterproto2.TYPE_MESSAGE, optional=True
     )
     """
-    REQUIRED - Salary preferences (for L2R SALARY features 11-13)
-    Used to compute salary alignment in L2R model
+    OPTIONAL - Salary preferences (for L2R SALARY features 11-13)
+    Used to compute salary alignment in L2R model when provided
     """
 
     feature_importance: "___common__v1__.FeatureImportancePrefs | None" = (

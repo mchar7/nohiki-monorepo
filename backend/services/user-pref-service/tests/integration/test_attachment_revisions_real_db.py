@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import pytest
+from nohiki.common.v1 import WorkArrangement
 from nohiki_fastapi_utils.errors import NotFoundError
 from sqlalchemy import event
 from user_pref_service.db.models import SearchPref, SearchPrefUpload
@@ -33,6 +34,8 @@ async def _create_profile(
         id=uuid4(),
         user_id=uuid4(),
         pref_name="Attachment revision profile",
+        search_keywords=["python"],
+        work_arrangements=[WorkArrangement.REMOTE],
         created_at=revision,
         updated_at=revision,
     )

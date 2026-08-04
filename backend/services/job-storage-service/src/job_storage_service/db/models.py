@@ -7,6 +7,7 @@ Tables: listings (post-enrichment canonical), listing_versions (history),
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any, ClassVar
 
@@ -23,7 +24,7 @@ from nohiki_db_utils.db_mixins import RepresentableMixin
 from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 SCHEMA_NAME = "job_storage_schema"
@@ -296,8 +297,8 @@ class ListingIngestSaga(SagaBaseMixin, Base):
     listing_url: Mapped[str] = mapped_column(Text, nullable=False)
     external_listing_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     job_board_source: Mapped[JobBoardSource] = mapped_column(JobBoardSourceEnum, nullable=False)
-    query_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    correlation_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    query_id: Mapped[uuid.UUID] = mapped_column(UUID(), nullable=False)
+    correlation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(), nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     discovered_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

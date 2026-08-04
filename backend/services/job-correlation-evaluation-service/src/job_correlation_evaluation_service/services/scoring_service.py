@@ -24,9 +24,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-type ScoreBreakdownValue = bool | float | int | str | None | dict[str, float]
-type ScoreBreakdownDict = dict[str, ScoreBreakdownValue]
-
 
 # Cap description length before lowercasing on the disqualification hot path:
 # pathological HTML descriptions (>>8KB) otherwise dominate per-pair CPU when

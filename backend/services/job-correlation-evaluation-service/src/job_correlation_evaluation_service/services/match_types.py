@@ -16,10 +16,6 @@ if TYPE_CHECKING:
 
     from job_correlation_evaluation_service.services.scoring.stages.deterministic_final import FactorAttribution
 
-# Type alias for score breakdown
-type ScoreBreakdownValue = float | int | str
-type ScoreBreakdown = dict[str, ScoreBreakdownValue]
-
 
 @dataclass(frozen=True, slots=True)
 class JobMatchResult:
@@ -29,7 +25,6 @@ class JobMatchResult:
     listing_id: str
     listing_url: str
     score: int
-    breakdown: ScoreBreakdown
     feature_schema_version: str
     role_relevance_raw: float
     ranking_index: float

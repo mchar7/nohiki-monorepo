@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -99,12 +100,14 @@ def test_migrations_match_profile_model_and_reverse_cleanly(
     assert revoked_families["revoked_before"]["type"].timezone is True
     assert isinstance(revoked_families["expires_at"]["type"], sa.DateTime)
     assert revoked_families["expires_at"]["type"].timezone is True
-
-    command.downgrade(config, "001")
-    tables_after_revocation_downgrade = set(sa.inspect(engine).get_table_names(schema=SCHEMA_NAME))
-    assert "revoked_access_tokens" not in tables_after_revocation_downgrade
-    assert "user_revocation_cutoffs" not in tables_after_revocation_downgrade
-    assert "revoked_session_families" not in tables_after_revocation_downgrade
+    with engine.begin() as connection:
+        generated_settings_id = connection.execute(
+            sa.text(
+                f"INSERT INTO {SCHEMA_NAME}.user_pref_settings_projections (user_id) VALUES (:user_id) RETURNING id"
+            ),
+            {"user_id": uuid.uuid4()},
+        ).scalar_one()
+    assert generated_settings_id.version == 7
 
     command.downgrade(config, "base")
     remaining_application_tables = set(sa.inspect(engine).get_table_names(schema=SCHEMA_NAME)) - {"alembic_version"}
