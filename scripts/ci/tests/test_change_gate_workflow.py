@@ -1385,7 +1385,6 @@ def test_deadcode_runs_once_with_split_static_cache_save() -> None:
     steps = _steps(job)
     deadcode = next(step for step in steps if step.get("name") == "Check selected dead code")
     assert job["env"]["SKYLOS_CACHE_DIR"] == "${{ github.workspace }}/.skylos"
-    assert job["env"]["SKYLOS_CACHE_STATIC_TIER"] == "content"
     assert deadcode["env"]["SKYLOS_JOBS"] == "2"
     assert "--with" not in deadcode["run"]
     assert "just hygiene-deadcode-strict" in deadcode["run"]

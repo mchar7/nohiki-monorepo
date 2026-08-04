@@ -286,8 +286,6 @@ def _build_skylos_cmd(scan_paths: list[str], options: DeadCodeScanOptions) -> li
         # sovereign CI: no third-party upload surface, ever
         "--no-upload",
         "--cache-static",
-        "--cache-static-tier",
-        os.environ.get("SKYLOS_CACHE_STATIC_TIER", "content"),
         # false-positive whitelist lives in [tool.skylos.whitelist]
         "--config-file",
         str(REPO_ROOT / "pyproject.toml"),

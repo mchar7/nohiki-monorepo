@@ -649,7 +649,7 @@ def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
     assert project["dependency-groups"]["deadcode"] == ["skylos==4.30.0"]
     assert project["tool"]["uv"]["sources"]["skylos"] == {
         "git": "ssh://git@github.com/mchar7/skylos",
-        "rev": "b65ec9a722691782ae632496d4405dcd3d0ea968",
+        "rev": "52ccaf2058fa2ed36453c85f7f721e799b6c5c7e",
     }
 
     with (_ROOT / "uv.lock").open("rb") as lock_file:
@@ -657,8 +657,8 @@ def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
     skylos = next(package for package in lock["package"] if package["name"] == "skylos")
     assert skylos["source"]["git"] == (
         "ssh://git@github.com/mchar7/skylos"
-        "?rev=b65ec9a722691782ae632496d4405dcd3d0ea968"
-        "#b65ec9a722691782ae632496d4405dcd3d0ea968"
+        "?rev=52ccaf2058fa2ed36453c85f7f721e799b6c5c7e"
+        "#52ccaf2058fa2ed36453c85f7f721e799b6c5c7e"
     )
 
     setup_steps = _setup_steps()
