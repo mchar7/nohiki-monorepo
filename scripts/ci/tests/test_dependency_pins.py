@@ -878,6 +878,8 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
         setup_inputs = setup_step.get("with", {})
         assert setup_inputs.get("version-file") == uv_version_file, location
         assert "version" not in setup_inputs, location
+        assert setup_inputs.get("enable-cache") is True, location
+        assert setup_inputs.get("cache-dependency-glob") == "uv.lock", location
         assert any(
             index < setup_index and str(step.get("uses", "")).startswith("actions/checkout@")
             for index, step in enumerate(steps)
