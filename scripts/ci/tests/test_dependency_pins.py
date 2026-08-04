@@ -117,6 +117,22 @@ def test_nix_installers_share_the_canonical_bot_managed_pin() -> None:
     assert workflow_installers == dict.fromkeys(workflow_installers, canonical)
 
 
+def test_digest_freshness_keeps_only_the_nix_store_cache() -> None:
+    steps = _steps(_workflow_jobs(_DIGEST_FRESHNESS)["probe"])
+    by_name = {step.get("name"): step for step in steps}
+
+    assert "Cache uv downloads" not in by_name
+    assert "Cache workspace virtual environment" not in by_name
+    assert not any(str(step.get("uses", "")).startswith("actions/cache@") for step in steps)
+
+    nix_store = by_name["Cache nix store"]
+    assert str(nix_store["uses"]).startswith("nix-community/cache-nix-action@")
+    assert nix_store["with"]["gc-max-store-size-linux"] == "0"
+
+    workspace_sync = by_name["Install workspace (all packages + extras)"]
+    assert "if" not in workspace_sync
+
+
 def test_workflow_checkouts_do_not_persist_credentials() -> None:
     workflow_paths = sorted((*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")))
     missing = [
