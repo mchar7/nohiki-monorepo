@@ -404,8 +404,7 @@ class EmbeddingCallback(betterproto2.Message):
     Publisher: ml-compute-service
     Consumer: Original requester (user-pref, enrichment, etc.)
 
-    Single message type per callback topic - oneof distinguishes
-    success from failure, fixing the dual-consumer-group bug.
+    Single message type per callback topic; oneof distinguishes success from failure.
     ════════════════════════════════════════════════════════════════════
 
     Oneofs:

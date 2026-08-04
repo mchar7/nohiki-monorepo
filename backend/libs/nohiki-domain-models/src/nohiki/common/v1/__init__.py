@@ -2037,9 +2037,6 @@ class ErrorInfo(betterproto2.Message):
     """
     ════════════════════════════════════════════════════════════════════
     ERROR INFO: Structured error details for failure callbacks
-
-    Replaces scattered error_code/error_message/retryable fields
-    with a single, typed, reusable structure.
     ════════════════════════════════════════════════════════════════════
     """
 
@@ -2360,10 +2357,6 @@ class OperationOutcome(betterproto2.Message):
     """
     ════════════════════════════════════════════════════════════════════
     OPERATION OUTCOME: Common operation result with structured error handling
-
-    Renamed from ProcessingResult to avoid collision with doc-process
-    domain's ProcessingResult success payload. Uses ErrorInfo for
-    structured error details instead of loose string fields.
     ════════════════════════════════════════════════════════════════════
     """
 

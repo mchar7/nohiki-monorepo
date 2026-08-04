@@ -39,17 +39,10 @@ playwright := env_lock + " shared node_modules -- " + pnpm + " --filter nohiki-f
 playwright_test := test_run + " " + playwright + " test --config=e2e/playwright.config.ts"
 ast_cmd := "cd scripts/util/ast_explorer && " + env_lock + " shared venv -- uv run --no-sync ast-explorer"
 
-# Aliases and defaults
+# Defaults
 
 default:
     @just --list
-
-# Alias for lint
-l: lint
-# Alias for format
-f: format
-# Alias for sync
-s: sync
 
 # Workspace management
 
@@ -81,9 +74,6 @@ clean-all: clean
 
 # Apply repository autofixes
 fix: lint-fix format lint-md-fix
-
-# Run the complete repository verification matrix
-check-all: verify
 
 # Check Python lint policy
 lint:
@@ -140,9 +130,6 @@ typecheck-job job:
 
 # Code hygiene
 
-# Run the complete repository verification matrix
-check-strict: verify
-
 # Run all strict hygiene checks
 hygiene: hygiene-deps hygiene-arch hygiene-deadcode-strict hygiene-fixtures-strict hygiene-build-backend-strict
 
@@ -185,10 +172,6 @@ hygiene-fixtures-services:
 
 hygiene-fixtures-libs:
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks fixtures --scope libs --ci
-
-# Validate migrated packages against the canonical uv_build settings.
-hygiene-build-backend:
-    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --ci
 
 # Require every buildable workspace package to use canonical uv_build settings.
 hygiene-build-backend-strict packages="ALL":
@@ -472,10 +455,6 @@ infra-down:
 # Start all services from the exact validated render
 compose-up:
     CONTAINER_RUNTIME={{docker}} sh infra/compose/scripts/preflight.sh up -d
-
-# Explicitly remove legacy connector identities and replication state.
-connect-migrate-legacy:
-    CONTAINER_RUNTIME={{docker}} sh infra/compose/scripts/preflight.sh run --rm nohiki-cp-kafka-connect /kafka/scripts/register-connectors.sh migrate-legacy
 
 # Trigger snapshot refresh for all listings (rebuilds ECST projections)
 snapshot-refresh reason="manual trigger":

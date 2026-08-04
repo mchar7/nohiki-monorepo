@@ -1055,10 +1055,6 @@ default_message_pool.register_message(
 @dataclass(eq=False, repr=False)
 class SkillNormalizationRequested(betterproto2.Message):
     """
-    NOTE: SkillEmbeddingCompleted was DELETED per embedding architecture refactor.
-    Use ml.v1.EmbeddingCompleted with entity_type=SKILL instead.
-    Topic: ml.fct.embedding-completed.v1
-
     ════════════════════════════════════════════════════════════════════
     SKILL NORMALIZATION REQUEST/CALLBACK PATTERN
     ════════════════════════════════════════════════════════════════════

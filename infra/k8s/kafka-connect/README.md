@@ -51,19 +51,6 @@ resources. The entrypoint runs `register-connectors.sh register` on every start:
 and non-destructive. For manual deployments, run `scripts/register-connectors.sh` inside an
 environment that mounts `/run/secrets/database/dsn` and can reach PostgreSQL and Kafka Connect.
 
-### Migrating off legacy connectors (destructive, explicit only)
-
-The legacy Compose connector identities and their replication slots/publications are removed only
-by the explicit `scripts/register-connectors.sh migrate-legacy` command, never at startup. It
-deletes the legacy connectors, drops their (inactive) replication slots and publications, then
-re-registers the current connectors. From the Compose stack:
-
-```bash
-just connect-migrate-legacy
-```
-
-Run it once when migrating an existing environment; it refuses to drop a slot that is still active.
-
 ## Local Development
 
 ### Start Kafka Connect

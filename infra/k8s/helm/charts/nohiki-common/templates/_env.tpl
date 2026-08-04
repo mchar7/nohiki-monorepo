@@ -322,9 +322,6 @@ Usage: {{ include "nohiki-common.env.all" . | nindent 12 }}
 {{- include "nohiki-common.env.observability" . }}
 {{- include "nohiki-common.env.llm" . }}
 {{- include "nohiki-common.env.manifest" . }}
-{{- with .Values.env }}
-{{ toYaml . }}
-{{- end }}
 {{- with .Values.extraEnv }}
 {{ tpl (toYaml .) $ }}
 {{- end }}

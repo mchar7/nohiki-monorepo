@@ -9,13 +9,6 @@ global:
   labels:
     appGroup: nohiki
 
-  # Azure configuration (empty = use Kubernetes Secrets)
-  azure:
-    keyVaultName: ""
-    managedIdentityClientId: ""
-    tenantId: ""
-    cloudName: ""
-
   secrets:
     databaseSecretName: nohiki-database-credentials
     redisSecretName: nohiki-redis-credentials
@@ -254,7 +247,6 @@ sidecars: []
 initContainers: []
 
 # Additional environment variables
-env: []
 extraEnv: []
 
 # LLM provider chain (rendered by nohiki-common.env.llm into {PREFIX}LLM__* env vars).

@@ -66,9 +66,6 @@ message CallbackHeader {
 
 // ════════════════════════════════════════════════════════════════════
 // ERROR INFO: Structured error details for failure callbacks
-//
-// Replaces scattered error_code/error_message/retryable fields
-// with a single, typed, reusable structure.
 // ════════════════════════════════════════════════════════════════════
 message ErrorInfo {
   string error_code = 1 [

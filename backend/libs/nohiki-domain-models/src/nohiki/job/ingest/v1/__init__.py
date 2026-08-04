@@ -183,7 +183,7 @@ class EnrichmentCompleted(betterproto2.Message):
         3, betterproto2.TYPE_MESSAGE
     )
     """
-    TYPED enriched listing data (replaces processed_listing_json)
+    Enriched listing data
     """
 
     result: "___common__v1__.OperationOutcome" = betterproto2.field(
@@ -445,7 +445,7 @@ class ListingDiscovered(betterproto2.Message):
         4, betterproto2.TYPE_MESSAGE
     )
     """
-    TYPED discovered listing data (replaces raw_listing_data_json)
+    Discovered listing data
     """
 
     discovered_at: "datetime.datetime" = betterproto2.field(

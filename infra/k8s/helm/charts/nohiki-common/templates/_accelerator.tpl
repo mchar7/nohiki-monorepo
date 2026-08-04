@@ -36,7 +36,7 @@ Resolve and validate the accelerator mode. Returns "cpu" or "cuda".
 {{- end -}}
 
 {{/*
-Rewrite .Values.env so exactly one {PREFIX}PROCESSING__COMPUTE_BACKEND entry
+Rewrite .Values.extraEnv so exactly one {PREFIX}PROCESSING__COMPUTE_BACKEND entry
 exists (or none). Args: dict "root" $ "name" <env name> "value" <backend|"">.
 An empty/absent value strips the entry (CPU relies on the service default).
 */}}
@@ -45,15 +45,15 @@ An empty/absent value strips the entry (CPU relies on the service default).
 {{- $name := .name -}}
 {{- $value := .value | default "" -}}
 {{- $out := list -}}
-{{- range $root.Values.env | default list -}}
+{{- if $value -}}
+{{- $out = append $out (dict "name" $name "value" $value) -}}
+{{- end -}}
+{{- range $root.Values.extraEnv | default list -}}
 {{- if ne .name $name -}}
 {{- $out = append $out . -}}
 {{- end -}}
 {{- end -}}
-{{- if $value -}}
-{{- $out = append $out (dict "name" $name "value" $value) -}}
-{{- end -}}
-{{- $_ := set $root.Values "env" $out -}}
+{{- $_ := set $root.Values "extraEnv" $out -}}
 {{- end -}}
 
 {{/*

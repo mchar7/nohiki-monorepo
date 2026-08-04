@@ -107,10 +107,6 @@ class ProcessingCallback(betterproto2.Message):
     Topic: Dynamic (callback_topic from CommandHeader)
     Publisher: doc-process-service
     Consumer: Original requester
-
-    Bug fix: Previously, failures were published to a fixed fact topic
-    instead of the callback_topic. Now both success and failure are
-    published to the requester's callback_topic via oneof.
     ════════════════════════════════════════════════════════════════════
 
     Oneofs:

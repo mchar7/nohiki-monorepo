@@ -31,8 +31,8 @@ RUN uv sync --package ml-compute-service --no-dev --no-editable
 FROM builder-base AS sync-gpu
 RUN uv sync --package ml-compute-service --no-dev --no-editable --extra cuda
 
-# Select the resolved environment. Defaults to CPU (byte-identical to the prior
-# build); the production GPU image sets --build-arg ML_COMPUTE_BUILDER=sync-gpu.
+# Select the resolved environment. The production GPU image sets
+# --build-arg ML_COMPUTE_BUILDER=sync-gpu.
 # BuildKit only builds the selected sync stage, so CPU images never pull CUDA.
 FROM ${ML_COMPUTE_BUILDER} AS builder
 

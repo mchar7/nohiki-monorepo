@@ -25,7 +25,7 @@ message ListingDiscovered {
 
   nohiki.common.v1.ListingReference listing = 3 [(buf.validate.field).required = true];
 
-  // TYPED discovered listing data (replaces raw_listing_data_json)
+  // Discovered listing data
   DiscoveredListing discovered_data = 4 [(buf.validate.field).required = true];
 
   google.protobuf.Timestamp discovered_at = 5 [(buf.validate.field).required = true];
@@ -50,7 +50,7 @@ message EnrichmentCompleted {
   nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
   nohiki.common.v1.ListingReference listing = 2 [(buf.validate.field).required = true];
 
-  // TYPED enriched listing data (replaces processed_listing_json)
+  // Enriched listing data
   StoredListing stored_data = 3 [(buf.validate.field).required = true];
 
   nohiki.common.v1.OperationOutcome result = 4 [(buf.validate.field).required = true];

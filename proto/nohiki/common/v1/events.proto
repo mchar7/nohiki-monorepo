@@ -61,10 +61,6 @@ message PrefReference {
 
 // ════════════════════════════════════════════════════════════════════
 // OPERATION OUTCOME: Common operation result with structured error handling
-//
-// Renamed from ProcessingResult to avoid collision with doc-process
-// domain's ProcessingResult success payload. Uses ErrorInfo for
-// structured error details instead of loose string fields.
 // ════════════════════════════════════════════════════════════════════
 message OperationOutcome {
   option (buf.validate.message).cel = {

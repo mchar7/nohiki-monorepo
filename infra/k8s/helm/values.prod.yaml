@@ -25,11 +25,6 @@ global:
       qdrant:
         cidrs: [0.0.0.0/0]
 
-  azure:
-    keyVaultName: nohiki-prod-kv
-    managedIdentityClientId: ""
-    tenantId: ""
-    cloudName: ""
   eso:
     # ESO operator+CRDs live in the foundation chart; this flag emits the
     # chart-managed external-secrets-sa, nohiki-secret-store, and ExternalSecrets.
