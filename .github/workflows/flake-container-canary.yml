@@ -204,12 +204,39 @@ jobs:
           test -d "$GITHUB_WORKSPACE"
           test -d /__e
           test -x /__e/node20/bin/node
+          test -d /__w/_actions
+          test -d "$RUNNER_TOOL_CACHE"
           findmnt -T "$GITHUB_WORKSPACE"
           findmnt -T /__e
+          findmnt -T /__w/_actions
+          findmnt -T "$RUNNER_TOOL_CACHE"
           findmnt -T /nix/store
           test "$(findmnt -T /nix/store -n -o TARGET)" = /
-          printf 'runner_tool_cache=%s\n' "${RUNNER_TOOL_CACHE:-unset}" | tee -a canary-timings.txt
-          printf 'nix_store_path=%s\n' "$(dirname "$(dirname "$(command -v python3)")")" | tee -a canary-timings.txt
+          find /__w/_actions -type f -print0 | sort -z | xargs -0 -r sha256sum \
+            > /tmp/canary-action-archives.sha256
+          find "$RUNNER_TOOL_CACHE" -type f -print0 | sort -z | xargs -0 -r sha256sum \
+            > /tmp/canary-tool-cache.sha256
+          printf 'runner_tool_cache=%s\n' "$RUNNER_TOOL_CACHE" | tee -a canary-timings.txt
+          printf 'action_archive_files=%s\n' "$(wc -l < /tmp/canary-action-archives.sha256)" \
+            | tee -a canary-timings.txt
+          printf 'runner_tool_cache_files=%s\n' "$(wc -l < /tmp/canary-tool-cache.sha256)" \
+            | tee -a canary-timings.txt
+          printf 'nix_store_path=%s\n' "$(dirname "$(dirname "$(command -v python3)")")" \
+            | tee -a canary-timings.txt
+
+      - name: Prepare Python gate environment
+        run: |
+          started=$(date +%s%3N)
+          uv sync --locked --group ci
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'uv_ci_sync_ms=%s\n' "$elapsed" | tee -a canary-timings.txt
+
+      - name: Prepare frontend gate environment
+        run: |
+          started=$(date +%s%3N)
+          env CI=true LEFTHOOK=0 pnpm install --frozen-lockfile --filter 'nohiki-frontend...'
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'pnpm_install_ms=%s\n' "$elapsed" | tee -a canary-timings.txt
 
       - name: Prove dind socket routing
         run: |
@@ -218,11 +245,14 @@ jobs:
           test -S /var/run/docker.sock
           docker version
           docker buildx version
-          curl --fail --silent --show-error http://cache-registry:5000/v2/ >/dev/null
+          docker run --rm --network host \
+            ghcr.io/mchar7/nohiki-ci-toolchain-canary@sha256:22628d0191ac3456bd7ab631f02dedb9362337148f501653c5d890b28c3d2b8d \
+            curl --fail --silent --show-error http://cache-registry:5000/v2/ >/dev/null
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
+          driver-opts: network=host
           buildkitd-config-inline: |
             [registry."cache-registry:5000"]
               http = true
@@ -244,6 +274,11 @@ jobs:
         run: |
           docker image inspect nohiki-frontend-container-canary:ci
           docker run --rm nohiki-frontend-container-canary:ci caddy version
+
+      - name: Verify runner cache inputs remain intact
+        run: |
+          sha256sum --check /tmp/canary-action-archives.sha256
+          sha256sum --check /tmp/canary-tool-cache.sha256
 
       - name: Upload self-hosted evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
