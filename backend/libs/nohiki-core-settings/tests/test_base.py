@@ -366,6 +366,31 @@ class TestAzureKeyVaultError:
             monkeypatch.setattr(base_module, "_azure_keyvault_source_factory", original_factory)
 
 
+@pytest.fixture
+def plain_nested_secrets(tmp_path: Path) -> Path:
+    """Create an ordinary nested secrets directory without credential bytes."""
+    s3 = tmp_path / "s3"
+    s3.mkdir()
+    (s3 / "access_key").touch()
+    (s3 / "secret_key").touch()
+    (s3 / "bucket").write_text("fixture-bucket", encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture
+def kubelet_projected_secrets(tmp_path: Path) -> Path:
+    """Create the kubelet atomic-writer layout, including its logical symlinks."""
+    generation = tmp_path / "..2026_08_04_00_00_00.000000000"
+    s3 = generation / "s3"
+    s3.mkdir(parents=True)
+    (s3 / "access_key").touch()
+    (s3 / "secret_key").touch()
+    (s3 / "bucket").write_text("fixture-bucket", encoding="utf-8")
+    (tmp_path / "..data").symlink_to(generation.name, target_is_directory=True)
+    (tmp_path / "s3").symlink_to("..data/s3", target_is_directory=True)
+    return tmp_path
+
+
 class TestFileSecretsSource:
     """Tests for how the file-secrets source resolves its directory."""
 
@@ -396,3 +421,33 @@ class TestFileSecretsSource:
             model_config = SettingsConfigDict(secrets_dir=str(pinned))
 
         assert _PinnedSettings().service_version == "1.2.3-from-class-config"
+
+    def test_plain_nested_directory_surfaces_logical_s3_keys(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        plain_nested_secrets: Path,
+    ) -> None:
+        """Plain directories continue to expose nested keys from the mount root."""
+        monkeypatch.setenv("SECRETS_DIR", str(plain_nested_secrets))
+
+        settings = _TestSettingsWithS3()
+
+        assert settings.s3.access_key is not None
+        assert settings.s3.secret_key is not None
+        assert len(settings.s3.access_key.get_secret_value()) == 0
+        assert len(settings.s3.secret_key.get_secret_value()) == 0
+
+    def test_kubelet_projected_directory_surfaces_logical_s3_keys(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        kubelet_projected_secrets: Path,
+    ) -> None:
+        """Kubelet control links cannot hide the logical nested secret paths."""
+        monkeypatch.setenv("SECRETS_DIR", str(kubelet_projected_secrets))
+
+        settings = _TestSettingsWithS3()
+
+        assert settings.s3.access_key is not None
+        assert settings.s3.secret_key is not None
+        assert len(settings.s3.access_key.get_secret_value()) == 0
+        assert len(settings.s3.secret_key.get_secret_value()) == 0
