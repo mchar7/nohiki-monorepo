@@ -495,20 +495,24 @@ def test_local_helmrelease_consumes_stable_committed_digest_values() -> None:
     assert generator_options["disableNameSuffixHash"] is True
     patches = _mapping_list(kustomization["patches"])
     patch = yaml.safe_load(str(patches[0]["patch"]))
-    assert patch == [
-        {
-            "op": "add",
-            "path": "/spec/valuesFrom",
-            "value": [
-                {
-                    "kind": "ConfigMap",
-                    "name": "nohiki-image-digests",
-                    "valuesKey": "values.yaml",
-                    "optional": False,
-                }
-            ],
-        }
-    ]
+    assert patch[0] == {
+        "op": "add",
+        "path": "/spec/valuesFrom",
+        "value": [
+            {
+                "kind": "ConfigMap",
+                "name": "nohiki-image-digests",
+                "valuesKey": "values.yaml",
+                "optional": False,
+            },
+            {
+                "kind": "ConfigMap",
+                "name": "nohiki-owner-model-egress-values",
+                "valuesKey": "values.yaml",
+                "optional": False,
+            },
+        ],
+    }
     values = _load_yaml(_DIGEST_VALUES)
     global_values = _mapping_at(values, "global")
     digest_map = _mapping_at(global_values, "imageDigests")
