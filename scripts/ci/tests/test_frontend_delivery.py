@@ -465,6 +465,12 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"
     )
     assert buildx["uses"] == ("docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c")
+    assert buildx["with"] == {
+        "driver-opts": "${{ runner.environment == 'self-hosted' && 'network=host' || '' }}",
+        "buildkitd-config": (
+            "${{ runner.environment == 'self-hosted' && '.github/buildkitd-self-hosted.toml' || '' }}"
+        ),
+    }
     frontend_build = next(step for step in frontend_steps if step.get("name") == "Build production frontend image")
     assert frontend_build["if"] == (
         "env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"
@@ -474,7 +480,15 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "file": "typescript/apps/frontend/Dockerfile",
         "load": True,
         "tags": "nohiki-frontend-smoke:ci",
-        "cache-from": "type=gha,scope=frontend-smoke",
+        "cache-from": (
+            "${{ runner.environment == 'self-hosted' && "
+            "'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache' || "
+            "'type=gha,scope=frontend-smoke' }}"
+        ),
+        "cache-to": (
+            "${{ runner.environment == 'self-hosted' && "
+            "'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache,mode=max' || '' }}"
+        ),
     }
     frontend_smoke = next(step for step in frontend_steps if step.get("name") == "Smoke production frontend container")
     assert frontend_smoke == {
@@ -496,8 +510,15 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     playwright_build = next(step for step in playwright_steps if step.get("name") == "Build Playwright runner image")
     assert "if" not in playwright_build
     assert playwright_build["with"]["file"] == "typescript/apps/frontend/Dockerfile.playwright-runner"
-    assert playwright_build["with"]["cache-from"] == "type=gha,scope=playwright-runner-smoke"
-    assert "cache-to" not in playwright_build["with"]
+    assert playwright_build["with"]["cache-from"] == (
+        "${{ runner.environment == 'self-hosted' && "
+        "'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache' || "
+        "'type=gha,scope=playwright-runner-smoke' }}"
+    )
+    assert playwright_build["with"]["cache-to"] == (
+        "${{ runner.environment == 'self-hosted' && "
+        "'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache,mode=max' || '' }}"
+    )
     assert "typescript/apps/frontend/node_modules/.bin/playwright" in next(
         step["run"] for step in playwright_steps if step.get("name") == "Verify Playwright runner"
     )

@@ -67,7 +67,7 @@ def test_frontend_and_python_tests_split_only_for_broad() -> None:
     assert python["env"]["SUMMARY_TITLE"] == ("${{ needs.changes.outputs.commit_class }}")
 
 
-def test_self_hosted_container_builds_use_import_only_cache_scopes() -> None:
+def test_container_build_caches_split_by_runner_environment() -> None:
     jobs = _WORKFLOW["jobs"]
     cases = (
         ("worker", "Build production frontend image", "frontend-smoke"),
@@ -79,8 +79,24 @@ def test_self_hosted_container_builds_use_import_only_cache_scopes() -> None:
     )
 
     for job_name, step_name, scope in cases:
-        build = next(step for step in jobs[job_name]["steps"] if step.get("name") == step_name)
+        steps = jobs[job_name]["steps"]
+        setup = next(step for step in steps if step.get("name") == "Set up Docker Buildx")
+        assert setup["with"] == {
+            "driver-opts": "${{ runner.environment == 'self-hosted' && 'network=host' || '' }}",
+            "buildkitd-config": (
+                "${{ runner.environment == 'self-hosted' && '.github/buildkitd-self-hosted.toml' || '' }}"
+            ),
+        }
+
+        build = next(step for step in steps if step.get("name") == step_name)
         inputs = build["with"]
-        assert inputs["cache-from"] == f"type=gha,scope={scope}"
-        assert "cache-to" not in inputs
+        assert inputs["cache-from"] == (
+            f"${{{{ runner.environment == 'self-hosted' && "
+            f"'type=registry,ref=cache-registry:5000/nohiki/{scope}:buildcache' || "
+            f"'type=gha,scope={scope}' }}}}"
+        )
+        assert inputs["cache-to"] == (
+            f"${{{{ runner.environment == 'self-hosted' && "
+            f"'type=registry,ref=cache-registry:5000/nohiki/{scope}:buildcache,mode=max' || '' }}}}"
+        )
         assert "hashFiles" not in inputs["cache-from"]

@@ -1,0 +1,2 @@
+[registry."cache-registry:5000"]
+  http = true
