@@ -47,7 +47,7 @@ describe('ProfileSection display name contract', () => {
     vi.clearAllMocks();
   });
 
-  test('loads a legacy null display name but refuses to save until corrected', async () => {
+  test('loads an account with no display name but refuses to save until corrected', async () => {
     const user = userEvent.setup();
     renderProfile({ ...ACCOUNT, display_name: null });
 

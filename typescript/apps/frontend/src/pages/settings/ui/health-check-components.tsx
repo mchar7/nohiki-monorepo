@@ -1,48 +1,9 @@
-import type {
-  HealthCheckResult,
-  HealthResponse,
-} from '@features/omakase/document-builder/index.ts';
+import type { HealthCheckResult } from '@features/omakase/document-builder/index.ts';
 import type { TFunction } from 'i18next';
 import { CheckCircle, XCircle } from 'lucide-react';
 import type { JSX } from 'react';
 import { Alert, AlertDescription } from '@/shared/ui/alert.tsx';
 import { Badge } from '@/shared/ui/badge.tsx';
-
-const ComponentHealthDisplay = ({
-  response,
-  getStatusColor: statusColorFn,
-  t,
-}: {
-  readonly response: HealthResponse;
-  readonly getStatusColor: (status: string) => string;
-  readonly t: TFunction<'settings'>;
-}): JSX.Element | null => {
-  const components = [
-    { name: 'Database', status: response.database?.status },
-    { name: 'Jinja Engine', status: response.jinja_engine?.status },
-    { name: 'Gotenberg', status: response.gotenberg?.status },
-  ].filter((c): c is { name: string; status: string } => c.status !== undefined);
-
-  if (components.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="mt-2">
-      <p className="mb-1 font-medium text-xs">{t('api.healthCheck.componentHealth')}</p>
-      <div className="grid grid-cols-2 gap-2">
-        {components.map((component) => (
-          <div key={component.name} className="flex items-center justify-between text-xs">
-            <span className="capitalize">{`${component.name}:`}</span>
-            <Badge variant="outline" className={`text-xs ${statusColorFn(component.status)}`}>
-              {component.status}
-            </Badge>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
 
 const SuccessAlert = ({
   healthCheck,
@@ -74,11 +35,6 @@ const SuccessAlert = ({
               {healthCheck.response.status.toUpperCase()}
             </Badge>
           </div>
-          <ComponentHealthDisplay
-            response={healthCheck.response}
-            getStatusColor={statusColorFn}
-            t={t}
-          />
         </div>
       </AlertDescription>
     </Alert>

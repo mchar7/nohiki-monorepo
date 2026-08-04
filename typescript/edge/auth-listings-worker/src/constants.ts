@@ -16,7 +16,7 @@ export const BFF_MAX_RESPONSE_BYTES: number = 1024 * 1024;
 /** Cache key prefix (fake URL for Cloudflare Cache API) */
 export const CACHE_KEY_PREFIX = 'https://cache.internal/auth-listings' as const;
 
-/** Cache version for key namespacing */
+/** Cache key namespace. Increment whenever the cached response shape changes. */
 export const CACHE_VERSION = 'v1' as const;
 
 /** Default country when request.cf is unavailable */

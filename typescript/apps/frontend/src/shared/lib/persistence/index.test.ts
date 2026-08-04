@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, vi } from 'vitest';
 
 const fakeIndexedDb = vi.hoisted(() => ({
-  legacy: new Map<IDBValidKey, unknown>(),
   stores: new Map<string, Map<IDBValidKey, unknown>>(),
   rejectedClears: new Set<string>(),
 }));
@@ -33,14 +32,13 @@ vi.mock('idb-keyval', () => ({
     getStore(store).clear();
     return Promise.resolve();
   },
-  del: (key: IDBValidKey, store?: unknown) => {
-    (store === undefined ? fakeIndexedDb.legacy : getStore(store)).delete(key);
+  del: (key: IDBValidKey, store: unknown) => {
+    getStore(store).delete(key);
     return Promise.resolve();
   },
   entries: (store: unknown) => Promise.resolve([...getStore(store).entries()]),
   get: (key: IDBValidKey, store: unknown) => Promise.resolve(getStore(store).get(key)),
-  keys: (store?: unknown) =>
-    Promise.resolve([...(store === undefined ? fakeIndexedDb.legacy : getStore(store)).keys()]),
+  keys: (store: unknown) => Promise.resolve([...getStore(store).keys()]),
   set: (key: IDBValidKey, value: unknown, store: unknown) => {
     getStore(store).set(key, value);
     return Promise.resolve();
@@ -60,7 +58,6 @@ const DATASET_STORE = 'nohiki-local-datasets-v1/datasets';
 
 beforeEach(() => {
   localStorage.clear();
-  fakeIndexedDb.legacy.clear();
   fakeIndexedDb.stores.clear();
   fakeIndexedDb.rejectedClears.clear();
 });
@@ -73,9 +70,6 @@ describe('clearUserScopedPersistence', () => {
       DATASET_STORE,
       new Map([['dataset-1', { email: 'user@example.com' }]]),
     );
-    fakeIndexedDb.legacy.set('template:legacy', { name: 'Legacy template' });
-    fakeIndexedDb.legacy.set('dataset:legacy', { email: 'user@example.com' });
-    fakeIndexedDb.legacy.set('device-preference', 'compact');
     localStorage.setItem(
       'nohiki-document-builder-store',
       JSON.stringify({ datasets: [{ cachedHtmlData: '<p>private preview</p>' }] }),
@@ -88,7 +82,6 @@ describe('clearUserScopedPersistence', () => {
     expect(fakeIndexedDb.stores.get(TEMPLATE_STORE)).toEqual(new Map());
     expect(fakeIndexedDb.stores.get(SCHEMA_STORE)).toEqual(new Map());
     expect(fakeIndexedDb.stores.get(DATASET_STORE)).toEqual(new Map());
-    expect(fakeIndexedDb.legacy).toEqual(new Map([['device-preference', 'compact']]));
     expect(localStorage.getItem('nohiki-document-builder-store')).toBeNull();
     expect(localStorage.getItem('template:fallback')).toBeNull();
     expect(localStorage.getItem('dataset:fallback')).toBeNull();

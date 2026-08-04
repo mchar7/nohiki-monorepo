@@ -22,17 +22,7 @@ export interface TemplateMetadata {
   tags?: string[] | undefined;
   /** Page size configuration */
   pageSize?: PageSizeConfig | undefined;
-  /** JavaScript requirement metadata */
-  requiresJavaScript?: JavaScriptRequirement | undefined;
 }
-
-export interface JavaScriptRequirement {
-  /** Whether JavaScript execution is required */
-  required: boolean;
-  /** Reason for requiring JavaScript */
-  reason?: string | undefined;
-}
-
 export interface PageSizeConfig {
   width: number;
   height: number;

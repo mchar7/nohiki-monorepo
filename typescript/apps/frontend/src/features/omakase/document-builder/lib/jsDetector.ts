@@ -103,18 +103,6 @@ function detectJavaScript(htmlTemplate: string | null | undefined): JsDetectionR
 }
 
 /**
- * Checks if a template requires JavaScript based on metadata declaration.
- */
-function hasJsDeclaration(template: {
-  requiresJavaScript?: {
-    required: boolean;
-    reason?: string;
-  };
-}): boolean {
-  return template.requiresJavaScript?.required === true;
-}
-
-/**
  * Determines if the JavaScript warning should be shown
  * @param htmlTemplate The HTML template content to check
  * @returns True if warning should be shown
@@ -127,4 +115,4 @@ function shouldShowJsWarning(htmlTemplate: string): boolean {
   return detection.hasJavaScript;
 }
 
-export { detectJavaScript, hasJsDeclaration, shouldShowJsWarning };
+export { detectJavaScript, shouldShowJsWarning };

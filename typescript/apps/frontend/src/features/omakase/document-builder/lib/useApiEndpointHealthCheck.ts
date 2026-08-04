@@ -11,10 +11,6 @@ const HEALTH_CHECK_TIMEOUT_MS: number = 10_000;
  */
 interface HealthResponse {
   status: string;
-  service?: string;
-  database?: { status: string };
-  jinja_engine?: { status: string };
-  gotenberg?: { status: string };
 }
 
 type HealthCheckState = 'idle' | 'checking' | 'success' | 'error';

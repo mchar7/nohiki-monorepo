@@ -1,19 +1,12 @@
-import { clear, del, get, keys, set } from 'idb-keyval';
+import { del, get, keys, set } from 'idb-keyval';
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest';
-import {
-  clearAllStorage,
-  datasetStorage,
-  getStorageQuota,
-  migrateStorage,
-  templateStorage,
-} from './storage.ts';
+import { clearAllStorage, datasetStorage, getStorageQuota, templateStorage } from './storage.ts';
 
 vi.mock('idb-keyval', () => ({
   get: vi.fn(),
   set: vi.fn(),
   del: vi.fn(),
   keys: vi.fn(),
-  clear: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -244,24 +237,5 @@ describe('clearAllStorage', () => {
     await clearAllStorage();
 
     expect(keys).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe('migrateStorage', () => {
-  test('performs migration when not already done', async () => {
-    vi.mocked(clear).mockResolvedValueOnce(undefined);
-
-    await migrateStorage('v1.0.0');
-
-    expect(clear).toHaveBeenCalled();
-    expect(localStorage.getItem('migration:v1.0.0')).toBe('true');
-  });
-
-  test('skips migration when already done', async () => {
-    localStorage.setItem('migration:v1.0.0', 'true');
-
-    await migrateStorage('v1.0.0');
-
-    expect(clear).not.toHaveBeenCalled();
   });
 });

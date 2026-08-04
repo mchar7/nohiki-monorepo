@@ -175,29 +175,14 @@ export async function clearUserScopedPersistence(): Promise<void> {
     // The in-memory quarantine still prevents hydration during this page lifetime.
   }
 
-  let legacyKeys: IDBValidKey[] = [];
-  let legacyKeyError: unknown;
-  try {
-    legacyKeys = await keys();
-  } catch (error) {
-    legacyKeyError = error;
-  }
-
-  const legacyUserKeys = legacyKeys.filter(
-    (key): key is string =>
-      typeof key === 'string' &&
-      USER_SCOPED_STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix)),
-  );
   const cleanupResults = await Promise.allSettled([
     templatePersistence.clear(),
     schemaPersistence.clear(),
     datasetPersistence.clear(),
-    ...legacyUserKeys.map((key) => del(key)),
   ]);
   const failures: unknown[] = cleanupResults.flatMap((result) =>
     result.status === 'rejected' ? [result.reason] : [],
   );
-  if (legacyKeyError !== undefined) failures.push(legacyKeyError);
 
   try {
     for (const key of Object.keys(USER_SCOPED_LOCAL_STORAGE_KEYS)) {

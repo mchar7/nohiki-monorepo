@@ -6,25 +6,8 @@ type RenderMethod = 'html' | 'image';
 
 interface TemplateInfo {
   id: string;
-  displayName?: string;
-  version?: string;
-  requiresJavaScript?: {
-    required: boolean;
-    reason?: string;
-  };
-}
-
-const DEFAULT_TEMPLATE_VERSION = '1.0';
-
-/**
- * Version component of a render-preference key.
- *
- * Reads and writes must derive it identically, so an empty version normalises to the
- * same default on both sides. `??` would store under the default and look up under ''.
- */
-function prefVersion(tmpl: TemplateInfo): string {
-  // biome-ignore lint/nursery/useNullishCoalescing: '' is not a version; it must normalise
-  return tmpl.version || DEFAULT_TEMPLATE_VERSION;
+  displayName: string;
+  version: string;
 }
 
 interface UseTemplateJsWarningReturn {
@@ -50,45 +33,20 @@ function setSessionPref(templateId: string, version: string, method: RenderMetho
   sessionTemplatePrefs.set(key, method);
 }
 
-/** Determines if JS is required based on template metadata and/or content detection. */
-function checkJsRequirements(
-  tmpl: TemplateInfo,
-  htmlTemplate?: string,
-): { isDeclared: boolean; requiresJs: boolean; reason?: string } {
-  const isDeclared = tmpl.requiresJavaScript?.required === true;
-  const isDetected: boolean = htmlTemplate ? shouldShowJsWarning(htmlTemplate) : false;
-  return {
-    isDeclared,
-    requiresJs: isDeclared || isDetected,
-    reason: tmpl.requiresJavaScript?.reason,
-  };
-}
-
 /** Checks permanent and session render preferences for a template. */
 function checkSavedPreferences(
   tmpl: TemplateInfo,
   getStoredPref: (id: string, version: string) => RenderMethod | null,
 ): { found: boolean; method: RenderMethod | null } {
-  const version = prefVersion(tmpl);
-  const savedPref = getStoredPref(tmpl.id, version);
+  const savedPref = getStoredPref(tmpl.id, tmpl.version);
   if (savedPref) {
     return { found: true, method: savedPref };
   }
-  const sessionPref = getSessionPref(tmpl.id, version);
+  const sessionPref = getSessionPref(tmpl.id, tmpl.version);
   if (sessionPref) {
     return { found: true, method: sessionPref };
   }
   return { found: false, method: null };
-}
-
-/** Builds the reason string for the JS warning dialog. */
-function buildWarningReason(isDeclared: boolean, jsReason?: string): string {
-  if (isDeclared) {
-    return jsReason
-      ? `This template explicitly declares that it requires JavaScript execution: ${jsReason}.`
-      : 'This template explicitly declares that it requires JavaScript execution.';
-  }
-  return 'JavaScript code was detected in this template.';
 }
 
 interface WarningDisplayState {
@@ -108,8 +66,7 @@ function evaluateJsRequirement(
   htmlTemplate: string | undefined,
   ctx: CheckJsContext,
 ): WarningDisplayState | null {
-  const jsReqs = checkJsRequirements(ctx.template, htmlTemplate);
-  if (!jsReqs.requiresJs) {
+  if (!htmlTemplate || !shouldShowJsWarning(htmlTemplate)) {
     return null;
   }
   const preference = checkSavedPreferences(ctx.template, ctx.getTemplateRenderPref);
@@ -118,9 +75,9 @@ function evaluateJsRequirement(
     return null;
   }
   return {
-    templateName: ctx.template.displayName || 'Unavailable',
-    templateVersion: prefVersion(ctx.template),
-    reason: buildWarningReason(jsReqs.isDeclared, jsReqs.reason),
+    templateName: ctx.template.displayName,
+    templateVersion: ctx.template.version,
+    reason: 'JavaScript code was detected in this template.',
   };
 }
 
@@ -134,7 +91,7 @@ function useTemplateJsWarning(
   const setTemplateRenderPref = useDocumentBuilderStore((state) => state.setTemplateRenderPref);
   const [displayState, setDisplayState] = useState<WarningDisplayState>({
     templateName: '',
-    templateVersion: DEFAULT_TEMPLATE_VERSION,
+    templateVersion: '',
     reason: undefined,
   });
 
@@ -170,7 +127,7 @@ function useTemplateJsWarning(
     if (!template) {
       return;
     }
-    const version = prefVersion(template);
+    const { version } = template;
     if (remember) {
       setTemplateRenderPref(template.id, version, method);
     } else {

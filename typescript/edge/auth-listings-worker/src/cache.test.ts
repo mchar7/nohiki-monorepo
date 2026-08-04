@@ -1,26 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { buildCacheHeaders, buildCacheKey } from './cache';
-import { CACHE_FRESH_SECONDS, CACHE_SWR_SECONDS } from './constants';
+import {
+  CACHE_FRESH_SECONDS,
+  CACHE_KEY_PREFIX,
+  CACHE_SWR_SECONDS,
+  CACHE_VERSION,
+} from './constants';
 
 describe('buildCacheKey', () => {
   it('builds key for USA', () => {
-    expect(buildCacheKey('USA')).toBe('https://cache.internal/auth-listings/v1/USA');
+    expect(buildCacheKey('USA')).toBe(`${CACHE_KEY_PREFIX}/${CACHE_VERSION}/USA`);
   });
 
   it('builds key for GBR', () => {
-    expect(buildCacheKey('GBR')).toBe('https://cache.internal/auth-listings/v1/GBR');
+    expect(buildCacheKey('GBR')).toBe(`${CACHE_KEY_PREFIX}/${CACHE_VERSION}/GBR`);
   });
 
   it('builds key for any arbitrary country string', () => {
-    expect(buildCacheKey('DEU')).toBe('https://cache.internal/auth-listings/v1/DEU');
+    expect(buildCacheKey('DEU')).toBe(`${CACHE_KEY_PREFIX}/${CACHE_VERSION}/DEU`);
   });
 
   it('builds key with lang segment for multilingual countries', () => {
-    expect(buildCacheKey('USA', 'en')).toBe('https://cache.internal/auth-listings/v1/USA/en');
+    expect(buildCacheKey('USA', 'en')).toBe(`${CACHE_KEY_PREFIX}/${CACHE_VERSION}/USA/en`);
   });
 
   it('builds key without lang segment when lang is undefined', () => {
-    expect(buildCacheKey('CHE', undefined)).toBe('https://cache.internal/auth-listings/v1/CHE');
+    expect(buildCacheKey('CHE', undefined)).toBe(`${CACHE_KEY_PREFIX}/${CACHE_VERSION}/CHE`);
   });
 });
 

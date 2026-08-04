@@ -45,7 +45,6 @@
       "unknownError": "Unknown error occurred"
     },
     "healthCheck": {
-      "componentHealth": "Component Health:",
       "failedAfter": "Failed after {{latency}}ms",
       "serviceStatus": "Service Status:"
     },

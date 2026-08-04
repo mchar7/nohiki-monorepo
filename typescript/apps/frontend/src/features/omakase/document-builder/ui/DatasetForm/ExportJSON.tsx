@@ -162,7 +162,7 @@ function DatasetSelectionList({
 }
 
 function useDatasetSelection(
-  datasets: Dataset[] | undefined,
+  datasets: Dataset[],
   preselectedDatasets: string[],
 ): {
   selectedDatasets: Set<string>;
@@ -188,7 +188,7 @@ function useDatasetSelection(
   };
 
   const selectAll = (): void => {
-    setSelectedDatasets(new Set(Array.isArray(datasets) ? datasets.map((d) => d.id) : []));
+    setSelectedDatasets(new Set(datasets.map((dataset) => dataset.id)));
   };
 
   const selectNone = (): void => {
@@ -220,15 +220,13 @@ export function ExportJSON({
   };
 
   const handleExportSelected = (): void => {
-    const selected = Array.isArray(datasets)
-      ? datasets.filter((d) => selectedDatasets.has(d.id))
-      : [];
+    const selected = datasets.filter((dataset) => selectedDatasets.has(dataset.id));
     exportDatasets(selected);
     handleClose();
   };
 
   const selectedCount = selectedDatasets.size;
-  const availableDatasets = Array.isArray(datasets) ? datasets.filter((d) => d.data) : [];
+  const availableDatasets = datasets.filter((dataset) => dataset.data);
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
