@@ -34,6 +34,11 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+filterwarnings = [
+    "error",
+    # google-genai 1.75.0 triggers this inside its Python 3.14 typing compatibility code (googleapis/python-genai#1939).
+    "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning:google.genai",
+]
 markers = [
     "integration: marks tests requiring live external services (deselect with '-m not integration')",
 ]

@@ -21,6 +21,7 @@ namespace = true
 
 [tool.pytest.ini_options]
 addopts = "--cov=src/nohiki_domain_utils --cov-report=term-missing --cov-report=html"
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 omit = [
