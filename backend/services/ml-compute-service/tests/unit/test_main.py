@@ -83,8 +83,8 @@ class TestModelCacheConfiguration:
 
             assert os.environ["HF_HOME"] == str(cache_dir / "huggingface")
             assert os.environ["HF_HUB_CACHE"] == str(cache_dir / "huggingface" / "hub")
-            assert os.environ["TRANSFORMERS_CACHE"] == str(cache_dir / "huggingface")
-            assert os.environ["SENTENCE_TRANSFORMERS_HOME"] == str(cache_dir / "huggingface")
+            assert os.environ["TRANSFORMERS_CACHE"] == str(cache_dir / "huggingface" / "hub")
+            assert os.environ["SENTENCE_TRANSFORMERS_HOME"] == str(cache_dir / "huggingface" / "hub")
             assert os.environ["FASTEMBED_CACHE_PATH"] == str(cache_dir / "fastembed")
 
 

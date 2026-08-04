@@ -48,10 +48,11 @@ settings = get_settings()
 def _configure_model_caches(cache_dir: Path) -> None:
     """Point every local model loader at the configured processing cache."""
     huggingface_dir = cache_dir / "huggingface"
+    hub_dir = huggingface_dir / "hub"
     os.environ["HF_HOME"] = str(huggingface_dir)
-    os.environ["HF_HUB_CACHE"] = str(huggingface_dir / "hub")
-    os.environ["TRANSFORMERS_CACHE"] = str(huggingface_dir)
-    os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(huggingface_dir)
+    os.environ["HF_HUB_CACHE"] = str(hub_dir)
+    os.environ["TRANSFORMERS_CACHE"] = str(hub_dir)
+    os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(hub_dir)
     os.environ["FASTEMBED_CACHE_PATH"] = str(cache_dir / "fastembed")
 
 
