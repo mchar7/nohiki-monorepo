@@ -67,7 +67,7 @@ def test_frontend_and_python_tests_split_only_for_broad() -> None:
     assert python["env"]["SUMMARY_TITLE"] == ("${{ needs.changes.outputs.commit_class }}")
 
 
-def test_container_builds_use_stable_per_image_buildkit_cache_scopes() -> None:
+def test_self_hosted_container_builds_use_import_only_cache_scopes() -> None:
     jobs = _WORKFLOW["jobs"]
     cases = (
         ("worker", "Build production frontend image", "frontend-smoke"),
@@ -82,6 +82,5 @@ def test_container_builds_use_stable_per_image_buildkit_cache_scopes() -> None:
         build = next(step for step in jobs[job_name]["steps"] if step.get("name") == step_name)
         inputs = build["with"]
         assert inputs["cache-from"] == f"type=gha,scope={scope}"
-        assert inputs["cache-to"] == f"type=gha,scope={scope},mode=max"
+        assert "cache-to" not in inputs
         assert "hashFiles" not in inputs["cache-from"]
-        assert "hashFiles" not in inputs["cache-to"]
