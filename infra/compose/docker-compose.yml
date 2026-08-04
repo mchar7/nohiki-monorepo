@@ -51,7 +51,7 @@ x-vol-s3-mlflow: &vol-s3-mlflow nohiki-vol-secret-s3-mlflow:/run/secrets/s3:ro
 
 services:
   nohiki-infra-secrets-init:
-    image: docker.io/library/busybox:1.38.0@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d
+    image: docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
     network_mode: none
     restart: "no"
 
@@ -787,7 +787,7 @@ services:
 
   nohiki-infra-pgadmin:
     <<: *common-infrastructure
-    image: docker.io/dpage/pgadmin4:9.16@sha256:40fa840c5bb7c8463957f1255b01283732c2d8c9396a956d180f8e6c296753b3
+    image: docker.io/dpage/pgadmin4:9.17@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
     environment:
       PGADMIN_DEFAULT_EMAIL: 'admin@admin.com'
       # DEV ONLY: production overrides via SOPS-encrypted values; pgAdmin is gated by `dev` profile.
@@ -932,7 +932,7 @@ services:
 
   nohiki-infra-valkey:
     <<: *common-infrastructure
-    image: docker.io/valkey/valkey:9.1.0-alpine@sha256:a35428eba9043cc0b79dbe54100f0c92784f2de00ad09b01182bfb1c5c83d1bd
+    image: docker.io/valkey/valkey:9.1.1-alpine@sha256:ee91f7a174ac4d6a6b0685b3a60e321f0a9dbbb691f9b0e285be2ba1d1be8328
     hostname: nohiki-infra-valkey
     command: ["valkey-server", "--appendonly", "yes"]
     volumes:
@@ -1169,7 +1169,7 @@ services:
 
   nohiki-obs-loki:
     <<: *common-infrastructure
-    image: docker.io/grafana/loki:3.7.3@sha256:70b9f699fc9bb868b62f1cfd4f787dfa50242f1fd92e6089787d5d7daea75fe8
+    image: docker.io/grafana/loki:3.7.4@sha256:87f0a067673756a3cede1bcbf0c74875f7df9b09fddb53e399d0c576f756cfcc
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_LOKI:-3100}:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -1194,7 +1194,7 @@ services:
 
   nohiki-obs-mimir:
     <<: *common-infrastructure
-    image: docker.io/grafana/mimir:3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d
+    image: docker.io/grafana/mimir:3.1.4@sha256:ea395743a08cc1f41ede12a7264613cb32f0268bbda6277f12a5929b71625a41
     command: ["-config.file=/etc/mimir/mimir.yaml", "-target=all"]
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_MIMIR:-9009}:9009"
@@ -1206,7 +1206,7 @@ services:
 
   nohiki-obs-pyroscope:
     <<: *common-infrastructure
-    image: docker.io/grafana/pyroscope:2.1.1@sha256:c8ad9891fc8562c794c946883c8324b7e48f4eda58d243387c7b6254f9f061fb
+    image: docker.io/grafana/pyroscope:2.2.0@sha256:7f019d866e474609c7f112d2632d75bdf8ad418c08461fcb5193444bb6dc476d
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PYROSCOPE:-4040}:4040"
     command:
@@ -1234,7 +1234,7 @@ services:
 
   nohiki-obs-phoenix:
     <<: *common-infrastructure
-    image: docker.io/arizephoenix/phoenix:17.26.0@sha256:adf850ae51707fc739abd0271fb57661fc1006c204d7eeeb62fa39f7fbc1c3a7
+    image: docker.io/arizephoenix/phoenix:17.30.0@sha256:02c5c55ada6f81f6ecb7eb5278df5e9cd9a06ba913f84a46c1105d93f5b8db9b
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PHOENIX_UI:-6006}:6006"
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_PHOENIX_OTLP:-4320}:4317"
@@ -1325,7 +1325,7 @@ services:
 
   nohiki-obs-grafana:
     <<: *common-infrastructure
-    image: docker.io/grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
+    image: docker.io/grafana/grafana:13.1.1@sha256:7cb8c64c4d57a57e734073f3cc94620adb24a0acb929bd80ba9f14017e3a975b
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_GRAFANA:-3001}:3000"
     environment:
