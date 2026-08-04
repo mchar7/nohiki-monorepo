@@ -28,10 +28,7 @@ _DEPENDENCY_MODULES = {
 }
 _IMAGE_DIGESTS = {
     "health-runner": _DIGEST,
-    **{
-        service: f"sha256:{character * 64}"
-        for service, character in zip(_DEPENDENCY_MODULES, "bcde", strict=True)
-    },
+    **{service: f"sha256:{character * 64}" for service, character in zip(_DEPENDENCY_MODULES, "bcde", strict=True)},
 }
 _READ_ONLY_VERBS = {"get", "list", "watch"}
 _FORBIDDEN_RESOURCES = {"secrets", "pods/exec", "pods/portforward"}
