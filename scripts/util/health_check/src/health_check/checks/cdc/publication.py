@@ -83,7 +83,7 @@ class PublicationCheck(HealthCheck):
                 CheckStatus.FAILED,
                 f"publication inventory mismatch: {len(missing)} missing, {len(unexpected)} unexpected",
                 details=details,
-                remediation_hint="Reconcile current Debezium connectors and remove verified legacy publications",
+                remediation_hint="Reconcile the configured Debezium connector publication inventory",
             )
 
         async with asyncio.TaskGroup() as tg:

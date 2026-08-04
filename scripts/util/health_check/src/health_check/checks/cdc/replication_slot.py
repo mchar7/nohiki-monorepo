@@ -79,7 +79,7 @@ class ReplicationSlotCheck(HealthCheck):
                     f"{len(missing)} missing, {len(unexpected)} unexpected, {len(inactive)} inactive"
                 ),
                 details=details,
-                remediation_hint="Reconcile current Debezium connectors and remove verified legacy slots",
+                remediation_hint="Reconcile the configured Debezium connector replication slot inventory",
             )
 
         return self._make_result(

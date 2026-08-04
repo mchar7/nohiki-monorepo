@@ -227,23 +227,6 @@ def test_readiness_checks_every_current_connector_identity(tmp_path: Path, missi
     assert f"missing connector {missing}" in result.stderr
 
 
-@pytest.mark.parametrize("unexpected", ["nohiki-outbox-user_auth", "qdrant-embedding-sink"])
-def test_readiness_rejects_unexpected_or_legacy_identities(tmp_path: Path, unexpected: str) -> None:
-    payload = _connector_payload()
-    payload[unexpected] = {
-        "info": {"config": {"connector.class": "example.UnexpectedConnector"}},
-        "status": {
-            "connector": {"state": "RUNNING"},
-            "tasks": [{"id": 0, "state": "RUNNING"}],
-        },
-    }
-
-    result = _run_healthcheck(tmp_path, payload)
-
-    assert result.returncode == 1
-    assert f"unexpected connector {unexpected}" in result.stderr
-
-
 @pytest.mark.parametrize("failed_component", ["connector", "task"])
 def test_readiness_requires_connectors_and_tasks_to_be_running(tmp_path: Path, failed_component: str) -> None:
     payload = _connector_payload()

@@ -3597,7 +3597,6 @@ def test_all_supported_just_compose_commands_use_the_validation_gate() -> None:
         f"{gate} up -d nohiki-infra-postgres nohiki-infra-valkey nohiki-cp-kafka nohiki-cp-kafka-init",
         f"{gate} down",
         f"{gate} up -d",
-        f"{gate} run --rm nohiki-cp-kafka-connect /kafka/scripts/register-connectors.sh migrate-legacy",
         f"{gate} build nohiki-job-snapshot-refresh",
         f'{gate} run --rm -e REFRESH_REASON="{{{{reason}}}}" nohiki-job-snapshot-refresh',
         f"{gate} down",
@@ -3747,7 +3746,6 @@ def test_tracked_repo_string_scan_ignores_untracked_files_and_detects_tracked_by
         "infra-down",
         "compose-up",
         "compose-down",
-        "connect-migrate-legacy",
         "snapshot-refresh",
         "logs bff",
     ],
@@ -4168,17 +4166,6 @@ def test_startup_registration_performs_no_destructive_cleanup(tmp_path: Path, ar
     assert psql_log.strip() == "", "startup must not touch replication slots/publications"
 
 
-def test_migrate_legacy_performs_destructive_cleanup(tmp_path: Path) -> None:
-    bin_dir = _bin_dir(tmp_path)
-    _connect_bins(bin_dir)
-    proc, curl_log, psql_log = _run_register(bin_dir, tmp_path, ["migrate-legacy"])
-    assert proc.returncode == 0, proc.stderr
-    assert " -X DELETE " in curl_log, "migrate-legacy must delete legacy connectors"
-    assert "nohiki-outbox-user_auth" in curl_log
-    assert "pg_replication_slots" in psql_log or "DROP PUBLICATION" in psql_log
-    assert " -X POST " in curl_log, "migrate-legacy must also re-register connectors"
-
-
 def test_unknown_command_is_rejected(tmp_path: Path) -> None:
     bin_dir = _bin_dir(tmp_path)
     _connect_bins(bin_dir)
@@ -4190,7 +4177,4 @@ def test_entrypoint_invokes_registration_only() -> None:
     entrypoint = _ENTRYPOINT.read_text(encoding="utf-8")
     assert re.search(r"register-connectors\.sh[\"']?\s+register\b", entrypoint), (
         "startup entrypoint must call the non-destructive register subcommand"
-    )
-    assert "migrate-legacy" not in re.sub(r"#.*", "", entrypoint), (
-        "entrypoint must never run destructive legacy migration at startup"
     )

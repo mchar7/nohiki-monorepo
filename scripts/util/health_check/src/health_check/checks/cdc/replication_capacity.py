@@ -1,4 +1,4 @@
-"""PostgreSQL logical replication capacity and legacy-slot invariant."""
+"""PostgreSQL logical replication capacity and slot-inventory invariant."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ _METADATA: Final = CheckMetadata(
     category=CheckCategory.CDC,
     platforms=frozenset({PlatformTarget.COMPOSE, PlatformTarget.KUBERNETES}),
     depends_on=frozenset({"replication_slot"}),
-    description="Verify replication slot and WAL sender headroom without legacy proliferation.",
+    description="Verify replication slot and WAL sender headroom against the configured inventory.",
 )
 
 
@@ -37,7 +37,7 @@ SELECT
 
 
 class ReplicationCapacityCheck(HealthCheck):
-    """Detect exhausted PostgreSQL CDC capacity and surplus legacy slots."""
+    """Detect exhausted PostgreSQL CDC capacity and surplus slots."""
 
     metadata = _METADATA
 
@@ -67,12 +67,12 @@ class ReplicationCapacityCheck(HealthCheck):
         if sender_headroom <= 0:
             failures.append("max_wal_senders exhausted")
         if unexpected_slots:
-            failures.append(f"{unexpected_slots} unexpected/legacy replication slot(s)")
+            failures.append(f"{unexpected_slots} unexpected replication slot(s)")
         if failures:
             return self._make_result(
                 CheckStatus.FAILED,
                 "; ".join(failures),
                 details=evidence,
-                remediation_hint="Drop verified legacy slots or increase PostgreSQL replication capacity",
+                remediation_hint="Drop verified unexpected slots or increase PostgreSQL replication capacity",
             )
         return self._make_result(CheckStatus.PASSED, "Replication capacity has headroom", details=evidence)
