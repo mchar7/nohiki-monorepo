@@ -714,14 +714,14 @@ def test_deadcode_command_uses_pinned_fork_static_cache_offline() -> None:
     assert _CI_PROJECT["dependency-groups"]["deadcode"] == ["skylos==4.30.0"]
     assert _CI_PROJECT["tool"]["uv"]["sources"]["skylos"] == {
         "git": "ssh://git@github.com/mchar7/skylos",
-        "rev": "b65ec9a722691782ae632496d4405dcd3d0ea968",
+        "rev": "52ccaf2058fa2ed36453c85f7f721e799b6c5c7e",
     }
     assert "uvx" not in command
     cache_index = command.index("--cache-static")
     assert command[cache_index : cache_index + 3] == [
         "--cache-static",
-        "--cache-static-tier",
-        "content",
+        "--config-file",
+        str(_ROOT / "pyproject.toml"),
     ]
     # Name-only baseline fingerprints suppress globally; the clean corpus needs no baseline.
     assert "--baseline" not in command
