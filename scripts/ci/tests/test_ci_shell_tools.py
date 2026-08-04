@@ -9,14 +9,15 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+import ci_checks.checks.workflow as workflow_helpers
 import pytest
 from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, string_at
 from ci_checks.app import app
 from ci_checks.checks.workflow import (
     COLD_WALL_BUDGET_SECONDS,
     WARM_WALL_BUDGET_SECONDS,
-    hosted_equivalent_minutes,
     render_report_summary,
+    runner_minute_totals,
     select_wall_budget,
 )
 from ci_checks.core.change_gate import GateDecision, render_outputs
@@ -284,7 +285,7 @@ def test_checks_workflow_factors_shared_shell_behaviour_into_python() -> None:
             assert "workflow.py summary" in command
 
     commands = "\n".join(command for job in jobs.values() for command in _commands(job))
-    assert "workflow.py guard" in commands.replace("\n", " ")
+    assert "workflow.py route" in commands.replace("\n", " ")
     assert commands.count("workflow.py verdict") == 2
     assert "workflow.py accounting" in commands
     for retired_shell in (
@@ -328,19 +329,38 @@ def test_workflow_summary_subcommand_writes_exact_report(
     )
 
 
-def test_workflow_guard_and_verdict_subcommands_preserve_decisions(
+def test_workflow_route_and_verdict_subcommands_preserve_decisions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output = tmp_path / "output"
-    broad = CliRunner().invoke(app, ["workflow-guard", "broad", str(output)])
-    assert broad.exit_code == 0, broad.output
-    assert output.read_text(encoding="utf-8") == "worker_timeout_minutes=52\n"
-
-    invalid = CliRunner().invoke(app, ["workflow-guard", "invalid", str(output)])
-    assert invalid.exit_code != 0
-    assert isinstance(invalid.exception, ValueError)
-    assert str(invalid.exception) == "cannot derive a guard for commit class: invalid"
+    summary = tmp_path / "summary"
+    inventory = [
+        {
+            "total_count": 1,
+            "runners": [
+                {
+                    "name": "nohiki-runner-01",
+                    "status": "online",
+                    "busy": True,
+                    "os": "linux",
+                    "labels": [{"name": label} for label in ("self-hosted", "Linux", "X64", "nohiki", "nohiki-t3")],
+                }
+            ],
+        }
+    ]
+    monkeypatch.setenv("GH_TOKEN", "redacted")
+    monkeypatch.setattr(workflow_helpers, "_gh_json", lambda _args: inventory)
+    route = CliRunner().invoke(
+        app,
+        ["workflow-route", "owner/repository", str(output), str(summary)],
+    )
+    assert route.exit_code == 0, route.output
+    emitted = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    assert emitted["runner_class"] == "nohiki-t3"
+    assert emitted["runner_target"] == '["self-hosted","Linux","X64","nohiki","nohiki-t3"]'
+    assert emitted["worker_timeout_minutes"] == "52"
+    assert emitted["playwright_timeout_minutes"] == "30"
 
     values = {
         "BROAD": "false",
@@ -379,10 +399,11 @@ def test_workflow_accounting_arithmetic_and_wall_boundary() -> None:
         {
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": "2026-07-23T00:01:01Z",
+            "labels": ["self-hosted", "Linux", "X64", "nohiki", "nohiki-t1"],
         }
     ]
-    assert hosted_equivalent_minutes(jobs, now) == 2
-    assert hosted_equivalent_minutes([], now) == 0
+    assert runner_minute_totals(jobs, now) == (2, 0)
+    assert runner_minute_totals([], now) == (0, 0)
 
     warm = select_wall_budget("", "true", "", "true")
     cold = select_wall_budget("true", "", "", "true")

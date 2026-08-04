@@ -1076,7 +1076,7 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
     ("changes", "Compute change gate"): _support("emits the lane flags, runs no check"),
     ("changes", "Upload affected image record"): _ARTIFACT,
     ("changes", "Look up a reusable Checks proof"): _support("proof cache lookup, runs no check"),
-    ("changes", "Derive worker guard"): _support("computes a timeout, runs no check"),
+    ("changes", "Select runner route"): _support("selects the payload runner class, runs no check"),
     ("changes", "Write Checks attestation"): _support("writes the proof document, runs no check"),
     ("changes", "Upload Checks attestation"): _ARTIFACT,
     ("changes", "Report router cost"): _TIMING,

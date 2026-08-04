@@ -47,7 +47,7 @@ app.command("gate-evidence")(_gate.gate_evidence_cmd)
 app.command("gate-reuse")(_gate.gate_reuse_cmd)
 
 # GitHub Checks workflow summary, verdict and accounting adapters.
-app.command("workflow-guard")(_workflow.guard_cmd)
+app.command("workflow-route")(_workflow.route_cmd)
 app.command("workflow-summary")(_workflow.summary_cmd)
 app.command("workflow-verdict")(_workflow.verdict_cmd)
 app.command("workflow-accounting")(_workflow.accounting_cmd)

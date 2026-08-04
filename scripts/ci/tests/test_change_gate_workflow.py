@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import re
@@ -7,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+import ci_checks.checks.workflow as workflow_helpers
 import pytest
 from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, mapping_sequence_at
 from ci_checks.checks.deadcode import STATIC_RESULT_OUTPUT
@@ -17,12 +19,13 @@ from ci_checks.checks.workflow import (
     accounting_span,
     derive_accounting,
     enforce_wall_budget,
-    hosted_equivalent_minutes,
     render_accounting,
     render_cache_table,
     render_open_summary,
+    route_outputs,
+    runner_minute_totals,
+    select_runner,
     select_wall_budget,
-    worker_timeout_minutes,
 )
 from ci_checks.core.change_gate import (
     BroadCause,
@@ -90,6 +93,151 @@ def _wall_budgets() -> dict[str, int]:
         "warm": WARM_WALL_BUDGET_SECONDS,
         "cold": COLD_WALL_BUDGET_SECONDS,
     }
+
+
+def _runner(
+    name: str,
+    tier: str,
+    *,
+    status: str = "online",
+    busy: bool = False,
+    operating_system: str = "linux",
+    labels: list[str] | None = None,
+) -> dict[str, object]:
+    names = labels or ["self-hosted", "Linux", "X64", "nohiki", tier]
+    return {
+        "name": name,
+        "status": status,
+        "busy": busy,
+        "os": operating_system,
+        "labels": [{"name": label} for label in names],
+    }
+
+
+def _inventory(*runners: dict[str, object], pages: int = 1) -> list[dict[str, object]]:
+    size = len(runners)
+    if pages == 1:
+        return [{"total_count": size, "runners": list(runners)}]
+    split = (size + pages - 1) // pages
+    return [
+        {"total_count": size, "runners": list(runners[offset : offset + split])} for offset in range(0, size, split)
+    ]
+
+
+def test_runner_priority_prefers_idle_tier_1_then_idle_undrained_tier_2_then_online_tier_3() -> None:
+    tier_1 = _runner("nohiki-runner-02", "nohiki-t1")
+    tier_2 = _runner("nohiki-runner-06", "nohiki-t2")
+    tier_3 = _runner("nohiki-runner-01", "nohiki-t3")
+    selected = select_runner(_inventory(tier_3, tier_2, tier_1, pages=2))
+    assert (selected.runner_class, selected.selected_name) == ("nohiki-t1", "nohiki-runner-02")
+
+    selected = select_runner(
+        _inventory(
+            _runner("nohiki-runner-02", "nohiki-t1", busy=True),
+            _runner("nohiki-runner-03", "nohiki-t1", status="offline"),
+            _runner("nohiki-runner-04", "nohiki-t1", busy=True),
+            _runner("nohiki-runner-05", "nohiki-t1"),
+            tier_2,
+            tier_3,
+        )
+    )
+    assert (selected.runner_class, selected.selected_name) == ("nohiki-t1", "nohiki-runner-05")
+
+    selected = select_runner(_inventory(tier_3, tier_2, _runner("nohiki-runner-02", "nohiki-t1", status="offline")))
+    assert (selected.runner_class, selected.selected_name) == ("nohiki-t2", "nohiki-runner-06")
+
+    selected = select_runner(
+        _inventory(
+            tier_3,
+            _runner("nohiki-runner-06", "nohiki-t2", busy=True),
+            _runner("nohiki-runner-02", "nohiki-t1", busy=True),
+        )
+    )
+    assert (selected.runner_class, selected.selected_name) == ("nohiki-t3", "nohiki-runner-01")
+
+
+def test_powered_off_tier_1_falls_through_without_waiting_and_rerun_takes_a_fresh_snapshot() -> None:
+    powered_off = select_runner(
+        _inventory(
+            _runner("nohiki-runner-02", "nohiki-t1", status="offline"),
+            _runner("nohiki-runner-01", "nohiki-t3"),
+        )
+    )
+    assert powered_off.runner_class == "nohiki-t3"
+    assert powered_off.tier_1_state == "offline"
+    fresh_attempt = select_runner(
+        _inventory(_runner("nohiki-runner-02", "nohiki-t1"), _runner("nohiki-runner-01", "nohiki-t3"))
+    )
+    assert fresh_attempt.runner_class == "nohiki-t1"
+
+
+def test_busy_tier_1_and_tier_2_fall_through_but_busy_tier_3_queues() -> None:
+    selected = select_runner(
+        _inventory(
+            _runner("nohiki-runner-02", "nohiki-t1", busy=True),
+            _runner("nohiki-runner-06", "nohiki-t2", busy=True),
+            _runner("nohiki-runner-01", "nohiki-t3", busy=True),
+        )
+    )
+    assert selected.runner_class == "nohiki-t3"
+    assert selected.runner_target == '["self-hosted","Linux","X64","nohiki","nohiki-t3"]'
+    assert (selected.tier_1_state, selected.tier_2_state, selected.tier_3_state) == (
+        "busy",
+        "busy",
+        "eligible",
+    )
+
+
+def test_tier_2_drain_skips_only_tier_2_and_absent_tiers_skip_cleanly() -> None:
+    selected = select_runner(
+        _inventory(_runner("nohiki-runner-06", "nohiki-t2"), _runner("nohiki-runner-01", "nohiki-t3")),
+        "TRUE",
+    )
+    assert selected.runner_class == "nohiki-t3"
+    assert (selected.tier_1_state, selected.tier_2_state) == ("absent", "draining")
+    assert select_runner(_inventory()).runner_class == "hosted"
+
+
+@pytest.mark.parametrize(
+    "inventory",
+    [
+        [{"total_count": 2, "runners": [_runner("nohiki-runner-01", "nohiki-t3")]}],
+        _inventory(_runner("nohiki-runner-01", "nohiki-t3"), _runner("nohiki-runner-07", "nohiki-t3")),
+        _inventory(_runner("nohiki-runner-01", "nohiki-t3"), _runner("nohiki-runner-01", "nohiki-t3")),
+        _inventory(
+            _runner(
+                "nohiki-runner-01",
+                "nohiki-t3",
+                labels=["self-hosted", "Linux", "ARM64", "nohiki", "nohiki-t3"],
+            )
+        ),
+        _inventory(_runner("nohiki-runner-01", "nohiki-t3", operating_system="Windows")),
+        [{"total_count": 1, "runners": [{"name": "nohiki-runner-01"}]}],
+    ],
+)
+def test_untrusted_inventory_forces_hosted_fallback(inventory: object) -> None:
+    selected = select_runner(inventory)
+    assert selected.runner_class == "hosted"
+    assert selected.runner_target == '"ubuntu-24.04"'
+    assert selected.tier_1_state == selected.tier_2_state == selected.tier_3_state == "untrusted"
+
+
+def test_runner_target_and_timeout_outputs_are_valid_for_every_class() -> None:
+    inventories = {
+        "nohiki-t1": _inventory(_runner("nohiki-runner-02", "nohiki-t1")),
+        "nohiki-t2": _inventory(_runner("nohiki-runner-06", "nohiki-t2")),
+        "nohiki-t3": _inventory(_runner("nohiki-runner-01", "nohiki-t3")),
+        "hosted": _inventory(),
+    }
+    expected_worker = {"nohiki-t1": "52", "nohiki-t2": "52", "nohiki-t3": "52", "hosted": "30"}
+    for runner_class, inventory in inventories.items():
+        outputs = route_outputs(select_runner(inventory))
+        assert outputs["runner_class"] == runner_class
+        assert json.loads(outputs["runner_target"])
+        assert outputs["worker_timeout_minutes"] == expected_worker[runner_class]
+        assert outputs["playwright_timeout_minutes"] == "30"
+        assert outputs["title_timeout_minutes"] == ("10" if runner_class == "hosted" else "20")
+        assert outputs["checks_timeout_minutes"] == "5"
 
 
 def _protected_main_fan_in(worker_result: str) -> subprocess.CompletedProcess[str]:
@@ -679,18 +827,35 @@ def test_skylos_cache_tests_run_only_where_the_private_analyzer_is_installed() -
     assert all(name.startswith(f"{_CI_TESTS}/") for name in marked), marked
 
 
-def test_worker_guard_bounds_a_hang_against_the_cold_budget() -> None:
-    changes = _jobs()["changes"]
-    assert changes["outputs"]["worker_timeout_minutes"] == ("${{ steps.guards.outputs.worker_timeout_minutes }}")
-    guards = next(step for step in _steps(changes) if step.get("name") == "Derive worker guard")
-    command = str(guards["run"])
-    cold = _wall_budgets()["cold"]
-    assert cold == max(_wall_budgets().values())
-    assert "workflow.py guard" in command.replace("\n", " ")
-    assert worker_timeout_minutes("standard") == worker_timeout_minutes("broad") == 52
-    with pytest.raises(ValueError, match="cannot derive a guard for commit class: invalid"):
-        worker_timeout_minutes("invalid")
-    assert _jobs()["worker"]["timeout-minutes"] == ("${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}")
+def test_workflow_helper_parses_on_hosted_bootstrap_python() -> None:
+    source = (_ROOT / "scripts" / "ci" / "src" / "ci_checks" / "checks" / "workflow.py").read_text(encoding="utf-8")
+    ast.parse(source, filename="workflow.py", feature_version=(3, 12))
+
+
+def test_router_emits_one_target_and_per_class_timeout_contract() -> None:
+    jobs = _jobs()
+    changes = jobs["changes"]
+    outputs = changes["outputs"]
+    route = next(step for step in _steps(changes) if step.get("name") == "Select runner route")
+    assert changes["runs-on"] == "ubuntu-24.04"
+    assert changes["timeout-minutes"] == 5
+    assert route["env"] == {
+        "GH_TOKEN": "${{ secrets.RUNNER_INVENTORY_TOKEN }}",
+        "TIER_2_DRAIN": "${{ vars.NOHIKI_T2_DRAIN }}",
+    }
+    assert "workflow.py route" in str(route["run"]).replace("\n", " ")
+    assert outputs["runner_target"] == "${{ steps.route.outputs.runner_target }}"
+    assert outputs["runner_class"] == "${{ steps.route.outputs.runner_class }}"
+    assert outputs["worker_timeout_minutes"] == "${{ steps.route.outputs.worker_timeout_minutes }}"
+    for job_name in ("worker", "playwright-image", "title-policy", "checks"):
+        assert "needs.changes.outputs.runner_target" in str(jobs[job_name]["runs-on"])
+    assert jobs["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+    assert jobs["playwright-image"]["timeout-minutes"] == (
+        "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}"
+    )
+    assert jobs["title-policy"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.title_timeout_minutes) }}"
+    assert jobs["checks"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}"
+    assert _wall_budgets() == {"warm": 8040, "cold": 8040}
 
 
 def test_router_emits_scoping_and_tree_attestation_contracts() -> None:
@@ -825,6 +990,14 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
         # Splits the class signal: the step disjuncts consume this, the scope selectors do not.
         "broad_unbounded",
         "worker_timeout_minutes",
+        "runner_target",
+        "runner_class",
+        "tier_1_state",
+        "tier_2_state",
+        "tier_3_state",
+        "playwright_timeout_minutes",
+        "title_timeout_minutes",
+        "checks_timeout_minutes",
         "protected_main_smoke",
         "commitlint_expected",
         "full",
@@ -870,6 +1043,10 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
     for field in ("run_id", "event_action", "commit_class", "tested_tree_sha"):
         assert field in validate_command
     assert "checks-attestation/checks-attestation.json" in validate_command
+    assert checks["runs-on"] == "${{ fromJSON(needs.changes.outputs.runner_target || '\"ubuntu-24.04\"') }}"
+    assert checks["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}"
+    for job_name in ("worker", "playwright-image", "title-policy"):
+        assert "||" not in str(jobs[job_name]["runs-on"])
 
 
 def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
@@ -879,22 +1056,81 @@ def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
     assert "CONTAINER_SELECTED" not in report["env"]
     assert "PLAYWRIGHT_SELECTED" not in report["env"]
     assert _wall_budgets() == {"warm": 8040, "cold": 8040}
-    assert _jobs()["playwright-image"]["timeout-minutes"] == 30
-
-
-def test_guard_entrypoint_emits_the_parsed_workflow_output(tmp_path: Path) -> None:
-    step = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Derive worker guard")
-    output = tmp_path / "guard-output"
-
-    result = _run_workflow_step(
-        step,
-        workflow_values={"COMMIT_CLASS": "broad"},
-        runner_values={"GITHUB_OUTPUT": str(output)},
+    assert _jobs()["playwright-image"]["timeout-minutes"] == (
+        "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}"
     )
 
-    assert result.returncode == 0, result.stderr
-    assert output.exists()
-    assert output.read_text(encoding="utf-8") == (f"worker_timeout_minutes={worker_timeout_minutes('broad')}\n")
+
+def test_routing_entrypoint_emits_complete_atomic_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "route-output"
+    summary = tmp_path / "summary"
+    calls: list[list[str]] = []
+
+    def inventory(args: list[str]) -> object:
+        calls.append(args)
+        return _inventory(_runner("nohiki-runner-01", "nohiki-t3"))
+
+    monkeypatch.setenv("GH_TOKEN", "redacted")
+    monkeypatch.setattr(workflow_helpers, "_gh_json", inventory)
+    workflow_helpers.route_cmd("owner/repository", output, summary)
+    emitted = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    assert emitted == route_outputs(select_runner(_inventory(_runner("nohiki-runner-01", "nohiki-t3"))))
+    assert calls == [["--paginate", "--slurp", "repos/owner/repository/actions/runners?per_page=100"]]
+    rendered = summary.read_text(encoding="utf-8")
+    assert "RUNNER_INVENTORY_TOKEN" not in rendered
+    assert "| Selected class | `nohiki-t3` |" in rendered
+
+
+def test_inventory_request_retries_once_then_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def unavailable(_args: list[str]) -> object:
+        nonlocal calls
+        calls += 1
+        msg = "untrusted response"
+        raise ValueError(msg)
+
+    output = tmp_path / "route-output"
+    monkeypatch.setenv("GH_TOKEN", "redacted")
+    monkeypatch.setattr(workflow_helpers, "_gh_json", unavailable)
+    workflow_helpers.route_cmd("owner/repository", output, tmp_path / "summary")
+    emitted = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    assert calls == 2
+    assert emitted["runner_target"] == '"ubuntu-24.04"'
+    assert emitted["runner_class"] == "hosted"
+
+
+def test_missing_inventory_secret_fails_closed_without_an_api_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    def unexpected_call(_args: list[str]) -> object:
+        pytest.fail("inventory API must not be called without its credential")
+
+    monkeypatch.setattr(workflow_helpers, "_gh_json", unexpected_call)
+    output = tmp_path / "route-output"
+    workflow_helpers.route_cmd("owner/repository", output, tmp_path / "summary")
+    emitted = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    assert emitted["runner_target"] == '"ubuntu-24.04"'
+    assert emitted["runner_class"] == "hosted"
+
+
+def test_router_failure_without_outputs_still_runs_hosted_fan_in() -> None:
+    jobs = _jobs()
+    fan_in = jobs["checks"]
+    assert fan_in["if"] == "always()"
+    assert fan_in["runs-on"] == "${{ fromJSON(needs.changes.outputs.runner_target || '\"ubuntu-24.04\"') }}"
+    assert fan_in["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}"
+    for job_name in ("worker", "playwright-image", "title-policy"):
+        assert "||" not in str(jobs[job_name]["runs-on"])
 
 
 def test_summary_entrypoint_writes_the_parsed_workflow_report(tmp_path: Path) -> None:
@@ -1060,9 +1296,9 @@ def test_runtime_accounting_falls_back_to_run_start_for_an_unusable_first_job_st
     assert result.start_basis == "run_started_at fallback: first non-skipped job start unavailable or invalid"
 
 
-def test_zero_step_job_has_zero_hosted_equivalent_minutes() -> None:
+def test_zero_step_job_has_zero_runner_minutes() -> None:
     now = datetime(2026, 7, 23, 0, 2, tzinfo=UTC)
-    assert hosted_equivalent_minutes([], now) == 0
+    assert runner_minute_totals([], now) == (0, 0)
     accounting = derive_accounting(
         "2026-07-23T00:00:00Z",
         now,
@@ -1072,8 +1308,10 @@ def test_zero_step_job_has_zero_hosted_equivalent_minutes() -> None:
         deadcode_missed="",
         deadcode_hit="",
     )
-    assert accounting.hosted_equivalent_minutes == 0
-    assert accounting.hosted_equivalent_cost_usd == "0.000"
+    assert accounting.avoided_minutes == 0
+    assert accounting.avoided_cost_usd == "0.000"
+    assert accounting.reconstructed_hosted_minutes == 0
+    assert accounting.reconstructed_hosted_cost_usd == "0.000"
     assert accounting.jobs == ()
 
 
@@ -1184,24 +1422,28 @@ def test_accounting_render_distinguishes_running_completed_and_both_skips() -> N
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": None,
             "conclusion": None,
+            "labels": ["ubuntu-24.04"],
         },
         {
             "name": "Router",
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": "2026-07-23T00:01:01Z",
             "conclusion": "success",
+            "labels": ["ubuntu-24.04"],
         },
         {
             "name": "Scoped worker (python)",
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": "2026-07-23T00:00:00Z",
             "conclusion": "skipped",
+            "labels": ["self-hosted", "Linux", "X64", "nohiki", "nohiki-t3"],
         },
         {
             "name": "Playwright runner image",
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": "2026-07-23T00:00:00Z",
             "conclusion": "skipped",
+            "labels": ["ubuntu-24.04"],
         },
     ]
     expected = {
@@ -1221,15 +1463,32 @@ def test_accounting_render_distinguishes_running_completed_and_both_skips() -> N
         deadcode_hit="true",
     )
     rendered = render_accounting(accounting, expected, "18234567890", now)
-    assert "| Checks | 60 | 1 | running (this job) |" in rendered
-    assert "| Router | 61 | 2 | success |" in rendered
-    assert "| Scoped worker (python) | 0 | 0 | skipped: already proven by run 18234567890 |" in rendered
-    assert "| Playwright runner image | 0 | 0 | skipped: not selected |" in rendered
-    assert "| Hosted-equivalent avoided minutes | 3 |" in rendered
-    assert "| Hosted-equivalent avoided cost USD | 0.018 |" in rendered
-    assert "Self-hosted jobs are not billed" in rendered
-    assert "Reconstructed billable minutes" not in rendered
-    assert "| Estimated cost USD |" not in rendered
+    assert "| Checks | 60 | 1 | reconstructed hosted | running (this job) |" in rendered
+    assert "| Router | 61 | 2 | reconstructed hosted | success |" in rendered
+    assert "| Scoped worker (python) | 0 | 0 | avoided | skipped: already proven by run 18234567890 |" in rendered
+    assert "| Playwright runner image | 0 | 0 | reconstructed hosted | skipped: not selected |" in rendered
+    assert "| Hosted-equivalent avoided minutes | 0 |" in rendered
+    assert "| Hosted-equivalent avoided cost USD | 0.000 |" in rendered
+    assert "| Reconstructed hosted minutes | 3 |" in rendered
+    assert "| Reconstructed hosted cost USD | 0.018 |" in rendered
+    assert "billing API, not this reconstruction" in rendered
+
+
+def test_runner_minutes_never_label_actual_hosted_execution_as_avoided() -> None:
+    now = datetime(2026, 7, 23, 0, 2, tzinfo=UTC)
+    jobs = [
+        {
+            "started_at": "2026-07-23T00:00:00Z",
+            "completed_at": "2026-07-23T00:01:01Z",
+            "labels": ["self-hosted", "Linux", "X64", "nohiki", "nohiki-t1"],
+        },
+        {
+            "started_at": "2026-07-23T00:00:00Z",
+            "completed_at": "2026-07-23T00:00:59Z",
+            "labels": ["ubuntu-24.04"],
+        },
+    ]
+    assert runner_minute_totals(jobs, now) == (2, 1)
 
 
 def test_router_open_summary_text_is_unchanged() -> None:

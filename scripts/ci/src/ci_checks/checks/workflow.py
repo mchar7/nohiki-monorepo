@@ -16,7 +16,30 @@ from pathlib import Path
 
 WARM_WALL_BUDGET_SECONDS = 8040
 COLD_WALL_BUDGET_SECONDS = 8040
-WORKER_TIMEOUT_MINUTES = 52
+
+_AUTOMATIC_LABELS = frozenset({"self-hosted", "Linux", "X64"})
+_TIER_NAMES = {
+    "nohiki-t1": frozenset(
+        {
+            "nohiki-runner-02",
+            "nohiki-runner-03",
+            "nohiki-runner-04",
+            "nohiki-runner-05",
+        }
+    ),
+    "nohiki-t2": frozenset({"nohiki-runner-06"}),
+    "nohiki-t3": frozenset({"nohiki-runner-01"}),
+}
+_TIER_ORDER = tuple(_TIER_NAMES)
+_MANAGED_LABELS = _AUTOMATIC_LABELS | frozenset({"nohiki", *_TIER_ORDER})
+_RUNNER_NAME = re.compile(r"nohiki-runner-[0-9]{2}\Z")
+_TIMEOUTS = {
+    "nohiki-t1": (52, 30, 20, 5),
+    "nohiki-t2": (52, 30, 20, 5),
+    "nohiki-t3": (52, 30, 20, 5),
+    "hosted": (30, 30, 10, 5),
+}
+_RUNNER_INVENTORY_ERRORS = (OSError, subprocess.CalledProcessError, ValueError)
 
 _CACHE_KEY = re.compile(r"([0-9a-f]{8})[0-9a-f]{24,}")
 _WORKER_COMMANDS = (
@@ -70,9 +93,51 @@ class Accounting:
 
     timing: WallTiming
     budget: WallBudget
-    hosted_equivalent_minutes: int
-    hosted_equivalent_cost_usd: str
+    avoided_minutes: int
+    avoided_cost_usd: str
+    reconstructed_hosted_minutes: int
+    reconstructed_hosted_cost_usd: str
     jobs: tuple[Mapping[str, object], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerRecord:
+    """Trusted repository runner inventory record."""
+
+    name: str
+    status: str
+    operating_system: str
+    busy: bool
+    labels: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class RouteSelection:
+    """One fail-closed runner decision shared by every payload job."""
+
+    runner_target: str
+    runner_class: str
+    tier_1_state: str
+    tier_2_state: str
+    tier_3_state: str
+    selected_name: str
+    fallback_reason: str
+
+
+def route_outputs(selection: RouteSelection) -> dict[str, str]:
+    """Return the complete atomic workflow-output contract."""
+    worker, playwright, title, checks = _TIMEOUTS[selection.runner_class]
+    return {
+        "runner_target": selection.runner_target,
+        "runner_class": selection.runner_class,
+        "tier_1_state": selection.tier_1_state,
+        "tier_2_state": selection.tier_2_state,
+        "tier_3_state": selection.tier_3_state,
+        "worker_timeout_minutes": str(worker),
+        "playwright_timeout_minutes": str(playwright),
+        "title_timeout_minutes": str(title),
+        "checks_timeout_minutes": str(checks),
+    }
 
 
 def _true(value: str | None) -> bool:
@@ -84,12 +149,159 @@ def _append(path: str | Path, text: str) -> None:
         handle.write(text)
 
 
-def worker_timeout_minutes(commit_class: str) -> int:
-    """Return the explicit worker timeout for a supported commit class."""
-    if commit_class not in {"standard", "broad"}:
-        msg = f"cannot derive a guard for commit class: {commit_class}"
+def _hosted_selection(reason: str, *, state: str = "unavailable") -> RouteSelection:
+    return RouteSelection(json.dumps("ubuntu-24.04"), "hosted", state, state, state, "", reason)
+
+
+def _runner_record(raw: object) -> RunnerRecord:
+    if not isinstance(raw, dict):
+        msg = "runner inventory contains a malformed record"
+        raise TypeError(msg)
+    name = raw.get("name")
+    status = raw.get("status")
+    busy = raw.get("busy")
+    operating_system = raw.get("os")
+    raw_labels = raw.get("labels")
+    if (
+        not isinstance(name, str)
+        or not isinstance(status, str)
+        or status not in {"online", "offline"}
+        or not isinstance(busy, bool)
+        or not isinstance(operating_system, str)
+        or not isinstance(raw_labels, list)
+    ):
+        msg = "runner inventory contains a malformed record"
         raise ValueError(msg)
-    return WORKER_TIMEOUT_MINUTES
+    labels: list[str] = []
+    for raw_label in raw_labels:
+        if not isinstance(raw_label, dict):
+            msg = "runner inventory contains a malformed label"
+            raise TypeError(msg)
+        label = raw_label.get("name")
+        if not isinstance(label, str):
+            msg = "runner inventory contains a malformed label"
+            raise TypeError(msg)
+        labels.append(label)
+    if len(labels) != len(set(labels)):
+        msg = "runner inventory contains duplicate labels"
+        raise ValueError(msg)
+    return RunnerRecord(name, status, operating_system, busy, frozenset(labels))
+
+
+def _complete_inventory(raw_pages: object) -> tuple[RunnerRecord, ...]:
+    if not isinstance(raw_pages, list) or not raw_pages:
+        msg = "runner inventory response is incomplete"
+        raise ValueError(msg)
+    records: list[RunnerRecord] = []
+    expected_total: int | None = None
+    for raw_page in raw_pages:
+        if not isinstance(raw_page, dict):
+            msg = "runner inventory response is malformed"
+            raise TypeError(msg)
+        total = raw_page.get("total_count")
+        raw_runners = raw_page.get("runners")
+        if isinstance(total, bool) or not isinstance(total, int) or total < 0 or not isinstance(raw_runners, list):
+            msg = "runner inventory response is malformed"
+            raise ValueError(msg)
+        if expected_total is None:
+            expected_total = total
+        elif total != expected_total:
+            msg = "runner inventory total_count changed during pagination"
+            raise ValueError(msg)
+        records.extend(_runner_record(raw) for raw in raw_runners)
+    if expected_total != len(records):
+        msg = "runner inventory response is incomplete"
+        raise ValueError(msg)
+    names = [record.name for record in records]
+    if len(names) != len(set(names)):
+        msg = "runner inventory contains duplicate names"
+        raise ValueError(msg)
+    return tuple(records)
+
+
+def _trusted_tiers(records: Sequence[RunnerRecord]) -> dict[str, tuple[RunnerRecord, ...]]:
+    tiers: dict[str, tuple[RunnerRecord, ...]] = {}
+    for tier in _TIER_ORDER:
+        members = tuple(record for record in records if tier in record.labels)
+        names = frozenset(record.name for record in members)
+        if not names <= _TIER_NAMES[tier]:
+            msg = f"{tier} ownership is not exact"
+            raise ValueError(msg)
+        if tier != "nohiki-t1" and len(members) > 1:
+            msg = f"{tier} ownership is not unique"
+            raise ValueError(msg)
+        for member in members:
+            if not _RUNNER_NAME.fullmatch(member.name):
+                msg = "managed runner name is invalid"
+                raise ValueError(msg)
+            expected_labels = _AUTOMATIC_LABELS | {"nohiki", tier}
+            if member.operating_system.casefold() != "linux" or member.labels != expected_labels:
+                msg = f"{tier} member OS, architecture, or labels are invalid"
+                raise ValueError(msg)
+        tiers[tier] = tuple(sorted(members, key=lambda member: member.name))
+    return tiers
+
+
+def select_runner(raw_pages: object, tier_2_drain: str = "") -> RouteSelection:
+    """Choose one neutral runner tier from a complete repository inventory."""
+    try:
+        tiers = _trusted_tiers(_complete_inventory(raw_pages))
+    except (TypeError, ValueError) as exc:
+        return _hosted_selection(str(exc), state="untrusted")
+    states: dict[str, str] = {}
+    tier_1 = tiers["nohiki-t1"]
+    idle_tier_1 = next((runner for runner in tier_1 if runner.status == "online" and not runner.busy), None)
+    if idle_tier_1 is not None:
+        states["nohiki-t1"] = "eligible"
+    elif any(runner.status == "online" for runner in tier_1):
+        states["nohiki-t1"] = "busy"
+    else:
+        states["nohiki-t1"] = "offline" if tier_1 else "absent"
+    tier_2 = tiers["nohiki-t2"]
+    drained = tier_2_drain.casefold() == "true"
+    idle_tier_2 = next((runner for runner in tier_2 if runner.status == "online" and not runner.busy), None)
+    if not tier_2:
+        states["nohiki-t2"] = "absent"
+    elif drained:
+        states["nohiki-t2"] = "draining"
+    elif idle_tier_2 is not None:
+        states["nohiki-t2"] = "eligible"
+    elif any(runner.status == "online" for runner in tier_2):
+        states["nohiki-t2"] = "busy"
+    else:
+        states["nohiki-t2"] = "offline"
+    tier_3 = tiers["nohiki-t3"]
+    online_tier_3 = next((runner for runner in tier_3 if runner.status == "online"), None)
+    states["nohiki-t3"] = "eligible" if online_tier_3 is not None else ("offline" if tier_3 else "absent")
+    if idle_tier_1 is not None:
+        selected = ("nohiki-t1", idle_tier_1)
+    elif idle_tier_2 is not None and not drained:
+        selected = ("nohiki-t2", idle_tier_2)
+    elif online_tier_3 is not None:
+        selected = ("nohiki-t3", online_tier_3)
+    else:
+        selected = None
+    if selected is None:
+        return RouteSelection(
+            json.dumps("ubuntu-24.04"),
+            "hosted",
+            states["nohiki-t1"],
+            states["nohiki-t2"],
+            states["nohiki-t3"],
+            "",
+            "no self-hosted tier is eligible",
+        )
+    runner_class, runner = selected
+    target = json.dumps(["self-hosted", "Linux", "X64", "nohiki", runner_class], separators=(",", ":"))
+    return RouteSelection(
+        target,
+        runner_class,
+        states["nohiki-t1"],
+        states["nohiki-t2"],
+        states["nohiki-t3"],
+        runner.name,
+        "",
+    )
 
 
 def require_outcome(outcome: str, *, expected: bool, name: str) -> None:
@@ -409,17 +621,29 @@ def select_wall_budget(ready_missed: str, ready_hit: str, deadcode_missed: str, 
     )
 
 
-def hosted_equivalent_minutes(jobs: Sequence[Mapping[str, object]], now: datetime) -> int:
-    """Reconstruct per-job rounded standard Linux hosted minutes avoided by self-hosting."""
+def _job_is_self_hosted(job: Mapping[str, object]) -> bool:
+    labels = job.get("labels")
+    return isinstance(labels, list) and any(
+        isinstance(label, str) and label.casefold() == "self-hosted" for label in labels
+    )
+
+
+def runner_minute_totals(jobs: Sequence[Mapping[str, object]], now: datetime) -> tuple[int, int]:
+    """Split rounded self-hosted avoided minutes from actual hosted reconstruction."""
     now_epoch = int(now.timestamp())
-    total = 0
+    avoided = 0
+    reconstructed = 0
     for job in jobs:
         started = _parse_time(job.get("started_at"))
         if started is None:
             continue
         completed = _parse_time(job.get("completed_at")) or now_epoch
-        total += math.ceil((completed - started) / 60)
-    return total
+        minutes = math.ceil((completed - started) / 60)
+        if _job_is_self_hosted(job):
+            avoided += minutes
+        else:
+            reconstructed += minutes
+    return avoided, reconstructed
 
 
 def _job_conclusion(job: Mapping[str, object], expected: Mapping[str, bool], reused_run_id: str) -> str:
@@ -449,12 +673,14 @@ def derive_accounting(
 ) -> Accounting:
     """Derive every arithmetic value rendered and enforced by the fan-in."""
     started_jobs = tuple(job for job in jobs if job.get("started_at") is not None)
-    minutes = hosted_equivalent_minutes(started_jobs, now)
+    avoided, reconstructed = runner_minute_totals(started_jobs, now)
     return Accounting(
         accounting_span(run_started_at, now, jobs),
         select_wall_budget(ready_missed, ready_hit, deadcode_missed, deadcode_hit),
-        minutes,
-        f"{minutes * 6 // 1000}.{minutes * 6 % 1000:03d}",
+        avoided,
+        f"{avoided * 6 // 1000}.{avoided * 6 % 1000:03d}",
+        reconstructed,
+        f"{reconstructed * 6 // 1000}.{reconstructed * 6 % 1000:03d}",
         started_jobs,
     )
 
@@ -473,11 +699,11 @@ def enforce_wall_budget(accounting: Accounting) -> None:
 
 
 def render_accounting(accounting: Accounting, expected: dict[str, bool], reused_run_id: str, now: datetime) -> str:
-    """Render the fan-in accounting table and hosted-equivalent avoided-cost summary."""
+    """Render truthful self-hosted avoidance and hosted execution reconstruction."""
     lines = [
         "",
-        "| Job | Exact seconds | Rounded hosted-equivalent minutes | Conclusion |",
-        "|---|---:|---:|---|",
+        "| Job | Exact seconds | Rounded standard-Linux minutes | Accounting | Conclusion |",
+        "|---|---:|---:|---|---|",
     ]
     now_epoch = int(now.timestamp())
     for job in accounting.jobs:
@@ -486,20 +712,22 @@ def render_accounting(accounting: Accounting, expected: dict[str, bool], reused_
             continue
         completed = _parse_time(job.get("completed_at")) or now_epoch
         seconds = completed - started
+        accounting_kind = "avoided" if _job_is_self_hosted(job) else "reconstructed hosted"
         lines.append(
             f"| {job.get('name', '')} | {seconds} | {math.ceil(seconds / 60)} | "
-            f"{_job_conclusion(job, expected, reused_run_id)} |"
+            f"{accounting_kind} | {_job_conclusion(job, expected, reused_run_id)} |"
         )
     timing = accounting.timing
     budget = accounting.budget
     lines.extend(
         [
             "",
-            "### Hosted-equivalent avoided cost",
+            "### Runner-minute accounting",
             "",
             (
-                "Self-hosted jobs are not billed by GitHub Actions; this section reconstructs "
-                "the standard Linux hosted minutes and cost avoided."
+                "Self-hosted jobs contribute only hosted-equivalent avoided minutes. "
+                "Hosted jobs contribute only reconstructed hosted minutes. The billing API, "
+                "not this reconstruction, is the authority for actual charges."
             ),
             "",
             "| Measure | Value |",
@@ -511,8 +739,10 @@ def render_accounting(accounting: Accounting, expected: dict[str, bool], reused_
             f"| Wall budget seconds | {budget.seconds} |",
             f"| Wall budget class | {budget.classification} |",
             f"| Wall budget basis | {budget.basis} |",
-            f"| Hosted-equivalent avoided minutes | {accounting.hosted_equivalent_minutes} |",
-            f"| Hosted-equivalent avoided cost USD | {accounting.hosted_equivalent_cost_usd} |",
+            f"| Hosted-equivalent avoided minutes | {accounting.avoided_minutes} |",
+            f"| Hosted-equivalent avoided cost USD | {accounting.avoided_cost_usd} |",
+            f"| Reconstructed hosted minutes | {accounting.reconstructed_hosted_minutes} |",
+            f"| Reconstructed hosted cost USD | {accounting.reconstructed_hosted_cost_usd} |",
             "",
             "### Commands",
             "",
@@ -528,9 +758,42 @@ def _gh_json(args: list[str]) -> object:
     return json.loads(result.stdout)
 
 
-def guard_cmd(commit_class: str, github_output: Path) -> None:
-    """Emit the matrix worker hang guard."""
-    _append(github_output, f"worker_timeout_minutes={worker_timeout_minutes(commit_class)}\n")
+def _route_summary(selection: RouteSelection, tier_2_drain: str) -> str:
+    drain = "true" if tier_2_drain.casefold() == "true" else "false"
+    selected_name = selection.selected_name or "none"
+    fallback = selection.fallback_reason or "none"
+    return (
+        "\n### Runner route\n\n"
+        "| Measure | Value |\n"
+        "|---|---|\n"
+        f"| Selected class | `{selection.runner_class}` |\n"
+        f"| Selected runner | `{selected_name}` |\n"
+        f"| Tier 1 state | `{selection.tier_1_state}` |\n"
+        f"| Tier 2 state | `{selection.tier_2_state}` |\n"
+        f"| Tier 3 state | `{selection.tier_3_state}` |\n"
+        f"| Tier 2 drain | `{drain}` |\n"
+        f"| Hosted fallback reason | {fallback} |\n"
+    )
+
+
+def route_cmd(repository: str, github_output: Path, summary: Path, tier_2_drain: str = "") -> None:
+    """Read complete runner inventory and emit one atomic fail-closed route."""
+    selection: RouteSelection | None = None
+    if not os.environ.get("GH_TOKEN"):
+        selection = _hosted_selection("RUNNER_INVENTORY_TOKEN is unavailable")
+    else:
+        endpoint = f"repos/{repository}/actions/runners?per_page=100"
+        for _attempt in range(2):
+            try:
+                selection = select_runner(_gh_json(["--paginate", "--slurp", endpoint]), tier_2_drain)
+                break
+            except _RUNNER_INVENTORY_ERRORS:
+                continue
+    if selection is None:
+        selection = _hosted_selection("runner inventory request failed")
+    output_text = "".join(f"{name}={value}\n" for name, value in route_outputs(selection).items())
+    _append(github_output, output_text)
+    _append(summary, _route_summary(selection, tier_2_drain))
 
 
 def summary_cmd(phase: str, job: str, summary: Path) -> None:
@@ -673,9 +936,11 @@ def accounting_cmd(summary: Path) -> None:
 def _main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
-    guard = subparsers.add_parser("guard")
-    guard.add_argument("commit_class")
-    guard.add_argument("github_output", type=Path)
+    route = subparsers.add_parser("route")
+    route.add_argument("repository")
+    route.add_argument("github_output", type=Path)
+    route.add_argument("summary", type=Path)
+    route.add_argument("tier_2_drain", nargs="?", default="")
     summary = subparsers.add_parser("summary")
     summary.add_argument("phase", choices=("open", "report"))
     summary.add_argument("job", choices=("router", "worker", "playwright", "title", "checks"))
@@ -687,8 +952,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
     accounting.add_argument("summary", type=Path)
     args = parser.parse_args(argv)
     try:
-        if args.command == "guard":
-            guard_cmd(args.commit_class, args.github_output)
+        if args.command == "route":
+            route_cmd(args.repository, args.github_output, args.summary, args.tier_2_drain)
         elif args.command == "summary":
             summary_cmd(args.phase, args.job, args.summary)
         elif args.command == "verdict":
