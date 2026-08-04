@@ -34,6 +34,7 @@ test_run := monorepo_root + "/scripts/dev/test-run.sh"
 # The flake pins pnpm to the version package.json declares, so Corepack would only
 # fetch a second copy, which hermetic shells forbid.
 pnpm := "pnpm"
+nix_flags := "--max-jobs " + env_var_or_default("NOHIKI_NIX_MAX_JOBS", "4") + " --cores " + env_var_or_default("NOHIKI_NIX_CORES", "5")
 playwright := env_lock + " shared node_modules -- " + pnpm + " --filter nohiki-frontend exec playwright"
 playwright_test := test_run + " " + playwright + " test --config=e2e/playwright.config.ts"
 ast_cmd := "cd scripts/util/ast_explorer && " + env_lock + " shared venv -- uv run --no-sync ast-explorer"
@@ -387,46 +388,46 @@ api-schema-check:
 
 # Lint proto files
 proto-lint:
-    nix develop .#ci --command bash -euc 'cd proto && buf lint'
+    nix develop .#ci {{ nix_flags }} --command bash -euc 'cd proto && buf lint'
 
 # Check proto breaking changes
 proto-breaking base_ref="main":
     #!/usr/bin/env bash
     set -euo pipefail
     if git cat-file -e '{{ base_ref }}^{commit}' && git ls-tree --name-only '{{ base_ref }}' proto/ | grep -q .; then
-        nix develop .#ci --command bash -euc "cd proto && buf breaking --against '../.git#commit={{ base_ref }},subdir=proto'"
+        nix develop .#ci {{ nix_flags }} --command bash -euc "cd proto && buf breaking --against '../.git#commit={{ base_ref }},subdir=proto'"
     else
         echo "Skipping: proto/ is absent from {{ base_ref }}"
     fi
 
 # Lint GitHub workflows with their native validators
 workflow-lint:
-    nix develop .#ci --command actionlint -ignore '^step must run script with "run" section or run action with "uses" section$'
-    nix develop .#ci --command check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml
+    nix develop .#ci {{ nix_flags }} --command actionlint -ignore '^step must run script with "run" section or run action with "uses" section$'
+    nix develop .#ci {{ nix_flags }} --command check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml
 
 # Lint every tracked Dockerfile
 docker-lint:
     #!/usr/bin/env bash
     set -euo pipefail
-    git ls-files -z -- '*Dockerfile' '*Dockerfile.*' ':(exclude)*.dockerignore' ':(exclude)*.j2' | xargs -0 -r nix develop .#ci --command hadolint
+    git ls-files -z -- '*Dockerfile' '*Dockerfile.*' ':(exclude)*.dockerignore' ':(exclude)*.j2' | xargs -0 -r nix develop .#ci {{ nix_flags }} --command hadolint
 
 # Scan the repository or staged changes for secrets
 secrets-scan mode="detect":
     #!/usr/bin/env bash
     set -euo pipefail
     case '{{ mode }}' in
-        detect) nix develop .#ci --command gitleaks detect --source . --config .gitleaks.toml --no-banner --redact ;;
-        staged) nix develop .#ci --command gitleaks protect --staged --config .gitleaks.toml --no-banner --redact ;;
+        detect) nix develop .#ci {{ nix_flags }} --command gitleaks detect --source . --config .gitleaks.toml --no-banner --redact ;;
+        staged) nix develop .#ci {{ nix_flags }} --command gitleaks protect --staged --config .gitleaks.toml --no-banner --redact ;;
         *) echo "mode must be detect or staged" >&2; exit 2 ;;
     esac
 
 # Scan a pushed commit range for secrets
 secrets-scan-range range:
-    nix develop .#ci --command gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --log-opts '{{ range }}'
+    nix develop .#ci {{ nix_flags }} --command gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --log-opts '{{ range }}'
 
 # Evaluate the native Nix flake checks
 nix-check:
-    nix flake check
+    nix flake check {{ nix_flags }}
 
 # Containers and builds
 

@@ -131,6 +131,9 @@ const jsdomUiTests = [
   'src/widgets/layout/ui/BottomNav.test.tsx',
 ];
 
+const gateCpuCount = Number.parseInt(process.env.NOHIKI_GATE_CPUS ?? '', 10);
+const gateMaxWorkers = Number.isSafeInteger(gateCpuCount) && gateCpuCount > 0 ? Math.max(1, gateCpuCount - 1) : undefined;
+
 export default defineConfig({
   envDir: false,
   plugins: [rejectUnresolvedTestMocks(), react()],
@@ -139,6 +142,7 @@ export default defineConfig({
     globals: true,
     // Threads measured 7.6% faster than Vitest's default forks pool on two CPUs.
     pool: 'threads',
+    maxWorkers: gateMaxWorkers,
     exclude: ['**/node_modules/**', '**/e2e/**'],
     projects: [
       {

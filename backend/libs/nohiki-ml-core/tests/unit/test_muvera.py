@@ -1,6 +1,7 @@
 """Unit tests for MUVERAEncoder."""
 
 from collections.abc import Generator
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -59,6 +60,28 @@ def test_muvera_encoder_initialization(
     # Output dimension: 2^6 * 16 * 8 = 8192
     assert encoder.output_dimension == 8192
     assert encoder._encoder is None  # Lazy loading
+
+
+@pytest.mark.usefixtures("mock_require_fastembed")
+def test_muvera_lazy_loads_backend_with_manifest_parameters(
+    manifest: SemanticRepresentationManifest,
+) -> None:
+    """The first encode path constructs fastembed from the pinned manifest."""
+    loaded = MagicMock()
+    muvera_class = MagicMock(return_value=loaded)
+    module = SimpleNamespace(Muvera=muvera_class)
+
+    with patch("nohiki_ml_core._deps.import_optional_module", return_value=module):
+        encoder = MUVERAEncoder(manifest)
+        assert encoder._ensure_encoder() is loaded
+
+    muvera_class.assert_called_once_with(
+        dim=48,
+        k_sim=6,
+        dim_proj=16,
+        r_reps=8,
+        random_seed=42,
+    )
 
 
 @pytest.mark.usefixtures("mock_require_fastembed")
