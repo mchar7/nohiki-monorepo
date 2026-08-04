@@ -817,7 +817,7 @@ container-tests = [
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
 ]
-deadcode = [{ name = "skylos", git = "ssh://git@github.com/mchar7/skylos?rev=ee3c049259842c1644e94003b2a6eeb88bc40144" }]
+deadcode = [{ name = "skylos", git = "ssh://git@github.com/mchar7/skylos?rev=b65ec9a722691782ae632496d4405dcd3d0ea968" }]
 
 [[package]]
 name = "click"
@@ -6215,7 +6215,7 @@ requires-dist = [
 [[package]]
 name = "skylos"
 version = "4.30.0"
-source = { git = "ssh://git@github.com/mchar7/skylos?rev=ee3c049259842c1644e94003b2a6eeb88bc40144#ee3c049259842c1644e94003b2a6eeb88bc40144" }
+source = { git = "ssh://git@github.com/mchar7/skylos?rev=b65ec9a722691782ae632496d4405dcd3d0ea968#b65ec9a722691782ae632496d4405dcd3d0ea968" }
 dependencies = [
     { name = "ca9" },
     { name = "inquirer" },

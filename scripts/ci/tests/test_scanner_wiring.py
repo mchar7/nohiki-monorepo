@@ -714,7 +714,7 @@ def test_deadcode_command_uses_pinned_fork_static_cache_offline() -> None:
     assert _CI_PROJECT["dependency-groups"]["deadcode"] == ["skylos==4.30.0"]
     assert _CI_PROJECT["tool"]["uv"]["sources"]["skylos"] == {
         "git": "ssh://git@github.com/mchar7/skylos",
-        "rev": "ee3c049259842c1644e94003b2a6eeb88bc40144",
+        "rev": "b65ec9a722691782ae632496d4405dcd3d0ea968",
     }
     assert "uvx" not in command
     cache_index = command.index("--cache-static")
