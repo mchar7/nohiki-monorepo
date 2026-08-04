@@ -178,7 +178,7 @@ Triggered by `CorrelationEvaluated` events that pass the score threshold.
 **Context variables:**
 
 | Variable | Source | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `listing_title` | `listing_snapshot.title` | Required |
 | `company_name` | `listing_snapshot.company_name` | Optional; omitted if None |
 | `listing_url` | `listing_snapshot.listing_url` | Optional; omitted if None |
@@ -195,7 +195,7 @@ Triggered by `ContentGenerationCompleted` events with `result.status == COMPLETE
 **Context variables:**
 
 | Variable | Source | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `listing_title` | `listing_snapshot.title` | Optional; None if snapshot absent |
 | `company_name` | `listing_snapshot.company_name` | Optional |
 | `request_id` | `ContentGenerationCompleted.request_id` | For tracing |
@@ -257,7 +257,7 @@ all under the `NOTIFICATION_` env prefix.
 **Key variables:**
 
 | Variable | Default | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `NOTIFICATION_EMAIL__PROVIDER` | `"resend"` | Active email provider (`"resend"` or `"twilio_sendgrid"`) |
 | `NOTIFICATION_EMAIL__API_KEY` | -- | API key for the selected provider |
 | `NOTIFICATION_EMAIL__FROM_ADDRESS` | `"noreply@nohiki.com"` | Sender address |

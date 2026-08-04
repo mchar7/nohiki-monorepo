@@ -31,7 +31,7 @@ uv run skill-semantic report threshold_analysis_results.json
 ## Commands
 
 | Command | Description |
-|---------|-------------|
+| --------- | ------------- |
 | `analyze` | Run full semantic similarity threshold analysis |
 | `quick` | Quick check with a few key skill pairs |
 | `report` | Display a previously generated analysis report |

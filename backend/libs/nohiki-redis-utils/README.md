@@ -265,7 +265,7 @@ class Settings(RedisMixin, NohikiBaseSettings):
 ### RedisSettings
 
 | Field | Env var | Default | Description |
-|-------|---------|---------|-------------|
+| ------- | --------- | --------- | ------------- |
 | `dsn` | `REDIS__DSN` | `redis://localhost:6379` | Full connection string |
 | `socket_timeout` | `REDIS__SOCKET_TIMEOUT` | `5.0` | Read/write timeout (seconds) |
 | `socket_connect_timeout` | `REDIS__SOCKET_CONNECT_TIMEOUT` | `5.0` | Connection timeout (seconds) |
@@ -308,7 +308,7 @@ class BFFCachingSettings(CachingSettings):
 ### AuthRateLimitConfig
 
 | Field | Default | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | `login_per_minute` | `5` | Max login attempts per minute per identifier |
 | `login_per_hour` | `20` | Max login attempts per hour per identifier |
 | `register_per_hour` | `3` | Max registration attempts per hour per IP |

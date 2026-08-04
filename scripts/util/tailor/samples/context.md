@@ -10,7 +10,9 @@
 
 ## Professional Summary
 
-Senior Software Engineer with 8+ years of experience building scalable distributed systems and microservices architectures. Expert in Python, TypeScript, and cloud-native technologies. Passionate about event-driven architectures and ML infrastructure.
+Senior Software Engineer with 8+ years of experience building scalable distributed systems and
+microservices architectures. Expert in Python, TypeScript, and cloud-native technologies. Passionate
+about event-driven architectures and ML infrastructure.
 
 ## Technical Skills
 

@@ -7,7 +7,7 @@ associations.
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `search_prefs` | Job target profiles with enrichment state (skills, embeddings, targeting criteria) |
 | `search_pref_uploads` | Junction table linking preferences to uploaded documents |
 | `user_pref_settings` | Per-user defaults (timezone, locale, feature importance weights) |

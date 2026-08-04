@@ -54,7 +54,7 @@ Kafka, and the data stores end to end. Other useful recipes: `just logs <service
 ## What listens where
 
 | Endpoint | Port |
-|---|---|
+| --- | --- |
 | Traefik (API gateway; routes BFF + auth only) | `8000`, `8443` |
 | PostgreSQL | `5432` |
 | pgAdmin | `5050` |

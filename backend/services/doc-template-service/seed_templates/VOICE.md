@@ -13,7 +13,7 @@ Authoritative writing-style reference for content generated against the
 ## Authority
 
 | Concern | Source of truth | Location |
-|---|---|---|
+| --- | --- | --- |
 | Deterministic mechanics (counts, patterns, bounds, cross-doc echoes) | YAML lint configs | `default_{resume,cover_letter}_template.lint.yaml` |
 | Subjective voice (tone, narrative arc, verb/subject coherence) | This document | `VOICE.md` (this file) |
 | Lint engine architecture | Code | `scripts/util/tailor/src/tailor/lint/` |
@@ -29,7 +29,7 @@ Fix the YAML if behaviour needs to change; do not restate the rule here.
 ### Resume
 
 | Mechanic | Rule ID | Severity |
-|---|---|---|
+| --- | --- | --- |
 | No em-dashes or en-dashes in bullets | `text.resume_bullets.banned_patterns_warning` | warning |
 | Forbid AI-slop verb openers (`Architected`, `Engineered`, `Spearheaded`, `Leveraged`, `Utilized`, `Established`, `Validated`, `Orchestrated`) | `content.experience_bullets.banned_openers`, `content.project_bullets.banned_openers` | warning |
 | Forbid weak ownership phrasing (`responsible for`, `assisted with`) | `text.resume_bullets.banned_patterns_warning` | warning |
@@ -43,7 +43,7 @@ Fix the YAML if behaviour needs to change; do not restate the rule here.
 ### Cover letter
 
 | Mechanic | Rule ID | Severity |
-|---|---|---|
+| --- | --- | --- |
 | No em-dashes, "passionate about", "team player", meta-joiners | `text.cover_letter.banned_patterns_warning` | warning |
 | Flag "I am writing to", cleft constructions | `text.cover_letter.banned_patterns_info` | info |
 | Body-paragraph counts and word bounds | `content.body_paragraphs.min_items`, `.max_items`, `.min_words_per_item`, `.max_words_per_item`, `.min_total_words`, `.max_total_words` | mixed |
@@ -65,7 +65,7 @@ Reserved tags the generator sets on input data to activate conditional
 rules. Add new tags here when introducing new gated rules.
 
 | Tag | Activates | Semantics |
-|---|---|---|
+| --- | --- | --- |
 | `has_employer_var` | `employer_mentions_min` | `lint_vars.employer_name` holds the target employer string |
 | `four_paragraph_structure` | `synthesis_re_enumeration` | Body has exactly 4 paragraphs; `body_paragraphs[3]` is synthesis |
 | `dev_role` | (reserved) | Technical individual-contributor role |

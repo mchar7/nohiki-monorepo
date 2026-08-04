@@ -227,7 +227,7 @@ Settings are composed from these mixins: `DatabaseMixin`, `KafkaMixin`, `RedisMi
 Key environment variables (prefix `SKILL_GRAPH_`):
 
 | Variable | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `SKILL_GRAPH_DATABASE__URL` | PostgreSQL connection string for `skill_graph_schema` |
 | `SKILL_GRAPH_QDRANT__HOST` | Qdrant host for skills and occupations collections |
 | `SKILL_GRAPH_MANIFEST_PATH` | Path to `nohiki-ml-manifest` YAML (semantic thresholds, collection names) |
@@ -245,7 +245,7 @@ model is updated. Run `scripts/calibrate_skill_thresholds/` after a model change
 For bootstrap seeding, the Kubernetes Job requires:
 
 | Variable | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `TABIYA_SKILLS_CSV` | Path to Tabiya `skills.csv` |
 | `TABIYA_SOURCE_VERSION` | ESCO version string (e.g., `1.1.1`) |
 | `TABIYA_RELATIONSHIPS_CSV` | (Optional) skill-to-skill relations |

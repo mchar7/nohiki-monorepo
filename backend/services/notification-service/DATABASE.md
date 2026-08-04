@@ -6,7 +6,7 @@ enqueue through provider dispatch outcomes.
 ## Entity Overview
 
 | Table | Purpose |
-|---|---|
+| --- | --- |
 | `messages` | Notification messages in all lifecycle states, with retry metadata and provider response data |
 | `outbox` | Transactional outbox for `NOTIFICATION_SENT` and `NOTIFICATION_FAILED` CDC events |
 | `processed_events` | Idempotency log for Kafka handler deduplication |

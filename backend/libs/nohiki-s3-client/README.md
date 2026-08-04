@@ -171,7 +171,7 @@ Pydantic Settings then reads the following environment variables (with the servi
 e.g. `USER_UPLOAD_`):
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `{PREFIX}S3__BUCKET` | *(required)* | Bucket name: no default; service fails to start if unset |
 | `{PREFIX}S3__ENDPOINT` | `""` | S3 endpoint URL; empty means AWS S3 |
 | `{PREFIX}S3__PUBLIC_URL` | `""` | External endpoint for presigned URLs; empty falls back to `endpoint` |

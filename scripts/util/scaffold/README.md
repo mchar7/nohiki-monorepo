@@ -70,7 +70,7 @@ edits, hints) without touching the filesystem.
 Every command supports three modes:
 
 | Mode | Trigger | Behaviour |
-|------|---------|-----------|
+| ------ | --------- | ----------- |
 | Interactive | default | Rich prompts walk through the spec; missing flags are asked for |
 | Non-interactive | `--non-interactive` | All required values must come from flags; prompts are suppressed |
 | Config-file | `--config-file spec.toml` | Load spec from TOML; flags override file values |
@@ -229,7 +229,7 @@ scripts/util/scaffold/
 ## Supported archetypes
 
 | Archetype | Shape | Kafka role | Typical flags |
-|-----------|-------|-----------|---------------|
+| ----------- | ------- | ----------- | --------------- |
 | kafka-only consumer | `kafka-only` | `consumer-only` | `--db --outbox --alembic --handler commands` |
 | kafka-only producer | `kafka-only` | `producer-only` | (no DB or handler flags) |
 | HTTP-only producer | `http-only` | `producer-only` | (FastAPI + JWT scaffolding) |

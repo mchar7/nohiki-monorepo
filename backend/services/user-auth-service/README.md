@@ -191,7 +191,7 @@ The service uses `DatabaseMixin`, `RedisMixin`, and `KafkaMixin` from `nohiki-co
 with the env prefix `USER_AUTH_`. Key settings:
 
 | Variable | Default | Notes |
-|----------|---------|-------|
+| ---------- | --------- | ------- |
 | `USER_AUTH_JWT__PRIVATE_KEY_PATH` | `/run/secrets/jwt_private_key.pem` | RSA private key PEM file. Mount as a Kubernetes secret. |
 | `USER_AUTH_JWT__KEY_ID` | `nohiki-key-1` | `kid` claim in tokens and JWKS. Change during key rotation. |
 | `USER_AUTH_JWT__ISSUER` | `https://api.nohiki.com` | `iss` claim. Must match verifier configuration. |

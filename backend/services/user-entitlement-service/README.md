@@ -97,7 +97,7 @@ Settings use `DatabaseMixin` and `KafkaMixin` from shared libraries, with the `U
 env prefix.
 
 | Variable | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `USER_ENTITLEMENT_KAFKA__DSN` | Kafka bootstrap server URL |
 | `USER_ENTITLEMENT_KAFKA__CONSUMER_GROUP` | Consumer group for both handlers (default: `user-entitlement-service-consumer`) |
 | `USER_ENTITLEMENT_DATABASE__DSN` | PostgreSQL connection string |

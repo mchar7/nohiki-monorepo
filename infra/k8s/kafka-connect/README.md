@@ -29,7 +29,7 @@ This replaces polling-based event publishing with real-time CDC that:
 ## Files
 
 | File | Description |
-|------|-------------|
+| ------ | ------------- |
 | `Dockerfile` | Custom Kafka Connect image with Debezium plugins |
 | `connectors/outbox-connector-template.json` | Template expanded into one connector per service schema |
 | `connectors/qdrant-embedding-sink.json` | Legacy Qdrant sink config; do not deploy for new flows |
@@ -113,7 +113,7 @@ The connector uses Debezium's Outbox Event Router SMT (Single Message Transform)
 ### Key Configuration Options
 
 | Option | Value | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | `table.include.list` | `<service_schema>.outbox` | Capture one service outbox table |
 | `transforms.outbox.route.by.field` | `type` | Route to topic based on type field |
 | `snapshot.mode` | `when_needed` | Snapshot when no usable offsets exist |

@@ -8,7 +8,7 @@ definitions, only the scheduling metadata derived from them.
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `ingestion_schedules` | One row per registered search query; tracks scheduling state and denormalized query parameters |
 | `processed_events` | Consumer-side idempotency log; prevents duplicate processing of Kafka messages |
 

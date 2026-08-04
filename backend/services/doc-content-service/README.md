@@ -136,7 +136,7 @@ variables use the `DOC_CONTENT_` prefix (e.g., `DOC_CONTENT__KAFKA__BOOTSTRAP_SE
 Key settings beyond the shared mixins:
 
 | Variable | Default | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `DOC_CONTENT__GENERATION__TIMEOUT_SECONDS` | `120` | Per-generation processing timeout |
 | `DOC_CONTENT__GENERATION__MAX_RETRY_ATTEMPTS` | `3` | Kafka-level retry attempts on handler failure |
 | `DOC_CONTENT__LLM__PROVIDER__MODELS__0__MODEL` | -- | Primary model in `provider:model` format (required) |

@@ -7,7 +7,7 @@ relationships, occupation-to-skill links, governance staging, and supporting ana
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `skill_node` | Canonical, deduplicated skill entities: the authoritative skill registry |
 | `skill_alias` | Surface-form variations that resolve to a canonical `skill_node` |
 | `skill_relationship` | Directed, typed edges between canonical skills (adjacency list) |

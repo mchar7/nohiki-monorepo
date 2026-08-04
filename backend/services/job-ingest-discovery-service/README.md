@@ -165,7 +165,7 @@ Settings inherit from `RedisMixin`, `KafkaMixin`, and `NohikiBaseSettings`. The 
 Key settings:
 
 | Setting | Default | Purpose |
-|---------|---------|---------|
+| --------- | --------- | --------- |
 | `JOB_INGEST_DISCOVERY__REDIS__CONNECTION_STRING` | -- | Redis URL (required) |
 | `JOB_INGEST_DISCOVERY__KAFKA__BOOTSTRAP_SERVERS` | -- | Kafka bootstrap (required) |
 | `JOB_INGEST_DISCOVERY__KAFKA__CONSUMER__MAX_CONCURRENT_HANDLERS` | `3` | Concurrent discovery runs |

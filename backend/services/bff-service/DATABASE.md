@@ -8,7 +8,7 @@ from its Kafka event handlers; API routers read from them.
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `account_projections` | User account state projected from `user-auth-service` |
 | `profile_projections` | Job search preference profiles from `user-pref-service` |
 | `user_pref_settings_projections` | Per-user default L2R feature importance weights from `user-pref-service` |

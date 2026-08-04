@@ -6,7 +6,7 @@ their active subscription tier, computed per-tier limits, and billing provider r
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `entitlements` | One row per user; stores tier, subscription status, computed limits, and billing provider references |
 | `outbox` | Transactional outbox for Debezium CDC pickup of `USER_ENTITLEMENT_CHANGED` events |
 | `processed_events` | Consumer idempotency log, prevents duplicate processing of incoming Kafka messages |

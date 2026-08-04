@@ -206,7 +206,7 @@ all prefixed by `DOC_TEMPLATE_`.
 Key environment variables:
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
+| ---------- | --------- | --------- |
 | `DOC_TEMPLATE__GOTENBERG__BASE_URL` | `http://gotenberg:3000` | Gotenberg service endpoint |
 | `DOC_TEMPLATE__GOTENBERG__REQUEST_TIMEOUT_S` | `10` | Per-request timeout for Gotenberg HTTP calls |
 | `DOC_TEMPLATE__TEMPLATE_SETTINGS__SEED_ON_STARTUP` | `true` | Whether to seed default templates on startup |

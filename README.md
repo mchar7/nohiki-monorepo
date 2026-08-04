@@ -34,11 +34,13 @@ flowchart LR
     PLT --> RD[(Valkey)]
 ```
 
+<!-- markdownlint-disable MD033 -->
+<!-- Native details/summary is required for this collapsible inventory; Markdown has no equivalent. -->
 <details>
 <summary><strong>Service inventory</strong></summary>
 
 | Domain | Service | Role |
-|---|---|---|
+| --- | --- | --- |
 | User | `user-auth-service` | JWT authentication and identity (HTTP + Kafka) |
 | User | `user-pref-service` | Job target profiles and preferences |
 | User | `user-upload-service` | Document storage on S3 |
@@ -62,11 +64,12 @@ Kafka-only services expose no business HTTP APIs, but they do expose internal he
 service directory has its own README and, where it owns tables, a DATABASE.md.
 
 </details>
+<!-- markdownlint-enable MD033 -->
 
 ## Repository map
 
 | Path | Contents |
-|---|---|
+| --- | --- |
 | [`backend/services/`](backend/services) | The microservices |
 | [`backend/libs/`](backend/libs) | Shared `nohiki-*` libraries: Kafka client, DB utils, settings, observability |
 | [`backend/jobs/`](backend/jobs) | One-shot and scheduled jobs |
@@ -107,11 +110,13 @@ just test-all-packages   # pytest across the whole workspace
 just test-e2e-journey smoke   # Playwright against the live stack
 ```
 
+<!-- markdownlint-disable MD033 -->
+<!-- Native details/summary is required for this collapsible shell list; Markdown has no equivalent. -->
 <details>
 <summary><strong>Targeted Nix shells</strong></summary>
 
 | Shell | Command | Contents |
-|---|---|---|
+| --- | --- | --- |
 | Default | `nix develop` | Everything: Python, Node, containers, infra |
 | Backend | `nix develop .#backend` | Python, uv, buf, grpcurl |
 | Frontend | `nix develop .#frontend` | Node.js only |
@@ -120,6 +125,7 @@ just test-e2e-journey smoke   # Playwright against the live stack
 | CI | `nix develop .#ci` | Minimal for pipelines |
 
 </details>
+<!-- markdownlint-enable MD033 -->
 
 With the stack up: API gateway on `:8000` (docs at [`/api/docs`](http://localhost:8000/api/docs)), frontend dev
 server on `:5173` (`pnpm --filter nohiki-frontend dev`), Grafana on `:3001` when the observability profile is

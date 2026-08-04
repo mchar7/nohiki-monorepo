@@ -260,7 +260,7 @@ Settings are loaded via `pydantic-settings` with the `JOB_CORRELATION_EVAL_` pre
 service composes the following mixins:
 
 | Mixin | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `DatabaseMixin` | PostgreSQL async engine + Alembic migrations |
 | `KafkaMixin` | Kafka consumer/producer with `max_concurrent_handlers=5` |
 | `RedisMixin` | Cache + circuit breaker state |

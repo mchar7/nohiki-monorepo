@@ -115,7 +115,7 @@ DOCX archives by their `word/document.xml` member to set the multipart filename 
 **Processing pipeline options** passed as multipart fields:
 
 | Field | Default | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `pipeline` | `standard` | Processing pipeline (`standard` or `vlm`) |
 | `pdf_backend` | `docling_parse` | PDF parsing backend |
 | `ocr_engine` | `rapidocr` | OCR engine (`auto`, `easyocr`, `kserve_v2_ocr`, `ocrmac`, `rapidocr`, `tesseract`, `tesserocr`) |
@@ -178,7 +178,7 @@ service-specific nested models. All environment variables use the `DOC_PROCESS_`
 ### Docling Settings (`DOC_PROCESS_DOCLING__*`)
 
 | Variable | Default | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `DOC_PROCESS_DOCLING__BASE_URL` | `http://docling-serve:5001` | Docling Serve endpoint |
 | `DOC_PROCESS_DOCLING__API_KEY` | `null` | API key for authenticated deployments |
 | `DOC_PROCESS_DOCLING__TIMEOUT_SECONDS` | `300` | Per-request HTTP timeout |
@@ -193,7 +193,7 @@ service-specific nested models. All environment variables use the `DOC_PROCESS_`
 ### VLM Settings (`DOC_PROCESS_VLM__*`)
 
 | Variable | Default | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `DOC_PROCESS_VLM__ENABLED` | `false` | Enable VLM image captioning |
 | `DOC_PROCESS_VLM__ENGINE_TYPE` | implementation default | Picture description engine type |
 | `DOC_PROCESS_VLM__API_URL` | implementation default | VLM endpoint |
@@ -204,7 +204,7 @@ service-specific nested models. All environment variables use the `DOC_PROCESS_`
 ### Cache Settings (`DOC_PROCESS_CACHE__*`)
 
 | Variable | Default | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `DOC_PROCESS_CACHE__RAW_TTL_SECONDS` | `604800` | 7-day TTL for raw bytes |
 | `DOC_PROCESS_CACHE__PROCESSED_TTL_SECONDS` | `604800` | 7-day TTL for snapshots |
 | `DOC_PROCESS_CACHE__KEY_PREFIX` | `doc-process` | Redis key namespace |
@@ -212,7 +212,7 @@ service-specific nested models. All environment variables use the `DOC_PROCESS_`
 ### Circuit Breaker Settings (`DOC_PROCESS_CIRCUIT_BREAKER__*`)
 
 | Variable | Default | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `DOC_PROCESS_CIRCUIT_BREAKER__ENABLED` | `true` | Reserved; not currently wired into the client |
 | `DOC_PROCESS_CIRCUIT_BREAKER__FAILURE_THRESHOLD` | `5` | Reserved |
 | `DOC_PROCESS_CIRCUIT_BREAKER__SUCCESS_THRESHOLD` | `2` | Reserved |

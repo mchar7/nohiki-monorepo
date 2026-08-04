@@ -30,7 +30,7 @@ uv run calibrate-skill-thresholds report calibration_report.json
 ## Commands
 
 | Command | Description |
-|---------|-------------|
+| --------- | ------------- |
 | `analyze` | Run full Jaccard similarity threshold analysis |
 | `quick` | Quick check: load data and show basic statistics |
 | `report` | Display a previously generated calibration report |

@@ -130,7 +130,7 @@ triplicate points server-side rather than in Python.
 `build_filter` converts a plain Python dict to a Qdrant `Filter` object. Supported value types:
 
 | Value type | Qdrant operator |
-|------------|----------------|
+| ------------ | ---------------- |
 | `bool`, `str`, `int` | `MatchValue` (exact match) |
 | `list[str \| int]` | `MatchAny` |
 | `{"$gt": v}`, `{"$gte": v, "$lte": v}` | `Range` |
@@ -303,7 +303,7 @@ class Settings(NohikiBaseSettings, QdrantMixin):
 Environment variables (all prefixed with the service prefix):
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| ---------- | --------- | ------------- |
 | `QDRANT__HOST` | `"qdrant"` | Hostname or IP |
 | `QDRANT__GRPC_PORT` | `6334` | gRPC port |
 | `QDRANT__API_KEY` | `None` | Required in non-dev environments |

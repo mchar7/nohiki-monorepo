@@ -107,7 +107,7 @@ env prefix is `JOB_INGEST_SCHEDULE_`.
 **Service-specific settings** (`JOB_INGEST_SCHEDULE_SCHEDULER__*`):
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| ---------- | --------- | ------------- |
 | `SCHEDULER__DEFAULT_HOURS_OLD` | `72` | How many hours back scrapers search for listings |
 | `SCHEDULER__DEFAULT_RESULTS_WANTED` | `50` | Target result count per scrape run |
 | `SCHEDULER__BATCH_LIMIT` | `100` | Maximum schedules processed per tick (overridden by tick event if non-zero) |

@@ -402,7 +402,33 @@ proto-breaking base_ref="main":
 
 # Lint GitHub workflows with their native validators
 workflow-lint:
-    nix develop .#ci {{ nix_flags }} --command actionlint -ignore '^step must run script with "run" section or run action with "uses" section$'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    diagnostics="$(mktemp)"
+    trap 'rm -f "$diagnostics"' EXIT
+
+    status=0
+    nix develop .#ci {{ nix_flags }} --command actionlint -oneline >"$diagnostics" || status=$?
+    ((status <= 1)) || exit "$status"
+    ((status == 0)) || [[ -s "$diagnostics" ]] || exit "$status"
+
+    unexpected=0
+    while IFS= read -r diagnostic; do
+        # actionlint does not understand the runner's four native `parallel:` groups; suppress only their exact source locations.
+        case "$diagnostic" in
+            '.github/workflows/checks.yml:285:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:363:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:493:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:504:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
+                ;;
+            *)
+                printf '%s\n' "$diagnostic" >&2
+                unexpected=1
+                ;;
+        esac
+    done <"$diagnostics"
+    ((unexpected == 0)) || exit 1
+
     nix develop .#ci {{ nix_flags }} --command check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml
 
 # Lint every tracked Dockerfile

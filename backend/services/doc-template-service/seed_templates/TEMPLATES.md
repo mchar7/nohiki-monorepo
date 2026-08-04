@@ -44,7 +44,7 @@ optional; include it if the template has a layout engine or other JS.
 ### Current Templates
 
 | Template | File | Schema | Visibility |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `resume` | `default_resume_template.html` | `default_resume_schema.json` | public |
 | `cover_letter` | `default_cover_letter_template.html` | `default_cover_letter_schema.json` | public |
 | `job_notification` | `default_job_notification_template.html` | (none) | internal |
@@ -67,7 +67,7 @@ these conventions for visual consistency.
 ### Color Palette
 
 | Token | Hex | Usage |
-|---|---|---|
+| --- | --- | --- |
 | Heading | `#1a1a1a` | Section titles, entry titles, name, labels |
 | Body | `#333333` | Body text, contact items |
 | Secondary | `#444444` | Subtitle, organization names |
@@ -141,7 +141,7 @@ from the `body` element (#333333, weight 400). Only elements that need to
 differ have overrides:
 
 | Element | Override | Reason |
-|---|---|---|
+| --- | --- | --- |
 | `.position-line` | `font-weight: 300` | Value text is lighter than body |
 | `.position-label` | `font-weight: 600; color: #1a1a1a` | Label stands out from value |
 | `.closing .sign-off` | `margin-bottom: 4pt` | Fixed gap to signature name |
@@ -167,7 +167,7 @@ fills the page naturally, regardless of content length.
 Each module is a frozen object literal with a single responsibility:
 
 | Module | Responsibility | Stateful? |
-|---|---|---|
+| --- | --- | --- |
 | `LayoutConfig` | Frozen tuning constants | No |
 | `DomUtils` | DOM queries and mutations | No |
 | `CssVariables` | CSS custom property management | No |
@@ -192,7 +192,7 @@ Runs on `DOMContentLoaded` -> `document.fonts.ready` -> run + 100ms retry.
 #### Config Values
 
 | Parameter | Value | Rationale |
-|---|---|---|
+| --- | --- | --- |
 | `lineHeightStart` | 1.42 | Higher than resume (1.35); prose needs more leading than bullets |
 | `lineHeightMin` | 1.3 | Minimum readable for continuous paragraphs |
 | `lineHeightMax` | 1.55 | Comfortable max; prevents overly loose text |
@@ -224,7 +224,7 @@ Brief comparison for reference. The resume uses the same design system but
 has a more complex layout.
 
 | Aspect | Resume | Cover Letter |
-|---|---|---|
+| --- | --- | --- |
 | Layout | Two-column with gray left sidebar | Single column |
 | Container | `216mm x 279mm` with `10mm` margin (rounded from US Letter 215.9 x 279.4mm) | `8.5in x 11in` with zero margin |
 | Line-height default | 1.35 | 1.42 |

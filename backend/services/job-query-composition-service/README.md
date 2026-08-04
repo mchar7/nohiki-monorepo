@@ -144,7 +144,7 @@ a service-specific `CompositionSettings` block. All environment variables are pr
 `JOB_QUERY_COMPOSITION_`.
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
+| ---------- | --------- | --------- |
 | `JOB_QUERY_COMPOSITION_COMPOSITION__RECOMPUTE_MIN_INTERVAL_SECONDS` | `300` | Minimum seconds between aggregate recomputations for a given query. Prevents publish storms on burst updates. |
 | `JOB_QUERY_COMPOSITION_COMPOSITION__INACTIVITY_THRESHOLD_DAYS` | `30` | Days of inactivity before a user's contributions are considered stale (used by inactivity tick handling). |
 | `JOB_QUERY_COMPOSITION_DATABASE__URL` | -- | PostgreSQL connection URL |

@@ -3,45 +3,109 @@
 // Version: 1.8
 syntax = "proto3";
 
+// The vendored path distinguishes upstream APIs while preserving the TEI package.
+// buf:lint:ignore PACKAGE_DIRECTORY_MATCH
 package tei.v1;
 
+// Vendored TEI clients depend on the upstream service name.
+// buf:lint:ignore SERVICE_SUFFIX
 service Info {
     rpc Info (InfoRequest) returns (InfoResponse) {
         option idempotency_level = IDEMPOTENT;
     };
 }
 
+// Vendored TEI clients depend on the upstream service name.
+// buf:lint:ignore SERVICE_SUFFIX
 service Embed {
+    // The upstream TEI RPC deliberately shares these published message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
     rpc Embed (EmbedRequest) returns (EmbedResponse);
+    // The upstream TEI stream RPC reuses its published unary message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc EmbedStream (stream EmbedRequest) returns (stream EmbedResponse);
+    // The upstream TEI RPC deliberately shares these published message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
     rpc EmbedSparse (EmbedSparseRequest) returns (EmbedSparseResponse);
+    // The upstream TEI stream RPC reuses its published unary message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc EmbedSparseStream (stream EmbedSparseRequest) returns (stream EmbedSparseResponse);
+    // The upstream TEI RPC deliberately shares these published message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
     rpc EmbedAll (EmbedAllRequest) returns (EmbedAllResponse);
+    // The upstream TEI stream RPC reuses its published unary message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc EmbedAllStream (stream EmbedAllRequest) returns (stream EmbedAllResponse);
 }
 
+// Vendored TEI clients depend on the upstream service name.
+// buf:lint:ignore SERVICE_SUFFIX
 service Predict {
+    // The upstream TEI RPC deliberately shares these published message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
     rpc Predict (PredictRequest) returns (PredictResponse);
+    // The upstream TEI RPC reuses its published response type.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc PredictPair (PredictPairRequest) returns (PredictResponse);
+    // The upstream TEI stream RPC reuses its published unary message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc PredictStream (stream PredictRequest) returns (stream PredictResponse);
+    // The upstream TEI stream RPC reuses its published pair message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc PredictPairStream (stream PredictPairRequest) returns (stream PredictResponse);
 }
 
+// Vendored TEI clients depend on the upstream service name.
+// buf:lint:ignore SERVICE_SUFFIX
 service Rerank {
+    // The upstream TEI RPC deliberately shares its published response type.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
     rpc Rerank (RerankRequest) returns (RerankResponse);
+    // The upstream TEI stream RPC reuses its published unary response type.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc RerankStream (stream RerankStreamRequest) returns (RerankResponse);
 }
 
+// Vendored TEI clients depend on the upstream service name.
+// buf:lint:ignore SERVICE_SUFFIX
 service Tokenize {
+    // The upstream Tokenize RPC uses its published Encode message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc Tokenize (EncodeRequest) returns (EncodeResponse);
+    // The upstream TEI stream RPC reuses its published Encode message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc TokenizeStream (stream EncodeRequest) returns (stream EncodeResponse);
+    // The upstream TEI RPC deliberately shares these published message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
     rpc Decode (DecodeRequest) returns (DecodeResponse);
+    // The upstream TEI stream RPC reuses its published Decode message types.
+    // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+    // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+    // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
     rpc DecodeStream (stream DecodeRequest) returns (stream DecodeResponse);
 }
 
 message InfoRequest {}
 
 enum ModelType {
+    // The upstream zero value name is a published Protobuf and JSON symbol.
+    // buf:lint:ignore ENUM_ZERO_VALUE_SUFFIX
     MODEL_TYPE_EMBEDDING = 0;
     MODEL_TYPE_CLASSIFIER = 1;
     MODEL_TYPE_RERANKER = 2;
@@ -73,6 +137,8 @@ message Metadata {
 }
 
 enum TruncationDirection {
+    // The upstream zero value name is a published Protobuf and JSON symbol.
+    // buf:lint:ignore ENUM_ZERO_VALUE_SUFFIX
     TRUNCATION_DIRECTION_RIGHT = 0;
     TRUNCATION_DIRECTION_LEFT = 1;
 }

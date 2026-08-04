@@ -25,7 +25,7 @@ uv run python -m proto_gen validate
 ## Commands
 
 | Command | Description |
-|---------|-------------|
+| --------- | ------------- |
 | `generate` | Full generation pipeline (fetch deps → generate → post-process) |
 | `fix-required` | Fix required field defaults in generated code |
 | `validate` | Validate all generated modules can be imported |

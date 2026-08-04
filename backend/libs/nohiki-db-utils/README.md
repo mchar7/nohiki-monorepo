@@ -499,7 +499,7 @@ This adds a nested `database: DatabaseSettings` model populated from `DATABASE__
 variables:
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `DATABASE__DSN` | required | PostgreSQL connection string (e.g., `postgresql://user:pw@host/db?sslmode=require`) |
 | `DATABASE__SCHEMA_NAME` | required | Service-specific schema (e.g., `job_storage_schema`) |
 | `DATABASE__POOL_SIZE` | `5` | SQLAlchemy connection pool size |

@@ -85,7 +85,7 @@ propagates the `traceparent` header to downstream calls.
 The sampler resolves based on configuration:
 
 | `sample_rate` | `tracing_enabled` | Sampler |
-|---|---|---|
+| --- | --- | --- |
 | `1.0` (default) | `true` | `ALWAYS_ON` |
 | `0.0` | `true` | `ALWAYS_OFF` |
 | `0.0-1.0` | `true` | `ParentBasedTraceIdRatio` |
@@ -301,7 +301,7 @@ these protocols. Key environment variables:
 Install only the instrumentation packages your service needs:
 
 | Extra | Adds | When to use |
-|---|---|---|
+| --- | --- | --- |
 | `[fastapi]` | FastAPI + OTel FastAPI instrumentor | All HTTP-serving services (all 18 currently) |
 | `[sqlalchemy]` | OTel SQLAlchemy instrumentor | Services with a database (via `nohiki-db-utils`) |
 | `[httpx]` | OTel httpx instrumentor | Services making outbound HTTP calls |

@@ -5,7 +5,7 @@ health and readiness probes, global error handlers with a typed error response e
 protection via Origin header validation, JWKS-based RS256 JWT verification for cookie-authenticated
 endpoints, Redis-backed rate limiting, and pagination helpers for list APIs.
 
-All 18 services install the base `[server]` extra. `bff-service` additionally installs `[jwt]`
+All 18 services install the base `[server]` extra. `bff-service` also installs `[jwt]`
 and `[otel]` because it is the only service that verifies incoming JWTs directly. All other
 services are Kafka-only and have no authentication surface.
 
@@ -126,7 +126,7 @@ to a consistent JSON error envelope:
 ```
 
 | Exception type | HTTP status | `error` field |
-|---|---|---|
+| --- | --- | --- |
 | `NohikiError` subclass | From `ErrorCode` on exception | From `ErrorCode` on exception |
 | `pydantic.ValidationError` | 422 | `VALIDATION_ERROR` |
 | `fastapi.HTTPException` | From exception | Mapped via `ErrorCode` |
@@ -426,7 +426,7 @@ and `build_probe_health_router`.
 ### Optional Extras
 
 | Extra | Adds | Used by |
-|---|---|---|
+| --- | --- | --- |
 | `server` | `uvicorn` | All 18 services |
 | `jwt` | `PyJWT`, `cryptography` | `bff-service` only |
 | `otel` | `nohiki-observability[fastapi,httpx]` | `bff-service`, `user-auth-service`, others |

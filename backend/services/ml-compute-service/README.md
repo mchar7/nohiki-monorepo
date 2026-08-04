@@ -174,7 +174,7 @@ handler raises `ValueError` on any unknown `encoding_mode`.
 Settings use the `ML_COMPUTE_` env prefix. Key settings:
 
 | Variable | Default | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `ML_COMPUTE_PROCESSING__COMPUTE_BACKEND` | `cpu` | Compute backend: `cpu`, `gpu`, or `auto`. `gpu` fails fast at startup if CUDA is unavailable. `auto` detects and logs the actual backend used. |
 | `ML_COMPUTE_PROCESSING__MAX_REQUEST_ITEMS` | `100` | Maximum items admitted in one batch embedding request (clamped 1-100). |
 | `ML_COMPUTE_PROCESSING__INFERENCE_BATCH_SIZE` | `8` | Maximum items per native model forward pass (clamped 1-64). |
