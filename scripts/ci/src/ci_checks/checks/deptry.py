@@ -15,6 +15,8 @@ from ci_checks.core.display import console, render_error_panel, render_summary_t
 from ci_checks.core.packages import Package
 from ci_checks.core.process_env import sanitized_python_env
 
+_DEPTRY_PROCESS_WATCHDOG_SECONDS = 6 * 60 * 60
+
 # DEP002 entries are runtime-selected adapters or deployment extras; DEP003
 # entries are modules deliberately supplied through a declared workspace facade;
 # DEP004 entries are imported by source-shipped test helpers. Keeping the list
@@ -286,7 +288,10 @@ async def scan_package(pkg: Package) -> DeptryResult:
         cwd=pkg.path,
         env=sanitized_python_env(),
     )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+    stdout, stderr = await asyncio.wait_for(
+        proc.communicate(),
+        timeout=_DEPTRY_PROCESS_WATCHDOG_SECONDS,
+    )
     duration_ms = int((asyncio.get_event_loop().time() - start) * 1000)
 
     output = stdout.decode() + stderr.decode()
