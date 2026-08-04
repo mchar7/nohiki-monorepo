@@ -97,9 +97,10 @@ global:
       - name: responses
         enabled: true
         routePath: /v1/responses
+        routeType: Responses
         requestTimeout: 180s
         connectTimeout: 10s
-        clientAuth: {header: Authorization, prefix: Bearer}
+        clientAuth: {header: Authorization, prefix: "Bearer "}
         secretSelector:
           matchLabels:
             nohiki.io/model-egress-route-responses: "true"
@@ -140,9 +141,10 @@ global:
       - name: completions
         enabled: true
         routePath: /v1/chat/completions
+        routeType: Completions
         requestTimeout: 180s
         connectTimeout: 10s
-        clientAuth: {header: Authorization, prefix: Bearer}
+        clientAuth: {header: Authorization, prefix: "Bearer "}
         secretSelector:
           matchLabels:
             nohiki.io/model-egress-route-completions: "true"
@@ -174,6 +176,7 @@ global:
       - name: messages
         enabled: true
         routePath: /v1/messages
+        routeType: Messages
         requestTimeout: 180s
         connectTimeout: 10s
         clientAuth: {header: x-api-key}

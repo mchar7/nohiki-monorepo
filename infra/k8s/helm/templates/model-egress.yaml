@@ -245,6 +245,9 @@ spec:
       kind: AgentgatewayBackend
       name: {{ printf "%s-%s" $gatewayName $backend.name }}
   backend:
+    ai:
+      routes:
+        {{ $backend.routePath | quote }}: {{ required (printf "modelEgress backend %s routeType is required" $backend.name) $backend.routeType }}
     health:
       unhealthyCondition: {{ $backend.health.unhealthyCondition | default "response.code >= 500 || response.code == 429" | quote }}
       eviction:
