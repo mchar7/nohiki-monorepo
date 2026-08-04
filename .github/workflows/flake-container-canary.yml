@@ -1,6 +1,7 @@
 name: Flake CI container canary
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       image:
@@ -30,11 +31,11 @@ defaults:
 jobs:
   hosted:
     name: Hosted container proof
-    if: inputs.run_hosted
+    if: github.event_name == 'pull_request' || inputs.run_hosted
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     container:
-      image: ${{ inputs.image }}
+      image: ${{ inputs.image || 'ghcr.io/mchar7/nohiki-ci-toolchain-canary@sha256:22628d0191ac3456bd7ab631f02dedb9362337148f501653c5d890b28c3d2b8d' }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -176,11 +177,11 @@ jobs:
 
   self-hosted:
     name: Self-hosted container and Docker proof
-    if: inputs.run_self_hosted
+    if: github.event_name == 'pull_request' || inputs.run_self_hosted
     runs-on: [self-hosted, linux, x64, nohiki]
     timeout-minutes: 30
     container:
-      image: ${{ inputs.image }}
+      image: ${{ inputs.image || 'ghcr.io/mchar7/nohiki-ci-toolchain-canary@sha256:22628d0191ac3456bd7ab631f02dedb9362337148f501653c5d890b28c3d2b8d' }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
