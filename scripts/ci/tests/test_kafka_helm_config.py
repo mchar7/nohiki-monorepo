@@ -33,7 +33,6 @@ _SOURCE_CONNECTOR_NAMES = {
     "bff-service-outbox",
     "doc-template-service-outbox",
     "job-correlation-evaluation-service-wal",
-    "job-ingest-discovery-service-outbox",
     "job-ingest-enrichment-service-outbox",
     "job-query-composition-service-outbox",
     "job-storage-service-outbox",

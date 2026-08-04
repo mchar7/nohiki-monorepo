@@ -33,7 +33,7 @@ async def test_exhausted_slot_and_sender_capacity_is_actionable() -> None:
 
 @pytest.mark.parametrize(
     ("target", "expected"),
-    [(PlatformTarget.COMPOSE, 12), (PlatformTarget.KUBERNETES, 13)],
+    [(PlatformTarget.COMPOSE, 12), (PlatformTarget.KUBERNETES, 12)],
 )
 async def test_replication_capacity_with_headroom_passes_with_evidence(target: PlatformTarget, expected: int) -> None:
     response = f"{expected}|16|{expected}|16|0"

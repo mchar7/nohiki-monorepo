@@ -909,14 +909,14 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
         assert not any(step.get("id") == "uv-version" for step in steps), location
 
 
-def test_kafka_connect_build_and_remote_connector_pins_are_consistent() -> None:
+def test_kafka_connect_image_owns_remote_connector_pins() -> None:
     dockerfile = _read_text(_KAFKA_DOCKERFILE)
     readme = _read_text(_KAFKA_README)
     helm_values = load_mapping(_HELM_VALUES)
     kafka_connect = helm_values["kafkaConnect"]
     assert isinstance(kafka_connect, dict)
-    values = kafka_connect.get("build")
-    assert isinstance(values, dict)
+    assert kafka_connect.get("build") is None
+    assert kafka_connect.get("image") == {"repository": "kafka-connect", "tag": ""}
 
     gradle = _images(_KAFKA_DOCKERFILE, "gradle")
     debezium = _images(_KAFKA_DOCKERFILE, "quay.io/debezium/connect")
@@ -924,13 +924,11 @@ def test_kafka_connect_build_and_remote_connector_pins_are_consistent() -> None:
     assert len(debezium) == 1
     gradle_ref = gradle[0]["ref"]
     assert readme.count(gradle_ref) == 3
-    assert values.get("debeziumVersion") == debezium[0]["version"]
 
     qdrant_version = re.search(r"^ARG QDRANT_CONNECTOR_VERSION=(\S+)$", dockerfile, re.MULTILINE)
     qdrant_digest = re.search(r"^ARG QDRANT_CONNECTOR_SHA256=(\S+)$", dockerfile, re.MULTILINE)
     assert qdrant_version
     assert qdrant_digest
-    assert values.get("qdrantKafkaVersion") == qdrant_version[1]
     assert _SHA256.fullmatch(qdrant_digest[1])
     assert dockerfile.index("sha256sum --check --strict qdrant-kafka.sha256") > dockerfile.index(
         "qdrant-kafka-${QDRANT_CONNECTOR_VERSION}.zip"

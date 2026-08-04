@@ -22,7 +22,7 @@ spec:
   replicas: {{ $cfg.replicas | default 2 }}
   bootstrapServers: {{ $cfg.bootstrapServers }}
   version: {{ $glob.kafka.version | default "4.3.0" }}
-
+  image: {{ include "nohiki.jobImage" (dict "glob" $glob "cfg" $cfg "default" "kafka-connect") }}
   config:
     group.id: {{ $cfg.groupId }}
     config.storage.topic: {{ $cfg.configStorageTopic }}
@@ -42,26 +42,6 @@ spec:
     # strimzi-kafka-connectors.yaml.
     offset.flush.interval.ms: {{ $cfg.offsetFlushIntervalMs | default 10000 }}
 
-  {{- if $cfg.build.enabled }}
-  build:
-    output:
-      type: docker
-      image: {{ $cfg.image.registry }}/{{ $cfg.image.repository }}:{{ $cfg.image.tag }}
-      {{- if $cfg.image.pullSecret }}
-      pushSecret: {{ $cfg.image.pullSecret }}
-      {{- end }}
-    plugins:
-      - name: debezium-postgres
-        artifacts:
-          - type: tgz
-            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/{{ $cfg.build.debeziumVersion }}/debezium-connector-postgres-{{ $cfg.build.debeziumVersion }}-plugin.tar.gz
-            sha512sum: {{ required "kafkaConnect.build.debeziumSha512 is required" $cfg.build.debeziumSha512 | quote }}
-      - name: qdrant-sink
-        artifacts:
-          - type: zip
-            url: https://github.com/qdrant/qdrant-kafka/releases/download/v{{ $cfg.build.qdrantKafkaVersion }}/qdrant-kafka-{{ $cfg.build.qdrantKafkaVersion }}.zip
-            sha512sum: {{ required "kafkaConnect.build.qdrantKafkaSha512 is required" $cfg.build.qdrantKafkaSha512 | quote }}
-  {{- end }}
 
   template:
     pod:
@@ -77,14 +57,14 @@ spec:
         {{- range $svcName, $svcValues := $.Values }}
         {{- if kindIs "map" $svcValues }}
         {{- $database := dig "database" dict $svcValues }}
-        {{- if and (kindIs "map" $database) (dig "enabled" false $database) }}
+        {{- if eq (include "nohiki.hasDebeziumEnabled" $svcValues) "true" }}
         - name: {{ $svcName }}-debezium-creds
           secret:
             secretName: {{ $svcName }}-debezium-credentials
         {{- end }}
         {{- end }}
         {{- end }}
-        {{- if $cfg.qdrant.enabled }}
+        {{- if and $cfg.qdrant.enabled $cfg.qdrant.apiKeyFromSecret }}
         - name: qdrant-creds
           secret:
             secretName: qdrant-credentials
@@ -100,14 +80,14 @@ spec:
         {{- range $svcName, $svcValues := $.Values }}
         {{- if kindIs "map" $svcValues }}
         {{- $database := dig "database" dict $svcValues }}
-        {{- if and (kindIs "map" $database) (dig "enabled" false $database) }}
+        {{- if eq (include "nohiki.hasDebeziumEnabled" $svcValues) "true" }}
         - name: {{ $svcName }}-debezium-creds
           mountPath: /mnt/secrets/{{ $svcName }}-debezium
           readOnly: true
         {{- end }}
         {{- end }}
         {{- end }}
-        {{- if $cfg.qdrant.enabled }}
+        {{- if and $cfg.qdrant.enabled $cfg.qdrant.apiKeyFromSecret }}
         - name: qdrant-creds
           mountPath: /mnt/secrets/qdrant
           readOnly: true

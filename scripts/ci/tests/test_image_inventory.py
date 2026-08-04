@@ -362,7 +362,7 @@ def test_kafka_connect_keeps_its_dedicated_context(inventory: ImageInventory) ->
 
 def test_vendored_base_inventory_covers_every_digest_pinned_oci_input(inventory: ImageInventory) -> None:
     pins = vendored_base_images(inventory, _ROOT, _MIRROR_ROOT)
-    assert len(pins) == 10
+    assert len(pins) == 11
     assert {pin.source.split("@", maxsplit=1)[0] for pin in pins} == {
         "docker.io/docker/dockerfile",
         "docker.io/library/caddy",
@@ -373,6 +373,7 @@ def test_vendored_base_inventory_covers_every_digest_pinned_oci_input(inventory:
         "mcr.microsoft.com/playwright",
         "public.ecr.aws/docker/library/python",
         "quay.io/debezium/connect",
+        "quay.io/strimzi/kafka",
         "registry.k8s.io/kubectl",
     }
     assert all(pin.mirror_repository.startswith(f"{_MIRROR_ROOT}/") for pin in pins)

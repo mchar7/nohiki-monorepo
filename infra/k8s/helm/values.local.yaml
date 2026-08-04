@@ -243,6 +243,9 @@ kafkaCluster:
     size: 2Gi
     deleteClaim: true
 
+kafkaConnect:
+  enabled: true
+
 rustfs:
   enabled: true
   # Local: standalone mode (1 pod, 1 PVC) - NOT HA

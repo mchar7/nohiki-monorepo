@@ -24,9 +24,9 @@ dev_image_tag := env_var_or_default("DEV_IMAGE_TAG", "dev")
 # Context the destructive reset may target; empty is fail-closed (no reset allowed).
 k8s_local_context := env_var_or_default("K8S_LOCAL_CONTEXT", "")
 
-# Local K3s deploy inventory: excludes ml-compute-service-gpu and kafka-connect, since
-# neither is built or pushed for the GPU-less local cluster (local ml-compute uses the CPU image).
-local_image_names := "user-auth-service user-pref-service user-upload-service user-entitlement-service job-storage-service job-ingest-discovery-service job-ingest-schedule-service job-ingest-enrichment-service job-query-composition-service job-correlation-evaluation-service skill-graph-service doc-template-service doc-content-service doc-process-service notification-service bff-service ml-gateway-service ml-compute-service sys-tick-job snapshot-refresh-job qdrant-init frontend"
+# Local K3s deploy inventory excludes only the GPU image. The Kafka Connect image
+# is a first-party Strimzi operand and is built and pushed with the local stack.
+local_image_names := "user-auth-service user-pref-service user-upload-service user-entitlement-service job-storage-service job-ingest-discovery-service job-ingest-schedule-service job-ingest-enrichment-service job-query-composition-service job-correlation-evaluation-service skill-graph-service doc-template-service doc-content-service doc-process-service notification-service bff-service ml-gateway-service ml-compute-service sys-tick-job snapshot-refresh-job qdrant-init kafka-connect frontend"
 
 # Common commands
 env_lock := monorepo_root + "/scripts/dev/env-lock.sh"

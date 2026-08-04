@@ -41,6 +41,18 @@ def test_connect_image_installs_postgresql_client_before_non_root_user() -> None
     assert not re.search(r"Fedora\s*\n# 42-based Debezium Connect image", dockerfile)
 
 
+def test_default_connect_image_is_strimzi_compatible_and_carries_every_plugin() -> None:
+    final_stage = _DOCKERFILE.rsplit("\nFROM ", maxsplit=1)[1]
+
+    assert final_stage.startswith(
+        "quay.io/strimzi/kafka:1.1.0-kafka-4.3.0@sha256:"
+        "b6848a53c01eec98b37866450a1227c3a41707785ec65b37063d2733a105bf36 AS strimzi"
+    )
+    assert "/opt/kafka/plugins/debezium-postgres/" in final_stage
+    assert "/opt/kafka/plugins/qdrant-kafka/" in final_stage
+    assert "/opt/kafka/plugins/nohiki-wal-router/" in final_stage
+
+
 def test_connect_image_replaces_vulnerable_netty_family_as_one_unit() -> None:
     dockerfile = _DOCKERFILE
     version = "4.1.135.Final"

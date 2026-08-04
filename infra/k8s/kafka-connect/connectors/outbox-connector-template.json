@@ -20,6 +20,7 @@
     "plugin.name": "pgoutput",
     "slot.name": "DB_PREFIX_outbox_slot",
     "publication.name": "DB_PREFIX_outbox_pub",
+    "publication.autocreate.mode": "filtered",
 
     "schema.include.list": "SCHEMA_NAME",
     "table.include.list": "SCHEMA_NAME.outbox",
