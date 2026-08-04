@@ -117,6 +117,22 @@ def test_nix_installers_share_the_canonical_bot_managed_pin() -> None:
     assert workflow_installers == dict.fromkeys(workflow_installers, canonical)
 
 
+def test_digest_freshness_keeps_only_the_nix_store_cache() -> None:
+    steps = _steps(_workflow_jobs(_DIGEST_FRESHNESS)["probe"])
+    by_name = {step.get("name"): step for step in steps}
+
+    assert "Cache uv downloads" not in by_name
+    assert "Cache workspace virtual environment" not in by_name
+    assert not any(str(step.get("uses", "")).startswith("actions/cache@") for step in steps)
+
+    nix_store = by_name["Cache nix store"]
+    assert str(nix_store["uses"]).startswith("nix-community/cache-nix-action@")
+    assert nix_store["with"]["gc-max-store-size-linux"] == "0"
+
+    workspace_sync = by_name["Install workspace (all packages + extras)"]
+    assert "if" not in workspace_sync
+
+
 def test_workflow_checkouts_do_not_persist_credentials() -> None:
     workflow_paths = sorted((*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")))
     missing = [
@@ -129,6 +145,25 @@ def test_workflow_checkouts_do_not_persist_credentials() -> None:
     ]
 
     assert not missing, f"checkout credentials persisted in read-only jobs: {missing}"
+
+
+def test_workflow_runner_labels_are_explicitly_versioned_or_approved_self_hosted() -> None:
+    failures: list[str] = []
+    workflow_paths = sorted((*_WORKFLOWS.glob("*.yml"), *_WORKFLOWS.glob("*.yaml")))
+    for path in workflow_paths:
+        for job_name, job in _workflow_jobs(path).items():
+            runs_on = job.get("runs-on")
+            if runs_on is None or runs_on == ["self-hosted", "linux", "x64", "nohiki"]:
+                continue
+            if isinstance(runs_on, str) and (
+                re.fullmatch(r"\$\{\{.+}}", runs_on) or re.fullmatch(r"(?:ubuntu|windows|macos)-\d+(?:\.\d+)*", runs_on)
+            ):
+                continue
+            failures.append(f"{path.relative_to(_ROOT)}:{job_name}: {runs_on!r}")
+
+    assert not failures, "workflow runner labels must be versioned or approved self-hosted labels:\n" + "\n".join(
+        failures
+    )
 
 
 @cache
@@ -865,6 +900,8 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
         setup_inputs = setup_step.get("with", {})
         assert setup_inputs.get("version-file") == uv_version_file, location
         assert "version" not in setup_inputs, location
+        assert setup_inputs.get("enable-cache") is True, location
+        assert setup_inputs.get("cache-dependency-glob") == "uv.lock", location
         assert any(
             index < setup_index and str(step.get("uses", "")).startswith("actions/checkout@")
             for index, step in enumerate(steps)
