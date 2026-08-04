@@ -55,22 +55,69 @@ if [ "$gate_lock" = 1 ]; then
     lock_dir=$runtime_dir/nohiki-gates
     lock_file=$lock_dir/pre-push.lock
     holder_file=$lock_dir/pre-push.holder
-    timeout=${NOHIKI_GATE_LOCK_TIMEOUT:-1800}
+    timeout=${NOHIKI_GATE_LOCK_TIMEOUT:-21600}
+    notice_interval=${NOHIKI_GATE_LOCK_NOTICE_INTERVAL:-300}
     case "$timeout" in
         ''|*[!0-9]*)
             printf 'error: NOHIKI_GATE_LOCK_TIMEOUT must be a non-negative integer\n' >&2
             exit 64
             ;;
     esac
+    case "$notice_interval" in
+        ''|*[!0-9]*|0)
+            printf 'error: NOHIKI_GATE_LOCK_NOTICE_INTERVAL must be a positive integer\n' >&2
+            exit 64
+            ;;
+    esac
+
+    read_holder() {
+        holder=$(cat -- "$holder_file" 2>/dev/null || printf 'pid=unknown worktree=unknown')
+        holder_pid=${holder%% *}
+        holder_pid=${holder_pid#pid=}
+    }
+
+    clear_stale_holder() {
+        read_holder
+        case "$holder_pid" in
+            ''|*[!0-9]*)
+                return 1
+                ;;
+        esac
+        if kill -0 "$holder_pid" 2>/dev/null; then
+            return 1
+        fi
+        rm -f -- "$holder_file"
+        printf 'pre-push gate: reclaimed stale holder metadata pid=%s\n' "$holder_pid" >&2
+        return 0
+    }
+
     mkdir -p -- "$lock_dir"
+    clear_stale_holder || true
     exec 9>"$lock_file"
     if ! flock -n 9; then
-        holder=$(cat -- "$holder_file" 2>/dev/null || printf 'pid=unknown worktree=unknown')
+        read_holder
         printf 'pre-push gate queued: holder %s\n' "$holder" >&2
-        if ! flock -w "$timeout" 9; then
-            printf 'error: timed out after %ss waiting for the pre-push gate held by %s\n' "$timeout" "$holder" >&2
-            exit 75
-        fi
+        elapsed=0
+        while :; do
+            if [ "$elapsed" -ge "$timeout" ]; then
+                printf 'error: timed out after %ss waiting for the pre-push gate held by %s\n' "$elapsed" "$holder" >&2
+                exit 75
+            fi
+            wait_seconds=$notice_interval
+            remaining=$((timeout - elapsed))
+            if [ "$wait_seconds" -gt "$remaining" ]; then
+                wait_seconds=$remaining
+            fi
+            if flock -w "$wait_seconds" 9; then
+                break
+            fi
+            elapsed=$((elapsed + wait_seconds))
+            if clear_stale_holder && flock -n 9; then
+                break
+            fi
+            read_holder
+            printf 'pre-push gate still queued after %ss: holder %s\n' "$elapsed" "$holder" >&2
+        done
     fi
     printf 'pid=%s worktree=%s\n' "$$" "$repo_root" >"$holder_file"
     trap 'rm -f -- "$holder_file"' EXIT

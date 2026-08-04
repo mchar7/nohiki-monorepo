@@ -15,6 +15,7 @@ import pytest
 from _documents import load_mapping
 from ci_checks.app import app
 from ci_checks.checks import deadcode as deadcode_check
+from ci_checks.checks import deptry as deptry_check
 from ci_checks.checks.deadcode import (
     DeadCodeFinding,
     DeadCodeResult,
@@ -71,6 +72,11 @@ def _options(
         include_tests=include_tests,
         include_parameters=False,
     )
+
+
+def test_scanner_hang_watchdogs_clear_weighted_gate_runs() -> None:
+    assert deadcode_check.SKYLOS_TIMEOUT_SECONDS >= 6 * 60 * 60
+    assert deptry_check._DEPTRY_PROCESS_WATCHDOG_SECONDS >= 6 * 60 * 60
 
 
 def test_skylos_jobs_resolution_honors_override_and_host_capacity(

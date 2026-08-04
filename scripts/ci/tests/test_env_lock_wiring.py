@@ -111,6 +111,39 @@ def test_nested_lock_invocation_is_reentrant() -> None:
     assert result.stderr == ""
 
 
+def test_nested_gate_inherits_marker_and_bypasses_machine_lock(tmp_path: Path) -> None:
+    wrapper = _ROOT / "scripts/dev/env-lock.sh"
+    result = subprocess.run(
+        [
+            "timeout",
+            "10",
+            wrapper,
+            "gate",
+            "pre-push",
+            "--",
+            wrapper,
+            "gate",
+            "pre-push",
+            "--",
+            sys.executable,
+            "-c",
+            "print('nested')",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {
+            "XDG_RUNTIME_DIR": str(tmp_path),
+            "NOHIKI_GATE_LOCK": "0",
+        },
+    )
+
+    assert result.stdout == "nested\n"
+    assert result.stderr == ""
+    assert not (tmp_path / "nohiki-gates/pre-push.holder").exists()
+
+
 def test_test_run_falls_through_when_oom_priority_is_unavailable(
     tmp_path: Path,
 ) -> None:
@@ -163,7 +196,9 @@ def test_machine_gate_serializes_worktrees_and_reports_holder(tmp_path: Path) ->
     release = tmp_path / "release"
     env = os.environ | {
         "XDG_RUNTIME_DIR": str(tmp_path),
+        "NOHIKI_GATE_LOCK": "0",
         "NOHIKI_GATE_LOCK_TIMEOUT": "30",
+        "NOHIKI_GATE_LOCK_NOTICE_INTERVAL": "1",
     }
     holder = subprocess.Popen(
         [
@@ -196,9 +231,10 @@ def test_machine_gate_serializes_worktrees_and_reports_holder(tmp_path: Path) ->
             env=env,
         )
         deadline = time.monotonic() + 30
-        while queue_log.stat().st_size == 0 and time.monotonic() < deadline:
+        while "still queued after 1s" not in queue_log.read_text(encoding="utf-8") and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert queue_log.stat().st_size > 0
+        queued_while_alive = queue_log.read_text(encoding="utf-8")
+        assert "pre-push gate still queued after 1s: holder pid=" in queued_while_alive
         assert waiter.poll() is None
         release.touch()
         stdout, _ = waiter.communicate(timeout=30)
@@ -214,7 +250,10 @@ def test_machine_gate_serializes_worktrees_and_reports_holder(tmp_path: Path) ->
 def test_machine_gate_wait_is_bounded(tmp_path: Path) -> None:
     wrapper = _ROOT / "scripts/dev/env-lock.sh"
     release = tmp_path / "release"
-    holder_env = os.environ | {"XDG_RUNTIME_DIR": str(tmp_path)}
+    holder_env = os.environ | {
+        "XDG_RUNTIME_DIR": str(tmp_path),
+        "NOHIKI_GATE_LOCK": "0",
+    }
     holder = subprocess.Popen(
         [
             wrapper,
@@ -247,6 +286,30 @@ def test_machine_gate_wait_is_bounded(tmp_path: Path) -> None:
     assert "timed out after 0s" in waiter.stderr
     release.touch()
     assert holder.wait(timeout=30) == 0
+
+
+def test_machine_gate_reclaims_stale_holder_metadata(tmp_path: Path) -> None:
+    wrapper = _ROOT / "scripts/dev/env-lock.sh"
+    lock_dir = tmp_path / "nohiki-gates"
+    lock_dir.mkdir()
+    holder_file = lock_dir / "pre-push.holder"
+    holder_file.write_text("pid=999999999 worktree=/stale/worktree\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [wrapper, "gate", "pre-push", "--", sys.executable, "-c", "print('reclaimed')"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {
+            "XDG_RUNTIME_DIR": str(tmp_path),
+            "NOHIKI_GATE_LOCK": "0",
+        },
+    )
+
+    assert result.stdout == "reclaimed\n"
+    assert "pre-push gate: reclaimed stale holder metadata pid=999999999" in result.stderr
+    assert not holder_file.exists()
 
 
 def test_gate_scope_falls_back_when_user_systemd_is_unavailable(tmp_path: Path) -> None:

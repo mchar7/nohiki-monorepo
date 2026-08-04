@@ -40,7 +40,7 @@ from ci_checks.core.process_env import sanitized_python_env
 # Constants
 
 PYTEST_SUCCESS = 0
-_WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS: int = 18 * 60
+_PROCESS_INACTIVITY_WATCHDOG_SECONDS: int = 18 * 60
 _UNIT_TEST_MARKERS = (
     "not integration and not e2e and not requires_docker "
     "and not requires_node_modules and not requires_skylos and not slow"
@@ -359,8 +359,119 @@ def _parse_test_progress(line: str) -> int:
     return len(re.findall(r"\b(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b", line))
 
 
-async def _wait_for_package_process(proc: asyncio.subprocess.Process) -> None:
-    await asyncio.wait_for(proc.wait(), timeout=_WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS)
+@dataclass(slots=True)
+class _ProcessProgress:
+    generation: int = 0
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def pulse(self) -> None:
+        self.generation += 1
+        self.event.set()
+
+    async def wait_after(self, generation: int) -> None:
+        while self.generation <= generation:
+            self.event.clear()
+            if self.generation > generation:
+                return
+            await self.event.wait()
+
+
+async def _wait_for_package_process(
+    proc: asyncio.subprocess.Process,
+    progress: _ProcessProgress,
+) -> None:
+    process_wait = asyncio.create_task(proc.wait())
+    observed_generation = progress.generation
+    try:
+        while not process_wait.done():
+            progress_wait = asyncio.create_task(progress.wait_after(observed_generation))
+            done, _ = await asyncio.wait(
+                {process_wait, progress_wait},
+                timeout=_PROCESS_INACTIVITY_WATCHDOG_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                progress_wait.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await progress_wait
+                msg = f"test subprocess produced no output for {_PROCESS_INACTIVITY_WATCHDOG_SECONDS}s"
+                raise TimeoutError(msg)
+            if process_wait in done:
+                progress_wait.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await progress_wait
+                await process_wait
+                return
+            await progress_wait
+            observed_generation = progress.generation
+        await process_wait
+    finally:
+        if not process_wait.done():
+            process_wait.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await process_wait
+
+
+async def _capture_process_output(
+    proc: asyncio.subprocess.Process,
+    *,
+    stdout_callback: Callable[[bytes], None] | None = None,
+) -> tuple[bytes, bytes]:
+    stdout_reader = proc.stdout
+    stderr_reader = proc.stderr
+    if stdout_reader is None or stderr_reader is None:
+        msg = "test subprocess output pipes are unavailable"
+        raise RuntimeError(msg)
+
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+    progress = _ProcessProgress()
+
+    async def drain(
+        reader: asyncio.StreamReader,
+        chunks: list[bytes],
+        callback: Callable[[bytes], None] | None = None,
+    ) -> None:
+        while chunk := await reader.read(65536):
+            chunks.append(chunk)
+            progress.pulse()
+            if callback is not None:
+                callback(chunk)
+
+    timeout_error: TimeoutError | None = None
+
+    async def wait_for_process() -> None:
+        nonlocal timeout_error
+        try:
+            await _wait_for_package_process(proc, progress)
+        except TimeoutError as exc:
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            await proc.wait()
+            timeout_error = exc
+        except BaseException:
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            await proc.wait()
+            raise
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(drain(stdout_reader, stdout_chunks, stdout_callback))
+            tg.create_task(drain(stderr_reader, stderr_chunks))
+            tg.create_task(wait_for_process())
+    except BaseException:
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+        await proc.wait()
+        raise
+
+    if timeout_error is not None:
+        raise timeout_error
+    return b"".join(stdout_chunks), b"".join(stderr_chunks)
 
 
 async def run_package_tests(
@@ -436,68 +547,31 @@ async def run_package_tests(
             pkg_type=pkg.pkg_type,
         )
 
-    stdout_chunks: list[bytes] = []
-    stderr_chunks: list[bytes] = []
+    pending = bytearray()
 
-    async def drain_stdout() -> None:
+    def record_stdout(chunk: bytes) -> None:
         nonlocal tests_completed
-        pending = bytearray()
-        while chunk := await stdout_reader.read(65536):
-            stdout_chunks.append(chunk)
-            pending.extend(chunk)
-            while (newline := pending.find(b"\n")) >= 0:
-                line = bytes(pending[: newline + 1])
-                del pending[: newline + 1]
-                tests_completed += _parse_test_progress(line.decode())
-                if progress_callback:
-                    progress_callback(tests_completed)
-        if pending:
-            tests_completed += _parse_test_progress(bytes(pending).decode())
+        pending.extend(chunk)
+        while (newline := pending.find(b"\n")) >= 0:
+            line = bytes(pending[: newline + 1])
+            del pending[: newline + 1]
+            tests_completed += _parse_test_progress(line.decode())
             if progress_callback:
                 progress_callback(tests_completed)
 
-    async def drain_stderr() -> None:
-        while chunk := await stderr_reader.read(65536):
-            stderr_chunks.append(chunk)
-
-    timeout_error: TimeoutError | None = None
-
-    async def wait_for_process() -> None:
-        nonlocal timeout_error
-        try:
-            await _wait_for_package_process(proc)
-        except TimeoutError as exc:
-            if proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-            await proc.wait()
-            timeout_error = exc
-        except BaseException:
-            if proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-            await proc.wait()
-            raise
-
-    try:
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(drain_stdout())
-            tg.create_task(drain_stderr())
-            tg.create_task(wait_for_process())
-    except BaseException:
-        if proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-        await proc.wait()
-        raise
-
-    if timeout_error is not None:
-        raise timeout_error
+    stdout_bytes, stderr_bytes = await _capture_process_output(
+        proc,
+        stdout_callback=record_stdout,
+    )
+    if pending:
+        tests_completed += _parse_test_progress(bytes(pending).decode())
+        if progress_callback:
+            progress_callback(tests_completed)
 
     duration_ms = int((time.time() - module_start_time) * 1000)
     pytest_passed = proc.returncode == PYTEST_SUCCESS
-    stdout = b"".join(stdout_chunks).decode()
-    stderr = b"".join(stderr_chunks).decode()
+    stdout = stdout_bytes.decode()
+    stderr = stderr_bytes.decode()
     output = stdout + stderr
     passed = pytest_passed
     coverage = _parse_coverage_output(output) if with_coverage else CoverageResult()
@@ -884,17 +958,7 @@ async def run_consolidated_tests(
             cwd=REPO_ROOT,
             env=test_env,
         )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=_WHOLE_PACKAGE_PROCESS_WATCHDOG_SECONDS,
-            )
-        except TimeoutError:
-            if proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-            await proc.wait()
-            raise
+        stdout, stderr = await _capture_process_output(proc)
 
         output = stdout.decode() + stderr.decode()
         exit_code = proc.returncode if proc.returncode is not None else -1

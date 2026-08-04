@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,53 @@ async def test_run_package_tests_drains_large_stdout_and_stderr(
 
 
 @pytest.mark.asyncio
+async def test_process_watchdog_allows_slow_but_progressing_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Periodic output keeps a process alive beyond the inactivity bound."""
+    monkeypatch.setattr(test_runner, "_PROCESS_INACTIVITY_WATCHDOG_SECONDS", 2.0)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        ("import time\nfor index in range(6):\n print(index, flush=True)\n time.sleep(0.5)\n"),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    stdout, stderr = await asyncio.wait_for(
+        test_runner._capture_process_output(proc),
+        timeout=10,
+    )
+
+    assert stdout.splitlines() == [b"0", b"1", b"2", b"3", b"4", b"5"]
+    assert stderr == b""
+    assert proc.returncode == 0
+
+
+@pytest.mark.asyncio
+async def test_process_watchdog_kills_silent_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A process with no output is still treated as hung and reaped."""
+    monkeypatch.setattr(test_runner, "_PROCESS_INACTIVITY_WATCHDOG_SECONDS", 0.1)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import time; time.sleep(60)",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    with pytest.raises(TimeoutError, match="produced no output"):
+        await asyncio.wait_for(
+            test_runner._capture_process_output(proc),
+            timeout=5,
+        )
+
+    assert proc.returncode is not None
+
+
+@pytest.mark.asyncio
 async def test_run_package_tests_timeout_kills_and_reaps_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The watchdog kills and reaps a child holding both output pipes open."""
     package_path = tmp_path / "package"
@@ -85,7 +133,10 @@ async def test_run_package_tests_timeout_kills_and_reaps_child(tmp_path: Path, m
     child_started = asyncio.Event()
     watchdog_fired = asyncio.Event()
 
-    async def controlled_watchdog(_: asyncio.subprocess.Process) -> None:
+    async def controlled_watchdog(
+        _: asyncio.subprocess.Process,
+        __: test_runner._ProcessProgress,
+    ) -> None:
         await child_started.wait()
         watchdog_fired.set()
         raise TimeoutError
