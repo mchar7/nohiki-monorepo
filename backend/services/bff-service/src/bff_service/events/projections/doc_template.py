@@ -46,6 +46,8 @@ async def _upsert_template_from_snapshot(session: AsyncSession, msg: TemplateCre
     if (
         not snapshot.namespace
         or not snapshot.name
+        or not snapshot.display_name
+        or snapshot.audience == TemplateAudience.UNSPECIFIED
         or not version_snapshot.version
         or not version_snapshot.template_content
     ):
@@ -61,14 +63,8 @@ async def _upsert_template_from_snapshot(session: AsyncSession, msg: TemplateCre
 
     access_scope = snapshot.access_scope or AccessScope.PUBLIC
     owner_id = UUID(snapshot.owner_id) if snapshot.owner_id else None
-    display_name = getattr(snapshot, "display_name", "") or snapshot.name.replace("_", " ").replace("-", " ").title()
-    audience = getattr(snapshot, "audience", TemplateAudience.UNSPECIFIED)
-    if audience == TemplateAudience.UNSPECIFIED:
-        audience = (
-            TemplateAudience.INTERNAL
-            if snapshot.namespace == "messaging-service" and snapshot.name == "job_notification"
-            else TemplateAudience.DOCUMENT
-        )
+    display_name = snapshot.display_name
+    audience = snapshot.audience
 
     stmt = (
         insert(TemplateProjection)

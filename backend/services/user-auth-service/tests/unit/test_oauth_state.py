@@ -190,6 +190,7 @@ class TestOAuthStateStorage:
                 "provider": "github",
                 "redirect_uri": "http://localhost/callback",
                 "created_at": now.isoformat(),
+                "return_url": "/dashboard",
             }
         )
         mock_cache.get.return_value = stored_data
@@ -212,6 +213,7 @@ class TestOAuthStateStorage:
                 "provider": "github",
                 "redirect_uri": "http://localhost/callback",
                 "created_at": now.isoformat(),
+                "return_url": "/dashboard",
             }
         )
         mock_cache.get.return_value = stored_data
@@ -241,6 +243,7 @@ class TestOAuthStateStorage:
                 "provider": "github",
                 "redirect_uri": "http://localhost/callback",
                 "created_at": datetime.now(tz=UTC).isoformat(),
+                "return_url": "/dashboard",
             }
         )
         cache = _AtomicStateCache(raw)

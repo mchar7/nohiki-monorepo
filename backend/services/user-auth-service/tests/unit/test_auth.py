@@ -6,6 +6,8 @@ import jwt
 import pytest
 from user_auth_service.core.jwt_rs256 import JWTConfig, RS256JWTHandler, generate_rsa_keypair
 
+_SESSION_FAMILY_ID = "550e8400-e29b-41d4-a716-446655440000"
+
 
 class TestRS256JWTHandler:
     """Tests for RS256JWTHandler."""
@@ -27,13 +29,15 @@ class TestRS256JWTHandler:
 
     def test_create_access_token_is_jwt(self, handler: RS256JWTHandler) -> None:
         """Token creation returns a JWT string."""
-        token = handler.create_access_token("user-123")
+        token = handler.create_access_token("user-123", session_family_id=_SESSION_FAMILY_ID)
         assert isinstance(token, str)
         assert token.count(".") == 2
 
     def test_access_token_contains_expected_claims(self, handler: RS256JWTHandler) -> None:
         """Issued token contains standard claims and is verifiable with public key."""
-        token = handler.create_access_token("user-456", roles=["user"], permissions=["read"], tenant_id="t-1")
+        token = handler.create_access_token(
+            "user-456", session_family_id=_SESSION_FAMILY_ID, roles=["user"], permissions=["read"], tenant_id="t-1"
+        )
         payload = jwt.decode(
             token,
             handler._public_key,

@@ -61,7 +61,7 @@ class RunResult(BaseModel):
     reasoning_tokens: int = 0
     api_requests: int = 0
     tool_calls_made: int = 0
-    retry_count: int | None = 0
+    retry_count: int | None
     usage_details: dict[str, int] = Field(default_factory=dict)
     actual_cost_usd: float | None = None
     reserved_cost_usd: float = 0.0
@@ -78,14 +78,7 @@ class RunResult(BaseModel):
     @computed_field
     @property
     def charged_cost_usd(self) -> float:
-        """Budget-charged cost mirroring the fail-closed scheduler settlement.
-
-        Known-price success charges the actual provider cost; unknown-price
-        success and any dispatched failure charge the worst-case reservation.
-        This is the amount that seeds a resumed ``BudgetScheduler`` so repeated
-        resume can never exceed the cap or forget a failure's fail-closed charge.
-        Serialized for round-tripping; recomputed for legacy artifacts.
-        """
+        """Budget-charged cost mirroring the fail-closed scheduler settlement."""
         if self.actual_cost_usd is not None:
             return self.actual_cost_usd
         return self.reserved_cost_usd

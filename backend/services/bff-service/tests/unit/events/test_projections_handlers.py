@@ -417,28 +417,6 @@ async def test_revocation_handlers_reject_malformed_user_uuid(
         await handler(event, _make_context(db_session=create_mock_session()))
 
 
-@pytest.mark.asyncio
-async def test_handle_legacy_account_deleted_creates_permanent_tombstone() -> None:
-    """Legacy deletion replay without metadata still blocks resurrection."""
-    user_id = uuid.uuid4()
-    mock_session = create_mock_session()
-
-    with patch(
-        "bff_service.events.projections.user_auth.record_user_revocation_cutoff",
-        new_callable=AsyncMock,
-    ) as record:
-        await handle_account_deleted(
-            AccountDeleted(user_id=str(user_id), metadata=None),
-            _make_context(db_session=mock_session),
-        )
-
-    record.assert_awaited_once_with(
-        mock_session,
-        user_id=user_id,
-        revoked_before=datetime.min.replace(tzinfo=UTC),
-        is_permanent=True,
-    )
-    assert any("DELETE FROM" in str(call.args[0]) for call in mock_session.execute.await_args_list)
 
 
 @pytest.mark.asyncio

@@ -52,6 +52,7 @@ class TestJudgmentRecord:
             run_number=2,
             judgment=_make_judgment(),
             cost_usd=0.001,
+            charged_cost_usd=0.001,
         )
         assert record.task_key == "openrouter:test/model::senior_python_remote::2"
 
@@ -62,6 +63,7 @@ class TestJudgmentRecord:
             run_number=1,
             judgment=_make_judgment(score=90),
             cost_usd=0.0025,
+            charged_cost_usd=0.0025,
         )
         json_str = record.model_dump_json()
         restored = JudgmentRecord.model_validate_json(json_str)
@@ -90,6 +92,7 @@ class TestJudgeCheckpoint:
                 run_number=1,
                 judgment=_make_judgment(),
                 cost_usd=0.001,
+                charged_cost_usd=0.001,
             ),
             JudgmentRecord(
                 model_name="m2",
@@ -97,6 +100,7 @@ class TestJudgeCheckpoint:
                 run_number=1,
                 judgment=_make_judgment(),
                 cost_usd=0.002,
+                charged_cost_usd=0.002,
             ),
         ]
         jc = JudgeCheckpoint(
@@ -118,6 +122,7 @@ class TestJudgeCheckpoint:
                 run_number=1,
                 judgment=j1,
                 cost_usd=0.001,
+                charged_cost_usd=0.001,
             ),
             JudgmentRecord(
                 model_name="m1",
@@ -125,6 +130,7 @@ class TestJudgeCheckpoint:
                 run_number=1,
                 judgment=j2,
                 cost_usd=0.002,
+                charged_cost_usd=0.002,
             ),
             JudgmentRecord(
                 model_name="m2",
@@ -132,6 +138,7 @@ class TestJudgeCheckpoint:
                 run_number=1,
                 judgment=j1,
                 cost_usd=0.001,
+                charged_cost_usd=0.001,
             ),
         ]
         jc = JudgeCheckpoint(
@@ -597,7 +604,7 @@ def test_record_failure_persists_dispatched_attempt_with_charge(tmp_path: Path) 
     record = manager.existing_records_for_judge("judge-a")[0]
     assert record.judgment is None
     assert record.cost_usd == pytest.approx(0.0)
-    assert record.charged_cost == pytest.approx(0.02)
+    assert record.charged_cost_usd == pytest.approx(0.02)
 
 
 def test_failure_excluded_from_judgments_but_counts_as_completed(tmp_path: Path) -> None:

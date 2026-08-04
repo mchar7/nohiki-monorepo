@@ -453,36 +453,6 @@ class TestHandleLockNotAcquiredSeeding:
         mock_wait.assert_called_once()
         assert state.status == "skipped"
 
-    @patch("nohiki_db_utils.seeding._get_seed_version")
-    @patch("nohiki_db_utils.seeding._get_lock_metadata")
-    @patch("nohiki_db_utils.seeding._wait_for_lock_release")
-    @pytest.mark.asyncio
-    async def test_handle_lock_not_acquired_no_metadata(
-        self,
-        mock_wait: AsyncMock,
-        mock_get_meta: AsyncMock,
-        mock_get_version: AsyncMock,
-    ) -> None:
-        """Test handling lock not acquired with no metadata."""
-        mock_conn = AsyncMock()
-        ctx = SeedContext(
-            service_name="test-svc",
-            pod_id="pod-1",
-            database_url="postgresql://localhost/db",
-            seed_name="test_seed",
-            seed_version="1.0.0",
-            timeout_seconds=60,
-        )
-        state = SeedingState()
-
-        mock_get_meta.return_value = None
-        mock_get_version.return_value = "1.0.0"  # Same version = skipped
-
-        await _handle_lock_not_acquired(mock_conn, 12345, ctx, state)
-
-        mock_get_meta.assert_called_once()
-        mock_wait.assert_called_once()
-        assert state.status == "skipped"
 
     @patch("nohiki_db_utils.seeding._get_seed_version")
     @patch("nohiki_db_utils.seeding._get_lock_metadata")

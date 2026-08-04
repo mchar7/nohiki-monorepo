@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 import pytest
+from bff_service.services.models import ProfileDetail
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from nohiki.common.v1 import CurrencyCode, PaymentFrequency, SeniorityLevel, WorkArrangement
@@ -49,17 +50,19 @@ async def test_list_profiles_returns_service_data(mocker: MockerFixture) -> None
     mock_service.list_profiles = mocker.AsyncMock(
         return_value=(
             [
-                {
-                    "id": str(uuid.uuid4()),
-                    "user_id": str(user_id),
-                    "pref_name": "Profile 1",
-                    "search_keywords": ["python"],
-                    "disallowed_keywords": [],
-                    "work_arrangements": ["REMOTE"],
-                    "notification_threshold": 0.7,
-                    "auto_tailor_threshold": 0.8,
-                    "open_to_relocation": False,
-                }
+                ProfileDetail.model_validate(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "user_id": str(user_id),
+                        "pref_name": "Profile 1",
+                        "search_keywords": ["python"],
+                        "disallowed_keywords": [],
+                        "work_arrangements": ["REMOTE"],
+                        "notification_threshold": 0.7,
+                        "auto_tailor_threshold": 0.8,
+                        "open_to_relocation": False,
+                    }
+                )
             ],
             1,
         )
@@ -98,17 +101,19 @@ async def test_list_profiles_page_two_slices_items_but_preserves_total(mocker: M
 
     user_id = uuid.uuid4()
     page_profiles = [
-        {
-            "id": str(uuid.uuid4()),
-            "user_id": str(user_id),
-            "pref_name": f"Profile {index}",
-            "search_keywords": ["python"],
-            "disallowed_keywords": [],
-            "work_arrangements": ["REMOTE"],
-            "notification_threshold": 0.7,
-            "auto_tailor_threshold": 0.8,
-            "open_to_relocation": False,
-        }
+        ProfileDetail.model_validate(
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": str(user_id),
+                "pref_name": f"Profile {index}",
+                "search_keywords": ["python"],
+                "disallowed_keywords": [],
+                "work_arrangements": ["REMOTE"],
+                "notification_threshold": 0.7,
+                "auto_tailor_threshold": 0.8,
+                "open_to_relocation": False,
+            }
+        )
         for index in (3, 4)
     ]
     mock_service = mocker.Mock()
@@ -375,21 +380,23 @@ async def test_get_profile_returns_service_data(mocker: MockerFixture, experienc
     mock_db = create_mock_session()
     mock_service = mocker.Mock()
     mock_service.get_profile = mocker.AsyncMock(
-        return_value={
-            "id": str(pref_id),
-            "user_id": str(user_id),
-            "pref_name": "Test Profile",
-            "search_keywords": ["go"],
-            "disallowed_keywords": [],
-            "work_arrangements": ["ON_SITE"],
-            "notification_threshold": 0.6,
-            "auto_tailor_threshold": None,
-            "open_to_relocation": True,
-            "experience_preference": {
-                "experience_years": experience_years,
-                "seniority_levels": ["MID"],
-            },
-        }
+        return_value=ProfileDetail.model_validate(
+            {
+                "id": str(pref_id),
+                "user_id": str(user_id),
+                "pref_name": "Test Profile",
+                "search_keywords": ["go"],
+                "disallowed_keywords": [],
+                "work_arrangements": ["ON_SITE"],
+                "notification_threshold": 0.6,
+                "auto_tailor_threshold": None,
+                "open_to_relocation": True,
+                "experience_preference": {
+                    "experience_years": experience_years,
+                    "seniority_levels": ["MID"],
+                },
+            }
+        )
     )
 
     result = await get_profile(pref_id, user_id, mock_db, mock_service)
@@ -407,7 +414,42 @@ def test_get_profile_api_retains_snake_case_salary_values(mocker: MockerFixture)
     pref_id = uuid.uuid4()
     mock_service = mocker.Mock()
     mock_service.get_profile = mocker.AsyncMock(
-        return_value={
+        return_value=ProfileDetail.model_validate(
+            {
+                "id": str(pref_id),
+                "user_id": str(user_id),
+                "pref_name": "Salary profile",
+                "search_keywords": ["python"],
+                "disallowed_keywords": [],
+                "work_arrangements": ["REMOTE"],
+                "notification_threshold": 0.7,
+                "auto_tailor_threshold": 0.8,
+                "open_to_relocation": False,
+                "salary_preference": {
+                    "min_salary": {"minor_units": 8_000_000, "currency": CurrencyCode.USD},
+                    "target_salary": {"minor_units": 12_500_000, "currency": CurrencyCode.EUR},
+                    "preferred_frequency": PaymentFrequency.ANNUALLY,
+                },
+            }
+        )
+    )
+
+    client = _build_profiles_client(mock_service, user_id)
+    response = client.get(f"/api/v1/profiles/{pref_id}")
+
+    assert response.status_code == 200
+    assert response.json()["salary_preference"] == {
+        "min_salary": {"minor_units": 8_000_000, "currency": "USD"},
+        "target_salary": {"minor_units": 12_500_000, "currency": "EUR"},
+        "preferred_frequency": "ANNUALLY",
+    }
+
+
+def test_list_profiles_api_maps_snake_protojson_salary_values(mocker: MockerFixture) -> None:
+    user_id = uuid.uuid4()
+    pref_id = uuid.uuid4()
+    profile = ProfileDetail.model_validate(
+        {
             "id": str(pref_id),
             "user_id": str(user_id),
             "pref_name": "Salary profile",
@@ -429,42 +471,6 @@ def test_get_profile_api_retains_snake_case_salary_values(mocker: MockerFixture)
             },
         }
     )
-
-    client = _build_profiles_client(mock_service, user_id)
-    response = client.get(f"/api/v1/profiles/{pref_id}")
-
-    assert response.status_code == 200
-    assert response.json()["salary_preference"] == {
-        "min_salary": {"minor_units": 8_000_000, "currency": "USD"},
-        "target_salary": {"minor_units": 12_500_000, "currency": "EUR"},
-        "preferred_frequency": "ANNUALLY",
-    }
-
-
-def test_list_profiles_api_maps_snake_protojson_salary_values(mocker: MockerFixture) -> None:
-    user_id = uuid.uuid4()
-    pref_id = uuid.uuid4()
-    profile = {
-        "id": str(pref_id),
-        "user_id": str(user_id),
-        "pref_name": "Salary profile",
-        "search_keywords": ["python"],
-        "disallowed_keywords": [],
-        "work_arrangements": ["REMOTE"],
-        "notification_threshold": 0.7,
-        "auto_tailor_threshold": 0.8,
-        "open_to_relocation": False,
-        "salary_preference": {
-            "min_salary": {"minor_units": 8_000_000, "currency": CurrencyCode.USD},
-            "target_salary": {"minor_units": 12_500_000, "currency": CurrencyCode.EUR},
-            "preferred_frequency": PaymentFrequency.ANNUALLY,
-        },
-        "commute_preferences": {
-            "acceptable_modes": ["TRANSIT_MODE_PUBLIC_TRANSIT", "TRANSIT_MODE_CYCLING"],
-            "max_commute_minutes": 45,
-            "ideal_commute_minutes": 25,
-        },
-    }
     mock_service = mocker.Mock()
     mock_service.list_profiles = mocker.AsyncMock(return_value=([profile], 1))
     client = _build_profiles_client(mock_service, user_id)

@@ -48,22 +48,22 @@ class TestResolveGlobPath:
     def test_no_wildcard_value_is_list(self) -> None:
         data = {"items": [1, 2, 3]}
         result = resolve_glob_path(data, "items")
-        assert result == [("items", [1, 2, 3])]
+        assert result == [("$.items", [1, 2, 3])]
 
     def test_no_wildcard_primitive_value_wraps_in_singleton(self) -> None:
         """A concrete path to a primitive (e.g. items[1]) exposes the value as a singleton scope."""
         data = {"name": "Alice"}
-        assert resolve_glob_path(data, "name") == [("name", ["Alice"])]
+        assert resolve_glob_path(data, "name") == [("$.name", ["Alice"])]
 
     def test_no_wildcard_dict_value_wraps_in_singleton(self) -> None:
         """A concrete path to a dict exposes the mapping as a singleton scope."""
         data = {"meta": {"owner": "Alice"}}
-        assert resolve_glob_path(data, "meta") == [("meta", [{"owner": "Alice"}])]
+        assert resolve_glob_path(data, "meta") == [("$.meta", [{"owner": "Alice"}])]
 
     def test_no_wildcard_indexed_access_to_list_element(self) -> None:
         """``items[1]`` exposes the indexed element as a singleton scope."""
         data = {"items": ["p0", "p1", "p2"]}
-        assert resolve_glob_path(data, "items[1]") == [("items[1]", ["p1"])]
+        assert resolve_glob_path(data, "items[1]") == [("$.items[1]", ["p1"])]
 
     def test_no_wildcard_missing_path(self) -> None:
         assert resolve_glob_path({"a": 1}, "b") == []
@@ -79,16 +79,16 @@ class TestResolveGlobPath:
         }
         result = resolve_glob_path(data, "records.entries[*].items")
         assert result == [
-            ("records.entries[0].items", ["Did X", "Did Y"]),
-            ("records.entries[1].items", ["Led A"]),
+            ("$.records.entries[0].items", ["Did X", "Did Y"]),
+            ("$.records.entries[1].items", ["Led A"]),
         ]
 
     def test_wildcard_no_suffix_item_is_list(self) -> None:
         data = {"matrix": [[1, 2], [3, 4]]}
         result = resolve_glob_path(data, "matrix[*]")
         assert result == [
-            ("matrix[0]", [1, 2]),
-            ("matrix[1]", [3, 4]),
+            ("$.matrix[0]", [1, 2]),
+            ("$.matrix[1]", [3, 4]),
         ]
 
     def test_wildcard_no_suffix_items_are_primitives(self) -> None:
@@ -96,8 +96,8 @@ class TestResolveGlobPath:
         data = {"items": ["First item.", "Second item."]}
         result = resolve_glob_path(data, "items[*]")
         assert result == [
-            ("items[0]", ["First item."]),
-            ("items[1]", ["Second item."]),
+            ("$.items[0]", ["First item."]),
+            ("$.items[1]", ["Second item."]),
         ]
 
     def test_wildcard_no_suffix_items_are_dicts(self) -> None:
@@ -105,8 +105,8 @@ class TestResolveGlobPath:
         data = {"entries": [{"name": "A"}, {"name": "B"}]}
         result = resolve_glob_path(data, "entries[*]")
         assert result == [
-            ("entries[0]", [{"name": "A"}]),
-            ("entries[1]", [{"name": "B"}]),
+            ("$.entries[0]", [{"name": "A"}]),
+            ("$.entries[1]", [{"name": "B"}]),
         ]
 
     def test_missing_child_key_emits_empty_list(self) -> None:
@@ -114,8 +114,8 @@ class TestResolveGlobPath:
         data = {"items": [{"name": "A"}, {"name": "B"}]}
         result = resolve_glob_path(data, "items[*].missing_key")
         assert result == [
-            ("items[0].missing_key", []),
-            ("items[1].missing_key", []),
+            ("$.items[0].missing_key", []),
+            ("$.items[1].missing_key", []),
         ]
 
     def test_prefix_not_list_returns_empty(self) -> None:
@@ -130,7 +130,7 @@ class TestResolveGlobPath:
     def test_simple_path_to_nested_list(self) -> None:
         data = {"skills": {"categories": [{"name": "A"}, {"name": "B"}]}}
         result = resolve_glob_path(data, "skills.categories")
-        assert result == [("skills.categories", [{"name": "A"}, {"name": "B"}])]
+        assert result == [("$.skills.categories", [{"name": "A"}, {"name": "B"}])]
 
     def test_mixed_present_and_missing_children(self) -> None:
         """Items where child exists as list vs missing produce different results."""
@@ -142,8 +142,8 @@ class TestResolveGlobPath:
         }
         result = resolve_glob_path(data, "entries[*].bullets")
         assert result == [
-            ("entries[0].bullets", ["a", "b"]),
-            ("entries[1].bullets", []),  # dict item, missing key → empty list
+            ("$.entries[0].bullets", ["a", "b"]),
+            ("$.entries[1].bullets", []),  # dict item, missing key → empty list
         ]
 
 
@@ -156,14 +156,14 @@ class TestResolveGlobPaths:
     def test_single_path_delegates(self) -> None:
         data = {"items": [1, 2]}
         result = resolve_glob_paths(data, ["items"])
-        assert result == [("items", [1, 2])]
+        assert result == [("$.items", [1, 2])]
 
     def test_multiple_paths_concatenated(self) -> None:
         data = {"a": [1, 2], "b": [3, 4]}
         result = resolve_glob_paths(data, ["a", "b"])
-        assert result == [("a", [1, 2]), ("b", [3, 4])]
+        assert result == [("$.a", [1, 2]), ("$.b", [3, 4])]
 
     def test_order_preserved(self) -> None:
         data = {"x": [1], "y": [2], "z": [3]}
         result = resolve_glob_paths(data, ["z", "x", "y"])
-        assert [r[0] for r in result] == ["z", "x", "y"]
+        assert [r[0] for r in result] == ["$.z", "$.x", "$.y"]

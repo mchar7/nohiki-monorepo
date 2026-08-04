@@ -400,38 +400,33 @@ async def _handle_lock_not_acquired(
 ) -> None:
     """Handle case when lock is held by another pod."""
     lock_meta = await _get_lock_metadata(conn, lock_id)
+    if lock_meta is None:
+        msg = "Seed lock metadata missing"
+        raise SeedingError(msg)
 
-    if lock_meta:
-        acquired_at, holder_id, _ = lock_meta
-        age_seconds = (datetime.now(UTC) - acquired_at).total_seconds()
+    acquired_at, holder_id, _ = lock_meta
+    age_seconds = (datetime.now(UTC) - acquired_at).total_seconds()
 
-        logger.info(
-            "Seed lock held by another pod",
+    logger.info(
+        "Seed lock held by another pod",
+        service=ctx.service_name,
+        seed_name=ctx.seed_name,
+        holder_pod=holder_id,
+        lock_age_seconds=round(age_seconds, 1),
+        max_wait_seconds=ctx.timeout_seconds,
+    )
+
+    if age_seconds > ctx.timeout_seconds:
+        logger.warning(
+            "Stale seed lock detected",
             service=ctx.service_name,
             seed_name=ctx.seed_name,
             holder_pod=holder_id,
             lock_age_seconds=round(age_seconds, 1),
-            max_wait_seconds=ctx.timeout_seconds,
+            timeout_seconds=ctx.timeout_seconds,
         )
 
-        if age_seconds > ctx.timeout_seconds:
-            logger.warning(
-                "Stale seed lock detected",
-                service=ctx.service_name,
-                seed_name=ctx.seed_name,
-                holder_pod=holder_id,
-                lock_age_seconds=round(age_seconds, 1),
-                timeout_seconds=ctx.timeout_seconds,
-            )
-
-        remaining_wait = max(0, ctx.timeout_seconds - age_seconds)
-    else:
-        logger.info(
-            "Seed lock held (no metadata - legacy lock)",
-            service=ctx.service_name,
-            seed_name=ctx.seed_name,
-        )
-        remaining_wait = ctx.timeout_seconds
+    remaining_wait = max(0, ctx.timeout_seconds - age_seconds)
 
     # Wait for lock release
     await _wait_for_lock_release(conn, lock_id, int(remaining_wait) + 5, ctx)

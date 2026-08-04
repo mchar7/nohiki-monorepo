@@ -1701,7 +1701,6 @@ def _reuse_fixture(tmp_path: Path, tree_sha: str) -> Path:
         }
         return record | overrides
 
-    legacy = {key: value for key, value in attested(204).items() if key != "base_sha"}
     scenarios: dict[str, object] = {
         "proven": {"runs": runs(201), "attestations": {"201": attested(201)}},
         "tree_mismatch": {
@@ -1714,7 +1713,6 @@ def _reuse_fixture(tmp_path: Path, tree_sha: str) -> Path:
             "runs": runs(203),
             "attestations": {"203": attested(203, base_sha="a-different-base")},
         },
-        "legacy_without_base": {"runs": runs(204), "attestations": {"204": legacy}},
         "only_edited": {
             "runs": runs(205),
             "attestations": {"205": attested(205, event_action="edited")},
@@ -1775,7 +1773,6 @@ def test_gate_reuse_proves_a_title_edit_and_names_the_run_it_relied_on(
     [
         "tree_mismatch",
         "base_retargeted",
-        "legacy_without_base",
         "only_edited",
         "artifact_expired",
         "no_successful_run",

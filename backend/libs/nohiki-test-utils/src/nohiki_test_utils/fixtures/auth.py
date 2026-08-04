@@ -72,9 +72,6 @@ def valid_user_token() -> str:
 
 
 @pytest.fixture
-def sample_user_headers(valid_user_token: str, sample_user_id: uuid.UUID) -> dict[str, str]:
-    """Create headers for user authentication including user context."""
-    return {
-        "Authorization": f"Bearer {valid_user_token}",
-        "X-Account-ID": str(sample_user_id),
-    }
+def sample_user_headers(valid_user_token: str) -> dict[str, str]:
+    """Create headers for user authentication."""
+    return {"Authorization": f"Bearer {valid_user_token}"}

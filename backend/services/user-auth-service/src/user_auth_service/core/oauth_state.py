@@ -155,7 +155,7 @@ class OAuthStateStorage:
             provider=data["provider"],
             redirect_uri=data["redirect_uri"],
             created_at=datetime.fromisoformat(str(data["created_at"])),
-            return_url=normalize_return_url(data.get("return_url")),
+            return_url=normalize_return_url(data["return_url"]),
         )
 
 

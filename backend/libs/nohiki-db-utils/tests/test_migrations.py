@@ -749,29 +749,6 @@ class TestHandleLockNotAcquired:
         mock_wait.assert_called_once()
         mock_get_version.assert_called_once()
 
-    @patch("nohiki_db_utils.migrations.coordinator.get_db_version_info")
-    @patch("nohiki_db_utils.migrations.coordinator.get_lock_metadata")
-    @patch("nohiki_db_utils.migrations.coordinator.wait_for_lock_release")
-    @pytest.mark.asyncio
-    async def test_handle_lock_not_acquired_no_metadata(
-        self,
-        mock_wait: AsyncMock,
-        mock_get_meta: AsyncMock,
-        mock_get_version: MagicMock,
-    ) -> None:
-        """Test handling lock not acquired with no metadata (legacy lock)."""
-        from nohiki_db_utils.migrations.coordinator import _handle_lock_not_acquired
-
-        conn = AsyncMock()
-        ctx = LockContext("test-service", "pod-1", "postgresql://localhost/db", "alembic.ini")
-
-        mock_get_meta.return_value = None
-        mock_get_version.return_value = ("abc123", "abc123")
-
-        await _handle_lock_not_acquired(conn, 12345, 30, ctx)
-
-        mock_get_meta.assert_called_once()
-        mock_wait.assert_called_once()
 
 
 class TestRunMigrationsWithCoordination:

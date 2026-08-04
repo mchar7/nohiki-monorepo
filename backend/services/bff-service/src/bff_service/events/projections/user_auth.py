@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from uuid import UUID
 
 from nohiki.user.auth.v1 import AccessTokenRevoked, AccountDeleted, AccountUpdated
@@ -161,7 +160,10 @@ async def handle_access_token_revoked(message: AccessTokenRevoked, context: Mess
 async def handle_account_deleted(message: AccountDeleted, context: MessageContext) -> None:
     """Permanently tombstone the account and remove its mutable projection atomically."""
     metadata = message.metadata
-    revoked_before = metadata.timestamp if metadata is not None else datetime.min.replace(tzinfo=UTC)
+    if metadata is None:
+        msg = "AccountDeleted metadata is required for revocation cutoff"
+        raise ValueError(msg)
+    revoked_before = metadata.timestamp
 
     session = context.require_db_session()
     user_id = UUID(message.user_id)

@@ -48,7 +48,7 @@ class TestGetCurrentUserIdFromCookie:
     async def test_returns_uuid_for_valid_token(self, jwt_handler: RS256JWTHandler) -> None:
         """Returns a UUID when the cookie holds a valid access token."""
         user_id = str(uuid.uuid4())
-        token = jwt_handler.create_access_token(user_id)
+        token = jwt_handler.create_access_token(user_id, session_family_id=str(uuid.uuid4()))
 
         mock_request = MagicMock()
         mock_request.cookies = {"nohiki_at": token}
@@ -70,32 +70,6 @@ class TestGetCurrentUserIdFromCookie:
             result = await get_current_user_id_from_cookie(mock_request)
         assert str(result) == user_id
 
-    @pytest.mark.asyncio
-    async def test_legacy_token_without_family_uses_existing_jti_policy(
-        self,
-        jwt_handler: RS256JWTHandler,
-    ) -> None:
-        """A legacy access token remains valid when its JTI is not revoked."""
-        user_id = uuid.uuid4()
-        token = jwt_handler.create_access_token(str(user_id))
-        mock_request = MagicMock()
-        mock_request.cookies = {"nohiki_at": token}
-        blacklist = _mock_blacklist()
-        db = MagicMock()
-
-        with (
-            patch(
-                "user_auth_service.core.auth_deps.get_settings",
-                return_value=MagicMock(cookie=MagicMock(access_token_name="nohiki_at")),
-            ),
-            patch("user_auth_service.core.auth_deps.get_jwt_handler", return_value=jwt_handler),
-            patch("user_auth_service.core.auth_deps.get_token_blacklist", return_value=blacklist),
-            patch("user_auth_service.core.auth_deps.get_refresh_token_service") as get_service,
-        ):
-            result = await get_current_user_id_from_cookie(mock_request, db)
-
-        assert result == user_id
-        get_service.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_rejects_locally_revoked_family_before_account_mutation(
@@ -273,7 +247,12 @@ class TestGetCurrentUserIdFromCookie:
             ),
             patch(
                 "user_auth_service.core.auth_deps.pyjwt.decode",
-                return_value={"sub": "not-a-uuid", "jti": None, "iat": None},
+                return_value={
+                    "sub": "not-a-uuid",
+                    "jti": None,
+                    "iat": None,
+                    "session_family_id": str(uuid.uuid4()),
+                },
             ),
             pytest.raises(HTTPException) as exc_info,
         ):

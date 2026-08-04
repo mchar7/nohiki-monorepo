@@ -14,7 +14,6 @@ where each service verifies JWTs using the JWKS endpoint.
 
 from __future__ import annotations
 
-import inspect
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from uuid import UUID
@@ -261,13 +260,12 @@ async def refresh_token(
     return {"status": "refreshed", "user_id": str(user_id)}
 
 
-def _extract_access_token_claims(request: Request) -> tuple[UUID, UUID, datetime, UUID | None] | None:
-    """Verify and extract the revocation-relevant claims from the access cookie."""
+def _extract_access_token_claims(request: Request) -> tuple[UUID, UUID, datetime, UUID] | None:
+    """Verify and extract revocation-relevant claims from the access cookie."""
     settings = get_settings()
     access_token = get_access_token_from_cookie(request.cookies, settings)
     if not access_token:
         return None
-
     try:
         handler = get_jwt_handler()
         payload = pyjwt.decode(
@@ -276,16 +274,14 @@ def _extract_access_token_claims(request: Request) -> tuple[UUID, UUID, datetime
             algorithms=[JWT_ALGORITHM],
             audience=handler.config.audience,
             issuer=handler.config.issuer,
-            options={"require": ["sub", "jti", "exp"]},
+            options={"require": ["sub", "jti", "exp", "session_family_id"]},
         )
         user_id = UUID(payload["sub"])
         jti = UUID(payload["jti"])
         expires_at = datetime.fromtimestamp(payload["exp"], UTC)
-        raw_family_id = payload.get("session_family_id")
-        session_family_id = UUID(raw_family_id) if raw_family_id is not None else None
-    except pyjwt.InvalidTokenError, KeyError, TypeError, ValueError, OverflowError, OSError:
+        session_family_id = UUID(payload["session_family_id"])
+    except (pyjwt.InvalidTokenError, KeyError, TypeError, ValueError, OverflowError, OSError):
         return None
-
     return user_id, jti, expires_at, session_family_id
 
 
@@ -300,16 +296,16 @@ async def _blacklist_access_token(jti: UUID, expires_at: datetime) -> None:
 async def _revoke_access_claimed_family(
     db: AsyncSession,
     refresh_service: RefreshTokenService,
+    *,
     user_id: UUID,
-    session_family_id: UUID | None,
+    session_family_id: UUID,
 ) -> RevokedSession | None:
-    """Revoke the family identified by a verified access token claim."""
-    if session_family_id is None:
-        return None
-    revoke_family = getattr(refresh_service, "revoke_session_family", None)
-    if not inspect.iscoroutinefunction(revoke_family):
-        return None
-    return await revoke_family(db, account_id=user_id, session_family_id=session_family_id)
+    """Revoke the family identified by a verified access-token claim."""
+    return await refresh_service.revoke_session_family(
+        db,
+        account_id=user_id,
+        session_family_id=session_family_id,
+    )
 
 
 @router.post("/logout")
@@ -330,12 +326,14 @@ async def logout(
     access_claims = _extract_access_token_claims(request)
     refresh_service = get_refresh_token_service()
     revoked_sessions: list[RevokedSession] = []
+    family_horizon: datetime | None = None
     if refresh_token:
         revoked_session = await refresh_service.revoke_session(db, refresh_token)
         if revoked_session is not None:
             revoked_sessions.append(revoked_session)
 
     if access_claims is not None:
+        family_horizon = datetime.now(UTC) + timedelta(minutes=get_jwt_handler().config.access_token_expire_minutes)
         user_id, jti, token_expires_at, session_family_id = access_claims
         claimed_session = await _revoke_access_claimed_family(
             db,
@@ -345,16 +343,7 @@ async def logout(
         )
         if claimed_session is not None:
             revoked_sessions.append(claimed_session)
-        family_horizon = (
-            datetime.now(UTC) + timedelta(minutes=get_jwt_handler().config.access_token_expire_minutes)
-            if session_family_id is not None or revoked_sessions
-            else None
-        )
-        expires_at = (
-            max(token_expires_at, family_horizon)
-            if session_family_id is not None and family_horizon is not None
-            else token_expires_at
-        )
+        expires_at = max(token_expires_at, family_horizon)
         await publish_access_token_revoked_event(
             db,
             outbox,
@@ -363,12 +352,6 @@ async def logout(
             expires_at=expires_at,
             session_family_id=session_family_id,
         )
-    else:
-        family_horizon = (
-            datetime.now(UTC) + timedelta(minutes=get_jwt_handler().config.access_token_expire_minutes)
-            if revoked_sessions
-            else None
-        )
 
     for revoked_session in revoked_sessions:
         same_as_access = (
@@ -376,7 +359,11 @@ async def logout(
             and revoked_session.account_id == access_claims[0]
             and revoked_session.session_family_id == access_claims[3]
         )
-        if not same_as_access and family_horizon is not None:
+        if not same_as_access:
+            if family_horizon is None:
+                family_horizon = datetime.now(UTC) + timedelta(
+                    minutes=get_jwt_handler().config.access_token_expire_minutes
+                )
             await publish_access_token_revoked_event(
                 db,
                 outbox,

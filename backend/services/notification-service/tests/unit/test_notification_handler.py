@@ -159,7 +159,7 @@ class TestSendNotification:
                 template_context=template_context,
                 email_address="test@example.com",
                 user_id=user_id,
-                correlation_id="corr-123",
+                correlation_id="00000000-0000-4000-8000-000000000001",
             )
             await _send_notification(params, db=create_mock_session())
 
@@ -189,7 +189,7 @@ class TestSendNotification:
                 template_context=template_context,
                 email_address="test@example.com",
                 user_id=user_id,
-                correlation_id="corr-123",
+                correlation_id="00000000-0000-4000-8000-000000000001",
             )
             await _send_notification(params, db=create_mock_session())
 
@@ -216,7 +216,7 @@ class TestSendNotification:
                 template_context=template_context,
                 email_address="test@example.com",
                 user_id=user_id,
-                correlation_id="corr-123",
+                correlation_id="00000000-0000-4000-8000-000000000001",
             )
             with pytest.raises(RuntimeError, match="Send failed"):
                 await _send_notification(params, db=create_mock_session())

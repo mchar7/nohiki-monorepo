@@ -107,7 +107,7 @@ def test_provider_sdks_load_only_for_the_selected_backend(provider: str) -> None
             assert any(name.startswith("azure") for name in sys.modules)
             assert not any(name.startswith(("aiobotocore", "botocore")) for name in sys.modules)
         else:
-            _ = client._backend
+            client._get_backend()
             assert any(name.startswith("aiobotocore") for name in sys.modules)
             assert not any(name.startswith("azure") for name in sys.modules)
 

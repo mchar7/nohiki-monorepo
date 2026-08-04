@@ -220,9 +220,7 @@ async def list_profiles(
         offset=pagination.offset,
         limit=pagination.page_size,
     )
-    profiles = [
-        ProfileResponse.model_validate(p.model_dump() if hasattr(p, "model_dump") else p) for p in profiles_data
-    ]
+    profiles = [ProfileResponse.model_validate(profile.model_dump()) for profile in profiles_data]
     return PaginatedResponse[ProfileResponse].create(
         items=profiles,
         total=total,
@@ -329,9 +327,7 @@ async def get_profile(
     profile_data = await service.get_profile(db, user_id, pref_id)
     if profile_data is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
-    return ProfileResponse.model_validate(
-        profile_data.model_dump() if hasattr(profile_data, "model_dump") else profile_data
-    )
+    return ProfileResponse.model_validate(profile_data.model_dump())
 
 
 @router.patch("/{pref_id}", response_model=CommandAcceptedResponse, status_code=status.HTTP_202_ACCEPTED)

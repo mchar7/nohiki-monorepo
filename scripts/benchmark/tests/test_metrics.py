@@ -15,6 +15,7 @@ from llm_benchmark.schemas.metrics import RunResult as _RunResult
 
 
 class RunResult(_RunResult):
+    retry_count: int | None = 0
     treatment_fingerprint: str = "test-treatment"
     cell_fingerprint: str = "test-cell"
 
@@ -839,44 +840,6 @@ class TestChargedCostRules:
         assert result.total_charged_cost == pytest.approx(0.11)
 
 
-class TestBackwardArtifactLoading:
-    """Existing artifacts without a persisted charged cost load conservatively."""
-
-    def test_legacy_run_without_charged_field_recomputes_from_reservation(self, tmp_path: Path) -> None:
-        # Simulate an artifact written before charged_cost_usd existed: a failed
-        # run with only a reservation and no actual cost, and no charged field.
-        legacy = {
-            "experiment_fingerprint": "legacy-exp",
-            "fixtures_used": ["f1"],
-            "runs_per_fixture": 1,
-            "fixture_checksums": {},
-            "models": {
-                "m1": {
-                    "model": "m1",
-                    "total_cost_usd": 0.0,
-                    "runs": [
-                        {
-                            "fixture_id": "f1",
-                            "treatment_fingerprint": "t1",
-                            "cell_fingerprint": "c1",
-                            "run_number": 1,
-                            "success": False,
-                            "latency_ms": 5.0,
-                            "actual_cost_usd": None,
-                            "reserved_cost_usd": 0.07,
-                        }
-                    ],
-                }
-            },
-        }
-        path = tmp_path / "legacy.json"
-        path.write_text(json.dumps(legacy))
-        loaded = _BenchmarkResult.load(path)
-        run = loaded.models["m1"].runs[0]
-        assert run.charged_cost_usd == pytest.approx(0.07)
-        assert loaded.total_charged_cost == pytest.approx(0.07)
-        assert loaded.total_actual_cost == pytest.approx(0.0)
-
     def test_charged_cost_round_trips_through_save_load(self, tmp_path: Path) -> None:
         result = BenchmarkResult(
             models={
@@ -901,84 +864,6 @@ class TestBackwardArtifactLoading:
         reloaded = BenchmarkResult.load(path)
         assert reloaded.total_charged_cost == pytest.approx(0.09)
 
-    def test_legacy_artifact_with_integer_retry_counts_loads_and_aggregates(self, tmp_path: Path) -> None:
-        # Pre-nullable artifacts stored retry_count as a plain int on every run, failures included.
-        legacy = {
-            "experiment_fingerprint": "legacy-exp",
-            "fixtures_used": ["f1"],
-            "runs_per_fixture": 1,
-            "fixture_checksums": {},
-            "models": {
-                "m1": {
-                    "model": "m1",
-                    "total_cost_usd": 0.0,
-                    "runs": [
-                        {
-                            "fixture_id": "f1",
-                            "treatment_fingerprint": "t1",
-                            "cell_fingerprint": "c1",
-                            "run_number": 1,
-                            "success": True,
-                            "latency_ms": 5.0,
-                            "retry_count": 0,
-                        },
-                        {
-                            "fixture_id": "f1",
-                            "treatment_fingerprint": "t1",
-                            "cell_fingerprint": "c2",
-                            "run_number": 2,
-                            "success": True,
-                            "latency_ms": 6.0,
-                            "retry_count": 2,
-                        },
-                        {
-                            "fixture_id": "f1",
-                            "treatment_fingerprint": "t1",
-                            "cell_fingerprint": "c3",
-                            "run_number": 3,
-                            "success": False,
-                            "latency_ms": 7.0,
-                            "retry_count": 1,
-                        },
-                    ],
-                }
-            },
-        }
-        path = tmp_path / "legacy.json"
-        path.write_text(json.dumps(legacy))
-        loaded = _BenchmarkResult.load(path)
-        model = loaded.models["m1"]
-        assert [r.retry_count for r in model.runs] == [0, 2, 1]
-        assert model.avg_retry_count == pytest.approx(1.0)
-
-    def test_legacy_failure_without_retry_field_defaults_to_zero(self, tmp_path: Path) -> None:
-        # An old failure run that omits retry_count loads as the int default 0, not None.
-        legacy = {
-            "experiment_fingerprint": "legacy-exp",
-            "fixtures_used": ["f1"],
-            "runs_per_fixture": 1,
-            "fixture_checksums": {},
-            "models": {
-                "m1": {
-                    "model": "m1",
-                    "total_cost_usd": 0.0,
-                    "runs": [
-                        {
-                            "fixture_id": "f1",
-                            "treatment_fingerprint": "t1",
-                            "cell_fingerprint": "c1",
-                            "run_number": 1,
-                            "success": False,
-                            "latency_ms": 5.0,
-                        }
-                    ],
-                }
-            },
-        }
-        path = tmp_path / "legacy.json"
-        path.write_text(json.dumps(legacy))
-        loaded = _BenchmarkResult.load(path)
-        assert loaded.models["m1"].runs[0].retry_count == 0
 
     def test_nullable_unknown_retry_round_trips_through_save_load(self, tmp_path: Path) -> None:
         result = BenchmarkResult(

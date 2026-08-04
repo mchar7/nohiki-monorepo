@@ -64,6 +64,7 @@ class BenchmarkConfig(_BenchmarkConfig):
 
 
 class RunResult(_RunResult):
+    retry_count: int | None = 0
     treatment_fingerprint: str = "test-treatment"
     cell_fingerprint: str = "test-cell"
 

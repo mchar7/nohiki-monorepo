@@ -162,42 +162,38 @@ async def _handle_lock_not_acquired(
 ) -> None:
     """Handle case when lock is held by another pod."""
     lock_meta = await get_lock_metadata(conn, lock_id)
+    if lock_meta is None:
+        msg = "Migration lock metadata missing"
+        raise MigrationError(msg)
 
-    if lock_meta:
-        acquired_at, holder_id = lock_meta
-        age_seconds = (datetime.now(UTC) - acquired_at).total_seconds()
+    acquired_at, holder_id = lock_meta
+    age_seconds = (datetime.now(UTC) - acquired_at).total_seconds()
 
-        logger.info(
-            "Migration lock held by another pod",
+    logger.info(
+        "Migration lock held by another pod",
+        service=context.service_name,
+        holder_pod=holder_id,
+        lock_age_seconds=round(age_seconds, 1),
+        max_wait_seconds=timeout_seconds,
+    )
+
+    if age_seconds > timeout_seconds:
+        logger.warning(
+            "Stale migration lock detected",
             service=context.service_name,
             holder_pod=holder_id,
             lock_age_seconds=round(age_seconds, 1),
-            max_wait_seconds=timeout_seconds,
+            timeout_seconds=timeout_seconds,
         )
+        logger.info("Waiting for stale lock to expire...", service=context.service_name)
 
-        if age_seconds > timeout_seconds:
-            logger.warning(
-                "Stale migration lock detected",
-                service=context.service_name,
-                holder_pod=holder_id,
-                lock_age_seconds=round(age_seconds, 1),
-                timeout_seconds=timeout_seconds,
-            )
-            logger.info("Waiting for stale lock to expire...", service=context.service_name)
-
-        remaining_wait = max(0, timeout_seconds - age_seconds)
-        if remaining_wait > 0:
-            logger.info(
-                "Waiting for lock release",
-                service=context.service_name,
-                max_wait_seconds=round(remaining_wait, 1),
-            )
-    else:
+    remaining_wait = max(0, timeout_seconds - age_seconds)
+    if remaining_wait > 0:
         logger.info(
-            "Migration lock held (no metadata - legacy lock)",
+            "Waiting for lock release",
             service=context.service_name,
+            max_wait_seconds=round(remaining_wait, 1),
         )
-        remaining_wait = timeout_seconds
 
     await wait_for_lock_release(conn, lock_id, int(remaining_wait) + 5, context.service_name)
 

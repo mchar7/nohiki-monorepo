@@ -168,12 +168,6 @@ def _format_subject(template: str, context: dict[str, str | int | None]) -> str:
     return " ".join(subject.splitlines())
 
 
-def _parse_uuid(value: str) -> UUID | None:
-    """Return a UUID for valid event identifiers and ignore legacy opaque IDs."""
-    try:
-        return UUID(value)
-    except ValueError:
-        return None
 
 
 async def _send_notification(params: NotificationSendParams, *, db: AsyncSession) -> None:
@@ -201,7 +195,7 @@ async def _send_notification(params: NotificationSendParams, *, db: AsyncSession
         listings=[dict(params.template_context)],
         template_name=params.template_name,
         rendered_body=params.rendered_body,
-        correlation_id=_parse_uuid(params.correlation_id),
+        correlation_id=UUID(params.correlation_id),
     )
 
     service = NotificationService()

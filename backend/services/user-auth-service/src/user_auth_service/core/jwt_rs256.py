@@ -97,10 +97,10 @@ class RS256JWTHandler:
         self,
         user_id: str,
         *,
+        session_family_id: str,
         roles: list[str] | None = None,
         permissions: list[str] | None = None,
         tenant_id: str | None = None,
-        session_family_id: str | None = None,
     ) -> str:
         """Create a signed RS256 access token.
 
@@ -109,7 +109,7 @@ class RS256JWTHandler:
             roles: Optional list of role names
             permissions: Optional list of permission strings
             tenant_id: Optional tenant UUID for multi-tenancy
-            session_family_id: Optional refresh-session family UUID
+            session_family_id: Session family UUID for revocation.
 
         Returns:
             Signed JWT string
@@ -131,8 +131,7 @@ class RS256JWTHandler:
             payload["permissions"] = permissions
         if tenant_id:
             payload["tenant_id"] = tenant_id
-        if session_family_id:
-            payload["session_family_id"] = session_family_id
+        payload["session_family_id"] = session_family_id
 
         return jwt.encode(
             payload,

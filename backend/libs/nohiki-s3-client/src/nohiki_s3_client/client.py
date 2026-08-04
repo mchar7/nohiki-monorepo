@@ -677,10 +677,6 @@ class S3Client:
             )
         return self.__backend
 
-    @property
-    def _backend(self) -> _S3Backend | _AzureBlobBackend:
-        """Return the selected backend for compatibility with instrumentation."""
-        return self._get_backend()
 
     @property
     def _session(self) -> object:

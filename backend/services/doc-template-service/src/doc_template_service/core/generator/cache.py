@@ -113,6 +113,6 @@ async def set_cached_validation_report(cache_key: str, report: ValidationReport)
     """
     report_dict = {
         "valid": report.valid,
-        "issues": [issue.model_dump() if hasattr(issue, "model_dump") else dict(issue) for issue in report.issues],
+        "issues": [issue.model_dump() for issue in report.issues],
     }
     await _cache.set(f"validation:{cache_key}", report_dict, ttl=VALIDATION_CACHE_TTL)

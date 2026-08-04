@@ -165,16 +165,10 @@ class RateLimitExceededHTTP(HTTPException):
 def get_client_id(request: Request) -> str:
     """Extract a client identifier for rate limiting.
 
-    Verified JWT subjects identify authenticated clients. With a usable ASGI
-    peer address, anonymous clients use only that address; a trusted proxy
-    middleware may set it. Legacy identity headers are considered only when
-    the server supplied no usable peer information.
+    Verified JWT subjects identify authenticated clients. Anonymous clients
+    use the ASGI peer address; a trusted proxy middleware may set it.
     """
     if user_id := _extract_verified_user_id(request):
-        return f"user:{user_id}"
-
-    client_host = request.client.host if request.client else None
-    if not isinstance(client_host, str) and (user_id := request.headers.get("X-Account-ID")):
         return f"user:{user_id}"
 
     return f"ip:{extract_client_ip(request)}"

@@ -25,9 +25,13 @@ from llm_benchmark.schemas.aggregation import (
     ModelEvaluation,
     compute_multi_judge_summary,
 )
-from llm_benchmark.schemas.judge import Disqualification
 from llm_benchmark.schemas.metrics import BenchmarkResult as _BenchmarkResult
-from llm_benchmark.schemas.metrics import ModelResult, RunResult
+from llm_benchmark.schemas.metrics import ModelResult
+from llm_benchmark.schemas.metrics import RunResult as _RunResult
+
+
+class RunResult(_RunResult):
+    retry_count: int | None = 0
 
 
 class BenchmarkResult(_BenchmarkResult):
@@ -239,30 +243,6 @@ class TestDisplayEvaluationResults:
         assert "best/model" in output
         assert "PASSED" in output
 
-    def test_renders_disqualifications(self) -> None:
-        summary = EvaluationSummary(
-            model_evaluations=[
-                ModelEvaluation(
-                    model="bad/model",
-                    classification=Classification.FAIL,
-                    overall_mean=30.0,
-                    category_aggregates=[],
-                    total_disqualifications=1,
-                    disqualification_details=[
-                        Disqualification(
-                            category="data_adherence",
-                            reason="Hallucinated company name not in posting",
-                        ),
-                    ],
-                    rank=1,
-                    evaluation_count=1,
-                ),
-            ],
-            total_evaluations=1,
-            judge_model="test-judge",
-        )
-        output = _capture_console_output(display_evaluation_results, summary)
-        assert "Disqualification" in output
 
 
 class TestDisplayBenchmarkResultsPassRates:

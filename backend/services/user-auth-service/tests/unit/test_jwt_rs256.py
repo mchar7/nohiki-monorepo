@@ -18,6 +18,8 @@ from user_auth_service.core.jwt_rs256 import (
     load_private_key_from_file,
 )
 
+_SESSION_FAMILY_ID = "550e8400-e29b-41d4-a716-446655440000"
+
 
 @pytest.fixture
 def jwt_config() -> JWTConfig:
@@ -88,7 +90,7 @@ class TestRS256JWTHandler:
         """Test creating a basic access token."""
         user_id = "test-user-123"
 
-        token = jwt_handler.create_access_token(user_id)
+        token = jwt_handler.create_access_token(user_id, session_family_id=_SESSION_FAMILY_ID)
 
         assert token is not None
         assert isinstance(token, str)
@@ -123,24 +125,10 @@ class TestRS256JWTHandler:
         )
         assert decoded["session_family_id"] == session_family_id
 
-    def test_create_access_token_without_session_family_remains_compatible(self, jwt_handler: RS256JWTHandler) -> None:
-        token = jwt_handler.create_access_token("test-user-123")
-
-        decoded = jwt.decode(
-            token,
-            jwt_handler._public_key,
-            algorithms=["RS256"],
-            audience="test-audience",
-            issuer="test-issuer",
-        )
-        assert "session_family_id" not in decoded
-
-    def test_create_access_token_with_roles(self, jwt_handler: RS256JWTHandler) -> None:
-        """Test creating access token with roles."""
         user_id = "test-user-123"
         roles = ["admin", "user"]
 
-        token = jwt_handler.create_access_token(user_id, roles=roles)
+        token = jwt_handler.create_access_token(user_id, session_family_id=_SESSION_FAMILY_ID, roles=roles)
 
         decoded = jwt.decode(
             token,
@@ -157,7 +145,7 @@ class TestRS256JWTHandler:
         user_id = "test-user-123"
         permissions = ["read:users", "write:users"]
 
-        token = jwt_handler.create_access_token(user_id, permissions=permissions)
+        token = jwt_handler.create_access_token(user_id, session_family_id=_SESSION_FAMILY_ID, permissions=permissions)
 
         decoded = jwt.decode(
             token,
@@ -174,7 +162,7 @@ class TestRS256JWTHandler:
         user_id = "test-user-123"
         tenant_id = "tenant-456"
 
-        token = jwt_handler.create_access_token(user_id, tenant_id=tenant_id)
+        token = jwt_handler.create_access_token(user_id, session_family_id=_SESSION_FAMILY_ID, tenant_id=tenant_id)
 
         decoded = jwt.decode(
             token,
@@ -194,10 +182,7 @@ class TestRS256JWTHandler:
         tenant_id = "tenant-456"
 
         token = jwt_handler.create_access_token(
-            user_id,
-            roles=roles,
-            permissions=permissions,
-            tenant_id=tenant_id,
+            user_id, session_family_id=_SESSION_FAMILY_ID, roles=roles, permissions=permissions, tenant_id=tenant_id
         )
 
         decoded = jwt.decode(
@@ -217,7 +202,7 @@ class TestRS256JWTHandler:
         """Test that created tokens include kid header."""
         user_id = "test-user-123"
 
-        token = jwt_handler.create_access_token(user_id)
+        token = jwt_handler.create_access_token(user_id, session_family_id=_SESSION_FAMILY_ID)
 
         # Verify signature and retrieve header in a single verified call
         decoded = jwt.decode_complete(
@@ -277,7 +262,7 @@ class TestRS256JWTHandler:
     def test_verify_access_token_returns_user_id(self, jwt_handler: RS256JWTHandler) -> None:
         """Returns the sub claim for a valid token."""
         user_id = "550e8400-e29b-41d4-a716-446655440000"
-        token = jwt_handler.create_access_token(user_id)
+        token = jwt_handler.create_access_token(user_id, session_family_id=_SESSION_FAMILY_ID)
 
         result = jwt_handler.verify_access_token(token)
 
@@ -285,7 +270,7 @@ class TestRS256JWTHandler:
 
     def test_verify_access_token_raises_for_tampered_token(self, jwt_handler: RS256JWTHandler) -> None:
         """Raises InvalidTokenError for a tampered token."""
-        token = jwt_handler.create_access_token("user-123")
+        token = jwt_handler.create_access_token("user-123", session_family_id=_SESSION_FAMILY_ID)
         tampered = token[:-4] + "XXXX"
 
         with pytest.raises(jwt.InvalidTokenError):
@@ -301,7 +286,7 @@ class TestRS256JWTHandler:
             private_key_pem,
             JWTConfig(issuer="test-issuer", audience="other-audience", key_id="test-key-id"),
         )
-        token = signer.create_access_token("user-123")
+        token = signer.create_access_token("user-123", session_family_id=_SESSION_FAMILY_ID)
 
         with pytest.raises(jwt.InvalidTokenError):
             verifier.verify_access_token(token)
@@ -362,7 +347,7 @@ class TestGenerateRSAKeypair:
                 key_id="test",
             ),
         )
-        token = handler.create_access_token("user-123")
+        token = handler.create_access_token("user-123", session_family_id=_SESSION_FAMILY_ID)
         assert token is not None
 
 
@@ -409,7 +394,7 @@ class TestJWTEdgeCases:
         user_id = "test-user-123"
 
         # Empty list should not include roles in payload
-        token = jwt_handler.create_access_token(user_id, roles=[])
+        token = jwt_handler.create_access_token(user_id, session_family_id=_SESSION_FAMILY_ID, roles=[])
 
         decoded = jwt.decode(
             token,
@@ -427,7 +412,7 @@ class TestJWTEdgeCases:
         user_id = "test-user-123"
 
         # Empty list should not include permissions in payload
-        token = jwt_handler.create_access_token(user_id, permissions=[])
+        token = jwt_handler.create_access_token(user_id, session_family_id=_SESSION_FAMILY_ID, permissions=[])
 
         decoded = jwt.decode(
             token,
@@ -443,7 +428,7 @@ class TestJWTEdgeCases:
     def test_token_expiration_time_is_set(self, jwt_handler: RS256JWTHandler) -> None:
         """Test that token expiration time is correctly set."""
         user_id = "test-user-123"
-        token = jwt_handler.create_access_token(user_id)
+        token = jwt_handler.create_access_token(user_id, session_family_id=_SESSION_FAMILY_ID)
 
         decoded = jwt.decode(
             token,

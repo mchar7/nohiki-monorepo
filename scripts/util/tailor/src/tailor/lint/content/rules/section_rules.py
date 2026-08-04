@@ -150,14 +150,8 @@ class UniqueOpeningWordsParams(BaseModel, frozen=True, extra="forbid"):
     openers per resolved path (e.g. per ``entries[*].bullets``), ``section``
     aggregates across all items in the same scope call, and ``document``
     aggregates across every invocation of this rule.
-
-    Attributes:
-        enabled: Master on/off switch (preserved for compatibility with
-            nested-schema YAMLs that wrapped the rule in a flag).
-        scope: Uniqueness window. See rule docstring for semantics.
     """
 
-    enabled: bool = True
     scope: Literal["entry", "section", "document"] = "entry"
 
 
@@ -401,8 +395,6 @@ class UniqueOpeningWordsRule:
         if not isinstance(params, UniqueOpeningWordsParams):
             msg = f"UniqueOpeningWordsRule expected UniqueOpeningWordsParams, got {type(params).__name__}"
             raise TypeError(msg)
-        if not params.enabled:
-            return []
 
         if params.scope == "entry":
             return self._check_per_path(rule_id, severity, resolved)

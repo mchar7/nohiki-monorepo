@@ -246,7 +246,7 @@ async def test_workload_identity_presign_uses_delegation_key_and_closes_resource
 )
 def test_azure_rejects_unsafe_or_hostless_service_endpoints(endpoint: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        _ = S3Client(azure_settings(endpoint=endpoint))._backend
+        S3Client(azure_settings(endpoint=endpoint))._get_backend()
 
 
 def test_direct_upload_headers_are_provider_specific() -> None:
@@ -261,4 +261,4 @@ def test_s3_remains_default_backend() -> None:
     settings = S3Settings(bucket="bucket")
     assert settings.provider is ObjectStorageProvider.S3
     client = S3Client(settings)
-    assert client._backend.__class__.__name__ == "_S3Backend"
+    assert client._get_backend().__class__.__name__ == "_S3Backend"

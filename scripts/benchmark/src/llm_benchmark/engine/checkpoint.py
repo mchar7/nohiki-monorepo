@@ -35,9 +35,7 @@ class JudgmentRecord(BaseModel):
         run_number: Run number within the model/fixture combo.
         judgment: Structured pointwise judgment, or ``None`` for a failed attempt.
         cost_usd: Actual provider cost for this call (``0.0`` for failures).
-        charged_cost_usd: Budget-charged cost (fail-closed reservation for
-            failures). ``None`` in legacy checkpoints, where it defaults to
-            ``cost_usd`` via :attr:`charged_cost`.
+        charged_cost_usd: Budget-charged cost.
     """
 
     model_name: str
@@ -45,12 +43,7 @@ class JudgmentRecord(BaseModel):
     run_number: int
     judgment: PointwiseJudgment | None = None
     cost_usd: float = 0.0
-    charged_cost_usd: float | None = None
-
-    @property
-    def charged_cost(self) -> float:
-        """Budget-charged cost, defaulting to actual cost for legacy records."""
-        return self.charged_cost_usd if self.charged_cost_usd is not None else self.cost_usd
+    charged_cost_usd: float
 
     @property
     def task_key(self) -> str:
@@ -81,7 +74,7 @@ class JudgeCheckpoint(BaseModel):
     @property
     def total_charged_cost_usd(self) -> float:
         """Accumulated budget-charged cost across attempts (incl. failures)."""
-        return sum(r.charged_cost for r in self.records)
+        return sum(r.charged_cost_usd for r in self.records)
 
     def to_judgments_by_model(self) -> dict[str, list[PointwiseJudgment]]:
         """Convert successful records to the judgments_by_model format.
