@@ -1,0 +1,252 @@
+name: Flake CI container canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Digest-pinned GHCR image reference
+        required: true
+        type: string
+      run_hosted:
+        description: Run the hosted canary
+        required: true
+        default: true
+        type: boolean
+      run_self_hosted:
+        description: Run the self-hosted Docker canary
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: write
+  contents: read
+  packages: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  hosted:
+    name: Hosted container proof
+    if: inputs.run_hosted
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: ${{ inputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user 0:0
+    steps:
+      - name: Mark container ready
+        run: |
+          printf 'container_ready_epoch_ms=%s\n' "$(date +%s%3N)" | tee canary-timings.txt
+          printf '| Proof | Milliseconds |\n|---|---:|\n' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Execute repository composite action
+        id: setup-ci
+        uses: ./.github/actions/setup-ci
+
+      - name: Restore Node 20 action cache
+        id: archive-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .canary-cache
+          key: flake-container-canary-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+
+      - name: Validate image contract
+        run: |
+          set -euo pipefail
+          test "$(id -u)" = 0
+          test -x /bin/sh
+          test -x /bin/bash
+          test -x /usr/bin/env
+          /bin/sh -c 'test "$(printf shell-ok)" = shell-ok'
+          # shellcheck disable=SC2016
+          bash -euo pipefail -c 'items=(one two); [[ ${#items[@]} == 2 ]]'
+          test "$(id -u ci)" = 1001
+          test "$(id -g ci)" = 1001
+          # shellcheck disable=SC2016
+          setpriv --reuid=1001 --regid=1001 --clear-groups env HOME=/ci-home \
+            sh -c 'test "$(id -u)" = 1001 && touch "$HOME/non-root-write"'
+          rm -f /ci-home/non-root-write
+          git config --local user.name ci-container-canary
+          git config --local user.email ci-container-canary@users.noreply.github.com
+          test "$(git config --local user.name)" = ci-container-canary
+          test "$(git config --local user.email)" = ci-container-canary@users.noreply.github.com
+          test "$(locale charmap)" = UTF-8
+          curl --fail --silent --show-error https://api.github.com/rate_limit >/dev/null
+          node --version
+          python3 --version
+          uv --version
+          pnpm --version
+          actionlint --version
+
+      - name: Run actionlint without setup-ci
+        run: |
+          started=$(date +%s%3N)
+          actionlint .github/workflows/flake-container-canary.yml
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'actionlint_ms=%s\n' "$elapsed" | tee -a canary-timings.txt
+          printf '| actionlint | %s |\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare Python gate environment
+        run: |
+          started=$(date +%s%3N)
+          uv sync --locked --group ci
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'uv_ci_sync_ms=%s\n' "$elapsed" | tee -a canary-timings.txt
+          printf '| uv locked CI sync | %s |\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run Ruff format and check without setup-ci
+        run: |
+          started=$(date +%s%3N)
+          uv run --no-sync ruff format --check scripts/ci
+          uv run --no-sync ruff check scripts/ci
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'ruff_ms=%s\n' "$elapsed" | tee -a canary-timings.txt
+          printf '| Ruff format and check | %s |\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Execute a Just recipe without Nix
+        run: |
+          started=$(date +%s%3N)
+          just lint
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'just_lint_ms=%s\n' "$elapsed" | tee -a canary-timings.txt
+          printf '| just lint | %s |\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run focused pytest package without setup-ci
+        env:
+          PYTHONPATH: scripts/ci/src
+        run: |
+          started=$(date +%s%3N)
+          uv run --no-sync pytest scripts/ci/tests/test_image_inventory.py
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'pytest_ms=%s\n' "$elapsed" | tee -a canary-timings.txt
+          printf '| focused pytest | %s |\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install one pnpm workspace package frozen
+        run: |
+          started=$(date +%s%3N)
+          env CI=true LEFTHOOK=0 pnpm install --frozen-lockfile --filter 'nohiki-frontend...'
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'pnpm_install_ms=%s\n' "$elapsed" | tee -a canary-timings.txt
+          printf '| pnpm frozen frontend install | %s |\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create cache and artifact evidence
+        run: |
+          mkdir -p .canary-cache canary-artifact
+          printf 'run=%s\ncache_hit=%s\ncomposite=%s\n' \
+            "$GITHUB_RUN_ID" "${{ steps.archive-cache.outputs.cache-hit }}" "${{ steps.setup-ci.outcome }}" \
+            | tee .canary-cache/result.txt canary-artifact/result.txt
+          cp canary-timings.txt canary-artifact/
+
+      - name: Save Node 20 action cache
+        if: steps.archive-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .canary-cache
+          key: flake-container-canary-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+
+      - name: Upload canary evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flake-container-hosted-${{ github.run_id }}
+          path: canary-artifact
+          retention-days: 7
+
+      - name: Remove local artifact copy
+        run: rm -rf downloaded-canary
+
+      - name: Download canary evidence
+        uses: actions/download-artifact@3e5f445b2cfb9172054b4087a40e8e0b5a5461e7 # v8.0.1
+        with:
+          name: flake-container-hosted-${{ github.run_id }}
+          path: downloaded-canary
+
+      - name: Verify downloaded evidence
+        run: cmp canary-artifact/result.txt downloaded-canary/result.txt
+
+  self-hosted:
+    name: Self-hosted container and Docker proof
+    if: inputs.run_self_hosted
+    runs-on: [self-hosted, linux, x64, nohiki]
+    timeout-minutes: 30
+    container:
+      image: ${{ inputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user 0:0
+    steps:
+      - name: Mark container ready
+        run: printf 'container_ready_epoch_ms=%s\n' "$(date +%s%3N)" | tee canary-timings.txt
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Execute repository composite action
+        uses: ./.github/actions/setup-ci
+
+      - name: Prove runner mounts and image store isolation
+        run: |
+          set -euo pipefail
+          test -d "$GITHUB_WORKSPACE"
+          test -d /__e
+          test -x /__e/node20/bin/node
+          findmnt -T "$GITHUB_WORKSPACE"
+          findmnt -T /__e
+          findmnt -T /nix/store
+          test "$(findmnt -T /nix/store -n -o TARGET)" = /
+          printf 'runner_tool_cache=%s\n' "${RUNNER_TOOL_CACHE:-unset}" | tee -a canary-timings.txt
+          printf 'nix_store_path=%s\n' "$(dirname "$(dirname "$(command -v python3)")")" | tee -a canary-timings.txt
+
+      - name: Prove dind socket routing
+        run: |
+          set -euo pipefail
+          test "$DOCKER_HOST" = unix:///var/run/docker.sock
+          test -S /var/run/docker.sock
+          docker version
+          docker buildx version
+          curl --fail --silent --show-error http://cache-registry:5000/v2/ >/dev/null
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          buildkitd-config-inline: |
+            [registry."cache-registry:5000"]
+              http = true
+              insecure = true
+
+      - name: Build real frontend product image through dind
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        env:
+          DOCKER_BUILD_SUMMARY: false
+        with:
+          context: .
+          file: typescript/apps/frontend/Dockerfile
+          load: true
+          tags: nohiki-frontend-container-canary:ci
+          cache-from: type=registry,ref=cache-registry:5000/nohiki/frontend-container-canary:buildcache
+          cache-to: type=registry,ref=cache-registry:5000/nohiki/frontend-container-canary:buildcache,mode=max
+
+      - name: Verify loaded product image
+        run: |
+          docker image inspect nohiki-frontend-container-canary:ci
+          docker run --rm nohiki-frontend-container-canary:ci caddy version
+
+      - name: Upload self-hosted evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flake-container-self-hosted-${{ github.run_id }}
+          path: canary-timings.txt
+          retention-days: 7

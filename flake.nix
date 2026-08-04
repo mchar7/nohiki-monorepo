@@ -315,6 +315,117 @@
         ];
         ciHygieneTools = ciTestTools ++ ciNodeTools;
         ciTools = pkgs.lib.unique ciHygieneTools;
+        # CI job containers need the complete workflow command surface plus a
+        # conventional userland for runner-injected JavaScript actions.
+        ciContainerTools = pkgs.lib.unique (ciTools ++ nativeBuildDeps ++ (with pkgs; [
+          azure-cli
+          bashInteractive
+          cacert
+          coreutils
+          cosign
+          curl
+          diffutils
+          docker-buildx
+          docker-client
+          dockerTools.binSh
+          dockerTools.caCertificates
+          dockerTools.usrBinEnv
+          file
+          findutils
+          gawk
+          gh
+          git
+          glibc
+          glibcLocalesUtf8
+          gnugrep
+          gnused
+          gnutar
+          gzip
+          inetutils
+          nix
+          openssh
+          opentofu
+          pkg-config
+          procps
+          sudo
+          stdenv.cc
+          trivy
+          unzip
+          util-linux
+          which
+          zip
+          zstd
+        ]));
+        ciContainerLibraryPath = pkgs.lib.makeLibraryPath (nativeBuildDeps ++ [
+          pkgs.glibc
+        ]);
+        ciToolchainImage = pkgs.dockerTools.buildLayeredImage {
+          name = "nohiki-ci-toolchain";
+          tag = "canary";
+          contents = ciContainerTools;
+          maxLayers = 100;
+          extraCommands = ''
+            mkdir -p ci-home etc/nix lib64 root tmp workspace
+            chmod 01777 tmp
+            ln -sf ${pkgs.stdenv.cc.bintools.dynamicLinker} lib64/ld-linux-x86-64.so.2
+            cat > etc/passwd <<'EOF'
+            root:x:0:0:root:/root:/bin/bash
+            ci:x:1001:1001:CI user:/ci-home:/bin/bash
+            nobody:x:65534:65534:nobody:/var/empty:/bin/false
+            EOF
+            cat > etc/group <<'EOF'
+            root:x:0:
+            ci:x:1001:
+            nobody:x:65534:
+            EOF
+            cat > etc/nsswitch.conf <<'EOF'
+            passwd: files
+            group: files
+            hosts: files dns
+            networks: files dns
+            EOF
+            cat > etc/gitconfig <<'EOF'
+            [safe]
+              directory = *
+            EOF
+            cat > etc/nix/nix.conf <<'EOF'
+            experimental-features = nix-command flakes
+            sandbox = false
+            EOF
+          '';
+          fakeRootCommands = ''
+            chown -R 1001:1001 ci-home
+          '';
+          config = {
+            Cmd = [ "/bin/bash" ];
+            Env = [
+              "PATH=${pkgs.lib.makeBinPath ciContainerTools}:/bin:/usr/bin"
+              "HOME=/root"
+              "LANG=C.UTF-8"
+              "LC_ALL=C.UTF-8"
+              "LOCALE_ARCHIVE=${pkgs.glibcLocalesUtf8}/lib/locale/locale-archive"
+              "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+              "NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+              "GIT_SSL_CAINFO=/etc/ssl/certs/ca-bundle.crt"
+              "LD_LIBRARY_PATH=${ciContainerLibraryPath}"
+              "PYTHONDONTWRITEBYTECODE=1"
+              "PYTHONUNBUFFERED=1"
+              "UV_LINK_MODE=copy"
+              "UV_PYTHON=${python}/bin/python"
+              "UV_PYTHON_DOWNLOADS=never"
+              "COREPACK_ENABLE_NETWORK=0"
+              "DOCKER_HOST=unix:///var/run/docker.sock"
+            ];
+            Labels = {
+              "org.opencontainers.image.source" = "https://github.com/mchar7/nohiki-monorepo";
+              "org.opencontainers.image.revision" = self.rev or self.dirtyRev or "uncommitted";
+              "org.opencontainers.image.licenses" = "Proprietary";
+            };
+            User = "0:0";
+            WorkingDir = "/workspace";
+          };
+        };
+
 
         baseEnv = {
           PYTHONDONTWRITEBYTECODE = "1";
@@ -370,7 +481,9 @@
 
       in
       {
-        packages.lefthook = lefthookPackage;
+        packages = { lefthook = lefthookPackage; } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          ci-toolchain-image = ciToolchainImage;
+        };
 
         checks.lefthook-version = pkgs.runCommand "lefthook-version-${lefthookVersion}" { } ''
           actual="$(${lefthookPackage}/bin/lefthook version)"
