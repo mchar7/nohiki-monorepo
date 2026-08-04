@@ -9,9 +9,6 @@ from typing import TYPE_CHECKING
 from job_correlation_evaluation_service.services.scoring.config import FreshnessScoringConfig
 from job_correlation_evaluation_service.services.scoring.constants import FeatureIndex
 from job_correlation_evaluation_service.services.scoring.features.base import FeatureGroup
-from job_correlation_evaluation_service.services.scoring.listing_quality import (
-    ListingQualityPredictor,
-)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -27,21 +24,15 @@ class JobMetadataFeatureGroup(FeatureGroup):
 
     Features:
         - JOB_AGE_HOURS: Job posting age in hours (for freshness)
-        - LISTING_FEEDBACK_COUNT: Total feedback count for the listing
-        - LISTING_QUALITY_SCORE: Predicted quality score from feedback
+        - LISTING_FEEDBACK_COUNT: Unavailable (0.0)
+        - LISTING_QUALITY_SCORE: Unavailable (NaN)
 
-    Design: Raw values for job age and listing quality signals.
+    Design: Raw job age with unavailable listing-quality slots.
 
     """
 
-    def __init__(self, listing_quality_predictor: ListingQualityPredictor | None = None) -> None:
-        """Initialize job metadata feature group.
-
-        Args:
-            listing_quality_predictor: Optional predictor for listing quality scores.
-
-        """
-        self._listing_quality_predictor = listing_quality_predictor
+    def __init__(self) -> None:
+        """Initialize job metadata feature extraction."""
         self._freshness = FreshnessScoringConfig()
 
     def extract(
@@ -51,7 +42,6 @@ class JobMetadataFeatureGroup(FeatureGroup):
     ) -> None:
         """Extract job metadata features into feature vector."""
         job = context.job
-        feedback_aggregate = context.feedback_aggregate
 
         # Direct attribute access - posted_at is datetime | None
         posted_at = job.posted_at
@@ -60,15 +50,8 @@ class JobMetadataFeatureGroup(FeatureGroup):
         else:
             features[FeatureIndex.JOB_AGE_HOURS] = math.nan
 
-        if feedback_aggregate is not None:
-            features[FeatureIndex.LISTING_FEEDBACK_COUNT] = float(feedback_aggregate.total_feedback)
-        else:
-            features[FeatureIndex.LISTING_FEEDBACK_COUNT] = 0.0
-
-        if self._listing_quality_predictor is not None and feedback_aggregate is not None:
-            features[FeatureIndex.LISTING_QUALITY_SCORE] = self._listing_quality_predictor.predict(feedback_aggregate)
-        else:
-            features[FeatureIndex.LISTING_QUALITY_SCORE] = math.nan
+        features[FeatureIndex.LISTING_FEEDBACK_COUNT] = 0.0
+        features[FeatureIndex.LISTING_QUALITY_SCORE] = math.nan
 
         age_hours = features[FeatureIndex.JOB_AGE_HOURS]
         if not math.isnan(age_hours):

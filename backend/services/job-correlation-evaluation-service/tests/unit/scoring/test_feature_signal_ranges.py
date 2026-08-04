@@ -12,7 +12,6 @@ from __future__ import annotations
 import math
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
-from uuid import UUID
 
 import numpy as np
 import pytest
@@ -25,9 +24,6 @@ from job_correlation_evaluation_service.services.scoring.features import (
     FeatureExtractionContext,
     PipelineScores,
 )
-from job_correlation_evaluation_service.services.scoring.features.groups.job_metadata import (
-    JobMetadataFeatureGroup,
-)
 from job_correlation_evaluation_service.services.scoring.features.groups.location import (
     LocationFeatureGroup,
 )
@@ -38,10 +34,6 @@ from job_correlation_evaluation_service.services.scoring.features.location_score
     LocationMatchResult,
     LocationScenario,
     LocationScorer,
-)
-from job_correlation_evaluation_service.services.scoring.listing_quality import (
-    ListingFeedbackAggregate,
-    ListingQualityPredictor,
 )
 from job_correlation_evaluation_service.services.scoring.skill_relationship_cache import (
     SkillRelationshipCache,
@@ -154,7 +146,6 @@ class TestLocationFeatureGroup:
                 job=job,
                 profile=profile,
                 pipeline_scores=PipelineScores(maxsim_score=0.5, rerank_score=0.5),
-                feedback_aggregate=None,
             )
 
             feature_group.extract(features, context)
@@ -175,7 +166,6 @@ class TestLocationFeatureGroup:
             job=job,
             profile=profile,
             pipeline_scores=PipelineScores(maxsim_score=0.5, rerank_score=0.5),
-            feedback_aggregate=None,
         )
 
         feature_group.extract(features, context)
@@ -212,7 +202,6 @@ class TestLocationFeatureGroup:
                 job=job,
                 profile=profile,
                 pipeline_scores=PipelineScores(maxsim_score=0.5, rerank_score=0.5),
-                feedback_aggregate=None,
             )
 
             feature_group.extract(features, context)
@@ -239,7 +228,6 @@ class TestLocationFeatureGroup:
                 job=job,
                 profile=profile,
                 pipeline_scores=PipelineScores(maxsim_score=0.5, rerank_score=0.5),
-                feedback_aggregate=None,
             )
 
             feature_group.extract(features, context)
@@ -265,7 +253,6 @@ class TestLocationFeatureGroup:
                 job=job,
                 profile=profile,
                 pipeline_scores=PipelineScores(maxsim_score=0.5, rerank_score=0.5),
-                feedback_aggregate=None,
             )
 
             feature_group.extract(features, context)
@@ -597,77 +584,6 @@ class TestJobMetadataFeatureGroup:
             if not math.isnan(age_hours):
                 assert age_hours >= 0
 
-    def test_listing_feedback_count_nonnegative(self) -> None:
-        """LISTING_FEEDBACK_COUNT should be non-negative."""
-        mock_predictor = MagicMock(spec=ListingQualityPredictor)
-        mock_predictor.predict.return_value = 0.5
-
-        feature_group = JobMetadataFeatureGroup(listing_quality_predictor=mock_predictor)
-
-        # Test with specific feedback counts that sum to desired total
-        test_cases = [
-            (0, 0, 0),  # No feedback
-            (5, 2, 1),  # 5 good, 2 too_high, 1 too_low = 8 total
-            (10, 5, 3),  # 10 good, 5 too_high, 3 too_low = 18 total
-            (50, 25, 15),  # 50 good, 25 too_high, 15 too_low = 90 total
-        ]
-
-        for good, high, low in test_cases:
-            features = np.full(FEATURE_COUNT, math.nan, dtype=np.float32)
-            job = _create_minimal_job()
-            profile = _create_minimal_profile()
-            feedback = ListingFeedbackAggregate(
-                listing_id=UUID("00000000-0000-0000-0000-000000000000"),
-                good_count=good,
-                too_high_count=high,
-                too_low_count=low,
-            )
-
-            context = FeatureExtractionContext(
-                job=job,
-                profile=profile,
-                pipeline_scores=PipelineScores(maxsim_score=0.5, rerank_score=0.5),
-                feedback_aggregate=feedback,
-            )
-
-            feature_group.extract(features, context)
-
-            total = good + high + low
-            assert features[FeatureIndex.LISTING_FEEDBACK_COUNT] == pytest.approx(float(total))
-
-    def test_listing_quality_score_range(self) -> None:
-        """LISTING_QUALITY_SCORE should be in valid range or NaN."""
-        quality_values = [0.0, 0.25, 0.5, 0.75, 1.0]
-
-        for quality in quality_values:
-            mock_predictor = MagicMock(spec=ListingQualityPredictor)
-            mock_predictor.predict.return_value = quality
-
-            feature_group = JobMetadataFeatureGroup(listing_quality_predictor=mock_predictor)
-
-            features = np.full(FEATURE_COUNT, math.nan, dtype=np.float32)
-            job = _create_minimal_job()
-            profile = _create_minimal_profile()
-            feedback = ListingFeedbackAggregate(
-                listing_id=UUID("00000000-0000-0000-0000-000000000000"),
-                good_count=7,
-                too_high_count=2,
-                too_low_count=1,
-            )
-
-            context = FeatureExtractionContext(
-                job=job,
-                profile=profile,
-                pipeline_scores=PipelineScores(maxsim_score=0.5, rerank_score=0.5),
-                feedback_aggregate=feedback,
-            )
-
-            feature_group.extract(features, context)
-
-            score = features[FeatureIndex.LISTING_QUALITY_SCORE]
-            if not math.isnan(score):
-                assert 0.0 <= score <= 1.0
-
 
 class TestWorkArrangementFeatureGroup:
     """Validate work arrangement match signal (index 25)."""
@@ -797,19 +713,14 @@ class TestValidityFlagsFeatureGroup:
         assert features[FeatureIndex.HAS_SKILL_DATA] == pytest.approx(0.0)
 
     def test_has_listing_quality_flag(self) -> None:
-        """HAS_LISTING_QUALITY should be 1.0 when quality score exists."""
-        mock_predictor = MagicMock(spec=ListingQualityPredictor)
-        mock_predictor.predict.return_value = 0.8
-
+        """HAS_LISTING_QUALITY should be 0.0 when no quality signal exists."""
         composer = FeatureComposer.create_default()
-
-        # Composer doesn't use the predictor directly, so we need to test through features
         job = _create_minimal_job()
         profile = _create_minimal_profile()
         scores = PipelineScores(maxsim_score=0.5, rerank_score=0.5)
 
         features = composer.extract(job, profile, scores).raw_features
-        # Without feedback, quality should be NaN
+
         assert features[FeatureIndex.HAS_LISTING_QUALITY] == pytest.approx(0.0)
 
 
@@ -841,7 +752,6 @@ class TestTaxonomyFeatureGroup:
             job=job,
             profile=profile,
             pipeline_scores=PipelineScores(maxsim_score=0.5, rerank_score=0.5),
-            feedback_aggregate=None,
         )
 
         feature_group.extract(features, context)
@@ -868,7 +778,6 @@ class TestTaxonomyFeatureGroup:
             job=job,
             profile=profile,
             pipeline_scores=PipelineScores(maxsim_score=0.5, rerank_score=0.5),
-            feedback_aggregate=None,
         )
 
         feature_group.extract(features, context)

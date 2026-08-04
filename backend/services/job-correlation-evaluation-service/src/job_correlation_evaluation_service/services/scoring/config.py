@@ -174,32 +174,6 @@ class SkillScoringConfig(BaseSettings):
     )
 
 
-class ListingQualityScoringConfig(BaseSettings):
-    """Configuration for listing quality scoring from feedback."""
-
-    model_config = SettingsConfigDict(
-        env_prefix="SCORING_LISTING_QUALITY__",
-        extra="ignore",
-    )
-
-    too_high_penalty: float = Field(
-        default=0.4,
-        description="Penalty weight for TOO_HIGH feedback ratio",
-    )
-    too_low_bonus: float = Field(
-        default=0.2,
-        description="Bonus weight for TOO_LOW feedback ratio",
-    )
-    neutral_quality: float = Field(
-        default=0.5,
-        description="Neutral quality score when no signal available",
-    )
-    min_feedback_for_signal: int = Field(
-        default=5,
-        description="Minimum feedback count to produce quality signal",
-    )
-
-
 class CountNormalizationConfig(BaseSettings):
     """Configuration for count feature normalization."""
 
@@ -284,7 +258,6 @@ class ScoringServiceSettings(BaseSettings):
     experience: ExperienceScoringConfig = Field(default_factory=ExperienceScoringConfig)
     freshness: FreshnessScoringConfig = Field(default_factory=FreshnessScoringConfig)
     skill: SkillScoringConfig = Field(default_factory=SkillScoringConfig)
-    listing_quality: ListingQualityScoringConfig = Field(default_factory=ListingQualityScoringConfig)
     count_normalization: CountNormalizationConfig = Field(default_factory=CountNormalizationConfig)
 
 
