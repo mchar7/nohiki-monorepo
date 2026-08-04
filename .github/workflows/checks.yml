@@ -533,8 +533,8 @@ jobs:
           file: typescript/apps/frontend/Dockerfile
           load: true
           tags: nohiki-frontend-smoke:ci
+          # GHA exports spent 25 minutes on the fleet uplink; imports remain as fresh-slot insurance.
           cache-from: type=gha,scope=frontend-smoke
-          cache-to: type=gha,scope=frontend-smoke,mode=max
 
       - name: Smoke production frontend container
         id: frontend-smoke
@@ -642,8 +642,8 @@ jobs:
           file: typescript/apps/frontend/Dockerfile.playwright-runner
           load: true
           tags: nohiki-playwright-runner-smoke:ci
+          # GHA exports spent 25 minutes on the fleet uplink; imports remain as fresh-slot insurance.
           cache-from: type=gha,scope=playwright-runner-smoke
-          cache-to: type=gha,scope=playwright-runner-smoke,mode=max
 
       - name: Verify Playwright runner
         id: runner-verify
