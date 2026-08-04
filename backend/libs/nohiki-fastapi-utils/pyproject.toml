@@ -19,7 +19,7 @@ server = [
 ]
 jwt = [
     "PyJWT>=2.11.0",
-    "cryptography>=46.0.0",
+    "cryptography>=50.0.0",
 ]
 otel = [
     "nohiki-observability[fastapi,httpx]==0.1.0",
