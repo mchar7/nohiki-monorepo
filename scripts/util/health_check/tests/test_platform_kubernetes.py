@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -531,6 +532,11 @@ class TestKubernetesPlatformGetLogs:
         assert "log line 1" in result
 
 
+def _dependency_command(*modules: str) -> list[str]:
+    checks = " and ".join(f"__import__('importlib.util').util.find_spec('{module}') is not None" for module in modules)
+    return ["python", "-c", f"{checks} or exit(1)"]
+
+
 class TestKubernetesPlatformExecInService:
     """Tests for exec_in_service method."""
 
@@ -554,6 +560,49 @@ class TestKubernetesPlatformExecInService:
         called_args = mock_kc.call_args[0][0]
         assert "exec" in called_args
         assert "bff-pod-abc" in called_args
+
+    def test_service_dependency_evidence_passes_for_exact_digest_pinned_probe(self, tmp_path: Path) -> None:
+        evidence = {
+            "nohiki_kafka_client": True,
+            "nohiki_db_utils": True,
+        }
+        tmp_path.joinpath("user-pref-service.json").write_text(json.dumps(evidence), encoding="utf-8")
+        with patch.dict("os.environ", {"K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": str(tmp_path)}):
+            code, output, error = KubernetesPlatform().exec_in_service(
+                "user-pref-service",
+                _dependency_command("nohiki_kafka_client", "nohiki_db_utils"),
+            )
+        assert (code, output, error) == (0, "service image dependencies verified", "")
+
+    @pytest.mark.parametrize("contents", [None, "{", "{}", '{"nohiki_kafka_client": true}'])
+    def test_service_dependency_evidence_fails_closed(
+        self,
+        tmp_path: Path,
+        contents: str | None,
+    ) -> None:
+        if contents is not None:
+            tmp_path.joinpath("user-pref-service.json").write_text(contents, encoding="utf-8")
+        with patch.dict("os.environ", {"K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": str(tmp_path)}):
+            code, _, error = KubernetesPlatform().exec_in_service(
+                "user-pref-service",
+                _dependency_command("nohiki_kafka_client", "nohiki_db_utils"),
+            )
+        assert code == 2
+        assert "evidence" in error
+
+    def test_service_dependency_evidence_reports_missing_module(self, tmp_path: Path) -> None:
+        evidence = {
+            "nohiki_kafka_client": True,
+            "nohiki_db_utils": False,
+        }
+        tmp_path.joinpath("user-pref-service.json").write_text(json.dumps(evidence), encoding="utf-8")
+        with patch.dict("os.environ", {"K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": str(tmp_path)}):
+            code, _, error = KubernetesPlatform().exec_in_service(
+                "user-pref-service",
+                _dependency_command("nohiki_kafka_client", "nohiki_db_utils"),
+            )
+        assert code == 1
+        assert error == "service image is missing dependencies: nohiki_db_utils"
 
 
 class TestKubernetesPlatformExecPsql:

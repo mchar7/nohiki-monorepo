@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 from health_check.checks.services.core_services import CoreServicesCheck
-from health_check.checks.services.service_dependencies import ServiceDependenciesCheck
+from health_check.checks.services.service_dependencies import _DEPS_BY_SERVICE, ServiceDependenciesCheck
 from health_check.checks.services.stale_services import StaleServicesCheck
 from health_check.config.services import CORE_SERVICES
 from health_check.core.models import CheckStatus
+from health_check.platform.kubernetes import KubernetesPlatform
 from health_check.platform.models import ServiceStatus
 
 from .._helpers import MockPlatform, make_service_info
@@ -148,6 +153,16 @@ class TestServiceDependenciesCheck:
         platform = MockPlatform(_exec_in_service_result=(1, "", "ModuleNotFoundError"))
         result = await ServiceDependenciesCheck().execute(platform)
         assert result.status == CheckStatus.FAILED
+
+    async def test_kubernetes_runs_against_init_container_evidence(self, tmp_path: Path) -> None:
+        for service, modules in _DEPS_BY_SERVICE.items():
+            tmp_path.joinpath(f"{service}.json").write_text(
+                json.dumps(dict.fromkeys(modules, True)),
+                encoding="utf-8",
+            )
+        with patch.dict("os.environ", {"K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": str(tmp_path)}):
+            result = await ServiceDependenciesCheck().execute(KubernetesPlatform())
+        assert result.status == CheckStatus.PASSED
 
     def test_metadata_check_id(self) -> None:
         assert ServiceDependenciesCheck().metadata.check_id == "service_dependencies"

@@ -215,10 +215,10 @@ INVENTORY_SPECS: Final[Mapping[str, InventorySpec]] = MappingProxyType(
         "replication_slot": InventorySpec(EndpointClass.DATABASE, _A, _C, ("logical replication slot state",)),
         "cdc_end_to_end": InventorySpec(
             EndpointClass.KAFKA,
-            _I,
+            _D,
             _C,
             ("synthetic outbox event",),
-            reason="mutates application data; the verification Job is strictly non-mutating",
+            adaptation="in-cluster CNPG outbox write and Strimzi Kafka delivery",
         ),
         "core_services": InventorySpec(
             EndpointClass.HTTP,
@@ -236,10 +236,10 @@ INVENTORY_SPECS: Final[Mapping[str, InventorySpec]] = MappingProxyType(
         ),
         "service_dependencies": InventorySpec(
             EndpointClass.KUBERNETES,
-            _I,
-            _W,
-            ("installed package imports",),
-            reason="requires command execution in application containers",
+            _D,
+            _C,
+            ("digest-pinned service-image module evidence",),
+            adaptation="digest-pinned service-image init-container evidence",
         ),
         "stale_services": InventorySpec(
             EndpointClass.KAFKA,

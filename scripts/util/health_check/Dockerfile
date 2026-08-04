@@ -17,9 +17,11 @@ FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:cea0e6040540fb2b965
 ADD --chmod=0555 --checksum=sha256:ab60ca5f0fd60c1eb81b52909e67060e3ba0bd27e55a8ac147cbc2172ff14212 \
     https://dl.k8s.io/release/v1.34.3/bin/linux/amd64/kubectl /usr/local/bin/kubectl
 COPY --from=builder /opt/venv /opt/venv
+COPY --chmod=0444 data/config/semantic_representation_manifest.json /app/data/config/semantic_representation_manifest.json
 RUN groupadd --system health && useradd --system --gid health --uid 65532 health
 USER 65532:65532
 ENV PATH="/opt/venv/bin:$PATH" \
+    PROJECT_ROOT=/app \
     K8S_LOCAL_MODE=false \
     K8S_NAMESPACE=nohiki
 STOPSIGNAL SIGTERM
