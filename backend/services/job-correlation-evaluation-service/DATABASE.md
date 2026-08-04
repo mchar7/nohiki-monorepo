@@ -60,8 +60,8 @@ notification pipeline, and the L2R training data export.
 - **`correlation_status`** (`correlation_status_enum`): State machine field. Valid values and
   transitions are defined below. Default: `pending`.
 - **`user_feedback`** (`user_feedback_enum`): Optional explicit feedback from the user.
-  Values: `liked`, `disliked`, `saved`, `interested`. Used as a training signal for the L2R
-  model.
+  Values: `unspecified`, `positive`, `negative`, `irrelevant`, `wrong_location`,
+  `wrong_level`, `wrong_salary`. Used as a training signal for the L2R model.
 - **`is_viewed`**, **`is_applied`**, **`is_dismissed`** (`BOOLEAN`): Interaction flags set by
   the BFF when the user takes action. Used by downstream services and the BFF query to filter
   the job list.

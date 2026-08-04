@@ -41,6 +41,26 @@ class CorrelationSpec:
 class TestFeedbackRecordingFlow:
     """Integration tests for the feedback recording flow."""
 
+    @pytest.fixture
+    @ignore_unused_fixture
+    def mock_repository(self) -> AsyncMock:
+        """Create mock correlation repository."""
+        return AsyncMock(spec=CorrelationRepository)
+
+    @pytest.fixture
+    @ignore_unused_fixture
+    def feedback_service(self, mock_repository: AsyncMock) -> CorrelationFeedbackService:
+        """Create feedback service."""
+        return CorrelationFeedbackService(repository=mock_repository)
+
+    @pytest.fixture
+    @ignore_unused_fixture
+    def sample_correlation(self) -> MagicMock:
+        """Create a correlation returned by repository updates."""
+        correlation = MagicMock()
+        correlation.id = uuid4()
+        return correlation
+
     @pytest.mark.asyncio
     async def test_view_then_apply_flow(self) -> None:
         """Test common flow: user views a job then applies."""
@@ -114,7 +134,7 @@ class TestFeedbackRecordingFlow:
         mock_repository: AsyncMock,
         sample_correlation: MagicMock,
     ) -> None:
-        """Test flow: user saves a job (which implies they liked it)."""
+        """Test flow: saving a job records positive feedback."""
         mock_repository.update.return_value = sample_correlation
 
         await feedback_service.record_feedback(
@@ -148,6 +168,18 @@ class TestFeedbackRecordingFlow:
 @pytest.mark.integration
 class TestTrainingDataExportFlow:
     """Integration tests for training data export flow."""
+
+    @pytest.fixture
+    @ignore_unused_fixture
+    def mock_repository(self) -> AsyncMock:
+        """Create mock correlation repository."""
+        return AsyncMock(spec=CorrelationRepository)
+
+    @pytest.fixture
+    @ignore_unused_fixture
+    def feedback_service(self, mock_repository: AsyncMock) -> CorrelationFeedbackService:
+        """Create feedback service."""
+        return CorrelationFeedbackService(repository=mock_repository)
 
     def _make_correlation(self, spec: CorrelationSpec | None = None) -> MagicMock:
         """Create mock correlation from spec."""

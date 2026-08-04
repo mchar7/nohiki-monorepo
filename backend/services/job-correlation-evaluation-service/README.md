@@ -66,10 +66,10 @@ endpoint (`/api/v1/correlations`), which presents ranked matches to the user.
   sequentially until `is_final_batch = true`. Consumer group:
   `job-correlation-eval-backfill-callback`.
 
-- **`job-correlation.cmd.feedback-recorded.v1`** (`FeedbackRecorded`): Records user
-  thumbs-up/down feedback on a correlation (liked, disliked, saved, interested). Updates the
-  `user_feedback` column on the `correlations` row. This signal feeds the L2R training data
-  export. Consumer group: `job-correlation-eval-feedback`.
+- **`job-correlation.cmd.feedback-recorded.v1`** (`FeedbackRecorded`): Records viewed,
+  saved, applied, dismissed, liked, and disliked interactions on a correlation. Interaction
+  actions update their corresponding flags; saved and liked persist `positive` while disliked
+  persists `negative` in `user_feedback`. Consumer group: `job-correlation-eval-feedback`.
 
 - **`job-correlation.cmd.training-export-requested.v1`** (`TrainingExportRequested`): Exports
   all correlations with feedback signals as `TrainingSample` protobuf objects and publishes

@@ -63,10 +63,13 @@ def upgrade() -> None:
     correlation_status_enum.create(op.get_bind(), checkfirst=True)
 
     user_feedback_enum = postgresql.ENUM(
-        "liked",
-        "disliked",
-        "saved",
-        "interested",
+        "unspecified",
+        "positive",
+        "negative",
+        "irrelevant",
+        "wrong_location",
+        "wrong_level",
+        "wrong_salary",
         name="user_feedback_enum",
         schema=SCHEMA_NAME,
         create_type=False,

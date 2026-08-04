@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from nohiki.common.v1 import CallbackHeader, EntityTimestamps
@@ -16,6 +16,42 @@ from nohiki.ml.v1 import DenseData, EmbeddingType, EmbeddingVector
 from nohiki.user.pref.v1 import PrefCreated, SearchPrefSnapshot
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import MessageContext
+
+
+@pytest.fixture
+def sample_profile() -> SearchPrefSnapshot:
+    """Create an active profile snapshot for backfill matching."""
+    return SearchPrefSnapshot(
+        id=str(uuid4()),
+        user_id=str(uuid4()),
+        pref_name="Test Profile",
+        is_active=True,
+        search_keywords=["python", "backend"],
+        disallowed_keywords=[],
+        work_arrangements=[],
+        example_uploads=[],
+        context_uploads=[],
+    )
+
+
+@pytest.fixture
+def sample_listings() -> list[ListingSnapshot]:
+    """Create enriched listing snapshots eligible for backfill matching."""
+    return [
+        ListingSnapshot(
+            id=str(uuid4()),
+            listing_url=f"https://example.com/job/{i}",
+            title=f"Python Developer {i}",
+            company_name=f"Company {i}",
+            description="Python backend developer needed",
+            skills_embedding=EmbeddingVector(
+                embedding_type=EmbeddingType.DENSE,
+                dense=DenseData(values=[0.1, 0.2, 0.3]),
+            ),
+            posted_at=datetime.now(UTC),
+        )
+        for i in range(3)
+    ]
 
 
 @pytest.mark.integration
@@ -174,23 +210,24 @@ class TestBackfillListingsHandlerFlow:
                 total_listings=len(sample_listing_snapshots),
             ),
         )
+        mock_db = create_mock_session()
         mock_context = MagicMock(spec=MessageContext)
         mock_context.correlation_id = str(uuid4())
+        mock_context.require_db_session.return_value = mock_db
 
         mock_profile = MagicMock()
         mock_profile.id = sample_backfill_message.pref_id
 
         with (
-            patch("job_correlation_evaluation_service.events.backfill_handler.db_session") as mock_db_session,
+            patch(
+                "job_correlation_evaluation_service.events.backfill_handler.check_and_mark_processed",
+                new=AsyncMock(return_value=True),
+            ) as mock_claim,
             patch(
                 "job_correlation_evaluation_service.events.backfill_handler.ProfileProjectionRepository"
             ) as mock_repo_cls,
             patch("job_correlation_evaluation_service.events.backfill_handler.JobMatcherService") as mock_matcher_cls,
         ):
-            mock_db = create_mock_session()
-            mock_db_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-            mock_db_session.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_repo = AsyncMock()
             mock_repo.get_profile = AsyncMock(return_value=mock_profile)
             mock_repo_cls.return_value = mock_repo
@@ -205,12 +242,16 @@ class TestBackfillListingsHandlerFlow:
 
             await handle_backfill_listings(sample_backfill_message, mock_context)
 
-            mock_repo.get_profile.assert_awaited_once()
-            mock_matcher.match_listings_to_profile.assert_awaited_once()
-
-            call_kwargs = mock_matcher.match_listings_to_profile.call_args.kwargs
-            assert len(call_kwargs["listings"]) == 3
-            assert call_kwargs["profile"] == mock_profile
+            mock_context.require_db_session.assert_called_once_with()
+            mock_claim.assert_awaited_once()
+            mock_repo.get_profile.assert_awaited_once_with(UUID(sample_backfill_message.pref_id))
+            mock_matcher.match_listings_to_profile.assert_awaited_once_with(
+                db=mock_db,
+                listings=sample_listing_snapshots,
+                profile=mock_profile,
+                correlation_id=mock_context.correlation_id,
+                force_rescore=False,
+            )
 
     @pytest.mark.asyncio
     async def test_backfill_skipped_for_missing_profile(self) -> None:
@@ -242,20 +283,21 @@ class TestBackfillListingsHandlerFlow:
                 total_listings=len(sample_listing_snapshots),
             ),
         )
+        mock_db = create_mock_session()
         mock_context = MagicMock(spec=MessageContext)
         mock_context.correlation_id = str(uuid4())
+        mock_context.require_db_session.return_value = mock_db
 
         with (
-            patch("job_correlation_evaluation_service.events.backfill_handler.db_session") as mock_db_session,
+            patch(
+                "job_correlation_evaluation_service.events.backfill_handler.check_and_mark_processed",
+                new=AsyncMock(return_value=True),
+            ) as mock_claim,
             patch(
                 "job_correlation_evaluation_service.events.backfill_handler.ProfileProjectionRepository"
             ) as mock_repo_cls,
             patch("job_correlation_evaluation_service.events.backfill_handler.JobMatcherService") as mock_matcher_cls,
         ):
-            mock_db = create_mock_session()
-            mock_db_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-            mock_db_session.return_value.__aexit__ = AsyncMock(return_value=None)
-
             mock_repo = AsyncMock()
             mock_repo.get_profile = AsyncMock(return_value=None)
             mock_repo_cls.return_value = mock_repo
@@ -269,8 +311,10 @@ class TestBackfillListingsHandlerFlow:
 
             await handle_backfill_listings(sample_backfill_message, mock_context)
 
-            mock_repo.get_profile.assert_awaited_once()
-            mock_matcher.match_listings_to_profile.assert_not_awaited()
+            mock_context.require_db_session.assert_called_once_with()
+            mock_claim.assert_awaited_once()
+            mock_repo.get_profile.assert_awaited_once_with(UUID(sample_backfill_message.pref_id))
+            mock_matcher_cls.assert_not_called()
 
 
 @pytest.mark.integration
@@ -377,17 +421,13 @@ class TestMatchListingsToProfileFlow:
 
         mock_repo = MagicMock()
         mock_repo.get_existing_listing_ids = AsyncMock(return_value=existing_ids)
-
-        mock_pipeline = MagicMock()
-        mock_pipeline.execute = MagicMock()
+        mock_repo.record_matches_batch_no_commit = AsyncMock()
 
         with patch(
             "job_correlation_evaluation_service.services.matcher_service.MatchRecordRepository"
         ) as mock_repo_class:
             mock_repo_class.return_value = mock_repo
-            # Fix: match_listings_to_profile does not use _pipeline, it uses _ml_service.
-            # But the test was mocking _pipeline which doesn't exist on JobMatcherService anymore.
-            # However, in this test it should just return 0 because of existing_ids.
+            # Existing correlations return before enrichment, scoring, or persistence.
 
             result = await service.match_listings_to_profile(
                 db=mock_db,
@@ -397,7 +437,7 @@ class TestMatchListingsToProfileFlow:
             )
 
             assert result == 0
-            mock_pipeline.execute.assert_not_called()
+            mock_repo.record_matches_batch_no_commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_match_handles_empty_listings(

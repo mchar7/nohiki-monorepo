@@ -13,6 +13,9 @@ from nohiki_db_utils.testing import (
     get_async_sessionmaker,
     postgres_container,
 )
+from nohiki_redis_utils import RedisCache
+from nohiki_redis_utils.testing import redis_container
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 __all__ = [
@@ -20,10 +23,20 @@ __all__ = [
     "async_session",
     "async_session_factory",
     "postgres_container",
+    "redis_cache",
+    "redis_container",
+    "setup_database_schema",
 ]
 
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
+_TRUNCATE_TABLES = (
+    "job_correlation_schema.correlations",
+    "job_correlation_schema.profile_projections",
+    "job_correlation_schema.processed_events",
+    "feedback.asymmetric_feedback",
+    "feedback.manual_adjustments",
+)
 
 
 @pytest_asyncio.fixture
@@ -48,9 +61,15 @@ async def async_session_factory(
 
 @pytest_asyncio.fixture
 async def async_session(
+    async_engine: AsyncEngine,
     async_session_factory: async_sessionmaker[AsyncSession],
+    setup_database_schema: None,
 ) -> AsyncGenerator[AsyncSession]:
-    """Provide a real PostgreSQL session for one test."""
+    """Provide an isolated real PostgreSQL session for one test."""
+    _ = setup_database_schema
+    async with async_engine.begin() as connection:
+        await connection.execute(text(f"TRUNCATE TABLE {', '.join(_TRUNCATE_TABLES)} RESTART IDENTITY CASCADE"))
+
     async with async_session_factory() as session:
         yield session
 
@@ -72,3 +91,15 @@ def setup_database_schema(postgres_container: str) -> None:
             os.environ.pop("DATABASE_URL", None)
         else:
             os.environ["DATABASE_URL"] = previous_database_url
+
+
+@pytest_asyncio.fixture
+async def redis_cache(redis_container: str) -> AsyncGenerator[RedisCache]:
+    """Provide an isolated real Redis cache for one test."""
+    cache = RedisCache(redis_url=redis_container, service_name="test")
+    await cache.delete("active_profiles")
+    try:
+        yield cache
+    finally:
+        await cache.delete("active_profiles")
+        await cache.close()

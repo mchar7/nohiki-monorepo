@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
+import pytest_asyncio
 from job_correlation_evaluation_service.db.models import Correlation, ProfileProjection
 from job_correlation_evaluation_service.repositories.correlation_repository import (
     CorrelationNotFoundError,
@@ -149,14 +150,14 @@ class TestMatchRecordRepositoryRealDB:
 
         assert len(existing) == 3
         for lid in listing_ids[:3]:
-            assert uuid.UUID(lid) in existing
+            assert lid in existing
 
 
 @pytest.mark.integration
 class TestCorrelationRepositoryRealDB:
     """Real database integration tests for CorrelationRepository."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     @ignore_unused_fixture
     async def sample_correlation(
         self,
@@ -173,6 +174,7 @@ class TestCorrelationRepositoryRealDB:
             correlation_score=75,
             correlation_reasoning={"test": "data"},
             correlation_status=CorrelationStatus.PENDING,
+            feature_schema_version="v5.0.0",
         )
         async_session.add(correlation)
         await async_session.commit()
@@ -276,6 +278,7 @@ class TestCorrelationRepositoryRealDB:
                 is_applied=applied,
                 is_dismissed=dismissed,
                 user_feedback=feedback,
+                feature_schema_version="v5.0.0",
             )
             async_session.add(correlation)
 
@@ -378,10 +381,11 @@ class TestProfileProjectionRepositoryRealDB:
     async def test_get_active_profiles_filters_correctly(
         self,
         async_session: AsyncSession,
+        redis_cache: RedisCache,
         setup_database_schema: None,
     ) -> None:
         """Test get_active_profiles filters by is_active."""
-        repo = ProfileProjectionRepository(async_session)
+        repo = ProfileProjectionRepository(async_session, cache=redis_cache)
 
         profiles = [
             SearchPrefSnapshot(
