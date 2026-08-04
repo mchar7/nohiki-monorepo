@@ -7,6 +7,8 @@ import os
 import sys
 from pathlib import Path
 
+from ci_checks.core.packages import REPO_ROOT
+
 _GREP_CACHE_SCHEMA = "v4"
 _SEARCHABLE_SUFFIXES = frozenset(
     {
@@ -54,6 +56,11 @@ _STATIC_CACHE_RELATIVE = Path("cache/runs/v1/static")
 _STATIC_CACHE_KEEP_ENTRIES = 2
 
 
+def skylos_cache_root(repo_root: Path = REPO_ROOT) -> Path:
+    """Resolve the Skylos cache root from its environment contract."""
+    return Path(os.environ.get("SKYLOS_CACHE_DIR", repo_root / ".skylos"))
+
+
 def _hash_file(path: str | Path) -> str:
     """Hash the complete contents of one file."""
     digest = hashlib.sha256()
@@ -98,7 +105,7 @@ def _configure_grep_cache(project_root: Path) -> str:
 
 def _prune_static_cache() -> None:
     """Keep only the two newest whole-result cache entries."""
-    cache_root = Path(os.environ.get("SKYLOS_CACHE_DIR", Path.cwd() / ".skylos"))
+    cache_root = skylos_cache_root()
     static_cache = cache_root / _STATIC_CACHE_RELATIVE
     entries = sorted(
         static_cache.glob("*.cache"),

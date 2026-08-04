@@ -15,6 +15,7 @@ import pytest
 from _documents import load_mapping
 from ci_checks.app import app
 from ci_checks.checks import deadcode as deadcode_check
+from ci_checks.checks import skylos_cache as skylos_cache_check
 from ci_checks.checks.deadcode import (
     DeadCodeFinding,
     DeadCodeResult,
@@ -86,6 +87,47 @@ def test_skylos_jobs_resolution_honors_override_and_host_capacity(
 
     monkeypatch.setattr("ci_checks.checks.deadcode.os.process_cpu_count", lambda: 0)
     assert _resolve_skylos_jobs() == "1"
+
+
+@pytest.mark.asyncio
+async def test_skylos_cache_root_is_shared_by_deadcode_and_pruning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deadcode execution and pruning must consume the same cache-root contract."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SKYLOS_CACHE_DIR", raising=False)
+    assert skylos_cache_check.skylos_cache_root() == _ROOT / ".skylos"
+
+    cache_root = tmp_path / "shared-skylos-cache"
+    monkeypatch.setenv("SKYLOS_CACHE_DIR", str(cache_root))
+    monkeypatch.setenv("SKYLOS_JOBS", "2")
+    assert skylos_cache_check.skylos_cache_root() == cache_root
+
+    captured_extra: Mapping[str, str] | None = None
+
+    def capture_env(*, extra: Mapping[str, str]) -> dict[str, str]:
+        nonlocal captured_extra
+        captured_extra = extra
+        return {"PATH": ""}
+
+    monkeypatch.setattr(deadcode_check, "sanitized_python_env", capture_env)
+    monkeypatch.setattr(deadcode_check.shutil, "which", lambda *_args, **_kwargs: None)
+    await deadcode_check.scan_scope(
+        [Package(name="package", path=_ROOT, pkg_type=PackageType.OTHER)],
+        _options(),
+    )
+    assert captured_extra is not None
+    assert captured_extra["SKYLOS_CACHE_DIR"] == str(cache_root)
+
+    static_cache = cache_root / "cache" / "runs" / "v1" / "static"
+    static_cache.mkdir(parents=True)
+    for index in range(3):
+        (static_cache / f"head-{index}.cache").write_text(str(index), encoding="utf-8")
+
+    skylos_cache_check._prune_static_cache()
+
+    assert len(list(static_cache.glob("*.cache"))) == 2
 
 
 @pytest.mark.asyncio
@@ -726,6 +768,7 @@ def test_deadcode_command_uses_pinned_fork_static_cache_offline() -> None:
     # Name-only baseline fingerprints suppress globally; the clean corpus needs no baseline.
     assert "--baseline" not in command
     assert "--no-upload" in command
+    assert "--config-file" not in command
     assert "--summary" not in command
     assert "--diff" not in command
     assert "--no-grep-verify" not in command

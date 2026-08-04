@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import quote
 
+from ci_checks.checks.skylos_cache import skylos_cache_root
 from ci_checks.core.display import (
     console,
     render_error_panel,
@@ -287,10 +288,8 @@ def _build_skylos_cmd(scan_paths: list[str], options: DeadCodeScanOptions) -> li
         "--no-upload",
         "--cache-static",
         "--cache-static-tier",
+        # Pinned Skylos fork 4.30.0 accepts "content" through SKYLOS_CACHE_STATIC_TIER.
         os.environ.get("SKYLOS_CACHE_STATIC_TIER", "content"),
-        # false-positive whitelist lives in [tool.skylos.whitelist]
-        "--config-file",
-        str(REPO_ROOT / "pyproject.toml"),
     ]
 
     if options.trace:
@@ -445,8 +444,8 @@ async def scan_scope(packages: list[Package], options: DeadCodeScanOptions) -> l
         extra={
             "OTEL_SDK_DISABLED": "true",
             "SKYLOS_GREP_BUDGET": "120",
-            # The fork treats this as the parent of cache/runs/v1/static.
-            "SKYLOS_CACHE_DIR": os.environ.get("SKYLOS_CACHE_DIR", str(REPO_ROOT / ".skylos")),
+            # Pinned Skylos fork 4.30.0 reads SKYLOS_CACHE_DIR as its cache root.
+            "SKYLOS_CACHE_DIR": str(skylos_cache_root(REPO_ROOT)),
             "SKYLOS_JOBS": _resolve_skylos_jobs(),
         }
     )

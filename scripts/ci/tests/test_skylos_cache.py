@@ -22,14 +22,21 @@ class _Cache:
 
 
 @pytest.mark.requires_skylos
-def test_grep_cache_key_changes_when_search_corpus_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Adding a usage outside the defining file must invalidate cached search results."""
+@pytest.mark.parametrize("usage_directory", [".", ".cache", ".codspeed", "htmlcov"])
+def test_grep_cache_key_changes_when_search_corpus_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    usage_directory: str,
+) -> None:
+    """A usage in any fork-searchable directory must invalidate cached search results."""
     # The analyzer is a private distribution absent from the shared environment closure, so the
     # module must stay importable without it; only this test needs the real cache internals.
     from skylos.core import grep_cache, grep_verify
 
     defining_file = tmp_path / "definition.py"
-    usage_file = tmp_path / "usage.py"
+    usage_root = tmp_path / usage_directory
+    usage_root.mkdir(exist_ok=True)
+    usage_file = usage_root / "usage.py"
     defining_file.write_text("def target():\n    return 1\n", encoding="utf-8")
     usage_file.write_text("value = 1\n", encoding="utf-8")
     finding = {
