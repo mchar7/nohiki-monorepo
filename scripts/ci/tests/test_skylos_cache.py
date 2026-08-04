@@ -1,4 +1,4 @@
-"""Contracts for sound Skylos grep-verification caching."""
+"""Contracts for the thin Skylos cache-retention adapter."""
 
 from __future__ import annotations
 
@@ -7,73 +7,39 @@ from pathlib import Path
 
 import pytest
 from ci_checks.checks import skylos_cache as skylos_cache_check
-from ci_checks.checks.skylos_cache import _configure_grep_cache, _hash_file
-
-
-class _Cache:
-    def __init__(self) -> None:
-        self.entries: dict[str, list[str]] = {}
-
-    def get(self, key: str) -> list[str] | None:
-        return self.entries.get(key)
-
-    def put(self, key: str, results: list[str]) -> None:
-        self.entries[key] = results
 
 
 @pytest.mark.requires_skylos
-def test_grep_cache_key_changes_when_search_corpus_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Adding a usage outside the defining file must invalidate cached search results."""
-    # The analyzer is a private distribution absent from the shared environment closure, so the
-    # module must stay importable without it; only this test needs the real cache internals.
-    from skylos.core import grep_cache, grep_verify
+def test_pinned_skylos_invalidates_warm_grep_when_caller_changes(
+    tmp_path: Path,
+) -> None:
+    from skylos.core.grep_cache import GrepCache
+    from skylos.core.grep_verify import grep_verify_findings
 
-    defining_file = tmp_path / "definition.py"
-    usage_file = tmp_path / "usage.py"
-    defining_file.write_text("def target():\n    return 1\n", encoding="utf-8")
-    usage_file.write_text("value = 1\n", encoding="utf-8")
+    definition = tmp_path / "definition.py"
+    usage = tmp_path / "usage.py"
+    definition.write_text("def target():\n    return 1\n", encoding="utf-8")
+    usage.write_text("value = 1\n", encoding="utf-8")
     finding = {
+        "name": "target",
         "simple_name": "target",
         "full_name": "definition.target",
         "type": "function",
-        "file": str(defining_file),
+        "file": str(definition),
+        "line": 1,
+        "confidence": 80,
     }
-    cache = _Cache()
-    monkeypatch.setattr(grep_cache, "file_content_hash", grep_cache.file_content_hash)
-    monkeypatch.setattr(
-        grep_verify,
-        "_GREP_VERIFY_CACHE_VERSION",
-        grep_verify._GREP_VERIFY_CACHE_VERSION,
+    cache = GrepCache()
+
+    before = grep_verify_findings([finding], str(tmp_path), cache=cache)
+    usage.write_text(
+        "from definition import target\n\ntarget()\n",
+        encoding="utf-8",
     )
+    after = grep_verify_findings([finding], str(tmp_path), cache=cache)
 
-    first_namespace = _configure_grep_cache(tmp_path)
-    first = grep_verify._cached_group_results(cache, "imports", finding, lambda: {"imports": []})
-    usage_file.write_text("target()\n", encoding="utf-8")
-    second_namespace = _configure_grep_cache(tmp_path)
-    second = grep_verify._cached_group_results(
-        cache,
-        "imports",
-        finding,
-        lambda: {"imports": [str(usage_file)]},
-    )
-
-    assert first == {"imports": []}
-    assert second == {"imports": [str(usage_file)]}
-    assert first_namespace.startswith("v4:")
-    assert first_namespace != second_namespace
-    assert len(cache.entries) == 2
-
-
-def test_defining_file_hash_covers_bytes_after_first_eight_kibibytes(
-    tmp_path: Path,
-) -> None:
-    """Same-size edits anywhere in a defining file must invalidate its cache identity."""
-    defining_file = tmp_path / "definition.py"
-    defining_file.write_bytes(b"x" * 8192 + b"alive")
-    before = _hash_file(defining_file)
-    defining_file.write_bytes(b"x" * 8192 + b"dead!")
-
-    assert _hash_file(defining_file) != before
+    assert "definition.target" not in before
+    assert after["definition.target"].alive is True
 
 
 @pytest.mark.requires_skylos
@@ -97,7 +63,6 @@ def test_static_cache_pruning_bounds_entries_after_scan(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SKYLOS_CACHE_DIR", str(tmp_path / ".skylos"))
-    monkeypatch.setattr(skylos_cache_check, "_configure_grep_cache", lambda _root: "namespace")
     monkeypatch.setattr(skylos_cli, "main", finish_scan)
 
     with pytest.raises(SystemExit, match="1"):
@@ -134,7 +99,6 @@ def test_static_cache_pruning_failure_blocks_publication(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SKYLOS_CACHE_DIR", str(tmp_path / ".skylos"))
-    monkeypatch.setattr(skylos_cache_check, "_configure_grep_cache", lambda _root: "namespace")
     monkeypatch.setattr(skylos_cli, "main", finish_scan)
     monkeypatch.setattr(Path, "unlink", fail_unlink)
 

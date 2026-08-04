@@ -22,7 +22,7 @@ container-tests = [
 ]
 
 [tool.uv.sources]
-skylos = { git = "ssh://git@github.com/mchar7/skylos", rev = "32d0d3dd1eaa97595d45e83a08d7813eeac099a4" }
+skylos = { git = "ssh://git@github.com/mchar7/skylos", rev = "ee3c049259842c1644e94003b2a6eeb88bc40144" }
 
 # The deadcode group carries an optional runtime dependency, not dev tooling:
 # ci_checks.checks.skylos_cache imports skylos when the deadcode scan spawns it.
