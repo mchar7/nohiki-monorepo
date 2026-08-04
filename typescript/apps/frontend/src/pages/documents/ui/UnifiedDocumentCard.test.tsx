@@ -142,31 +142,27 @@ describe('UnifiedDocumentCard - completed', () => {
     expect(downloadLink).toHaveAttribute('href', 'https://example.com/doc.pdf');
   });
 
-  test.each([
-    'javascript:alert(1)',
-    'data:text/html,pwned',
-    '//evil.example/doc.pdf',
-    'not a url',
-  ])('does not expose unsafe completed URL %s as a link', (downloadUrl) => {
-    renderCard({
-      type: 'generated',
-      data: { ...GENERATED_COMPLETED.data, download_url: downloadUrl },
-    });
-    expect(screen.queryByRole('link', { name: DOWNLOAD_PATTERN })).not.toBeInTheDocument();
-  });
-  test.each([
-    'javascript:alert(1)',
-    'data:text/html,pwned',
-    '//evil.example/doc.pdf',
-    'not a url',
-  ])('does not expose uploaded unsafe URL %s as a download control', (downloadUrl) => {
-    renderCard({
-      type: 'uploaded',
-      data: { ...UPLOADED_DOC.data, download_url: downloadUrl },
-    });
-    expect(screen.queryByRole('button', { name: DOWNLOAD_PATTERN })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: DOWNLOAD_PATTERN })).not.toBeInTheDocument();
-  });
+  test.each(['javascript:alert(1)', 'data:text/html,pwned', '//evil.example/doc.pdf', 'not a url'])(
+    'does not expose unsafe completed URL %s as a link',
+    (downloadUrl) => {
+      renderCard({
+        type: 'generated',
+        data: { ...GENERATED_COMPLETED.data, download_url: downloadUrl },
+      });
+      expect(screen.queryByRole('link', { name: DOWNLOAD_PATTERN })).not.toBeInTheDocument();
+    },
+  );
+  test.each(['javascript:alert(1)', 'data:text/html,pwned', '//evil.example/doc.pdf', 'not a url'])(
+    'does not expose uploaded unsafe URL %s as a download control',
+    (downloadUrl) => {
+      renderCard({
+        type: 'uploaded',
+        data: { ...UPLOADED_DOC.data, download_url: downloadUrl },
+      });
+      expect(screen.queryByRole('button', { name: DOWNLOAD_PATTERN })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: DOWNLOAD_PATTERN })).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe('UnifiedDocumentCard - processing', () => {

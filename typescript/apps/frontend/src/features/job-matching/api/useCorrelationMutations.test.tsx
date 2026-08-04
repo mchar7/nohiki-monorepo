@@ -80,27 +80,26 @@ describe('useRecordFeedback', () => {
     vi.clearAllMocks();
   });
 
-  test.each([
-    'SAVED',
-    'APPLIED',
-    'DISMISSED',
-  ] as const)('sends the exact %s feedback payload', async (feedbackType) => {
-    mockPost.mockResolvedValue({ data: { request_id: 'test-request-id' }, error: undefined });
-    const { wrapper } = createHarness();
-    const { result } = renderHook(() => useRecordFeedback(), { wrapper });
+  test.each(['SAVED', 'APPLIED', 'DISMISSED'] as const)(
+    'sends the exact %s feedback payload',
+    async (feedbackType) => {
+      mockPost.mockResolvedValue({ data: { request_id: 'test-request-id' }, error: undefined });
+      const { wrapper } = createHarness();
+      const { result } = renderHook(() => useRecordFeedback(), { wrapper });
 
-    await act(() =>
-      result.current.mutateAsync({
+      await act(() =>
+        result.current.mutateAsync({
+          params: { path: { correlation_id: 'corr-123' } },
+          body: { feedback_type: feedbackType },
+        }),
+      );
+
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/correlations/{correlation_id}/feedback', {
         params: { path: { correlation_id: 'corr-123' } },
         body: { feedback_type: feedbackType },
-      }),
-    );
-
-    expect(mockPost).toHaveBeenCalledWith('/api/v1/correlations/{correlation_id}/feedback', {
-      params: { path: { correlation_id: 'corr-123' } },
-      body: { feedback_type: feedbackType },
-    });
-  });
+      });
+    },
+  );
 
   test('optimistically updates the exact detail and every list cache, then reconciles them', async () => {
     const request = deferred<{ data: { request_id: string }; error: undefined }>();

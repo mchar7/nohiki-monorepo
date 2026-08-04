@@ -65,27 +65,27 @@ function arrange(displayName: string | null): void {
 describe('ReviewStep name preflight', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  test.each([
-    null,
-    '   ',
-  ])('blocks generation with localized profile guidance when display name is %s', async (displayName) => {
-    const user = userEvent.setup();
-    const onGenerate = vi.fn();
-    arrange(displayName);
+  test.each([null, '   '])(
+    'blocks generation with localized profile guidance when display name is %s',
+    async (displayName) => {
+      const user = userEvent.setup();
+      const onGenerate = vi.fn();
+      arrange(displayName);
 
-    render(
-      <ReviewStep
-        state={BASE_STATE}
-        onFormDataChange={vi.fn()}
-        onGenerate={onGenerate}
-        isGenerating={false}
-      />,
-    );
-    await user.click(screen.getByRole('button', { name: 'wizard.navigation.generate' }));
+      render(
+        <ReviewStep
+          state={BASE_STATE}
+          onFormDataChange={vi.fn()}
+          onGenerate={onGenerate}
+          isGenerating={false}
+        />,
+      );
+      await user.click(screen.getByRole('button', { name: 'wizard.navigation.generate' }));
 
-    expect(onGenerate).not.toHaveBeenCalled();
-    expect(screen.getByText('wizard.review.nameRequired')).toBeInTheDocument();
-  });
+      expect(onGenerate).not.toHaveBeenCalled();
+      expect(screen.getByText('wizard.review.nameRequired')).toBeInTheDocument();
+    },
+  );
 
   test('maps display name to full_name and permits generation', async () => {
     const user = userEvent.setup();

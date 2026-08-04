@@ -41,15 +41,16 @@ function renderView(listingUrl: string): void {
 }
 
 describe('MatchDetailView listing URL', () => {
-  test.each([
-    'javascript:alert(1)',
-    'data:text/html,<script>alert(1)</script>',
-    'not a URL',
-  ])('does not render an external link for unsafe or malformed URL %s', (listingUrl) => {
-    renderView(listingUrl);
-    expect(screen.queryByRole('link', { name: 'Apply on Original Site' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Apply on Original Site' })).toBeDisabled();
-  });
+  test.each(['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'not a URL'])(
+    'does not render an external link for unsafe or malformed URL %s',
+    (listingUrl) => {
+      renderView(listingUrl);
+      expect(
+        screen.queryByRole('link', { name: 'Apply on Original Site' }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Apply on Original Site' })).toBeDisabled();
+    },
+  );
 
   test('renders a valid HTTPS external link', () => {
     renderView(CORRELATION.listing_url);

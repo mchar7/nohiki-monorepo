@@ -145,22 +145,21 @@ describe('AuthPage register form', () => {
     expect(result.error?.issues[0]?.message).toBe('Display name is required');
   });
 
-  test.each([
-    'Line\nBreak',
-    'Tabbed\tName',
-    'Null\0Name',
-  ])('blocks display name containing controls %j', (displayName) => {
-    const schema = createAuthSchema(i18n.getFixedT('en', ['auth', 'common']), 'register');
-    const result = schema.safeParse({
-      displayName,
-      email: 'international@example.com',
-      password: 'Password123!',
-      confirmPassword: 'Password123!',
-    });
+  test.each(['Line\nBreak', 'Tabbed\tName', 'Null\0Name'])(
+    'blocks display name containing controls %j',
+    (displayName) => {
+      const schema = createAuthSchema(i18n.getFixedT('en', ['auth', 'common']), 'register');
+      const result = schema.safeParse({
+        displayName,
+        email: 'international@example.com',
+        password: 'Password123!',
+        confirmPassword: 'Password123!',
+      });
 
-    expect(result.success).toBe(false);
-    expect(result.error?.issues[0]?.message).toMatch(/control characters/iu);
-  });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.message).toMatch(/control characters/iu);
+    },
+  );
 
   test('keeps display-name validation localized in every supported locale', () => {
     expect(authEn.validation.displayName.required).toBe('Display name is required');

@@ -86,17 +86,16 @@ describe('mapDataToTemplateVariables - complete data', () => {
     expect(result.full_name).toBe('J. Doe');
   });
 
-  test.each([
-    null,
-    '',
-    '   ',
-  ])('does not fabricate full_name from structured fields when display_name is %s', (displayName) => {
-    const schema: ContentSchema = { properties: { full_name: {} } };
-    const account = { ...COMPLETE_ACCOUNT, display_name: displayName };
+  test.each([null, '', '   '])(
+    'does not fabricate full_name from structured fields when display_name is %s',
+    (displayName) => {
+      const schema: ContentSchema = { properties: { full_name: {} } };
+      const account = { ...COMPLETE_ACCOUNT, display_name: displayName };
 
-    const result = mapDataToTemplateVariables(schema, null, null, account);
-    expect(result).not.toHaveProperty('full_name');
-  });
+      const result = mapDataToTemplateVariables(schema, null, null, account);
+      expect(result).not.toHaveProperty('full_name');
+    },
+  );
 
   test('falls back to first keyword when pref_name is empty', () => {
     const schema: ContentSchema = { properties: { professional_title: {} } };

@@ -205,13 +205,12 @@ describe('sanitizeUrl', () => {
 });
 
 describe('getSafeExternalUrl', () => {
-  test.each([
-    'javascript:alert(1)',
-    'data:text/html,<script>alert(1)</script>',
-    'not a URL',
-  ])('rejects unsafe or malformed URL %s', (url) => {
-    expect(getSafeExternalUrl(url)).toBe('');
-  });
+  test.each(['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'not a URL'])(
+    'rejects unsafe or malformed URL %s',
+    (url) => {
+      expect(getSafeExternalUrl(url)).toBe('');
+    },
+  );
 
   test('preserves a valid HTTPS URL', () => {
     expect(getSafeExternalUrl('https://example.com/jobs/1?source=test')).toBe(

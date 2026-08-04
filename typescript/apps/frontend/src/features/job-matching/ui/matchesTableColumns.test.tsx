@@ -257,25 +257,24 @@ describe('matchesTableColumns', () => {
       expect(dismissItem.className).toContain('text-destructive');
     });
 
-    test.each([
-      'javascript:alert(1)',
-      'data:text/html,<script>alert(1)</script>',
-      'not a URL',
-    ])('does not open unsafe or malformed listing URL %s', async (listingUrl) => {
-      const user = userEvent.setup();
-      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-      const original = mockData[0];
-      if (!original) throw new Error('expected a listing row');
-      mockData[0] = { ...original, listing_url: listingUrl };
-      renderTableWithRouter();
+    test.each(['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'not a URL'])(
+      'does not open unsafe or malformed listing URL %s',
+      async (listingUrl) => {
+        const user = userEvent.setup();
+        const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+        const original = mockData[0];
+        if (!original) throw new Error('expected a listing row');
+        mockData[0] = { ...original, listing_url: listingUrl };
+        renderTableWithRouter();
 
-      await user.click(await screen.findByRole('button', { name: 'More options' }));
-      await user.click(await screen.findByText('View Original Posting'));
+        await user.click(await screen.findByRole('button', { name: 'More options' }));
+        await user.click(await screen.findByText('View Original Posting'));
 
-      expect(openSpy).not.toHaveBeenCalled();
-      mockData[0] = { ...original, listing_url: 'https://example.com/job' };
-      openSpy.mockRestore();
-    });
+        expect(openSpy).not.toHaveBeenCalled();
+        mockData[0] = { ...original, listing_url: 'https://example.com/job' };
+        openSpy.mockRestore();
+      },
+    );
 
     test('opens a valid HTTPS listing URL', async () => {
       const user = userEvent.setup();

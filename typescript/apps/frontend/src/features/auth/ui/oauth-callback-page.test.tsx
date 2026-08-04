@@ -252,16 +252,15 @@ describe('OAuthCallbackPage error codes', () => {
       expectedMessage: 'oauth.errors.serverError',
       provider: 'google',
     },
-  ])('maps $errorCode to $expectedMessage and identifies $provider', ({
-    errorCode,
-    expectedMessage,
-    provider,
-  }) => {
-    setupMocks({ error: errorCode, provider });
-    render(<OAuthCallbackPage />);
+  ])(
+    'maps $errorCode to $expectedMessage and identifies $provider',
+    ({ errorCode, expectedMessage, provider }) => {
+      setupMocks({ error: errorCode, provider });
+      render(<OAuthCallbackPage />);
 
-    expect(screen.getByText(expectedMessage)).toBeInTheDocument();
-    expect(screen.getByText(`oauth.callback.errorDescription:${provider}`)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'oauth.callback.tryAgain' })).toBeInTheDocument();
-  });
+      expect(screen.getByText(expectedMessage)).toBeInTheDocument();
+      expect(screen.getByText(`oauth.callback.errorDescription:${provider}`)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'oauth.callback.tryAgain' })).toBeInTheDocument();
+    },
+  );
 });

@@ -58,19 +58,18 @@ describe('ProfileSection display name contract', () => {
     expect(mockUpdateAccount).not.toHaveBeenCalled();
   });
 
-  test.each([
-    '',
-    '   ',
-    '\u00a0\u2003',
-  ])('rejects explicit blank display name %j', async (value) => {
-    const user = userEvent.setup();
-    renderProfile();
+  test.each(['', '   ', '\u00a0\u2003'])(
+    'rejects explicit blank display name %j',
+    async (value) => {
+      const user = userEvent.setup();
+      renderProfile();
 
-    fireEvent.change(screen.getByLabelText(/display name/iu), { target: { value } });
-    await user.click(screen.getByRole('button', { name: /save changes/iu }));
+      fireEvent.change(screen.getByLabelText(/display name/iu), { target: { value } });
+      await user.click(screen.getByRole('button', { name: /save changes/iu }));
 
-    expect(mockUpdateAccount).not.toHaveBeenCalled();
-  });
+      expect(mockUpdateAccount).not.toHaveBeenCalled();
+    },
+  );
 
   test('normalizes display name while first and last names remain optional', async () => {
     const user = userEvent.setup();
