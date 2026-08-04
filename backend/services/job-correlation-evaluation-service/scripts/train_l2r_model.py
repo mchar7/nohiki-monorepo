@@ -28,6 +28,7 @@ import joblib
 import lightgbm as lgb
 import numpy as np
 import typer
+from job_correlation_evaluation_service.services.feedback_service import TrainingExportSample
 from job_correlation_evaluation_service.services.scoring.constants import (
     FEATURE_COUNT,
     FEATURE_NAMES,
@@ -100,7 +101,7 @@ async def _export_from_db(
     min_date: datetime | None,
     max_date: datetime | None,
     limit: int,
-) -> list[dict[str, str | float | list[float]]]:
+) -> list[TrainingExportSample]:
     """Export training data from database."""
     from job_correlation_evaluation_service.repositories.correlation_repository import (
         CorrelationRepository,
@@ -127,29 +128,29 @@ async def _export_from_db(
     return samples
 
 
-def _export_from_file(data_file: Path) -> list[dict[str, str | float | list[float]]]:
+def _export_from_file(data_file: Path) -> list[TrainingExportSample]:
     """Load training data from JSON file."""
     if not data_file.exists():
         msg = f"Training data file not found: {data_file}"
         raise typer.BadParameter(msg)
 
-    return json.loads(data_file.read_text())
+    return cast("list[TrainingExportSample]", json.loads(data_file.read_text()))
 
 
 def _group_samples_by_query(
-    samples: Sequence[dict[str, str | float | list[float]]],
-) -> dict[str, list[dict[str, str | float | list[float]]]]:
+    samples: Sequence[TrainingExportSample],
+) -> dict[str, list[TrainingExportSample]]:
     """Group samples by query_id."""
-    query_samples: dict[str, list[dict[str, str | float | list[float]]]] = {}
+    query_samples: dict[str, list[TrainingExportSample]] = {}
     for sample in samples:
-        query_id = str(sample["query_id"])
+        query_id = sample["query_id"]
         if query_id not in query_samples:
             query_samples[query_id] = []
         query_samples[query_id].append(sample)
     return query_samples
 
 
-def _extract_and_convert_label(sample: dict[str, str | float | list[float]]) -> int:
+def _extract_and_convert_label(sample: TrainingExportSample) -> int:
     """Extract label and convert to integer for LightGBM ranking."""
     label = sample["label"]
     if not isinstance(label, (int, float)):
@@ -167,7 +168,7 @@ def _extract_and_convert_label(sample: dict[str, str | float | list[float]]) -> 
 
 
 def _prepare_training_data(
-    samples: Sequence[dict[str, str | float | list[float]]],
+    samples: Sequence[TrainingExportSample],
 ) -> tuple[NDArray[np.floating[Any]], NDArray[np.signedinteger[Any]], list[int], list[str]]:
     """Convert samples to numpy arrays for LightGBM training."""
     if not samples:
@@ -490,7 +491,7 @@ async def _run_training_pipeline(
     console.rule("[bold blue]L2R Model Training Pipeline[/bold blue]")
 
     console.print("\n[bold]Step 1/6:[/bold] Exporting training data...")
-    samples: list[dict[str, str | float | list[float]]]
+    samples: list[TrainingExportSample]
     if data_file:
         console.print(f"  Loading from file: {data_file}")
         samples = _export_from_file(data_file)

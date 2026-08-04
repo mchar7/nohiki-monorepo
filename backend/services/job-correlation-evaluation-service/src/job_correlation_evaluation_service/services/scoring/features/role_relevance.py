@@ -57,16 +57,10 @@ def role_relevance(listing: ListingSnapshot, profile: SearchPrefSnapshot) -> flo
 
     Search discovery terms preserve the user's primary role phrase first. The
     first normalized multi-token term is therefore role identity; later terms
-    remain skills for semantic and skill factors. ``pref_name`` is only a
-    legacy fallback when no role-shaped search term exists.
+    remain skills for semantic and skill factors.
     """
-    role_text = _first_role_phrase(getattr(profile, "search_keywords", ()))
-    if role_text is None:
-        candidate = getattr(profile, "pref_name", None)
-        role_text = candidate if isinstance(candidate, str) else None
-    role_tokens = _identity_tokens(role_text or "")
-    title = getattr(listing, "title", None)
-    title_tokens = _identity_tokens(title if isinstance(title, str) else "")
+    role_tokens = _identity_tokens(_first_role_phrase(profile.search_keywords) or "")
+    title_tokens = _identity_tokens(listing.title)
     if not role_tokens or not title_tokens:
         return None
 
@@ -83,24 +77,16 @@ def role_relevance(listing: ListingSnapshot, profile: SearchPrefSnapshot) -> flo
     return max(0.0, min(1.0, 0.75 * coverage + 0.25 * precision))
 
 
-def _first_role_phrase(keywords: Iterable[object]) -> str | None:
-    """Return the first string search term with at least two identity tokens."""
-    if isinstance(keywords, str):
-        return None
-    try:
-        iterator = iter(keywords)
-    except TypeError:
-        return None
-    for keyword in iterator:
-        if isinstance(keyword, str) and len(_identity_tokens(keyword)) >= _MIN_ROLE_TOKENS:
+def _first_role_phrase(keywords: Iterable[str]) -> str | None:
+    """Return the first search term with at least two identity tokens."""
+    for keyword in keywords:
+        if len(_identity_tokens(keyword)) >= _MIN_ROLE_TOKENS:
             return keyword
     return None
 
 
 def _identity_tokens(text: str) -> tuple[str, ...]:
     """Tokenize and drop generic title/seniority words."""
-    if not isinstance(text, str):
-        return ()
     return tuple(
         token
         for token in _TOKEN_PATTERN.findall(text.lower())

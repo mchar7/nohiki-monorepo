@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from nohiki.feedback.v1 import ScoreFeedbackType
@@ -128,27 +128,9 @@ class FeedbackRepository:
         self,
         correlation_id: UUID,
         user_id: UUID,
-        adjustment: ManualAdjustmentCreate | None = None,
-        **legacy_fields: float | str | None,
+        adjustment: ManualAdjustmentCreate,
     ) -> ManualAdjustmentModel:
-        """Create an idempotent, finite manual score adjustment.
-
-        Args:
-            correlation_id: The correlation being adjusted.
-            user_id: The user providing the adjustment.
-            adjustment: Typed adjustment fields.
-            **legacy_fields: Backward-compatible keyword fields for direct callers.
-
-        Returns:
-            The created adjustment model.
-        """
-        if adjustment is None:
-            adjustment = ManualAdjustmentCreate(
-                original_score=cast("float", legacy_fields["original_score"]),
-                adjusted_score=cast("float", legacy_fields["adjusted_score"]),
-                reasoning=cast("str", legacy_fields["reasoning"]),
-                request_id=cast("str | None", legacy_fields.get("request_id")),
-            )
+        """Create an idempotent, finite manual score adjustment."""
         original_score = adjustment.original_score
         adjusted_score = adjustment.adjusted_score
         reasoning = adjustment.reasoning

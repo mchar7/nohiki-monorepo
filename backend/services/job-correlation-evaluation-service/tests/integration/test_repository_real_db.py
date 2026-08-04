@@ -14,6 +14,7 @@ from job_correlation_evaluation_service.db.models import Correlation, ProfilePro
 from job_correlation_evaluation_service.repositories.correlation_repository import (
     CorrelationNotFoundError,
     CorrelationRepository,
+    CorrelationUpdate,
 )
 from job_correlation_evaluation_service.repositories.match_record_repository import (
     MatchRecordRepository,
@@ -214,8 +215,7 @@ class TestCorrelationRepositoryRealDB:
 
         updated = await repo.update(
             sample_correlation.id,
-            is_viewed=True,
-            user_feedback=UserFeedback.POSITIVE,
+            CorrelationUpdate(is_viewed=True, user_feedback=UserFeedback.POSITIVE),
         )
 
         assert updated.is_viewed is True
@@ -238,7 +238,7 @@ class TestCorrelationRepositoryRealDB:
         missing_id = uuid.uuid4()
 
         with pytest.raises(CorrelationNotFoundError):
-            await repo.update(missing_id, is_viewed=True)
+            await repo.update(missing_id, CorrelationUpdate(is_viewed=True))
 
     @pytest.mark.asyncio
     async def test_get_feedback_stats_aggregates_correctly(

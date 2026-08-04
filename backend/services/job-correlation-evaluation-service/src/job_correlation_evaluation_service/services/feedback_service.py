@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from functools import partial
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, TypedDict
 from uuid import UUID
 
 from nohiki.common.v1 import UserFeedback
@@ -20,6 +19,16 @@ if TYPE_CHECKING:
     from job_correlation_evaluation_service.db.models import Correlation
 
 logger = get_logger(__name__)
+
+
+class TrainingExportSample(TypedDict):
+    """Canonical training row shared by event export and model training."""
+
+    correlation_id: str
+    label: float
+    features: list[float]
+    query_id: str
+    feature_schema_version: str
 
 
 class CorrelationFeedbackService:
@@ -87,12 +96,7 @@ class CorrelationFeedbackService:
         else:
             msg = f"Unknown feedback type: {feedback_type}"
             raise ValueError(msg)
-        update_correlation = partial(
-            self._repo.update,
-            correlation_id,
-            **({"user_id": user_id} if user_id is not None else {}),
-        )
-        return await update_correlation(**changes.values())
+        return await self._repo.update(correlation_id, changes, user_id=user_id)
 
     async def get_stats(self) -> dict[str, int | dict[str, int]]:
         """Get feedback statistics for monitoring and analytics.
@@ -111,32 +115,15 @@ class CorrelationFeedbackService:
         min_date: datetime | None = None,
         max_date: datetime | None = None,
         limit: int = 10000,
-    ) -> list[dict[str, str | float | list[float]]]:
-        """Export training data for L2R model training.
-
-        Exports correlations with feedback signals in a format suitable for
-        LightGBM LambdaMART training. Each sample includes:
-        - correlation_id: Unique identifier
-        - label: Computed relevance label (0.0 - 5.0)
-        - features: Feature vector stored at scoring time
-        - query_id: User ID for LambdaMART grouping
-
-        Args:
-            min_date: Optional minimum creation date filter
-            max_date: Optional maximum creation date filter
-            limit: Maximum samples to export (default 10000)
-
-        Returns:
-            List of training samples with computed labels
-
-        """
+    ) -> list[TrainingExportSample]:
+        """Export correlations with feedback as canonical L2R training rows."""
         correlations = await self._repo.get_for_training(
             min_date=min_date,
             max_date=max_date,
             limit=limit,
         )
 
-        samples: list[dict[str, str | float | list[float]]] = []
+        samples: list[TrainingExportSample] = []
         for corr in correlations:
             label = self._compute_label(corr)
             if label is not None and corr.feature_vector is not None:
@@ -157,7 +144,6 @@ class CorrelationFeedbackService:
             min_date=str(min_date) if min_date else None,
             max_date=str(max_date) if max_date else None,
         )
-
         return samples
 
     def _compute_label(self, correlation: Correlation) -> float | None:

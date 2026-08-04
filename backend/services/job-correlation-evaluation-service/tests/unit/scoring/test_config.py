@@ -17,7 +17,6 @@ from job_correlation_evaluation_service.services.scoring.config import (
     LocationScoringConfig,
     ScoringServiceSettings,
     SkillScoringConfig,
-    get_scoring_config,
     get_scoring_service_settings,
     reset_scoring_service_settings,
 )
@@ -243,13 +242,6 @@ class TestSingletonPattern:
         instance2 = get_scoring_service_settings()
 
         assert instance1 is not instance2
-
-    def test_get_scoring_config_alias_returns_same_instance(self) -> None:
-        """Test get_scoring_config is an alias for get_scoring_service_settings."""
-        instance1 = get_scoring_service_settings()
-        instance2 = get_scoring_config()
-
-        assert instance1 is instance2
 
 
 class TestEnvironmentVariableOverrides:

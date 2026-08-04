@@ -63,12 +63,6 @@ def _build_fit_ranking_breakdown(result: JobMatchResult) -> FitRankingBreakdown:
     return FitRankingBreakdown(method_version=FIT_RANKING_METHOD_VERSION, factors=factors)
 
 
-def _serialize_correlation_metadata(result: JobMatchResult) -> dict[str, str]:
-    """Serialize the legacy metadata map as empty until typed attribution exists."""
-    del result
-    return {}
-
-
 def _build_listing_notification_snapshot(
     job: ListingSnapshot,
 ) -> ListingNotificationSnapshot:
@@ -132,7 +126,6 @@ async def publish_correlation_evaluated(
         correlation_id=str(result.correlation_id),
         fit_score=result.score,
         correlation_status=result.status,
-        correlation_metadata=_serialize_correlation_metadata(result),
         fit_ranking_breakdown=_build_fit_ranking_breakdown(result),
         listing_snapshot=listing_snapshot,
         pref_snapshot=context.profile,
