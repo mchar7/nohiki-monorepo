@@ -79,18 +79,18 @@ describe('Login', () => {
     expect(mockNavigate).toHaveBeenCalledWith({ to: '/', replace: true });
   });
 
-  test.each([
-    '//attacker.example/steal',
-    '/\\attacker.example/steal',
-  ])('navigates home instead of following unsafe returnUrl %s', async (returnUrl) => {
-    const user = userEvent.setup();
-    render(<Login returnUrl={returnUrl} />);
+  test.each(['//attacker.example/steal', '/\\attacker.example/steal'])(
+    'navigates home instead of following unsafe returnUrl %s',
+    async (returnUrl) => {
+      const user = userEvent.setup();
+      render(<Login returnUrl={returnUrl} />);
 
-    await user.click(screen.getByRole('button', { name: 'Complete Auth' }));
+      await user.click(screen.getByRole('button', { name: 'Complete Auth' }));
 
-    expect(mockNavigate).toHaveBeenCalledWith({ to: '/', replace: true });
-    expect(mockNavigate).not.toHaveBeenCalledWith(
-      expect.objectContaining({ href: expect.any(String) }),
-    );
-  });
+      expect(mockNavigate).toHaveBeenCalledWith({ to: '/', replace: true });
+      expect(mockNavigate).not.toHaveBeenCalledWith(
+        expect.objectContaining({ href: expect.any(String) }),
+      );
+    },
+  );
 });

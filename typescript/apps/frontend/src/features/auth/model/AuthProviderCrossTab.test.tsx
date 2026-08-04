@@ -68,24 +68,27 @@ describe('AuthProvider remote auth transitions', () => {
   test.each<[string, string | null]>([
     ['logout', null],
     ['account switch', 'other-user'],
-  ])('clears private memory and persistence once on remote %s while preserving public cache', async (_label, userId) => {
-    const queryClient = new QueryClient();
-    queryClient.setQueryData(['profiles'], [{ id: 'private-profile' }]);
-    queryClient.setQueryData(['skills', 'public'], [{ id: 'typescript' }]);
-    const cancelQueries = vi.spyOn(queryClient, 'cancelQueries');
+  ])(
+    'clears private memory and persistence once on remote %s while preserving public cache',
+    async (_label, userId) => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['profiles'], [{ id: 'private-profile' }]);
+      queryClient.setQueryData(['skills', 'public'], [{ id: 'typescript' }]);
+      const cancelQueries = vi.spyOn(queryClient, 'cancelQueries');
 
-    await renderProvider(queryClient);
-    await act(async () => remoteTransition?.(userId));
+      await renderProvider(queryClient);
+      await act(async () => remoteTransition?.(userId));
 
-    await waitFor(() => expect(globalThis.location.href).toBe('/auth'));
-    expect(cancelQueries).toHaveBeenCalledTimes(1);
-    expect(mocks.clearPersistence).toHaveBeenCalledTimes(1);
-    expect(mocks.resetResources).toHaveBeenCalledTimes(1);
-    expect(useAppStore.getState().session).toBeNull();
-    expect(useAppStore.getState().selectedProfileId).toBeNull();
-    expect(queryClient.getQueryData(['profiles'])).toBeUndefined();
-    expect(queryClient.getQueryData(['skills', 'public'])).toEqual([{ id: 'typescript' }]);
-  });
+      await waitFor(() => expect(globalThis.location.href).toBe('/auth'));
+      expect(cancelQueries).toHaveBeenCalledTimes(1);
+      expect(mocks.clearPersistence).toHaveBeenCalledTimes(1);
+      expect(mocks.resetResources).toHaveBeenCalledTimes(1);
+      expect(useAppStore.getState().session).toBeNull();
+      expect(useAppStore.getState().selectedProfileId).toBeNull();
+      expect(queryClient.getQueryData(['profiles'])).toBeUndefined();
+      expect(queryClient.getQueryData(['skills', 'public'])).toEqual([{ id: 'typescript' }]);
+    },
+  );
 
   test('clears user-scoped openapi-react-query keys whose first segment is the HTTP method', async () => {
     const queryClient = new QueryClient();

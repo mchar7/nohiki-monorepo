@@ -201,12 +201,11 @@ describe('JobActions', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
-  test.each([
-    'javascript:alert(1)',
-    'data:text/html,<script>alert(1)</script>',
-    'not a URL',
-  ])('does not render a link for unsafe or malformed URL %s', (listingUrl) => {
-    renderDetail({ listing_url: listingUrl });
-    expect(screen.queryByRole('link', { name: VIEW_ORIGINAL_RE })).not.toBeInTheDocument();
-  });
+  test.each(['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'not a URL'])(
+    'does not render a link for unsafe or malformed URL %s',
+    (listingUrl) => {
+      renderDetail({ listing_url: listingUrl });
+      expect(screen.queryByRole('link', { name: VIEW_ORIGINAL_RE })).not.toBeInTheDocument();
+    },
+  );
 });

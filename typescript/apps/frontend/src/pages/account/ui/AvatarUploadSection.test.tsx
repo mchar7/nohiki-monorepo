@@ -47,11 +47,12 @@ describe('AvatarUploadSection fallback priority', () => {
   test.each([
     [{ first_name: '李', last_name: null }, '李'],
     [{ first_name: null, last_name: 'O’Connor' }, 'O'],
-  ] satisfies ReadonlyArray<
-    readonly [Partial<UserResponse>, string]
-  >)('supports either optional structured name %#', (overrides, expected) => {
-    expect(renderFallback({ display_name: null, ...overrides })).toHaveTextContent(expected);
-  });
+  ] satisfies ReadonlyArray<readonly [Partial<UserResponse>, string]>)(
+    'supports either optional structured name %#',
+    (overrides, expected) => {
+      expect(renderFallback({ display_name: null, ...overrides })).toHaveTextContent(expected);
+    },
+  );
 
   test('uses email only when no display or structured name is available', () => {
     expect(

@@ -66,24 +66,23 @@ describe('PreviewPane JavaScript warning integration', () => {
       method: 'html' as const,
       remember: true,
     },
-  ])('passes the $method choice and remember preference through the component boundary', async ({
-    buttonName,
-    method,
-    remember,
-  }) => {
-    const user = userEvent.setup();
-    render(<PreviewPane showHeader={false} templateId="template-1" />);
+  ])(
+    'passes the $method choice and remember preference through the component boundary',
+    async ({ buttonName, method, remember }) => {
+      const user = userEvent.setup();
+      render(<PreviewPane showHeader={false} templateId="template-1" />);
 
-    if (remember) {
-      await user.click(
-        screen.getByRole('checkbox', {
-          name: 'Don\'t ask again for "Test Template@1.0.0"',
-        }),
-      );
-    }
-    await user.click(screen.getByRole('button', { name: buttonName }));
+      if (remember) {
+        await user.click(
+          screen.getByRole('checkbox', {
+            name: 'Don\'t ask again for "Test Template@1.0.0"',
+          }),
+        );
+      }
+      await user.click(screen.getByRole('button', { name: buttonName }));
 
-    expect(mockHandleJsChoice).toHaveBeenCalledOnce();
-    expect(mockHandleJsChoice).toHaveBeenCalledWith(method, remember);
-  });
+      expect(mockHandleJsChoice).toHaveBeenCalledOnce();
+      expect(mockHandleJsChoice).toHaveBeenCalledWith(method, remember);
+    },
+  );
 });

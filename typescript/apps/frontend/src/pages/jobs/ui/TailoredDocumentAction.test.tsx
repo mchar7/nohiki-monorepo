@@ -245,19 +245,19 @@ describe('TailoredDocumentAction', () => {
       sse: { status: 'failed', error: 'Rendering failed' },
       expected: 'Generation failed',
     },
-  ])('shows existing GenerationProgress in the $state terminal state', async ({
-    sse,
-    expected,
-  }) => {
-    vi.mocked(useDocumentSSE).mockReturnValue(sseResult(sse));
-    mutate.mockImplementation((_variables, options) => {
-      options.onSuccess({ request_id: 'request-99', status: 'accepted' });
-    });
-    const user = await openAction();
-    await chooseTemplate(user);
-    await user.click(screen.getByRole('button', { name: 'Generate document' }));
+  ])(
+    'shows existing GenerationProgress in the $state terminal state',
+    async ({ sse, expected }) => {
+      vi.mocked(useDocumentSSE).mockReturnValue(sseResult(sse));
+      mutate.mockImplementation((_variables, options) => {
+        options.onSuccess({ request_id: 'request-99', status: 'accepted' });
+      });
+      const user = await openAction();
+      await chooseTemplate(user);
+      await user.click(screen.getByRole('button', { name: 'Generate document' }));
 
-    await waitFor(() => expect(useDocumentSSE).toHaveBeenCalledWith('request-99'));
-    expect(screen.getByText(expected)).toBeVisible();
-  });
+      await waitFor(() => expect(useDocumentSSE).toHaveBeenCalledWith('request-99'));
+      expect(screen.getByText(expected)).toBeVisible();
+    },
+  );
 });
