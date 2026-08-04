@@ -41,25 +41,9 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
-
-      - name: Cache uv downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/uv
-          key: uv-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            uv-v2-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Cache workspace virtual environment
-        id: venv-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .venv
-          key: venv-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock', '**/pyproject.toml', '.python-version', 'flake.nix', 'flake.lock') }}
+          gc-max-store-size-linux: "0"
 
       - name: Install workspace (all packages + extras)
-        if: steps.venv-cache.outputs.cache-hit != 'true'
         run: |
           # shellcheck disable=SC2016 # $(command -v python) must expand inside the nix shell, not here
           nix develop .#ci --command bash -euc '
@@ -93,7 +77,6 @@ jobs:
       - name: Report probe and workflow accounting
         if: always()
         env:
-          CACHE_HIT: ${{ steps.venv-cache.outputs.cache-hit }}
           GH_TOKEN: ${{ github.token }}
           JOB_STARTED: ${{ steps.timing.outputs.started }}
           REPO: ${{ github.repository }}
@@ -131,7 +114,6 @@ jobs:
             echo "- wall_seconds=$wall_seconds"
             echo "- reconstructed_billable_minutes=$billable_minutes"
             echo "- R=$ratio"
-            echo "- cache_hit=${CACHE_HIT:-unknown}"
             echo "- setup_seconds=$((UNIQUE_STARTED - JOB_STARTED))"
             echo "- unique_work_seconds=$((observed_epoch - UNIQUE_STARTED))"
             echo "- command_inventory=ci-checks image-freshness; digest rot issue synchronization; jobs API accounting aggregation"
