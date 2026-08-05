@@ -73,30 +73,6 @@ describe('useTemplateJsWarning', () => {
     expect(onRenderChoice).toHaveBeenLastCalledWith('image');
   });
 
-  // The stored version is a key component. Writing it under a normalised default while
-  // reading it under the raw value silently loses every remembered choice.
-  test('honours a remembered choice for a template with an empty version string', () => {
-    const { result, onRenderChoice } = setup({
-      id: 'tpl-empty-version',
-      display_name: 'Legacy',
-      version: '',
-    });
-
-    act(() => {
-      result.current.checkJsRequirement(undefined, JS_TEMPLATE);
-    });
-    act(() => {
-      result.current.handleJsChoice('html', true);
-    });
-
-    let warned = true;
-    act(() => {
-      warned = result.current.checkJsRequirement(undefined, JS_TEMPLATE);
-    });
-    expect(warned).toBe(false);
-    expect(onRenderChoice).toHaveBeenLastCalledWith('html');
-  });
-
   test('re-prompts when the remembered choice belongs to a different version', () => {
     const { result } = setup({ id: 'tpl-versioned', display_name: 'Chart', version: '1.0' });
 

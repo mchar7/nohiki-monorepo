@@ -17,10 +17,6 @@ export interface OmakaseTemplateMetadata {
   version: string;
   engine: string;
   pageSize: PageSize;
-  requiresJavaScript?: {
-    required: boolean;
-    reason?: string;
-  };
 }
 
 export type ValidationLevelType = 'error' | 'warning' | 'info';

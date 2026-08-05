@@ -5,7 +5,6 @@ import {
   CACHE_FRESH_SECONDS,
   CACHE_KEY_PREFIX,
   CACHE_SWR_SECONDS,
-  CACHE_VERSION,
   DEFAULT_COUNTRY_ALPHA3,
   WORKER_SERVICE_NAME,
   WORKER_SERVICE_VERSION,
@@ -39,10 +38,6 @@ describe('constants', () => {
 
   it('CACHE_KEY_PREFIX is the internal cache URL', () => {
     expect(CACHE_KEY_PREFIX).toBe('https://cache.internal/auth-listings');
-  });
-
-  it('CACHE_VERSION is v1', () => {
-    expect(CACHE_VERSION).toBe('v1');
   });
 
   it('DEFAULT_COUNTRY_ALPHA3 is USA', () => {

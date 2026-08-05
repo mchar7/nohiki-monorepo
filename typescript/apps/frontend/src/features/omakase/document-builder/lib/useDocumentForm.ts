@@ -17,10 +17,6 @@ function resolveSchema(schema: JSONSchemaProperty): JSONSchemaProperty | null {
       return schema;
     }
 
-    if ('schema' in schema && schema.schema) {
-      return schema.schema as JSONSchemaProperty;
-    }
-
     return null;
   } catch (error) {
     logger.error('DocumentForm: Failed to resolve schema', error);

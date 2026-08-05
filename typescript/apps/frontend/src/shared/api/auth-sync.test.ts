@@ -93,6 +93,12 @@ describe('cross-tab auth transitions', () => {
         newValue: JSON.stringify({ userId: 42, nonce: 'invalid' }),
       }),
     );
+    globalThis.dispatchEvent(
+      new StorageEvent('storage', {
+        key: AUTH_TRANSITION_STORAGE_KEY,
+        newValue: JSON.stringify({ userId: 'missing-nonce' }),
+      }),
+    );
 
     expect(handler).not.toHaveBeenCalled();
     unsubscribe();

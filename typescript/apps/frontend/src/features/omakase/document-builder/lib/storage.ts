@@ -1,4 +1,4 @@
-import { clear, del, get, keys, set } from 'idb-keyval';
+import { del, get, keys, set } from 'idb-keyval';
 
 interface StorageItem<T = unknown> {
   id: string;
@@ -184,18 +184,4 @@ async function clearAllStorage(): Promise<void> {
   await Promise.all([templateStorage.clear(), datasetStorage.clear()]);
 }
 
-async function migrateStorage(version: string): Promise<void> {
-  const migrationKey = `migration:${version}`;
-  const migrated = localStorage.getItem(migrationKey);
-
-  if (!migrated) {
-    try {
-      await clear();
-      localStorage.setItem(migrationKey, 'true');
-    } catch {
-      // Migration failure is non-critical - storage will be cleared on next migration attempt
-    }
-  }
-}
-
-export { clearAllStorage, datasetStorage, getStorageQuota, migrateStorage, templateStorage };
+export { clearAllStorage, datasetStorage, getStorageQuota, templateStorage };

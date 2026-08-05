@@ -1,5 +1,5 @@
 import { describe, expect } from 'vitest';
-import { detectJavaScript, hasJsDeclaration, shouldShowJsWarning } from './jsDetector.ts';
+import { detectJavaScript, shouldShowJsWarning } from './jsDetector.ts';
 
 describe('detectJavaScript - script tags and modules', () => {
   test('detects basic script tags', () => {
@@ -127,19 +127,5 @@ describe('shouldShowJsWarning', () => {
   test('returns false when no JavaScript is detected', () => {
     const html = '<html><body><h1>Plain HTML</h1></body></html>';
     expect(shouldShowJsWarning(html)).toBe(false);
-  });
-});
-
-describe('hasJsDeclaration', () => {
-  test('returns true when requiresJavaScript.required is true', () => {
-    expect(hasJsDeclaration({ requiresJavaScript: { required: true } })).toBe(true);
-  });
-
-  test('returns false when requiresJavaScript.required is false', () => {
-    expect(hasJsDeclaration({ requiresJavaScript: { required: false } })).toBe(false);
-  });
-
-  test('returns false when requiresJavaScript is undefined', () => {
-    expect(hasJsDeclaration({})).toBe(false);
   });
 });

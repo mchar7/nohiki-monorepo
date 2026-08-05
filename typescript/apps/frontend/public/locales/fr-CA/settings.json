@@ -45,7 +45,6 @@
       "unknownError": "Une erreur inconnue s'est produite"
     },
     "healthCheck": {
-      "componentHealth": "État des composants :",
       "failedAfter": "Échec après {{latency}}ms",
       "serviceStatus": "État du service :"
     },

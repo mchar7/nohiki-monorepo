@@ -28,12 +28,14 @@ function subscribeToAuthTransitions(handler: AuthTransitionHandler): () => void 
     if (event.key !== AUTH_TRANSITION_STORAGE_KEY || event.newValue === null) return;
 
     try {
-      const transition = JSON.parse(event.newValue) as Partial<AuthTransition>;
-      if (transition.userId === null || typeof transition.userId === 'string') {
-        handler(transition.userId);
+      const transition: unknown = JSON.parse(event.newValue);
+      if (typeof transition !== 'object' || transition === null) return;
+      const { nonce, userId } = transition as Record<string, unknown>;
+      if (typeof nonce === 'string' && (userId === null || typeof userId === 'string')) {
+        handler(userId);
       }
     } catch {
-      // Ignore malformed values written by unrelated or older clients.
+      // Ignore malformed values.
     }
   };
 
