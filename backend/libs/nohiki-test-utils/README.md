@@ -116,9 +116,9 @@ pytest_plugins = ["nohiki_test_utils.plugins"]
   `user_id` UUID and `username: "testuser"` claim. Use for authenticated endpoint tests
   that need a structurally valid token but do not verify signatures.
 
-- **`sample_user_headers`** -- Function-scoped. Returns `{"Authorization": "Bearer <token>",
-  "X-Account-ID": "<uuid>"}` composed from `valid_user_token` and `sample_user_id`
-  (expected to be provided by the consuming service's own conftest).
+- **`sample_user_headers`** -- Function-scoped. Returns `{"Authorization": "Bearer <token>"}`
+  composed from `valid_user_token`. Authorization is the only identity header the fixture
+  emits, so a test that needs another header adds it explicitly.
 
 - **`valid_internal_token`** -- Module-level constant (not a fixture). Pre-generated token
   with `service: "test-service"` and `role: "internal"` claims. Use when a test needs
