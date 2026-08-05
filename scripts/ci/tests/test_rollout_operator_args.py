@@ -4,6 +4,7 @@ import re
 import subprocess
 import tarfile
 from pathlib import Path
+from typing import TypeIs
 
 import yaml
 from _documents import (
@@ -11,6 +12,8 @@ from _documents import (
     containers_of,
     load_manifests,
     load_mapping,
+    mapping_at,
+    mapping_sequence_at,
     metadata_of,
     string_at,
 )
@@ -23,11 +26,13 @@ _PINNED_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}")
 _PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
 
 
+def _is_string_mapping(value: object) -> TypeIs[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
 def _mimir_dependency() -> dict[str, object]:
-    lock = load_mapping(_CHART / "Chart.lock")
-    dependencies = lock["dependencies"]
-    assert isinstance(dependencies, list)
-    return next(item for item in dependencies if isinstance(item, dict) and item.get("name") == "mimir-distributed")
+    dependencies = mapping_sequence_at(load_mapping(_CHART / "Chart.lock"), "dependencies")
+    return next(item for item in dependencies if item.get("name") == "mimir-distributed")
 
 
 def _archived_mapping(member: str) -> dict[str, object]:
@@ -37,7 +42,7 @@ def _archived_mapping(member: str) -> dict[str, object]:
         metadata_file = archive.extractfile(f"{dependency['name']}/charts/{_ROLLOUT_CHART}/{member}")
         assert metadata_file is not None
         metadata: object = yaml.safe_load(metadata_file)
-    assert isinstance(metadata, dict)
+    assert _is_string_mapping(metadata)
     return metadata
 
 
@@ -49,15 +54,13 @@ def _rollout_chart_app_version() -> str:
 
 
 def _rollout_image(image_tag: str) -> str:
-    defaults = _archived_mapping("values.yaml")["image"]
-    assert isinstance(defaults, dict)
-    root_values = load_mapping(_CHART / "values.yaml")
-    mimir_values = root_values["mimir-distributed"]
-    assert isinstance(mimir_values, dict)
-    rollout_values = mimir_values["rollout_operator"]
-    assert isinstance(rollout_values, dict)
-    image_values = rollout_values["image"]
-    assert isinstance(image_values, dict)
+    defaults = mapping_at(_archived_mapping("values.yaml"), "image")
+    image_values = mapping_at(
+        load_mapping(_CHART / "values.yaml"),
+        "mimir-distributed",
+        "rollout_operator",
+        "image",
+    )
     registry = image_values.get("registry", defaults["registry"])
     repository = image_values.get("repository", defaults["repository"])
     return f"{registry}/{repository}:{image_tag}"
@@ -108,11 +111,11 @@ def test_rollout_operator_image_and_args_match_nested_chart_contract() -> None:
 
     assert _PINNED_TAG.fullmatch(image_tag)
     assert image_tag.partition("@")[0] == app_version
-    local_values = load_mapping(_CHART / "values.local.yaml")
-    local_mimir = local_values.get("mimir-distributed")
-    assert isinstance(local_mimir, dict)
-    local_rollout_operator = local_mimir.get("rollout_operator")
-    assert isinstance(local_rollout_operator, dict)
+    local_rollout_operator = mapping_at(
+        load_mapping(_CHART / "values.local.yaml"),
+        "mimir-distributed",
+        "rollout_operator",
+    )
     assert local_rollout_operator.get("enabled") is False
 
     container = _render_rollout_container()

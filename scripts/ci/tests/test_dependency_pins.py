@@ -10,7 +10,7 @@ from functools import cache
 from pathlib import Path
 from typing import cast
 
-from _documents import WorkflowJob, WorkflowStep, load_jsonc, load_mapping, load_workflow
+from _documents import WorkflowJob, WorkflowStep, load_jsonc, load_mapping, load_workflow, mapping_sequence_at
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RENOVATE = _ROOT / ".github" / "renovate.json5"
@@ -264,14 +264,9 @@ def _workspace_member_names() -> set[str]:
 
 
 def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
-    rules = _renovate_config()["packageRules"]
-    assert isinstance(rules, list)
-    typed_rules = [rule for rule in rules if isinstance(rule, dict)]
-    assert len(typed_rules) == len(rules)
+    rules = mapping_sequence_at(_renovate_config(), "packageRules")
 
-    pypi_rules = [
-        rule for rule in typed_rules if rule.get("enabled") is False and rule.get("matchDatasources") == ["pypi"]
-    ]
+    pypi_rules = [rule for rule in rules if rule.get("enabled") is False and rule.get("matchDatasources") == ["pypi"]]
     assert len(pypi_rules) == 1
     package_names = pypi_rules[0].get("matchPackageNames")
     assert isinstance(package_names, list)
@@ -288,14 +283,13 @@ def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
         rule.get("enabled") is False
         and rule.get("matchDatasources") == ["git-refs"]
         and rule.get("matchPackageNames") == ["ssh://git@github.com/mchar7/skylos"]
-        for rule in typed_rules
+        for rule in rules
     )
 
 
 def test_renovate_abandonment_suppression_is_limited_to_verified_false_positives() -> None:
-    rules = _renovate_config()["packageRules"]
-    assert isinstance(rules, list)
-    threshold_rules = [rule for rule in rules if isinstance(rule, dict) and "abandonmentThreshold" in rule]
+    rules = mapping_sequence_at(_renovate_config(), "packageRules")
+    threshold_rules = [rule for rule in rules if "abandonmentThreshold" in rule]
     assert len(threshold_rules) == 2
 
     finished_rules = [rule for rule in threshold_rules if rule.get("abandonmentThreshold") is None]
@@ -1126,19 +1120,15 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         assert match
         assert match.group("currentValue")
 
-    rules = config["packageRules"]
-    assert isinstance(rules, list)
-    assert all(isinstance(rule, dict) for rule in rules)
-    major_rule = next(rule for rule in rules if isinstance(rule, dict) and rule.get("matchUpdateTypes") == ["major"])
+    rules = mapping_sequence_at(config, "packageRules")
+    major_rule = next(rule for rule in rules if rule.get("matchUpdateTypes") == ["major"])
     assert major_rule.get("dependencyDashboardApproval") is True
-    pin_rules = [rule for rule in rules if isinstance(rule, dict) and "pinDigests" in rule]
+    pin_rules = [rule for rule in rules if "pinDigests" in rule]
     assert len(pin_rules) == 1
     assert pin_rules[0].get("matchManagers") == ["helm-values"]
     assert pin_rules[0].get("pinDigests") is False
     vendored_digest_rule = next(
-        rule
-        for rule in rules
-        if isinstance(rule, dict) and rule.get("matchPackageNames") == ["external-secrets", "keda", "cloudnative-pg"]
+        rule for rule in rules if rule.get("matchPackageNames") == ["external-secrets", "keda", "cloudnative-pg"]
     )
     assert vendored_digest_rule.get("matchManagers") == ["custom.regex"]
     assert vendored_digest_rule.get("matchDatasources") == ["helm"]
@@ -1162,14 +1152,10 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         ): "Compose and Helm image parity",
     }
     last_generic_group = max(
-        index
-        for index, rule in enumerate(rules)
-        if isinstance(rule, dict) and rule.get("groupName") and "matchPackageNames" not in rule
+        index for index, rule in enumerate(rules) if rule.get("groupName") and "matchPackageNames" not in rule
     )
     for dependencies, group_name in parity_groups.items():
-        parity_rule = next(
-            rule for rule in rules if isinstance(rule, dict) and rule.get("matchPackageNames") == list(dependencies)
-        )
+        parity_rule = next(rule for rule in rules if rule.get("matchPackageNames") == list(dependencies))
         assert parity_rule.get("groupName") == group_name
         assert rules.index(parity_rule) > last_generic_group
 
@@ -1186,7 +1172,6 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     for managers in grouped_ecosystems:
         rule = None
         for candidate in rules:
-            assert isinstance(candidate, dict)
             match_managers = candidate.get("matchManagers", [])
             assert isinstance(match_managers, list)
             assert all(isinstance(manager, str) for manager in match_managers)

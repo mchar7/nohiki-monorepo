@@ -217,7 +217,8 @@ def test_promotion_validates_merge_revision_renders_all_manifests_and_opens_acti
 
     verify = next(step for step in activation["steps"] if step.get("name") == "Verify immutable release inputs")
     foundation = load_mapping(_ROOT / "infra/k8s/helm-foundation/Chart.yaml")
-    cert_manager = [dependency for dependency in foundation["dependencies"] if dependency["name"] == "cert-manager"]
+    dependencies = mapping_sequence_at(foundation, "dependencies")
+    cert_manager = [dependency for dependency in dependencies if dependency["name"] == "cert-manager"]
     assert len(cert_manager) == 1
     cert_manager_archive = (
         f"infra/k8s/helm-foundation/charts/{cert_manager[0]['name']}-{cert_manager[0]['version']}.tgz"

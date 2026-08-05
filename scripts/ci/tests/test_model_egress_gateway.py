@@ -12,7 +12,7 @@ from typing import cast
 import jsonschema
 import pytest
 import yaml
-from _documents import Manifest, load_manifests, load_mapping
+from _documents import Manifest, load_manifests, load_mapping, mapping_sequence_at
 from ci_checks.core.image_inventory import load_inventory
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -121,11 +121,8 @@ def _walk(value: object) -> Iterator[object]:
 
 def _foundation_dependency_archive(name: str) -> tuple[Path, dict[str, object]]:
     chart = load_mapping(_FOUNDATION_CHART / "Chart.yaml")
-    dependencies = chart["dependencies"]
-    assert isinstance(dependencies, list)
-    matches = [
-        dependency for dependency in dependencies if isinstance(dependency, dict) and dependency.get("name") == name
-    ]
+    dependencies = mapping_sequence_at(chart, "dependencies")
+    matches = [dependency for dependency in dependencies if dependency.get("name") == name]
     assert len(matches) == 1
     dependency = matches[0]
     version = dependency.get("version")
