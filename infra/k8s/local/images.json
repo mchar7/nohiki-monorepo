@@ -23,7 +23,7 @@
     {"name":"sys-tick-job","context":".","dockerfile":"backend/jobs/sys-tick-job/Dockerfile","local":true},
     {"name":"snapshot-refresh-job","context":".","dockerfile":"backend/jobs/snapshot-refresh-job/Dockerfile","local":true},
     {"name":"qdrant-init","context":".","dockerfile":"infra/shared/qdrant-init/Dockerfile","local":true},
-    {"name":"kafka-connect","context":"infra/k8s/kafka-connect","dockerfile":"Dockerfile","local":false},
+    {"name":"kafka-connect","context":"infra/k8s/kafka-connect","dockerfile":"Dockerfile","local":true},
     {"name":"frontend","context":".","dockerfile":"typescript/apps/frontend/Dockerfile","local":true},
     {"name":"api-verification-runner","context":".","dockerfile":"tests/Dockerfile.api-runner","local":true},
     {"name":"playwright-verification-runner","context":".","dockerfile":"typescript/apps/frontend/Dockerfile.playwright-runner","local":true},

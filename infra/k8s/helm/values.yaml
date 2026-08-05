@@ -395,6 +395,9 @@ job-ingest-discovery-service:
   database:
     enabled: true
     schema: job_ingest_discovery_schema
+  # Discovery publishes directly to Kafka and has no transactional outbox.
+  debezium:
+    enabled: false
   scaling:
     minReplicas: "0"
     maxReplicas: 3
@@ -408,6 +411,9 @@ job-ingest-schedule-service:
   database:
     enabled: true
     schema: job_schedule_schema
+  # Schedule consumes CDC events but does not produce an outbox or WAL stream.
+  debezium:
+    enabled: false
   scaling:
     excluded: true
 
@@ -608,19 +614,12 @@ kafkaConnect:
   # Commit offsets every 10s (default 60s). Faster commits shrink the replay window
   # on Connect pod restart/rebalance and let consumers see lower lag during steady state.
   offsetFlushIntervalMs: 10000
-  # Image for custom Kafka Connect build with Debezium + Qdrant plugins
-  # MUST be configured per environment (same registry as service images)
+  # Prebuilt Strimzi-compatible image containing Debezium PostgreSQL, Qdrant,
+  # and the Nohiki WAL router SMT. Environment image coordinates and promotion
+  # use the same global first-party image contract as application services.
   image:
-    registry: ""  # REQUIRED: Set per environment
-    repository: ""  # REQUIRED: Set per environment (e.g., nohiki-kafka-connect)
-    tag: latest
-    pullSecret: ""  # Set if using private registry
-  build:
-    enabled: true
-    debeziumVersion: "3.6.0.Final"
-    debeziumSha512: "6a59c35e657b824e9a37008586bde707f684fc7549ac5e0a59facaa41acb24d8adb85eaa93917be811794c0f05ef9056ad1efe339f082ee2f25ae9b67c91d788"
-    qdrantKafkaVersion: "1.3.3"
-    qdrantKafkaSha512: "d33addecfcbaf27845686d6a0928d8c595ab975d2c71310c33ab5a4847d4e1b9a9a9dd9ddbd51328ccd7fd40f7b72fbc657decd87487dc56a8fa04b2cb82ee3b"
+    repository: kafka-connect
+    tag: ""
   # Observability: JMX Prometheus exporter for Kafka Connect
   metricsConfig:
     type: jmxPrometheusExporter

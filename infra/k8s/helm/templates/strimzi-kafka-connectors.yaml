@@ -17,7 +17,7 @@ NOTE: Keep connector config in sync with infra/k8s/kafka-connect/connectors/
 {{- $dbPort := $globDb.port | default 5432 }}
 
 {{- range $svcName, $svcValues := .Values }}
-{{- if and (ne $svcName "job-ingest-schedule-service") (eq (include "nohiki.hasDatabaseEnabled" $svcValues) "true") }}
+{{- if eq (include "nohiki.hasDebeziumEnabled" $svcValues) "true" }}
 {{- $dbName := include "nohiki.dbName" (dict "svcName" $svcName "svcValues" $svcValues) }}
 {{- $dbSchema := include "nohiki.dbSchema" (dict "svcName" $svcName "svcValues" $svcValues) }}
 {{- $prefix := include "nohiki.dbPrefix" $svcName }}
@@ -51,9 +51,7 @@ spec:
     plugin.name: pgoutput
     slot.name: {{ if eq $connectorMode "wal" }}{{ $resourcePrefix }}_wal_slot{{ else }}{{ $prefix }}_outbox_slot{{ end }}
     publication.name: {{ if eq $connectorMode "wal" }}{{ $resourcePrefix }}_wal_pub{{ else }}{{ $prefix }}_outbox_pub{{ end }}
-{{ if eq $connectorMode "wal" }}
     publication.autocreate.mode: filtered
-{{ end }}
 {{ if eq $connectorMode "wal" }}
     message.prefix.include.list: ".*"
 {{ end }}

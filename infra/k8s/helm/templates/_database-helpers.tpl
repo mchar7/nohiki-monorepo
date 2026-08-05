@@ -15,6 +15,20 @@ true
 {{- end }}
 
 {{/*
+Return "true" when a database-backed service participates in Debezium CDC.
+Services without an outbox or logical-message stream opt out with
+debezium.enabled: false.
+*/}}
+{{- define "nohiki.hasDebeziumEnabled" -}}
+{{- if eq (include "nohiki.hasDatabaseEnabled" .) "true" -}}
+{{- $debezium := index . "debezium" | default dict -}}
+{{- if dig "enabled" true $debezium -}}
+true
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Database Helper Templates - derives database values from service name with override capability.
 
 Design: Iterates over .Values using dig to find subcharts with database.enabled: true.

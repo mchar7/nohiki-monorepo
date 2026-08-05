@@ -30,12 +30,11 @@ _METADATA: Final[CheckMetadata] = CheckMetadata(
     description="Verify all outbox connectors are running and replication slots are active.",
 )
 
-_CONNECT_BASE: Final[str] = f"http://localhost:{KAFKA_CONNECT_DEFAULT_PORT}"
 _SLOT_QUERY: Final[str] = "SELECT slot_name, active FROM pg_replication_slots ORDER BY slot_name"
 
 
 def _connect_base(platform: Platform) -> str:
-    return "http://nohiki-connect-api:8083" if platform.target is PlatformTarget.KUBERNETES else _CONNECT_BASE
+    return platform.service_url("kafka-connect", KAFKA_CONNECT_DEFAULT_PORT)
 
 
 def _slot_states(stdout: str) -> dict[str, bool]:

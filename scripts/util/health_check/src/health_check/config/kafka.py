@@ -174,16 +174,9 @@ COMPOSE_CDC_CONNECTORS: Final[tuple[CdcConnector, ...]] = (
 )
 """Compose CDC sources registered by the image startup script."""
 
-KUBERNETES_CDC_CONNECTORS: Final[tuple[CdcConnector, ...]] = (
-    *COMPOSE_CDC_CONNECTORS,
-    CdcConnector(
-        "job-ingest-discovery-service-outbox",
-        "job_ingest_discovery_outbox_slot",
-        "job_ingest_discovery_outbox_pub",
-        "job_ingest_discovery_schema.outbox",
-    ),
-)
+KUBERNETES_CDC_CONNECTORS: Final[tuple[CdcConnector, ...]] = COMPOSE_CDC_CONNECTORS
 """Kubernetes CDC sources rendered by the Helm chart."""
+
 
 KUBERNETES_SINK_CONNECTOR_NAMES: Final[tuple[str, ...]] = ("qdrant-embedding-sink",)
 """Kubernetes sink connectors rendered when the chart's Kafka Connect stack is enabled."""

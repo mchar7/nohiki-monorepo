@@ -164,6 +164,16 @@ def _restart_request(url: str, timeout: int) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+_K8S_SERVICE_NAME_MAP: Final[dict[str, str]] = {
+    "kafka-connect": "nohiki-connect-api",
+}
+
+
+def resolve_kubernetes_service_name(canonical_name: str) -> str:
+    """Resolve a canonical service name to its deployed Kubernetes Service."""
+    return _K8S_SERVICE_NAME_MAP.get(canonical_name, canonical_name)
+
+
 K8S_NAME_MAP: Final[dict[str, str]] = {
     "postgres": "nohiki-infra-postgres",
     "redis": "nohiki-infra-redis",
@@ -498,7 +508,8 @@ class KubernetesPlatform:
         """Return a URL routable from the health-check process."""
         if self._local_mode:
             return f"http://localhost:{port}"
-        return f"http://{canonical_name}.{self._namespace}.svc.cluster.local:{port}"
+        service_name = resolve_kubernetes_service_name(canonical_name)
+        return f"http://{service_name}.{self._namespace}.svc.cluster.local:{port}"
 
     def check_port(self, host: str, port: int, *, timeout: float = 5.0) -> bool:
         """Return True if a TCP connection to ``host:port`` succeeds."""

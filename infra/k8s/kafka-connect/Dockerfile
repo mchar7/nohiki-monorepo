@@ -20,7 +20,7 @@ RUN gradle --no-daemon --console=plain test shadowJar
 # -----------------------------------------------------------------------------
 # Stage 2: Kafka Connect runtime with CDC + sink + custom SMT plugins
 # -----------------------------------------------------------------------------
-FROM quay.io/debezium/connect:3.6.0.Final@sha256:698f0559e667a242f962221079e75917b2b7a3ad4de62661e977628da0e33b45
+FROM quay.io/debezium/connect:3.6.0.Final@sha256:698f0559e667a242f962221079e75917b2b7a3ad4de62661e977628da0e33b45 AS compose
 
 # Connector registration checks PostgreSQL replication slots with psql.
 USER 0
@@ -207,3 +207,13 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=10 \
     CMD ["curl", "--fail", "--silent", "--show-error", "--max-time", "5", "http://localhost:8083/"]
 
 ENTRYPOINT ["/kafka/scripts/entrypoint.sh"]
+
+# -----------------------------------------------------------------------------
+# Stage 3: Strimzi-compatible runtime for KafkaConnect custom resources
+# -----------------------------------------------------------------------------
+FROM quay.io/strimzi/kafka:1.1.0-kafka-4.3.0@sha256:b6848a53c01eec98b37866450a1227c3a41707785ec65b37063d2733a105bf36 AS strimzi
+USER root:root
+COPY --from=compose --chown=1001:0 /kafka/connect/debezium-connector-postgres/ /opt/kafka/plugins/debezium-postgres/
+COPY --from=compose --chown=1001:0 /kafka/connect/qdrant-kafka/ /opt/kafka/plugins/qdrant-kafka/
+COPY --from=compose --chown=1001:0 /kafka/connect/nohiki-wal-router/ /opt/kafka/plugins/nohiki-wal-router/
+USER 1001

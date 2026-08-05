@@ -310,7 +310,7 @@ def test_build_workflow_reclaims_build_cache_before_trivy_scan() -> None:
     assert build_index < prune_index < scan_index
 
 
-def test_local_deploy_inventory_excludes_gpu_and_kafka_connect() -> None:
+def test_local_deploy_inventory_excludes_only_the_gpu_image() -> None:
     inventory = _image_inventory_specs()
     inventory_names = {image for image, *_ in inventory}
     release_names = set(load_inventory().names)
@@ -318,7 +318,7 @@ def test_local_deploy_inventory_excludes_gpu_and_kafka_connect() -> None:
     assert inventory_names == release_names
 
     non_local_names = {image for image, *_, local in inventory if not local}
-    assert non_local_names == {"ml-compute-service-gpu", "kafka-connect"}
+    assert non_local_names == {"ml-compute-service-gpu"}
     assert {image for image, *_, local in inventory if local} == (release_names - non_local_names)
 
     expected_lifecycle_commands = {

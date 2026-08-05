@@ -72,7 +72,7 @@ spec:
 
   # Per-service roles managed via ESO-generated secrets
   # App roles: DML access to service database
-  # Debezium roles: REPLICATION privilege for CDC
+  # Debezium roles: REPLICATION plus per-database owner-role membership for CDC
   managed:
     roles:
       {{- range $svcName, $svcValues := $.Values }}
@@ -89,6 +89,7 @@ spec:
         replication: false
         passwordSecret:
           name: {{ $svcName }}-db-credentials
+      {{- if eq (include "nohiki.hasDebeziumEnabled" $svcValues) "true" }}
       - name: {{ $debeziumRole }}
         ensure: present
         login: true
@@ -99,6 +100,11 @@ spec:
         replication: true
         passwordSecret:
           name: {{ $svcName }}-debezium-credentials
+        # Debezium creates the filtered publication and replication slot from
+        # the KafkaConnector declaration; owner membership permits table capture.
+        inRoles:
+          - {{ $appRole }}
+        {{- end }}
       {{- end }}
       {{- end }}
 {{- end }}
