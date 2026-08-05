@@ -1135,6 +1135,15 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     assert len(pin_rules) == 1
     assert pin_rules[0].get("matchManagers") == ["helm-values"]
     assert pin_rules[0].get("pinDigests") is False
+    vendored_digest_rule = next(
+        rule
+        for rule in rules
+        if isinstance(rule, dict) and rule.get("matchPackageNames") == ["external-secrets", "keda", "cloudnative-pg"]
+    )
+    assert vendored_digest_rule.get("matchManagers") == ["custom.regex"]
+    assert vendored_digest_rule.get("matchDatasources") == ["helm"]
+    assert vendored_digest_rule.get("matchUpdateTypes") == ["digest"]
+    assert vendored_digest_rule.get("enabled") is False
     parity_groups = {
         ("pnpm",): "pnpm version parity",
         ("@playwright/test",): "Playwright version parity",

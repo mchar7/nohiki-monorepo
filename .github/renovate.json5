@@ -479,6 +479,15 @@
       "groupName": "Playwright version parity"
     },
     {
+      // why: replacing bytes under an unchanged chart version is an immutable-release violation, not an update.
+      "description": "Reject same-version vendored chart digest replacements",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["helm"],
+      "matchPackageNames": ["external-secrets", "keda", "cloudnative-pg"],
+      "matchUpdateTypes": ["digest"],
+      "enabled": false
+    },
+    {
       // why: KEDA is repeated in Terraform, the wrapper chart, its vendored archive, and the integrity ledger.
       "description": "Keep every KEDA version owner in one update",
       "matchPackageNames": ["keda"],

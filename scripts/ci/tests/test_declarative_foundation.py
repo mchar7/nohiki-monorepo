@@ -157,6 +157,7 @@ def test_foundation_dependency_coordinates_lock_and_archives_are_exact() -> None
 def test_operator_wrapper_coordinates_locks_and_archives_are_exact(wrapper_name: str) -> None:
     wrapper = _FOUNDATION_CHART / "operators" / wrapper_name
     chart = _load(wrapper / "Chart.yaml")
+    assert "appVersion" not in chart
     lock = _load(wrapper / "Chart.lock")
     assert len(chart["dependencies"]) == 1
     dependency = chart["dependencies"][0]
