@@ -315,7 +315,7 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
     ]
     assert bindings
     assert bindings[0][3:5] == (4, "cluster-uid")
-    assert gets == len(runner.FULL_CHILDREN) * 2 + 5
+    assert gets == len(runner.FULL_CHILDREN) * 2 + 6
 
 
 def test_finalize_rejects_a_replaced_attempt_configmap(

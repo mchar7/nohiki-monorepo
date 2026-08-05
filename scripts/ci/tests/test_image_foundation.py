@@ -514,7 +514,8 @@ def test_local_helmrelease_consumes_stable_committed_digest_values() -> None:
         ],
     }
     runtime_secrets = _load_yaml(_ROOT / "infra/k8s/gitops/clusters/local/runtime-secrets.yaml")
-    assert runtime_secrets["spec"]["healthChecks"][:2] == [
+    runtime_spec = _mapping_at(runtime_secrets, "spec")
+    assert _mapping_list(runtime_spec["healthChecks"])[:2] == [
         {
             "apiVersion": "v1",
             "kind": "Secret",
