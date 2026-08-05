@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from nohiki_llm_client.client import (
     DynamicAgentConfig,
@@ -22,6 +23,8 @@ from nohiki_llm_client.config.settings import (
     LLMProviderSettings,
     LLMSettings,
 )
+from nohiki_llm_client.providers.openrouter import RobustOpenRouterModel
+from openai import AsyncOpenAI
 from pydantic import BaseModel, SecretStr, ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior
@@ -30,6 +33,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.usage import RunUsage
 from tenacity import wait_none
 
@@ -63,6 +67,28 @@ def _malformed_openai_hop(requests: list[str]) -> Model:
         http_client=http_client,
     )
     return OpenAIChatModel("gpt-test", provider=OpenAIProvider(openai_client=openai_client))
+
+
+def _null_choices_openrouter_hop(name: str, requests: list[str]) -> RobustOpenRouterModel:
+    """A real OpenRouter model whose endpoint returns HTTP 200 with null ``choices``.
+
+    The body carries no error envelope, which is the shape whose exception TYPE the library
+    owns and has changed between releases. Driving the real validation path rather than
+    constructing the exception is what keeps the tests over this shape from going blind.
+    """
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        requests.append(name)
+        return httpx.Response(200, json={"id": None, "choices": None, "model": None, "object": None})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    openai_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://openrouter.test/api/v1",
+        http_client=http_client,
+    )
+    return RobustOpenRouterModel(name, provider=OpenRouterProvider(openai_client=openai_client))
+
 
 class TestLLMClientBuildModelChain:
     """Tests for _build_model_chain with fallback configuration."""
@@ -563,49 +589,25 @@ class TestLLMClientRun:
             assert result.downstream_provider == "TestProvider"
 
     @pytest.mark.asyncio
-    async def test_openrouter_invalid_response_raises_provider_response_error(self, llm_settings: LLMSettings) -> None:
-        """UnexpectedModelBehavior with OpenRouter invalid response prefix raises LLMProviderResponseError."""
-        from nohiki_llm_client.config.constants import (
-            OPENROUTER_INVALID_RESPONSE_PREFIX,
-        )
-        from nohiki_llm_client.exceptions import LLMProviderResponseError
-        from pydantic_ai.exceptions import UnexpectedModelBehavior
+    async def test_openrouter_null_choices_is_transient_and_retried(self, llm_settings: LLMSettings) -> None:
+        """A real null-choices response follows the bare ``ModelAPIError`` retry path."""
+        from nohiki_llm_client.exceptions import LLMTransientError
 
-        client = LLMClient(llm_settings)
-        model = TestModel()
+        requests: list[str] = []
+        client = LLMClient(llm_settings, retry_wait=wait_none())
         agent = cast(
             "Agent[SampleContext, SampleOutput]",
-            Agent(model, deps_type=SampleContext, output_type=SampleOutput),
+            Agent(
+                _null_choices_openrouter_hop("vendor/model", requests),
+                deps_type=SampleContext,
+                output_type=SampleOutput,
+            ),
         )
 
-        error_msg = f"{OPENROUTER_INVALID_RESPONSE_PREFIX}: 5 validation errors for _OpenRouterChatCompletion"
-        with (
-            patch.object(agent, "run", side_effect=UnexpectedModelBehavior(error_msg)),
-            pytest.raises(LLMProviderResponseError, match="Invalid response from openrouter"),
-        ):
+        with pytest.raises(LLMTransientError):
             await client.run(agent, "test", deps=SampleContext(data="test"))
 
-    @pytest.mark.asyncio
-    async def test_openrouter_invalid_response_is_not_retried_by_tenacity(self, llm_settings: LLMSettings) -> None:
-        """OpenRouter invalid response is NOT retried by Tenacity: agent.run called exactly once."""
-        from nohiki_llm_client.config.constants import (
-            OPENROUTER_INVALID_RESPONSE_PREFIX,
-        )
-        from nohiki_llm_client.exceptions import LLMProviderResponseError
-        from pydantic_ai.exceptions import UnexpectedModelBehavior
-
-        client = LLMClient(llm_settings)
-        model = TestModel()
-        agent = cast(
-            "Agent[SampleContext, SampleOutput]",
-            Agent(model, deps_type=SampleContext, output_type=SampleOutput),
-        )
-
-        error_msg = f"{OPENROUTER_INVALID_RESPONSE_PREFIX}: 5 validation errors for _OpenRouterChatCompletion"
-        with patch.object(agent, "run", side_effect=UnexpectedModelBehavior(error_msg)) as mock_run:
-            with pytest.raises(LLMProviderResponseError):
-                await client.run(agent, "test", deps=SampleContext(data="test"))
-            assert mock_run.call_count == 1
+        assert len(requests) == MAX_RETRY_ATTEMPTS
 
     @pytest.mark.asyncio
     async def test_model_http_error_4xx_raises_provider_response_error(self, llm_settings: LLMSettings) -> None:
@@ -909,7 +911,10 @@ class TestLLMClientRun:
             ],
         )
 
-        with patch.object(agent, "run", side_effect=group) as mock_run, pytest.raises(LLMTransientError):
+        with (
+            patch.object(agent, "run", side_effect=group) as mock_run,
+            pytest.raises(LLMTransientError),
+        ):
             await client.run(agent, "test", deps=SampleContext(data="test"))
 
         assert mock_run.call_count == MAX_RETRY_ATTEMPTS
@@ -996,29 +1001,10 @@ class TestLLMClientRun:
         tried both legitimately change when the library reclassifies this body, and pinning
         either would make this a version pin instead of a contract check.
         """
-        import httpx
         from nohiki_llm_client.exceptions import LLMError
-        from nohiki_llm_client.providers.openrouter import RobustOpenRouterModel
-        from openai import AsyncOpenAI
-        from pydantic_ai.providers.openrouter import OpenRouterProvider
 
         requests: list[str] = []
-
-        def make_hop(name: str) -> RobustOpenRouterModel:
-            def handle(_request: httpx.Request) -> httpx.Response:
-                requests.append(name)
-                # HTTP 200, null `choices`, no error envelope.
-                return httpx.Response(200, json={"id": None, "choices": None, "model": None, "object": None})
-
-            http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-            openai_client = AsyncOpenAI(
-                api_key="test-key",
-                base_url="https://openrouter.test/api/v1",
-                http_client=http_client,
-            )
-            return RobustOpenRouterModel(name, provider=OpenRouterProvider(openai_client=openai_client))
-
-        chain = FallbackModel(make_hop("vendor/hop0"), make_hop("vendor/hop1"), make_hop("vendor/hop2"))
+        chain = FallbackModel(*(_null_choices_openrouter_hop(f"vendor/hop{n}", requests) for n in range(3)))
         client = LLMClient(llm_settings, retry_wait=wait_none())
         agent = cast(
             "Agent[SampleContext, SampleOutput]",
