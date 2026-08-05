@@ -501,6 +501,8 @@ def _connector_is_running(
     except HTTPError as exc:
         exc.close()
         return False
+    except OSError, URLError:
+        return False
     connector = payload.get("connector", {}) if isinstance(payload, dict) else {}
     tasks = payload.get("tasks", []) if isinstance(payload, dict) else []
     return connector.get("state") == "RUNNING" and bool(tasks) and all(task.get("state") == "RUNNING" for task in tasks)
@@ -526,8 +528,6 @@ async def _wait_for_connector_running(
                 ),
                 timeout=remaining,
             )
-        except TimeoutError:
-            return False
         except OSError, URLError:
             running = False
         if running:
@@ -541,7 +541,13 @@ async def _wait_for_connector_running(
 async def test_connect_readiness_waiters_enforce_wall_clock_budgets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A slow individual probe must not extend either waiter's total deadline."""
+    """Probe timeouts remain retryable without extending either total deadline."""
+
+    def timeout_probe(*_args: object, **_kwargs: object) -> None:
+        raise TimeoutError
+
+    monkeypatch.setitem(globals(), "urlopen", timeout_probe)
+    assert not _connector_is_running("http://connect.invalid", "connector")
 
     def slow_probe(*_args: object, **_kwargs: object) -> bool:
         time.sleep(1)
