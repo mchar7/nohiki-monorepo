@@ -664,17 +664,17 @@ def test_hosted_lane_mirrors_name_real_flags_and_jobs() -> None:
 
 
 def test_pre_commit_uses_scheduler_level_file_filtering() -> None:
-    """Argument-taking tools use templates; no-argument tools use literal commands plus globs."""
+    """Argument-taking tools consume staged inventories; no-argument tools use literal commands plus globs."""
     configured = _configured_hooks()["pre-commit"]
 
-    # The Python mutator reaches the staged inventory through a git-diff pathspec so a
-    # huge commit cannot exceed ARG_MAX; the pathspec mirrors its glob and exclude set.
-    python_run = _run_command("python-check-format")
-    assert "{staged_files}" not in python_run
-    assert "git diff --cached" in python_run
+    # Mutators with potentially large inventories derive NUL-safe path lists directly
+    # from Git; the frontend mutator can safely consume Lefthook's staged template.
+    for name in ("python-check-format", "markdown-lint"):
+        run = _run_command(name)
+        assert "{staged_files}" not in run
+        assert "git diff --cached" in run
 
-    for name in ("frontend-lint", "markdown-lint"):
-        assert "{staged_files}" in _run_command(name)
+    assert "{staged_files}" in _run_command("frontend-lint")
 
     for name in ("proto-lint", "i18n-check", "actions-lint", "docker-lint"):
         assert _glob_set(configured[name]), f"{name} needs a glob to drive the scheduler skip"
