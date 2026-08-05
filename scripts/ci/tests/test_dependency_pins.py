@@ -1031,7 +1031,9 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     assert isinstance(custom_managers, list)
     assert all(isinstance(manager, dict) for manager in custom_managers)
     custom_by_dependency = {
-        manager.get("depNameTemplate"): manager for manager in custom_managers if isinstance(manager, dict)
+        dependency: manager
+        for manager in cast(list[dict[str, object]], custom_managers)
+        if isinstance(dependency := manager.get("depNameTemplate"), str)
     }
     assert set(custom_by_dependency) == {
         "pnpm",

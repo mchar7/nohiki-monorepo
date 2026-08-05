@@ -282,6 +282,8 @@ _HOSTED_SELF_REFERENCE = frozenset(
         "flake.lock",
         ".github/workflows/checks.yml",
         ".github/actions/setup-ci/action.yml",
+        "scripts/ci/src/ci_checks/core/change_gate.py",
+        "scripts/ci/src/ci_checks/core/change_rules.py",
         "scripts/ci/src/ci_checks/checks/gate.py",
         "scripts/ci/src/ci_checks/checks/tests.py",
     }
@@ -1206,6 +1208,14 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
         waiver=(
             "runs integration and requires_docker tests against hosted PostgreSQL; local "
             "pre-push python-tests explicitly deselects both markers"
+        ),
+    ),
+    ("worker", "Test JVM module"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver=(
+            "runs the blocking Gradle build and static analysis; no local hook invokes the "
+            "separate JVM devshell, so developers reproduce it explicitly with `just test-jvm`"
         ),
     ),
     ("worker", "Run Node workspace contract tests"): _HostedStep(
