@@ -16,7 +16,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Never, Protocol, cast
+from typing import Never, Protocol, TypedDict, cast
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +58,24 @@ class _EditRef:
     pull_request: int
     name: str
     typename: str
+
+
+class _PageInfo(TypedDict):
+    hasNextPage: bool
+    endCursor: str | None
+
+
+class _EditRecord(TypedDict):
+    id: str
+    editedAt: str
+    diff: str | None
+    deletedAt: str | None
+
+
+class _EditPage(TypedDict):
+    totalCount: int
+    pageInfo: _PageInfo
+    nodes: list[_EditRecord]
 
 
 class _Pattern(Protocol):
@@ -396,34 +414,91 @@ def _pages(value: object, surface: str) -> list[object]:
     return [item for page in pages for item in page]
 
 
+def _object_mapping(value: object, failure: str) -> dict[str, object]:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        _fail(failure)
+    return cast(dict[str, object], value)
+
+
 def _required_int(item: object, key: str, surface: str) -> int:
-    if not isinstance(item, dict) or type(value := item.get(key)) is not int:
+    values = _object_mapping(item, f"GitHub API returned malformed {surface}")
+    if type(value := values.get(key)) is not int:
         _fail(f"GitHub API returned malformed {surface}")
     return value
 
 
 def _required_string(item: object, key: str, surface: str) -> str:
-    if not isinstance(item, dict) or not isinstance(value := item.get(key), str) or not value:
+    values = _object_mapping(item, f"GitHub API returned malformed {surface}")
+    if not isinstance(value := values.get(key), str) or not value:
         _fail(f"GitHub API returned malformed {surface}")
     return value
 
 
 def _body(item: object, key: str, surface: str) -> str:
-    if not isinstance(item, dict) or key not in item:
+    values = _object_mapping(item, f"GitHub API returned malformed {surface}")
+    if key not in values:
         _fail(f"GitHub API returned malformed {surface}")
-    value = item[key]
+    value = values[key]
     if value is not None and not isinstance(value, str):
         _fail(f"GitHub API returned malformed {surface}")
     return "" if value is None else value
 
 
 def _url_number(item: object, key: str, surface: str) -> int:
-    if not isinstance(item, dict) or not isinstance(value := item.get(key), str):
+    values = _object_mapping(item, f"GitHub API returned malformed {surface}")
+    if not isinstance(value := values.get(key), str):
         _fail(f"GitHub API returned malformed {surface}")
     rendered = value.rstrip("/").rsplit("/", 1)[-1]
     if not rendered.isascii() or not rendered.isdigit():
         _fail(f"GitHub API returned malformed {surface}")
     return int(rendered)
+
+
+def _edit_page(value: object) -> _EditPage:
+    failure = "GitHub GraphQL returned malformed edit history"
+    page = _object_mapping(value, failure)
+    if type(total := page.get("totalCount")) is not int or total < 0:
+        _fail(failure)
+
+    page_info_value = _object_mapping(page.get("pageInfo"), failure)
+    if type(has_next_page := page_info_value.get("hasNextPage")) is not bool:
+        _fail(failure)
+    end_cursor = page_info_value.get("endCursor")
+    if end_cursor is not None and not isinstance(end_cursor, str):
+        _fail(failure)
+
+    record_values = page.get("nodes")
+    if not isinstance(record_values, list) or len(record_values) != total:
+        _fail("GitHub GraphQL returned incomplete edit history")
+    records: list[_EditRecord] = []
+    for record_value in record_values:
+        record = _object_mapping(record_value, "GitHub GraphQL returned malformed edit history record")
+        edit_id = _required_string(record, "id", "edit history record")
+        edited_at = _required_string(record, "editedAt", "edit history record")
+        if "diff" not in record or "deletedAt" not in record:
+            _fail("GitHub GraphQL returned malformed edit history record")
+        diff = record["diff"]
+        deleted_at = record["deletedAt"]
+        if (diff is not None and not isinstance(diff, str)) or (
+            deleted_at is not None and not isinstance(deleted_at, str)
+        ):
+            _fail("GitHub GraphQL returned malformed edit history record")
+        records.append(
+            {
+                "id": edit_id,
+                "editedAt": edited_at,
+                "diff": diff,
+                "deletedAt": deleted_at,
+            }
+        )
+    return {
+        "totalCount": total,
+        "pageInfo": {
+            "hasNextPage": has_next_page,
+            "endCursor": end_cursor,
+        },
+        "nodes": records,
+    }
 
 
 def _history_surfaces(value: object, refs: Sequence[_EditRef]) -> tuple[Surface, ...]:
@@ -436,53 +511,33 @@ def _history_surfaces(value: object, refs: Sequence[_EditRef]) -> tuple[Surface,
     seen: set[str] = set()
     surfaces: list[Surface] = []
     for node in value:
-        node_id = _required_string(node, "id", "edit history node")
-        typename = _required_string(node, "__typename", "edit history node")
+        node_values = _object_mapping(node, "GitHub GraphQL returned malformed edit history")
+        node_id = _required_string(node_values, "id", "edit history node")
+        typename = _required_string(node_values, "__typename", "edit history node")
         ref = expected.get(node_id)
         if ref is None or typename != ref.typename or node_id in seen:
             _fail("GitHub GraphQL returned mismatched edit history")
         seen.add(node_id)
-        if not isinstance(node, dict) or type(node.get("includesCreatedEdit")) is not bool:
+        if type(node_values.get("includesCreatedEdit")) is not bool:
             _fail("GitHub GraphQL returned malformed edit history")
-        last_edited = node.get("lastEditedAt")
+        last_edited = node_values.get("lastEditedAt")
         if last_edited is not None and not isinstance(last_edited, str):
             _fail("GitHub GraphQL returned malformed edit history")
-        edits = node.get("userContentEdits")
-        if not isinstance(edits, dict) or type(total := edits.get("totalCount")) is not int or total < 0:
-            _fail("GitHub GraphQL returned malformed edit history")
-        page_info = edits.get("pageInfo")
-        if not isinstance(page_info, dict) or type(page_info.get("hasNextPage")) is not bool:
-            _fail("GitHub GraphQL returned malformed edit history")
-        end_cursor = page_info.get("endCursor")
-        if end_cursor is not None and not isinstance(end_cursor, str):
-            _fail("GitHub GraphQL returned malformed edit history")
-        if page_info["hasNextPage"]:
+        edits = _edit_page(node_values.get("userContentEdits"))
+        if edits["pageInfo"]["hasNextPage"]:
             _fail("GitHub GraphQL truncated edit history")
-        records = edits.get("nodes")
-        if not isinstance(records, list) or len(records) != total:
-            _fail("GitHub GraphQL returned incomplete edit history")
-        for record in records:
-            edit_id = _required_string(record, "id", "edit history record")
-            edited_at = _required_string(record, "editedAt", "edit history record")
-            if not isinstance(record, dict) or "diff" not in record or "deletedAt" not in record:
-                _fail("GitHub GraphQL returned malformed edit history record")
-            diff = record["diff"]
-            deleted_at = record["deletedAt"]
-            if (diff is not None and not isinstance(diff, str)) or (
-                deleted_at is not None and not isinstance(deleted_at, str)
-            ):
-                _fail("GitHub GraphQL returned malformed edit history record")
-            if diff is None and deleted_at is None:
+        for record in edits["nodes"]:
+            if record["diff"] is None and record["deletedAt"] is None:
                 _fail("GitHub GraphQL returned unavailable edit history")
             surfaces.append(
                 Surface(
                     ref.pull_request,
                     f"{ref.name}-history",
-                    "" if diff is None else diff,
+                    "" if record["diff"] is None else record["diff"],
                     node_id,
-                    edit_id,
-                    edited_at,
-                    deleted_at,
+                    record["id"],
+                    record["editedAt"],
+                    record["deletedAt"],
                 )
             )
     if seen != expected.keys():
