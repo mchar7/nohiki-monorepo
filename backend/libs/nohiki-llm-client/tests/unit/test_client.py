@@ -722,6 +722,53 @@ class TestLLMClientRun:
             mock_calc.assert_called_once()
             assert result.cost_usd == pytest.approx(0.0099)
 
+    @pytest.mark.asyncio
+    async def test_openrouter_no_completion_body_classifies_as_transient(self, llm_settings: LLMSettings) -> None:
+        """A bare ``ModelAPIError`` is classified, not left to the bare ``except Exception``.
+
+        ``ModelAPIError`` is the PARENT of ``ModelHTTPError`` and a sibling of
+        ``UnexpectedModelBehavior``, so it needs its own clause in ``_single_attempt``.
+        PydanticAI raises it for an OpenRouter body with null ``choices`` and no error
+        envelope. The exception is produced by the library rather than hand-built, so a
+        library reword cannot make this pass vacuously.
+
+        The cause assertion is load-bearing: PydanticAI chains the underlying
+        ``ValidationError`` onto it, so generalising the ``LLMValidationError`` cause check
+        up to ``AgentRunError`` would misclassify this transient as a quality failure and
+        stop retrying it.
+        """
+        from nohiki_llm_client.exceptions import LLMTransientError
+        from nohiki_llm_client.providers.openrouter import RobustOpenRouterModel
+        from pydantic import ValidationError
+        from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+
+        mock_provider = MagicMock()
+        mock_provider.name = "openrouter"
+        router = RobustOpenRouterModel("test/model", provider=mock_provider)
+        no_completion = MagicMock()
+        no_completion.model_dump.return_value = {
+            "id": None,
+            "choices": None,
+            "model": "test/model",
+            "object": None,
+        }
+
+        with pytest.raises(ModelAPIError) as produced:
+            router._validate_completion(no_completion)
+        assert not isinstance(produced.value, ModelHTTPError)
+        assert isinstance(produced.value.__cause__, ValidationError)
+
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            Agent[SampleContext, SampleOutput],
+            Agent(TestModel(), deps_type=SampleContext, output_type=SampleOutput),
+        )
+        with (
+            patch.object(agent, "run", side_effect=produced.value),
+            pytest.raises(LLMTransientError, match="null `choices`"),
+        ):
+            await client.run(agent, "test", deps=SampleContext(data="test"))
+
 
 class TestModelSupportsCachePoint:
     """Tests for _model_supports_cache_point utility."""
