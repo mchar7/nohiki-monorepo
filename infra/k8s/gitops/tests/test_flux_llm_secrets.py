@@ -114,7 +114,7 @@ def test_local_secret_store_can_read_only_encrypted_sources() -> None:
     assert secret_rule == {
         "apiGroups": [""],
         "resources": ["secrets"],
-        "resourceNames": [RUNTIME_SECRET, "nohiki-model-egress-tls-source"],
+        "resourceNames": [RUNTIME_SECRET, "nohiki-llm-proxy-source", "nohiki-model-egress-tls-source"],
         "verbs": ["get"],
     }
     store = next(document for document in documents if document.get("kind") == "SecretStore")
@@ -150,6 +150,18 @@ def test_flux_reconciles_secret_sources_before_consumers() -> None:
         "secretRef": {"name": "flux-sops"},
     }
     assert runtime["spec"]["healthChecks"] == [
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "name": "nohiki-llm-proxy-source",
+            "namespace": "nohiki",
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "name": "nohiki-owner-model-egress-values",
+            "namespace": "flux-system",
+        },
         {
             "apiVersion": "v1",
             "kind": "Secret",

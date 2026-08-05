@@ -529,6 +529,18 @@ def test_local_runtime_secrets_have_one_flux_owner_and_ordered_dependencies() ->
         {
             "apiVersion": "v1",
             "kind": "Secret",
+            "name": "nohiki-llm-proxy-source",
+            "namespace": "nohiki",
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "name": "nohiki-owner-model-egress-values",
+            "namespace": "flux-system",
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
             "name": "nohiki-llm-runtime",
             "namespace": "nohiki",
         },

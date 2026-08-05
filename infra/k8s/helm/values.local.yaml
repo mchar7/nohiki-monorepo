@@ -292,7 +292,6 @@ rustfs:
   ingress:
     enabled: false
   persistence:
-    storageClass: local-path
     size: 2Gi
   # No PDB for single replica
   pdb:
@@ -546,6 +545,8 @@ mimir-distributed:
     structuredConfig:
       ingest_storage:
         enabled: false
+      ingester:
+        push_grpc_method_enabled: true
       common:
         storage:
           s3:

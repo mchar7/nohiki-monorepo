@@ -406,6 +406,18 @@ def test_flux_orders_crds_foundation_and_platform_with_health_gates() -> None:
                 {
                     "apiVersion": "v1",
                     "kind": "Secret",
+                    "name": "nohiki-llm-proxy-source",
+                    "namespace": "nohiki",
+                },
+                {
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "name": "nohiki-owner-model-egress-values",
+                    "namespace": "flux-system",
+                },
+                {
+                    "apiVersion": "v1",
+                    "kind": "Secret",
                     "name": "nohiki-llm-runtime",
                     "namespace": "nohiki",
                 },

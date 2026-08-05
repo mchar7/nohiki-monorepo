@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib.machinery
 import importlib.util
+import ipaddress
 import json
 import os
 import subprocess
@@ -94,6 +95,13 @@ elif name == "systemd-run":
 def _stub_create_acceptance(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "preflight", lambda: None)
     monkeypatch.setattr(runner, "kind_modules_override", lambda: None)
+    monkeypatch.setattr(runner, "require_llm_proxy_env_file", lambda: Path("/secure/proxy.env"))
+    monkeypatch.setattr(
+        runner,
+        "write_llm_proxy_values",
+        lambda *_: Path("/secure/owner-model-egress.values.json"),
+    )
+    monkeypatch.setattr(runner, "install_llm_proxy_source", lambda *_: {})
     monkeypatch.setattr(
         runner,
         "validate_cluster",
@@ -357,6 +365,153 @@ def test_preflight_accepts_pinned_client_outputs(monkeypatch: pytest.MonkeyPatch
     ]
 
 
+def test_create_rejects_a_missing_proxy_source_before_runtime_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    attempt = tmp_path / "attempt"
+    attempt.mkdir()
+    monkeypatch.delenv(runner.LLM_PROXY_ENV, raising=False)
+    monkeypatch.setattr(runner, "preflight", lambda: None)
+    monkeypatch.setattr(runner, "require_no_residue", lambda *_: None)
+    monkeypatch.setattr(runner, "kind_modules_override", lambda: None)
+
+    with pytest.raises(runner.KindctlError, match=runner.LLM_PROXY_ENV):
+        runner.create(attempt)
+
+    assert not (attempt / "runtime").exists()
+
+
+def test_llm_proxy_source_requires_an_owner_only_regular_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    source = tmp_path / "proxy.env"
+    source.write_text("LLM_PROXY_SERVER_API_KEY=synthetic\n", encoding="utf-8")
+    source.chmod(0o600)
+    monkeypatch.setenv(runner.LLM_PROXY_ENV, str(source))
+
+    assert runner.require_llm_proxy_env_file() == source
+
+    source.chmod(0o640)
+    with pytest.raises(runner.KindctlError, match="owner-only mode-0600"):
+        runner.require_llm_proxy_env_file()
+
+
+def test_proxy_binding_materializes_only_attempt_local_nonsecret_values(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    host = str(ipaddress.ip_address(0x0A141E28))
+    source = tmp_path / "proxy.env"
+    source.write_text(
+        f"LLM_PROXY_SERVER_BASE_URL=http://{host}:8317/v1\nLLM_PROXY_SERVER_API_KEY=synthetic-credential\n",
+        encoding="utf-8",
+    )
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+
+    values = runner.write_llm_proxy_values(runtime, source)
+
+    assert values == runtime / "owner-model-egress.values.json"
+    assert values.stat().st_mode & 0o777 == 0o600
+    rendered = json.loads(values.read_text(encoding="utf-8"))
+    assert rendered == {
+        "global": {
+            "modelEgress": {
+                "destinations": [{"cidr": f"{host}/32", "port": 8317}],
+                "providerEndpoints": {
+                    "openai-responses": {
+                        "host": host,
+                        "path": "/v1/responses",
+                        "port": 8317,
+                        "tls": None,
+                    }
+                },
+            }
+        }
+    }
+    assert "synthetic-credential" not in values.read_text(encoding="utf-8")
+
+
+def test_create_installs_proxy_credentials_and_required_values_configmap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    kubeconfig = tmp_path / "kubeconfig"
+    source = tmp_path / "proxy.env"
+    source.write_text(
+        "LLM_PROXY_SERVER_API_KEY=synthetic-credential\nLLM_PROXY_SERVER_BASE_URL=http://owner-proxy.example:8317\n",
+        encoding="utf-8",
+    )
+    values = tmp_path / "owner-model-egress.values.json"
+    source_sha256 = runner.sha256_file(source)
+    calls: list[tuple[str, ...]] = []
+
+    def run(argv: Sequence[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        call = tuple(argv)
+        calls.append(call)
+        if call[-1].startswith("jsonpath="):
+            return _completed(argv, f"proxy-secret-uid\t17\tOpaque\t{source_sha256}")
+        if call[-1].startswith("go-template="):
+            return _completed(argv, "LLM_PROXY_SERVER_BASE_URL\nLLM_PROXY_SERVER_API_KEY\n")
+        return _completed(argv)
+
+    monkeypatch.setattr(runner, "run_command", run)
+
+    measurement = runner.install_llm_proxy_source(kubeconfig, source, values)
+
+    assert calls[:3] == [
+        (
+            "kubectl",
+            "--kubeconfig",
+            str(kubeconfig),
+            "create",
+            "namespace",
+            "flux-system",
+        ),
+        (
+            "kubectl",
+            "--kubeconfig",
+            str(kubeconfig),
+            "create",
+            "namespace",
+            "nohiki",
+        ),
+        (
+            "kubectl",
+            "--kubeconfig",
+            str(kubeconfig),
+            "-n",
+            "nohiki",
+            "create",
+            "secret",
+            "generic",
+            "nohiki-llm-proxy-source",
+            f"--from-env-file={source}",
+        ),
+    ]
+    assert calls[-1][-4:] == (
+        "create",
+        "configmap",
+        "nohiki-owner-model-egress-values",
+        f"--from-file=values.yaml={values}",
+    )
+    assert measurement == {
+        "keyNames": ["LLM_PROXY_SERVER_API_KEY", "LLM_PROXY_SERVER_BASE_URL"],
+        "name": "nohiki-llm-proxy-source",
+        "namespace": "nohiki",
+        "resourceVersion": "17",
+        "sourceFileSha256": source_sha256,
+        "type": "Opaque",
+        "uid": "proxy-secret-uid",
+    }
+    assert "synthetic-credential" not in json.dumps(measurement)
+
+
 def test_create_executes_the_scoped_command_under_its_own_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -599,6 +754,50 @@ def test_storage_probe_reuses_the_bound_claim_and_requires_pv_deletion(
     assert all("claimName: nohiki-storage-probe" in manifest for manifest in manifests)
     assert "storageClassName: standard" in manifests[0]
     assert any("--for=delete" in call and "pv/pv-probe" in call for call in calls)
+
+
+def test_local_render_only_requests_kind_storage_classes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    monkeypatch.setattr(
+        runner,
+        "command_json",
+        lambda *_args, **_kwargs: {
+            "items": [{"metadata": {"name": "standard"}}],
+        },
+    )
+
+    assert runner.require_rendered_storage_classes(tmp_path / "kubeconfig") == ()
+
+
+def test_rendered_storage_guard_names_every_missing_class(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    monkeypatch.setattr(
+        runner,
+        "run_command",
+        lambda argv, **_kwargs: _completed(
+            argv,
+            "spec:\n  storageClassName: gone-b\n---\nspec:\n  storageClassName: gone-a\n",
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "command_json",
+        lambda *_args, **_kwargs: {
+            "items": [{"metadata": {"name": "standard"}}],
+        },
+    )
+
+    with pytest.raises(
+        runner.KindctlError,
+        match="unavailable StorageClasses: gone-a, gone-b",
+    ):
+        runner.require_rendered_storage_classes(tmp_path / "kubeconfig")
 
 
 def test_residue_inventory_detects_every_nohiki_owned_surface(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
