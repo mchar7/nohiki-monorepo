@@ -1042,6 +1042,7 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     assert config["nix"] == {"enabled": True}
     assert config["automerge"] is False
     assert config["minimumReleaseAge"] == "3 days"
+    assert config["postUpdateOptions"] == ["helmUpdateSubChartArchives"]
     assert config["prConcurrentLimit"] == 2
     extends = config["extends"]
     assert isinstance(extends, list)
@@ -1085,7 +1086,6 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         ("public.ecr.aws/docker/library/python", "docker"),
         ("opentofu/opentofu", "github-releases"),
         ("gradle", "docker"),
-        ("quay.io/debezium/connect", "docker"),
         ("semgrep", "pypi"),
         ("external-secrets", "helm"),
         ("keda", "helm"),
@@ -1136,16 +1136,28 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     assert pin_rules[0].get("matchManagers") == ["helm-values"]
     assert pin_rules[0].get("pinDigests") is False
     parity_groups = {
-        "pnpm": "pnpm version parity",
-        "@playwright/test": "Playwright version parity",
-        "java-jdk": "JDK major parity",
-        "gradle": "Gradle toolchain parity",
+        ("pnpm",): "pnpm version parity",
+        ("@playwright/test",): "Playwright version parity",
+        ("java-jdk",): "JDK major parity",
+        ("gradle",): "Gradle toolchain parity",
+        ("keda",): "KEDA version parity",
+        (
+            "docker.io/grafana/mimir",
+            "quay.io/prometheus/prometheus",
+            "quay.io/docling-project/docling-serve-cpu",
+        ): "Compose and Helm image parity",
     }
-    for dependency, group_name in parity_groups.items():
+    last_generic_group = max(
+        index
+        for index, rule in enumerate(rules)
+        if isinstance(rule, dict) and rule.get("groupName") and "matchPackageNames" not in rule
+    )
+    for dependencies, group_name in parity_groups.items():
         parity_rule = next(
-            rule for rule in rules if isinstance(rule, dict) and rule.get("matchPackageNames") == [dependency]
+            rule for rule in rules if isinstance(rule, dict) and rule.get("matchPackageNames") == list(dependencies)
         )
         assert parity_rule.get("groupName") == group_name
+        assert rules.index(parity_rule) > last_generic_group
 
     grouped_ecosystems = (
         {"npm"},

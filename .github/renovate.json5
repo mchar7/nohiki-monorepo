@@ -27,6 +27,7 @@
     "enabled": true,
     "schedule": ["before 7am on monday"]
   },
+  "postUpdateOptions": ["helmUpdateSubChartArchives"],
   "enabledManagers": [
     "npm",
     "pep621",
@@ -188,14 +189,6 @@
         "gradle:(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)-jdk\\d+@(?<currentDigest>sha256:[0-9a-f]{64})"
       ],
       "depNameTemplate": "gradle",
-      "datasourceTemplate": "docker"
-    },
-    {
-      // why: Helm build metadata must move with the Debezium Connect image.
-      "customType": "regex",
-      "managerFilePatterns": ["/^infra\\/k8s\\/helm\\/values\\.yaml$/"],
-      "matchStrings": ["debeziumVersion:\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+\\.Final)"],
-      "depNameTemplate": "quay.io/debezium/connect",
       "datasourceTemplate": "docker"
     },
     {
@@ -407,15 +400,6 @@
       "groupName": "Kubernetes and Helm minor, patch, and digest"
     },
     {
-      "description": "Keep images shared by Compose and Helm in one pull request",
-      "matchPackageNames": [
-        "docker.io/grafana/mimir",
-        "quay.io/prometheus/prometheus",
-        "quay.io/docling-project/docling-serve-cpu"
-      ],
-      "groupName": "Compose and Helm image parity"
-    },
-    {
       "description": "Group Terraform provider and module updates",
       "matchManagers": ["terraform"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
@@ -493,6 +477,21 @@
       "description": "Keep duplicate Playwright declarations aligned",
       "matchPackageNames": ["@playwright/test"],
       "groupName": "Playwright version parity"
+    },
+    {
+      // why: KEDA is repeated in Terraform, the wrapper chart, its vendored archive, and the integrity ledger.
+      "description": "Keep every KEDA version owner in one update",
+      "matchPackageNames": ["keda"],
+      "groupName": "KEDA version parity"
+    },
+    {
+      "description": "Keep images shared by Compose and Helm in one pull request",
+      "matchPackageNames": [
+        "docker.io/grafana/mimir",
+        "quay.io/prometheus/prometheus",
+        "quay.io/docling-project/docling-serve-cpu"
+      ],
+      "groupName": "Compose and Helm image parity"
     }
   ],
   "vulnerabilityAlerts": {

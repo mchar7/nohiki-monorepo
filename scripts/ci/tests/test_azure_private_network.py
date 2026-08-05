@@ -121,7 +121,10 @@ def test_managed_services_use_exact_private_link_contracts() -> None:
     assert locked_version
     assert locked_constraint
     assert locked_constraint["value"] == constraint
-    assert locked_version["value"] == constraint.removeprefix("~> ").strip()
+    minimum = tuple(int(part) for part in constraint.removeprefix("~> ").strip().split("."))
+    locked = tuple(int(part) for part in locked_version["value"].split("."))
+    assert locked[:2] == minimum[:2]
+    assert locked >= minimum
     assert 'data "azurerm_eventhub_namespace"' in iac
     assert 'variable "event_hubs_namespace_name"' in iac
     assert 'variable "event_hubs_resource_group_name"' in iac

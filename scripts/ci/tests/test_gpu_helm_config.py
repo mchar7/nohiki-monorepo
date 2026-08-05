@@ -197,6 +197,7 @@ def _terraform_label_and_taint() -> tuple[dict[str, str], str, str]:
 
 
 def test_base_values_pin_device_plugin_and_default_to_no_gpu() -> None:
+    image_pins: set[tuple[str, str]] = set()
     for chart_name in ("nohiki-common", "ml-compute-service"):
         values = yaml.safe_load((_CHART / "charts" / chart_name / "values.yaml").read_text(encoding="utf-8"))
         plugin = values["gpuDevicePlugin"]
@@ -204,8 +205,10 @@ def test_base_values_pin_device_plugin_and_default_to_no_gpu() -> None:
         assert plugin["enabled"] is False
         assert plugin["image"]["repository"] == _DEVICE_PLUGIN_REPO
         assert _is_digest_pinned_tag(plugin["image"]["tag"]), f"{chart_name} device plugin image must be digest-pinned"
+        image_pins.add((plugin["image"]["repository"], plugin["image"]["tag"]))
         if chart_name == "ml-compute-service":
             assert "gpu" not in values.get("resources", {})
+    assert len(image_pins) == 1, "device plugin image pins must stay aligned"
 
 
 @pytest.mark.parametrize(

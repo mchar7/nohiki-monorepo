@@ -12,6 +12,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 _GITLEAKS = _ROOT / ".gitleaks.toml"
 _LEFTHOOK = _ROOT / "lefthook.yml"
 _JUSTFILE = _ROOT / "Justfile"
+_GATEWAY_API_CRDS = _ROOT / "infra" / "k8s" / "gitops" / "gateway-api-crds" / "gateway-api-crds.yaml"
 _ANCHORED_SHA256_REGEX = re.compile(r"\^[0-9a-f]{64}\$")
 _EXPECTED_RULE_REGEXES = {
     "openrouter-api-key": r"sk-or-v1-[a-zA-Z0-9]{64}",
@@ -56,18 +57,20 @@ def test_gitleaks_allows_only_the_anchored_public_checksums() -> None:
     assert set(allowlist) == {"regexes"}
     regexes = allowlist["regexes"]
     assert isinstance(regexes, list)
-    assert len(regexes) == len(set(regexes))
+    provenance = _GATEWAY_API_CRDS.read_text(encoding="utf-8")
+    approved_checksums = re.findall(r"(?m)^# sha256:\s*([0-9a-f]{64})\s*$", provenance)
+    assert len(approved_checksums) == 1
+    assert regexes == [f"^{approved_checksums[0]}$"]
 
-    for regex in regexes:
-        assert isinstance(regex, str)
-        assert _ANCHORED_SHA256_REGEX.fullmatch(regex)
-        checksum = regex.removeprefix("^").removesuffix("$")
-        matcher = re.compile(regex)
-        assert matcher.fullmatch(checksum)
-        assert not matcher.search(f"prefix-{checksum}")
-        assert not matcher.search(f"{checksum}-suffix")
-        replacement = "0" if checksum[-1] != "0" else "1"
-        assert not matcher.search(checksum[:-1] + replacement)
+    regex = regexes[0]
+    assert _ANCHORED_SHA256_REGEX.fullmatch(regex)
+    checksum = regex.removeprefix("^").removesuffix("$")
+    matcher = re.compile(regex)
+    assert matcher.fullmatch(checksum)
+    assert not matcher.search(f"prefix-{checksum}")
+    assert not matcher.search(f"{checksum}-suffix")
+    replacement = "0" if checksum[-1] != "0" else "1"
+    assert not matcher.search(checksum[:-1] + replacement)
 
 
 def test_gitleaks_has_no_broad_or_scope_level_exemptions() -> None:

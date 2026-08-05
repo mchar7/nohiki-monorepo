@@ -41,11 +41,12 @@ LIFECYCLE_SCRIPT = REPO_ROOT / "infra" / "k8s" / "local" / "lifecycle.sh"
 JUSTFILE = REPO_ROOT / "Justfile"
 README = GITOPS_DIR / "README.md"
 FLAKE = REPO_ROOT / "flake.nix"
+KINDCTL = REPO_ROOT / "infra" / "k8s" / "local" / "kindctl"
 RUNTIME_CONTROL_BRANCH = "runtime-control/local/portable-bootstrap"
 DATA_LOSS_ACK = "I understand this permanently deletes local Nohiki data"
 
-# The flux CLI is pinned in the flake devshell; nixpkgs (flake.lock) is the single
-# source of truth for the version, so no volatile version literal lives in tracked docs.
+# The Flux CLI release is owned by the flake; kindctl uses the same version for
+# its runtime preflight.
 
 # Bootstrap owner and repository coordinates stay operator-supplied. The
 # runtime-control branch is independently bound to the reviewed local Git HEAD.
@@ -180,6 +181,13 @@ def test_flux_cli_is_pinned_in_the_flake_devshell() -> None:
     source = FLAKE.read_text(encoding="utf-8")
     version = re.search(r'fluxVersion\s*=\s*"(?P<version>\d+\.\d+\.\d+)";', source)
     assert version, "flake.nix must pin a semantic Flux CLI version"
+    kindctl_version = re.search(
+        r'^FLUX_VERSION\s*=\s*"(?P<version>\d+\.\d+\.\d+)"$',
+        KINDCTL.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert kindctl_version, "kindctl must declare the Flux CLI version used by its preflight"
+    assert kindctl_version["version"] == version["version"]
     checksums = re.findall(r'fluxSha256\s*=\s*"([0-9a-f]{64})";', source)
     assert len(checksums) == 4, "each supported platform must pin the Flux CLI release checksum"
     assert len(set(checksums)) == 4, "Flux CLI platform checksums must not be duplicated"
