@@ -123,6 +123,11 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         "docker-lint": frozenset({"**/Dockerfile{,.*}", "Dockerfile", ".hadolint.yaml"}),
     },
     "pre-push": {
+        # Not a check and has no hosted counterpart: it exists so the envelope can
+        # tell "the gate ran" from "the gate selected no files and skipped
+        # everything". Unglobbed on purpose, since an empty selection skips
+        # unglobbed jobs too and that is precisely the condition being detected.
+        "gate-liveness": frozenset(),
         "secrets-scan": frozenset(),
         "python-lint": frozenset(),
         "python-format": frozenset(),

@@ -318,10 +318,29 @@ The configured hooks are:
   - Image matrix parity
   - Protobuf breaking-change detection
 
-The installed pre-push wrapper invokes the pinned Lefthook binary with `--force`, so every pre-push job above runs
-on a normal push even when its configured glob does not match the change. Before invoking Lefthook, the wrapper
-unsets `LEFTHOOK`, `LEFTHOOK_BIN`, `LEFTHOOK_VERBOSE`, `LEFTHOOK_CONFIG`, and `LEFTHOOK_EXCLUDE`. Those variables
-therefore cannot disable a push that reaches the wrapper. There is no `SKIP_PREPUSH` override or branch-name skip.
+The installed pre-push wrapper invokes the pinned Lefthook binary with `--force`, but that flag does **not** make
+every job above run. The wrapper's Lefthook pass runs exactly one job, an envelope that acquires the gate lock and
+re-enters Lefthook with `NOHIKI_GATE_ACTIVE=1`; every job listed above is skipped in that outer pass by condition
+and runs only in the inner one, which is a separate process that never receives `--force`. So `--force` guarantees
+the envelope runs, nothing more, and the jobs above are subject to their configured globs as normal.
+
+What the inner pass checks is chosen by Lefthook from `git diff --name-only HEAD @{push}`, falling back to a diff
+against the head branch. That is a property of your worktree, not of the commits you are pushing, and it has two
+consequences the envelope now contains:
+
+- If that selection is empty, Lefthook skips **every** job, globbed or not, and exits zero. The envelope detects
+  this by requiring the inner pass to run an unglobbed `gate-liveness` job, and fails the push if it did not, so a
+  gate that inspected nothing can no longer report success.
+- If you push a commit that is not what your worktree holds, for example
+  `git push origin <rev>:refs/heads/<branch>` from a checkout parked elsewhere, the jobs would examine your
+  worktree while git publishes `<rev>`, and pass without having read the published code. The envelope refuses such
+  a push, comparing the pushed commit's tree against the worktree's rather than comparing commit identity, so
+  `git push origin HEAD:refs/heads/<branch>` and a detached HEAD on the tip are still accepted. It likewise
+  refuses when tracked files are modified, since the jobs would then read uncommitted content.
+
+Before invoking Lefthook, the wrapper unsets `LEFTHOOK`, `LEFTHOOK_BIN`, `LEFTHOOK_VERBOSE`, `LEFTHOOK_CONFIG`, and
+`LEFTHOOK_EXCLUDE`. Those variables therefore cannot disable a push that reaches the wrapper. There is no
+`SKIP_PREPUSH` override or branch-name skip.
 
 Hooks remain client-side. `git push --no-verify` bypasses the pre-push hook completely, before the wrapper can run;
 no client-side wrapper can prevent that. Use it only as a deliberate exception, knowing that it skips all local

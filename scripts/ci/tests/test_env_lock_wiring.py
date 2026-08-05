@@ -81,10 +81,65 @@ def test_prepush_gate_envelopes_every_phase() -> None:
     inactive_skip = [{"run": 'test "${NOHIKI_GATE_ACTIVE:-0}" != 1'}]
 
     assert envelope["skip"] == [{"run": 'test "${NOHIKI_GATE_ACTIVE:-0}" = 1'}]
-    assert "scripts/dev/env-lock.sh gate pre-push --" in envelope["run"]
-    assert "scripts/dev/test-run.sh gate --" in envelope["run"]
-    assert "env NOHIKI_GATE_ACTIVE=1 lefthook run pre-push" in envelope["run"]
+    assert "scripts/dev/prepush-gate.sh" in envelope["run"]
+    # Git hands the ref pairs to the hook on standard input, and Lefthook gives a
+    # job an empty stdin unless the job asks for it. Without this key the
+    # envelope cannot tell which commit is being published.
+    assert envelope["use_stdin"] is True
     assert all(inactive_skip[0] in phase["skip"] for phase in jobs[1:])
+
+    # The lock, the resource scope and the re-entrant pass moved into the
+    # envelope script; assert they are still all present and in that order.
+    gate = (_ROOT / "scripts" / "dev" / "prepush-gate.sh").read_text(encoding="utf-8")
+    chain = (
+        "scripts/dev/env-lock.sh gate pre-push --",
+        "scripts/dev/test-run.sh gate --",
+        "env NOHIKI_GATE_ACTIVE=1",
+        "lefthook run pre-push --no-auto-install",
+    )
+    offset = -1
+    for fragment in chain:
+        found = gate.find(fragment, offset + 1)
+        assert found > offset, f"{fragment!r} missing from prepush-gate.sh or out of order"
+        offset = found
+
+
+def test_prepush_gate_cannot_report_success_having_inspected_nothing() -> None:
+    """An empty push selection skips every job and exits zero; that must not pass.
+
+    Lefthook picks pre-push files with `git diff --name-only HEAD @{push}`. When
+    that resolves empty it skips unglobbed jobs too, so the gate reports success
+    having run nothing. The envelope requires an unglobbed liveness job to have
+    run, which is exactly the condition that job cannot satisfy when the
+    selection is empty.
+    """
+    config = yaml.safe_load((_ROOT / "lefthook.yml").read_text(encoding="utf-8"))
+    jobs = config["pre-push"]["jobs"]
+    liveness = [job for job in jobs if job.get("name") == "gate-liveness"]
+
+    assert len(liveness) == 1, "pre-push must define exactly one gate-liveness job"
+    assert "glob" not in liveness[0], "the liveness job must not be glob-filtered"
+    assert "NOHIKI_GATE_LIVENESS" in liveness[0]["run"]
+
+    gate = (_ROOT / "scripts" / "dev" / "prepush-gate.sh").read_text(encoding="utf-8")
+    assert 'if [ ! -e "$liveness" ]; then' in gate
+    assert "inspected nothing" in gate
+
+
+def test_prepush_gate_refuses_to_examine_a_tree_it_is_not_publishing() -> None:
+    """The gate must not check one tree while git publishes another.
+
+    `git push origin <rev>:refs/heads/x` from a parked checkout makes the jobs
+    examine the worktree while git publishes <rev>, so they pass without ever
+    reading the published code. The envelope compares trees rather than commit
+    identity, which keeps `git push origin HEAD:refs/heads/x` and a detached
+    HEAD on the tip working.
+    """
+    gate = (_ROOT / "scripts" / "dev" / "prepush-gate.sh").read_text(encoding="utf-8")
+
+    assert "refusing to gate" in gate
+    assert "HEAD^{tree}" in gate
+    assert "${local_sha}^{tree}" in gate
 
 
 def test_nested_lock_invocation_is_reentrant() -> None:
