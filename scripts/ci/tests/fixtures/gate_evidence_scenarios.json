@@ -233,6 +233,57 @@
       }
     }
   },
+  "malformed_then_valid": {
+    "pulls": [
+      {
+        "number": 17,
+        "merged_at": "2026-07-21T12:00:00Z",
+        "merge_commit_sha": "merge-sha",
+        "head": {"sha": "pr-head"},
+        "base": {"sha": "base-sha"}
+      }
+    ],
+    "commit": {
+      "sha": "merge-sha",
+      "commit": {"tree": {"sha": "tree-merge"}},
+      "parents": [{"sha": "base-sha"}, {"sha": "pr-head"}]
+    },
+    "runs": {
+      "workflow_runs": [
+        {
+          "id": 105,
+          "name": "Checks",
+          "event": "pull_request",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "pr-head"
+        },
+        {
+          "id": 101,
+          "name": "Checks",
+          "event": "pull_request",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "pr-head"
+        }
+      ]
+    },
+    "attestations": {
+      "105": {
+        "tested_tree_sha": "tree-merge",
+        "event_action": "synchronize",
+        "commit_class": "standard",
+        "run_id": 105
+      },
+      "101": {
+        "tested_tree_sha": "tree-merge",
+        "event_action": "synchronize",
+        "commit_class": "standard",
+        "run_id": 101,
+        "base_sha": "base-sha"
+      }
+    }
+  },
   "api_failure": {
     "fail_api": "pulls",
     "pulls": [],
