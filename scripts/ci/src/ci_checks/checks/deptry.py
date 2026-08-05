@@ -133,8 +133,11 @@ _PACKAGE_IGNORES: dict[str, dict[str, tuple[str, ...]]] = {
         "DEP002": ("nohiki-ml-core",),
         "DEP003": ("fastapi", "pydantic", "pydantic_settings", "uvicorn"),
     },
+    # boto3 and botocore reach infra/k8s/local/model_archive_seed.py, which kindctl runs as
+    # `uv run --package ml-compute-service`. Deptry scans src/ only, so that consumer is
+    # invisible to it while the declaration remains load-bearing for the RustFS upload path.
     "ml-compute-service": {
-        "DEP002": ("huggingface-hub", "torch"),
+        "DEP002": ("boto3", "botocore", "huggingface-hub", "torch"),
         "DEP003": ("fastapi", "numpy", "pydantic", "pydantic_settings", "uvicorn"),
     },
     "skill-graph-service": {
