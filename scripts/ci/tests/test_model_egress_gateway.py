@@ -7,6 +7,7 @@ import tarfile
 from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
+from typing import cast
 
 import jsonschema
 import pytest
@@ -859,7 +860,8 @@ def test_local_proxy_endpoint_uses_its_owner_credential(
     managed_rendered: tuple[Manifest, ...],
 ) -> None:
     local = _named(rendered, "ExternalSecret", "nohiki-model-egress-openai")
-    assert local["spec"]["data"] == [
+    local_spec = cast(dict[str, object], local["spec"])
+    assert local_spec["data"] == [
         {
             "secretKey": "Authorization",
             "remoteRef": {
@@ -870,7 +872,8 @@ def test_local_proxy_endpoint_uses_its_owner_credential(
     ]
 
     managed = _named(managed_rendered, "ExternalSecret", "nohiki-model-egress-openai")
-    assert managed["spec"]["data"] == [
+    managed_spec = cast(dict[str, object], managed["spec"])
+    assert managed_spec["data"] == [
         {
             "secretKey": "Authorization",
             "remoteRef": {"key": "model-egress-openai-authorization"},
