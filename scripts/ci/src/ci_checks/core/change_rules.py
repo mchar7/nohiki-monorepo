@@ -136,22 +136,24 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
     ),
     SurfaceRule(
         (
-            # Importing any core submodule executes the package initializer.
-            "scripts/ci/src/ci_checks/core/__init__.py",
+            # Self-reference: these modules decide which lanes run, so a bounded
+            # edit must exercise every lane whose dispatch it can change.
             "scripts/ci/src/ci_checks/core/change_gate.py",
             "scripts/ci/src/ci_checks/core/change_rules.py",
-            "scripts/ci/src/ci_checks/core/display.py",
-            "scripts/ci/src/ci_checks/core/image_inventory.py",
-            "scripts/ci/src/ci_checks/core/packages.py",
+            "scripts/ci/src/ci_checks/checks/gate.py",
+            # The runner controls every package's test invocation.
+            "scripts/ci/src/ci_checks/checks/tests.py",
         ),
-        flags=BROAD_PYTHON_FLAGS,
+        flags=FLAG_NAMES,
         packages=("ci-checks",),
     ),
     SurfaceRule(
         (
-            "scripts/ci/src/ci_checks/checks/gate.py",
-            # The runner controls every package's test invocation.
-            "scripts/ci/src/ci_checks/checks/tests.py",
+            # Importing any core submodule executes the package initializer.
+            "scripts/ci/src/ci_checks/core/__init__.py",
+            "scripts/ci/src/ci_checks/core/display.py",
+            "scripts/ci/src/ci_checks/core/image_inventory.py",
+            "scripts/ci/src/ci_checks/core/packages.py",
         ),
         flags=BROAD_PYTHON_FLAGS,
         packages=("ci-checks",),

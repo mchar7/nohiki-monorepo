@@ -165,6 +165,26 @@ def test_commit_class_boundaries(path: str, expected: CommitClass) -> None:
     assert not decision.unmatched
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "scripts/ci/src/ci_checks/core/change_gate.py",
+        "scripts/ci/src/ci_checks/core/change_rules.py",
+        "scripts/ci/src/ci_checks/checks/gate.py",
+        "scripts/ci/src/ci_checks/checks/tests.py",
+    ],
+)
+def test_gate_authority_changes_select_every_lane_including_jvm(path: str) -> None:
+    decision = evaluate(
+        {path},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.flags == set(FLAG_NAMES)
+    assert decision.flag_value("jvm_tests")
+
+
 def test_unmapped_path_fails_closed_without_unrelated_frontend_smoke() -> None:
     decision = evaluate(
         {"unmapped/tracked.file"},
