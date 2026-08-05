@@ -323,6 +323,31 @@ on a normal push even when its configured glob does not match the change. Before
 unsets `LEFTHOOK`, `LEFTHOOK_BIN`, `LEFTHOOK_VERBOSE`, `LEFTHOOK_CONFIG`, and `LEFTHOOK_EXCLUDE`. Those variables
 therefore cannot disable a push that reaches the wrapper. There is no `SKIP_PREPUSH` override or branch-name skip.
 
+### GitHub-retained prose
+
+Every pull request title, body, conversation comment, review summary, and inline
+review comment must pass `just github-prose-scan` before the corresponding `gh`
+command creates or edits it.
+Supply prose through a file or standard input, never as an inline shell argument:
+
+```bash
+just github-prose-scan /tmp/pr-body
+just github-prose-scan < /tmp/pr-comment
+```
+
+Audit one pull request immediately after posting, or audit the complete repository:
+
+```bash
+just github-prose-sweep 171
+just github-prose-sweep
+```
+
+The scanner loads the private disclosure vocabulary through the same pinned tool
+installation as the pre-push wrapper, then verifies an opaque vocabulary digest.
+Findings name only the surface, location, and rule; they do not render the matched
+text. Missing or changed policy, API failures, empty payloads, malformed responses,
+and unexpected scanner errors make the command refuse with a nonzero exit.
+
 Hooks remain client-side. `git push --no-verify` bypasses the pre-push hook completely, before the wrapper can run;
 no client-side wrapper can prevent that. Use it only as a deliberate exception, knowing that it skips all local
 pre-push checks and leaves the hosted checks to catch failures.
