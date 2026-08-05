@@ -61,27 +61,21 @@ Get database schema for a service (derived or explicit override).
 {{- end }}
 
 {{/*
-Get app role name for a service (derived or explicit override).
-Checks database.roles.app first, then database.appRole, then derives.
+Get app role name for a service (derived or explicit database.roles.app override).
 */}}
 {{- define "nohiki.dbAppRole" -}}
 {{- $prefix := include "nohiki.dbPrefix" .svcName -}}
-{{- $default := printf "%s_svc" $prefix -}}
-{{- $rolesApp := dig "database" "roles" "app" "" .svcValues -}}
-{{- $appRole := dig "database" "appRole" "" .svcValues -}}
-{{- if $rolesApp }}{{ $rolesApp }}{{- else if $appRole }}{{ $appRole }}{{- else }}{{ $default }}{{- end -}}
+{{- $appRole := dig "database" "roles" "app" "" .svcValues -}}
+{{- $appRole | default (printf "%s_svc" $prefix) -}}
 {{- end }}
 
 {{/*
-Get debezium role name for a service (derived or explicit override).
-Checks database.roles.debezium first, then database.debeziumRole, then derives.
+Get debezium role name for a service (derived or explicit database.roles.debezium override).
 */}}
 {{- define "nohiki.dbDebeziumRole" -}}
 {{- $prefix := include "nohiki.dbPrefix" .svcName -}}
-{{- $default := printf "%s_debezium" $prefix -}}
-{{- $rolesDebezium := dig "database" "roles" "debezium" "" .svcValues -}}
-{{- $debeziumRole := dig "database" "debeziumRole" "" .svcValues -}}
-{{- if $rolesDebezium }}{{ $rolesDebezium }}{{- else if $debeziumRole }}{{ $debeziumRole }}{{- else }}{{ $default }}{{- end -}}
+{{- $debeziumRole := dig "database" "roles" "debezium" "" .svcValues -}}
+{{- $debeziumRole | default (printf "%s_debezium" $prefix) -}}
 {{- end }}
 
 {{/* Get app role secret name for a service. */}}

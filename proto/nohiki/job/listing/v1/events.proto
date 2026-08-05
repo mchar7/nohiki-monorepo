@@ -18,7 +18,7 @@ message ListingAccepted {
   nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
   nohiki.common.v1.ListingReference listing = 2 [(buf.validate.field).required = true];
 
-  // Typed discovered listing data (replaces raw_listing_data_json)
+  // Discovered listing data
   nohiki.job.ingest.v1.DiscoveredListing discovered_data = 3 [(buf.validate.field).required = true];
 
   // Internal listing ID assigned by storage service

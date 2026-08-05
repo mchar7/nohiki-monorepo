@@ -44,8 +44,7 @@ message EmbeddingResult {
 // Publisher: ml-compute-service
 // Consumer: Original requester (user-pref, enrichment, etc.)
 //
-// Single message type per callback topic - oneof distinguishes
-// success from failure, fixing the dual-consumer-group bug.
+// Single message type per callback topic; oneof distinguishes success from failure.
 // ════════════════════════════════════════════════════════════════════
 message EmbeddingCallback {
   nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];

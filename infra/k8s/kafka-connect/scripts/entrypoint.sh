@@ -40,8 +40,6 @@ echo "Waiting for worker to stabilize..."
 sleep 10
 
 # Register connectors via REST API (idempotent - safe to run on every restart).
-# Startup registers only; destructive legacy cleanup is the explicit
-# `register-connectors.sh migrate-legacy` command and never runs here.
 "${SCRIPTS_DIR}/register-connectors.sh" register
 
 # Start background health monitor - auto-restarts any FAILED/UNASSIGNED tasks

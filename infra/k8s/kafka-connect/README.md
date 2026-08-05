@@ -51,19 +51,6 @@ resources. The entrypoint runs `register-connectors.sh register` on every start:
 and non-destructive. For manual deployments, run `scripts/register-connectors.sh` inside an
 environment that mounts `/run/secrets/database/dsn` and can reach PostgreSQL and Kafka Connect.
 
-### Migrating off legacy connectors (destructive, explicit only)
-
-The legacy Compose connector identities and their replication slots/publications are removed only
-by the explicit `scripts/register-connectors.sh migrate-legacy` command, never at startup. It
-deletes the legacy connectors, drops their (inactive) replication slots and publications, then
-re-registers the current connectors. From the Compose stack:
-
-```bash
-just connect-migrate-legacy
-```
-
-Run it once when migrating an existing environment; it refuses to drop a slot that is still active.
-
 ## Local Development
 
 ### Start Kafka Connect
@@ -77,6 +64,21 @@ just compose-up
 
 Do not post `outbox-connector-template.json` directly: it contains placeholders that
 `scripts/register-connectors.sh` expands for each service schema.
+
+### Reconcile persisted Compose CDC state (destructive, explicit only)
+
+The current registration path is intentionally non-destructive. If health checks report
+superseded `nohiki-outbox-*` connectors or their `nohiki_outbox_slot_*` and
+`nohiki_outbox_pub_*` resources, run the bounded reconciliation command:
+
+```bash
+just connect-reconcile-compose-cdc
+```
+
+The command deletes only the recognized superseded Compose connector identities, drops their
+inactive replication slots and publications, then registers the current connector inventory. It
+never runs at startup and refuses to drop an active slot. Inspect any unexpected resource whose
+name is outside that bounded set before removing it manually.
 
 ### Check Connector Status
 

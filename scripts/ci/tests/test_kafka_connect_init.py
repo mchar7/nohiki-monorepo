@@ -6,11 +6,19 @@ import re
 import subprocess
 import textwrap
 from pathlib import Path
+from typing import TypedDict, cast
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CONNECT_ROOT = _REPOSITORY_ROOT / "infra" / "k8s" / "kafka-connect"
 _DOCKERFILE = (_CONNECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
 _REGISTRATION = (_CONNECT_ROOT / "scripts" / "register-connectors.sh").read_text(encoding="utf-8")
+
+
+class _CdcState(TypedDict):
+    connectors: list[str]
+    slots: dict[str, bool]
+    publications: list[str]
+    configs: dict[str, dict[str, object]]
 
 
 def test_connect_image_installs_postgresql_client_before_non_root_user() -> None:
@@ -187,81 +195,177 @@ def test_qdrant_connector_restores_shaded_dns_name_resolver_provider() -> None:
     assert retain_uds < write_descriptor < patch_jar < verify_patch < cleanup
 
 
-def test_legacy_connectors_are_explicitly_cleaned_up_before_registration() -> None:
-    registration = _REGISTRATION
+def _expected_compose_cdc_inventory() -> tuple[set[str], set[str], set[str]]:
+    outbox_array = re.search(r"OUTBOX_CONNECTORS=\(\n(?P<entries>.*?)\n\)", _REGISTRATION, re.DOTALL)
+    wal_array = re.search(r"WAL_CONNECTORS=\(\n(?P<entries>.*?)\n\)", _REGISTRATION, re.DOTALL)
+    assert outbox_array is not None
+    assert wal_array is not None
 
-    legacy_array = re.search(r"LEGACY_OUTBOX_CONNECTORS=\(\n(?P<entries>.*?)\n\)", registration, re.DOTALL)
-    assert legacy_array is not None, "legacy cleanup must use an explicit, bounded connector list"
+    outbox = re.findall(r'"([^:"]+):([^:"]+)"', outbox_array.group("entries"))
+    wal = re.findall(r'"([^:"]+):([^:"]+):([^:"]+)"', wal_array.group("entries"))
+    connectors = {f"{service}-outbox" for service, _ in outbox}
+    connectors.update(f"{service}-wal" for service, _, _ in wal)
+    if (_CONNECT_ROOT / "connectors" / "qdrant-embedding-sink.json").is_file():
+        connectors.add("qdrant-embedding-sink")
+    slots = {f"{service.removesuffix('-service').replace('-', '_')}_outbox_slot" for service, _ in outbox}
+    slots.update(f"{prefix}_wal_slot" for _, _, prefix in wal)
+    publications = {f"{service.removesuffix('-service').replace('-', '_')}_outbox_pub" for service, _ in outbox}
+    publications.update(f"{prefix}_wal_pub" for _, _, prefix in wal)
+    return connectors, slots, publications
 
-    legacy_connectors = re.findall(r'"([^"]+)"', legacy_array.group("entries"))
-    assert set(legacy_connectors) == {
-        "nohiki-outbox-user_auth",
-        "nohiki-outbox-user_pref",
-        "nohiki-outbox-user_upload",
-        "nohiki-outbox-user_entitlement",
-        "nohiki-outbox-job_query",
-        "nohiki-outbox-job_storage",
-        "nohiki-outbox-job_correlation",
-        "nohiki-outbox-job_ingest_enrichment",
-        "nohiki-outbox-doc_render",
-        "nohiki-outbox-doc_schema",
-        "nohiki-outbox-doc_template",
-        "nohiki-outbox-skill_graph",
-        "nohiki-outbox-notification",
-    }
-    assert all("qdrant" not in name for name in legacy_connectors)
-    legacy_suffixes = {name.removeprefix("nohiki-outbox-") for name in legacy_connectors}
-    assert legacy_suffixes == {
-        "user_auth",
-        "user_pref",
-        "user_upload",
-        "user_entitlement",
-        "job_query",
-        "job_storage",
-        "job_correlation",
-        "job_ingest_enrichment",
-        "doc_render",
-        "doc_schema",
-        "doc_template",
-        "skill_graph",
-        "notification",
-    }
-    assert len(legacy_suffixes) == 13
-    assert not legacy_suffixes & {"job_schedule", "bff", "qdrant"}
 
-    cleanup_function = re.search(
-        r"cleanup_legacy_replication_resources\(\) \{(?P<body>.*?)\n\}",
-        registration,
-        re.DOTALL,
+def _run_compose_cdc_reconciliation(
+    tmp_path: Path,
+    *,
+    superseded_slot_active: bool,
+) -> tuple[subprocess.CompletedProcess[str], _CdcState]:
+    secrets_dir = tmp_path / "secrets" / "database"
+    secrets_dir.mkdir(parents=True)
+    (secrets_dir / "dsn").write_text("postgresql://user:pass@postgres:5432/nohiki\n", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "connectors": ["nohiki-outbox-user_auth"],
+                "slots": {"nohiki_outbox_slot_user_auth": superseded_slot_active},
+                "publications": ["nohiki_outbox_pub_user_auth"],
+                "configs": {},
+            }
+        ),
+        encoding="utf-8",
     )
-    assert cleanup_function is not None
-    cleanup_body = cleanup_function.group("body")
-    assert 'local suffix="${connector_name#nohiki-outbox-}"' in cleanup_body
-    assert 'local slot_name="nohiki_outbox_slot_${suffix}"' in cleanup_body
-    assert 'local publication_name="nohiki_outbox_pub_${suffix}"' in cleanup_body
-    suffix_validation = '[[ "$connector_name" == nohiki-outbox-* && "$suffix" =~ ^[a-z0-9_]+$ ]]'
-    assert suffix_validation in cleanup_body
-    assert cleanup_body.index(suffix_validation) < cleanup_body.index("psql -X")
-    assert ":'slot_name'" not in cleanup_body
-    assert ':"publication_name"' not in cleanup_body
-    assert "FROM pg_replication_slots WHERE slot_name = '${slot_name}'" in cleanup_body
-    assert "SELECT pg_drop_replication_slot('${slot_name}');" in cleanup_body
-    assert "WHEN active THEN 'active' ELSE 'inactive'" in cleanup_body
-    assert re.search(r"active\).*?return 1", cleanup_body, re.DOTALL)
-    assert re.search(r"inactive\).*?pg_drop_replication_slot", cleanup_body, re.DOTALL)
-    assert 'DROP PUBLICATION IF EXISTS \\"${publication_name}\\";' in cleanup_body
-    assert '"${OUTBOX_CONNECTORS[@]}"' not in cleanup_body
-    assert "qdrant" not in cleanup_body
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "curl").write_text(
+        textwrap.dedent(
+            """
+            #!/usr/bin/env python3
+            import json
+            import os
+            import sys
+            from pathlib import Path
 
-    cleanup_loop = 'for connector_name in "${LEGACY_OUTBOX_CONNECTORS[@]}"; do'
-    deletion_call = 'delete_legacy_connector "$connector_name"'
-    replication_cleanup_call = 'cleanup_legacy_replication_resources "$connector_name"'
-    migrate_body = registration.split("migrate_legacy() {", 1)[1].split("\n}", 1)[0]
-    main_body = registration.split("main() {", 1)[1].split("\n}", 1)[0]
-    migrate_branch = main_body.split("migrate-legacy)", 1)[1].split(";;", 1)[0]
-    assert registration.count(cleanup_loop) == 2
-    assert migrate_body.index(deletion_call) < migrate_body.index(replication_cleanup_call)
-    assert migrate_branch.index("migrate_legacy") < migrate_branch.index("register_all")
+            state_path = Path(os.environ["CDC_STATE"])
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            args = sys.argv[1:]
+            method = args[args.index("-X") + 1] if "-X" in args else "GET"
+            url = next(arg for arg in args if arg.startswith(("http://", "https://")))
+
+            def save():
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+
+            if "/connectors/" in url:
+                name = url.split("/connectors/", 1)[1].split("/", 1)[0]
+                if method == "DELETE":
+                    present = name in state["connectors"]
+                    if present:
+                        state["connectors"].remove(name)
+                        state["configs"].pop(name, None)
+                        save()
+                    if "-w" in args:
+                        print("204" if present else "404", end="")
+                    raise SystemExit(0)
+                if name not in state["connectors"]:
+                    raise SystemExit(22)
+                if url.endswith("/status"):
+                    print(json.dumps({"connector": {"state": "RUNNING"}, "tasks": [{"state": "RUNNING"}]}))
+                elif url.endswith("/config"):
+                    print(json.dumps(state["configs"][name]))
+                else:
+                    print("{}")
+                raise SystemExit(0)
+
+            if method == "POST" and url.endswith("/connectors"):
+                payload = json.load(sys.stdin)
+                name = payload["name"]
+                config = payload["config"]
+                if name not in state["connectors"]:
+                    state["connectors"].append(name)
+                state["configs"][name] = config
+                if slot := config.get("slot.name"):
+                    state["slots"][slot] = True
+                if publication := config.get("publication.name"):
+                    if publication not in state["publications"]:
+                        state["publications"].append(publication)
+                save()
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    (bin_dir / "psql").write_text(
+        textwrap.dedent(
+            """
+            #!/usr/bin/env python3
+            import json
+            import os
+            import re
+            import sys
+            from pathlib import Path
+
+            state_path = Path(os.environ["CDC_STATE"])
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            args = sys.argv[1:]
+            query = args[args.index("-c") + 1]
+
+            if "SELECT CASE WHEN active" in query:
+                name = re.search(r"slot_name = '([^']+)'", query).group(1)
+                if name in state["slots"]:
+                    print("active" if state["slots"][name] else "inactive")
+            elif "pg_drop_replication_slot" in query:
+                name = re.search(r"pg_drop_replication_slot\\('([^']+)'\\)", query).group(1)
+                state["slots"].pop(name, None)
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+            elif "DROP PUBLICATION" in query:
+                name = re.search(r'DROP PUBLICATION IF EXISTS "([^"]+)"', query).group(1)
+                if name in state["publications"]:
+                    state["publications"].remove(name)
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    for executable in (bin_dir / "curl", bin_dir / "psql"):
+        executable.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(_CONNECT_ROOT / "scripts" / "register-connectors.sh"),
+            "reconcile-compose-cdc",
+        ],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "SECRETS_DIR": str(tmp_path / "secrets"),
+            "CDC_STATE": str(state_path),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    state = cast("_CdcState", json.loads(state_path.read_text(encoding="utf-8")))
+    return result, state
+
+
+def test_reconcile_compose_cdc_recovers_exact_inventory_from_superseded_resources(tmp_path: Path) -> None:
+    expected_connectors, expected_slots, expected_publications = _expected_compose_cdc_inventory()
+
+    result, state = _run_compose_cdc_reconciliation(tmp_path, superseded_slot_active=False)
+
+    assert result.returncode == 0, result.stderr
+    assert set(state["connectors"]) == expected_connectors
+    assert set(state["slots"]) == expected_slots
+    assert set(state["publications"]) == expected_publications
+    assert all(state["slots"].values())
+
+
+def test_reconcile_compose_cdc_refuses_active_superseded_slot(tmp_path: Path) -> None:
+    result, state = _run_compose_cdc_reconciliation(tmp_path, superseded_slot_active=True)
+
+    assert result.returncode != 0
+    assert "superseded replication slot nohiki_outbox_slot_user_auth is still active" in result.stderr
+    assert state["slots"]["nohiki_outbox_slot_user_auth"] is True
+    assert "nohiki_outbox_pub_user_auth" in state["publications"]
 
 
 def test_outbox_connectors_use_service_owned_schemas() -> None:

@@ -1,4 +1,4 @@
-"""Behavior tests for replication capacity and legacy-slot detection."""
+"""Behavior tests for replication capacity and unexpected-slot detection."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from health_check.platform.models import PlatformTarget
 from .._helpers import MockPlatform
 
 
-async def test_legacy_slot_proliferation_reports_counts_and_remediation() -> None:
+async def test_unexpected_slot_reports_counts_and_remediation() -> None:
     result = await ReplicationCapacityCheck().execute(MockPlatform(_psql_result=(0, "13|16|12|16|1", "")))
 
     assert result.status == CheckStatus.FAILED
-    assert "legacy" in result.summary
+    assert "unexpected" in result.summary
     assert any("slots=13/16" in detail and "headroom=3" in detail for detail in result.details)
     assert "canonical_slots=12/12 unexpected=1" in result.details
     assert result.remediation_hint is not None

@@ -329,7 +329,7 @@ class ListingAccepted(betterproto2.Message):
         3, betterproto2.TYPE_MESSAGE
     )
     """
-    Typed discovered listing data (replaces raw_listing_data_json)
+    Discovered listing data
     """
 
     listing_id: "str" = betterproto2.field(4, betterproto2.TYPE_STRING)

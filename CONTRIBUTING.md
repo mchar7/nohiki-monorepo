@@ -163,8 +163,6 @@ just lint-libs         # Lint shared libs only
 just lint-md           # Lint markdown files
 ```
 
-Aliases: `just l` (lint), `just f` (format), `just s` (sync)
-
 ### Type Checking
 
 ```bash
@@ -222,9 +220,8 @@ just hygiene-deadcode             # Dead code detection
 just hygiene-deadcode-strict      # Dead code detection (fail mode)
 just hygiene-fixtures             # Pytest fixture usage check
 just hygiene-fixtures-strict      # Fail on fixture issues
-just hygiene-build-backend        # Canonical [build-system] check (reports migration progress)
-just hygiene-build-backend-strict # Fail on any package not on uv_build (post-rollout gate)
-just check-strict                 # lint + typecheck-all + hygiene
+just hygiene-build-backend-strict # Enforce the canonical uv_build stanza
+just verify                       # Complete developer-reproducible verification matrix
 ```
 
 ### Build / Docker
@@ -262,7 +259,7 @@ just fe-dev                       # Dev server (localhost:5173)
 just fe-build                     # Production build
 just fe-analyze                   # Bundle size analysis
 just fe-check                     # tsc + biome + vitest
-just check-all                    # lint + fe-check + lint-md
+just verify                       # Complete developer-reproducible verification matrix
 ```
 
 ### Protobuf
@@ -439,9 +436,8 @@ build-backend = "uv_build"
 - The pin must match exactly. Bump both the constant in
   `scripts/ci/src/ci_checks/checks/build_backend.py` (`CANONICAL_REQUIRES`) and
   every package's `pyproject.toml` in a single change.
-- Never carry `[tool.hatch.*]` or `[tool.setuptools.*]` tables in a migrated
-  package. uv_build uses the src layout by default with zero additional
-  configuration.
+- Never carry `[tool.hatch.*]` or `[tool.setuptools.*]` tables. uv_build uses
+  the src layout by default with zero additional configuration.
 - Workspace members that are intentionally never built (e.g. the `tests/`
   integration package) simply omit `[build-system]` entirely.
 
@@ -452,13 +448,6 @@ build-backend = "uv_build"
   at `src/nohiki/`.
 - Non-standard module names where normalisation does not match the desired
   module (rare).
-
-**Enforcement:** `just hygiene-build-backend` reports migration progress and
-fails on drift (packages already on uv_build diverging from the canonical
-stanza, or carrying residue from superseded `[tool.hatch.*]` /
-`[tool.setuptools.*]` sections). `just hygiene-build-backend-strict` also
-fails on any package not yet migrated to uv_build. Wire this
-into `just hygiene` once the rollout is complete.
 
 ### Exceptions
 
@@ -829,7 +818,7 @@ just test-all-e2e  # Both
 - **No TaskGroup for a single task**: just `await` directly (SonarQube S7513)
 - **No raw `pytest` or `python`**: always `uv run pytest` / `uv run python`
 - **No `uv pip install`**: edit `pyproject.toml` + `uv sync`
-- **No build backends other than `uv_build`**: canonical `[build-system]` stanza enforced by `just hygiene-build-backend`
+- **No build backends other than `uv_build`**: canonical `[build-system]` stanza enforced by `just hygiene-build-backend-strict`
 - **No secrets committed**: use `infra/shared/secrets/` (gitignored)
 - **Never commit ignored local scratch state**
 - **No `_pb2` imports**: use `from nohiki.domain.v1 import ...` (betterproto2)

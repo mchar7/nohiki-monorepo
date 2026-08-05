@@ -36,20 +36,13 @@ def _slot_rows(
     target: PlatformTarget = PlatformTarget.COMPOSE,
     *,
     inactive: str | None = None,
-    legacy: bool = False,
 ) -> str:
     slot_names = tuple(connector.slot_name for connector in cdc_connectors_for(target))
-    rows = [f"{name}|{'f' if name == inactive else 't'}" for name in slot_names]
-    if legacy:
-        rows.append("nohiki_outbox_user_auth_slot|t")
-    return "\n".join(rows)
+    return "\n".join(f"{name}|{'f' if name == inactive else 't'}" for name in slot_names)
 
 
-def _publication_names(target: PlatformTarget = PlatformTarget.COMPOSE, *, legacy: bool = False) -> str:
-    names = [connector.publication_name for connector in cdc_connectors_for(target)]
-    if legacy:
-        names.append("nohiki_outbox_pub_user_auth")
-    return "\n".join(names)
+def _publication_names(target: PlatformTarget = PlatformTarget.COMPOSE) -> str:
+    return "\n".join(connector.publication_name for connector in cdc_connectors_for(target))
 
 
 _KNOWN_UUID: str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -123,16 +116,6 @@ class TestDebeziumConnectorsCheck:
         result = await DebeziumConnectorsCheck().execute(_MultiCurlPlatform(target=target))
         assert result.status == CheckStatus.PASSED
 
-    async def test_rejects_legacy_connector_alongside_exact_current_inventory(self) -> None:
-        names = [*_COMPOSE_CONNECTOR_NAMES, "nohiki-outbox-user_auth"]
-        platform = MockPlatform(_curl_result=(0, json.dumps(names), ""))
-
-        result = await DebeziumConnectorsCheck().execute(platform)
-
-        assert result.status == CheckStatus.FAILED
-        assert "unexpected" in result.summary
-        assert "nohiki-outbox-user_auth: unexpected connector" in result.details
-
     async def test_error_when_api_unreachable(self) -> None:
         platform = MockPlatform(_curl_result=(1, "", "connection refused"))
         result = await DebeziumConnectorsCheck().execute(platform)
@@ -150,6 +133,17 @@ class TestDebeziumConnectorsCheck:
         result = await DebeziumConnectorsCheck().execute(_EmptyListPlatform())
         assert result.status == CheckStatus.FAILED
         assert "No connectors" in result.summary
+
+    async def test_reports_superseded_compose_connector_with_reconciliation_path(self) -> None:
+        names = [*_COMPOSE_CONNECTOR_NAMES, "nohiki-outbox-user_auth"]
+        platform = MockPlatform(_curl_result=(0, json.dumps(names), ""))
+
+        result = await DebeziumConnectorsCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert "nohiki-outbox-user_auth: unexpected connector" in result.details
+        assert result.remediation_hint is not None
+        assert "just connect-reconcile-compose-cdc" in result.remediation_hint
 
     async def test_fails_when_connector_failed(self) -> None:
         names_body = json.dumps(["conn-a"])
@@ -249,7 +243,7 @@ class TestDebeziumConnectorsCheck:
         cases = [
             [(1, "", "unreachable")],
             [(0, "[]", "")],
-            [(0, json.dumps([*canonical, "nohiki-legacy"]), "")],
+            [(0, json.dumps([*canonical, "unexpected-connector"]), "")],
             [
                 (0, json.dumps(list(canonical)), ""),
                 *((0, _connector_response(state="UNASSIGNED"), "") for _ in canonical),
@@ -349,13 +343,16 @@ class TestReplicationSlotCheck:
         result = await ReplicationSlotCheck().execute(platform)
         assert result.status == CheckStatus.FAILED
 
-    async def test_rejects_legacy_slot_alongside_exact_current_inventory(self) -> None:
-        platform = MockPlatform(_psql_result=(0, _slot_rows(legacy=True), ""))
+    async def test_reports_superseded_compose_slot_with_reconciliation_path(self) -> None:
+        rows = f"{_slot_rows()}\nnohiki_outbox_slot_user_auth|f"
+        platform = MockPlatform(_psql_result=(0, rows, ""))
 
         result = await ReplicationSlotCheck().execute(platform)
 
         assert result.status == CheckStatus.FAILED
-        assert any(detail == "nohiki_outbox_user_auth_slot: unexpected slot" for detail in result.details)
+        assert "nohiki_outbox_slot_user_auth: unexpected slot" in result.details
+        assert result.remediation_hint is not None
+        assert "just connect-reconcile-compose-cdc" in result.remediation_hint
 
     async def test_error_when_psql_fails(self) -> None:
         platform = MockPlatform(_psql_result=(1, "", "error"))
@@ -386,13 +383,16 @@ class TestPublicationCheck:
         result = await PublicationCheck().execute(platform)
         assert result.status == CheckStatus.FAILED
 
-    async def test_rejects_legacy_publication_alongside_exact_current_inventory(self) -> None:
-        platform = MockPlatform(_psql_result=(0, _publication_names(legacy=True), ""))
+    async def test_reports_superseded_compose_publication_with_reconciliation_path(self) -> None:
+        publications = f"{_publication_names()}\nnohiki_outbox_pub_user_auth"
+        platform = MockPlatform(_psql_result=(0, publications, ""))
 
         result = await PublicationCheck().execute(platform)
 
         assert result.status == CheckStatus.FAILED
-        assert any(detail == "nohiki_outbox_pub_user_auth: unexpected publication" for detail in result.details)
+        assert "nohiki_outbox_pub_user_auth: unexpected publication" in result.details
+        assert result.remediation_hint is not None
+        assert "just connect-reconcile-compose-cdc" in result.remediation_hint
 
     async def test_error_when_psql_fails(self) -> None:
         platform = MockPlatform(_psql_result=(1, "", "error"))
