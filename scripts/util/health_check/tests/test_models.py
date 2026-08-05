@@ -123,7 +123,7 @@ class TestCheckSuiteResult:
         suite = self._make_suite([CheckStatus.ERROR, CheckStatus.PASSED])
         assert suite.error_count == 1
 
-    def test_empty_suite_passes(self) -> None:
+    def test_empty_suite_remains_valid_without_cli_selection(self) -> None:
         suite = CheckSuiteResult(results=(), total_duration_ms=0.0, platform=PlatformTarget.COMPOSE)
         assert suite.passed is True
 

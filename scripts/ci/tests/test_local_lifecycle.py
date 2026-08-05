@@ -391,6 +391,14 @@ printf 'uv %s\\n' "$*" >> "$CALL_LOG"
 case "$*" in
   *'validate_local_secret_sources.py'*)
     if [ "${SECRET_VALIDATION_FAIL:-0}" = 1 ]; then exit 73; fi ;;
+  *'python -m health_check.acceptance.live_cluster_cdc'*)
+    while [ "$#" -gt 0 ] && [ "$1" != python ]; do shift; done
+    [ "$#" -gt 0 ] || exit 76
+    shift
+    PYTHONPATH="$PWD/scripts/util/health_check/src" python "$@"
+    exit $? ;;
+  *'health-check inventory'*)
+    printf 'health-evidence %s\\n' "$CDC_ACCEPTANCE_EVIDENCE" >> "$CALL_LOG" ;;
 esac
 exit 0
 """,
@@ -451,6 +459,37 @@ if [ "${BOOTSTRAP_PARTIAL:-0}" = 1 ] && [ "$1" = --validate ]; then exit 42; fi
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# synthetic lifecycle helper\n", encoding="utf-8")
+    adapter = root / "scripts" / "util" / "health_check" / "src" / "health_check" / "acceptance"
+    adapter.mkdir(parents=True)
+    adapter.parent.joinpath("__init__.py").write_text("", encoding="utf-8")
+    adapter.joinpath("__init__.py").write_text("", encoding="utf-8")
+    adapter.joinpath("live_cluster_cdc.py").write_text(
+        """from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--namespace", required=True)
+parser.add_argument("--evidence", type=Path, required=True)
+args = parser.parse_args()
+with Path(os.environ["CALL_LOG"]).open("a", encoding="utf-8") as call_log:
+    call_log.write(
+        f"adapter --namespace {args.namespace} --evidence {args.evidence} "
+        f"CDC_ACCEPTANCE_EVIDENCE={os.environ.get('CDC_ACCEPTANCE_EVIDENCE', '')}\\n"
+    )
+if os.environ.get("CDC_ADAPTER_FAIL") == "1":
+    raise SystemExit(74)
+args.evidence.parent.mkdir(parents=True, exist_ok=True)
+args.evidence.write_text(
+    json.dumps({"check": "live-cluster-cdc", "status": "passed"}) + "\\n",
+    encoding="utf-8",
+)
+""",
+        encoding="utf-8",
+    )
     _write_executable(
         root / "infra" / "k8s" / "local" / "cluster_reset.py",
         '#!/bin/sh\nprintf \'factory-reset %s\\n\' "$*" >> "$CALL_LOG"\n',
@@ -625,6 +664,14 @@ def test_preflight_and_diagnostics_are_read_only_and_redacted_with_fake_tools(
     diagnostics = "\n".join(_probe(lifecycle_probes, "diagnostics").calls).lower()
     assert "health-check inventory --target k8s --json" in diagnostics
     assert "get gateway,httproute" in diagnostics
+    health_evidence = [
+        call.removeprefix("health-evidence ")
+        for mode in ("preflight", "diagnostics")
+        for call in _probe(lifecycle_probes, mode).calls
+        if call.startswith("health-evidence ")
+    ]
+    assert len(health_evidence) == 2
+    assert all(path.endswith("/evidence/live-cdc.json") for path in health_evidence)
 
 
 def test_publish_is_the_only_build_and_publish_authority(
@@ -787,6 +834,8 @@ def test_verify_invokes_every_declared_gate_and_managed_proxy_cleanup(
     calls = _new_calls(log)
     joined = "\n".join(calls)
     required = (
+        "health_check.acceptance.live_cluster_cdc",
+        "live-cdc.json",
         "migration-truth",
         "verify-migration-heads.py",
         "kustomization health-verification",
@@ -802,5 +851,51 @@ def test_verify_invokes_every_declared_gate_and_managed_proxy_cleanup(
     )
     for gate in required:
         assert gate in joined, f"verify omitted gate {gate!r}: {calls}"
+
+    evidence = tmp_path / "evidence" / "live-cdc.json"
+    adapter_command = (
+        "uv run --no-sync --project scripts/util/health_check python -m "
+        f"health_check.acceptance.live_cluster_cdc --namespace nohiki --evidence {evidence}"
+    )
+    adapter_call = f"adapter --namespace nohiki --evidence {evidence} CDC_ACCEPTANCE_EVIDENCE={evidence}"
+    assert calls.count(adapter_command) == 1
+    assert calls.count(adapter_call) == 1
+    assert evidence.is_file()
+    assert joined.index("gateway_proxy.py start") < joined.index(adapter_command)
+    assert joined.index(adapter_command) < joined.index("migration-truth")
     assert joined.index("gateway_proxy.py start") < joined.index("verify-k8s-jobs.py")
     assert joined.rindex("gateway_proxy.py stop") > joined.index("verify-k8s-jobs.py")
+
+
+def test_verify_fails_closed_when_live_cdc_adapter_fails(
+    tmp_path: Path,
+) -> None:
+    lifecycle, log, env = _lifecycle_sandbox(tmp_path)
+    result = _run_lifecycle(lifecycle, "verify", env | {"CDC_ADAPTER_FAIL": "1"})
+    assert result.returncode == 74
+    calls = _new_calls(log)
+    assert any(call.startswith("adapter --namespace nohiki --evidence ") for call in calls)
+    assert not any("migration-truth" in call for call in calls)
+    assert any("gateway_proxy.py stop" in call for call in calls)
+    assert not (tmp_path / "evidence" / "live-cdc.json").exists()
+
+
+def test_verify_fails_closed_when_live_cdc_adapter_is_absent(
+    tmp_path: Path,
+) -> None:
+    lifecycle, log, env = _lifecycle_sandbox(tmp_path)
+    adapter = (
+        lifecycle.parents[3]
+        / "scripts"
+        / "util"
+        / "health_check"
+        / "src"
+        / "health_check"
+        / "acceptance"
+        / "live_cluster_cdc.py"
+    )
+    adapter.unlink()
+    result = _run_lifecycle(lifecycle, "verify", env)
+    assert result.returncode != 0
+    assert "required lifecycle helper is absent" in result.stderr
+    assert not any("health_check.acceptance.live_cluster_cdc" in call for call in _new_calls(log))

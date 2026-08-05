@@ -1,4 +1,4 @@
-"""Fail-closed static health inventory command."""
+"""Fail-closed health inventory and acceptance-evidence command."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def inventory_command(
         typer.Option("--json", help="Emit deterministic machine-readable JSON"),
     ] = False,
 ) -> None:
-    """Validate and print complete health-check registry metadata."""
+    """Validate and print registry metadata plus required external evidence."""
     if target.lower() not in {"k8s", "kubernetes"}:
         message = "inventory target must be k8s"
         raise typer.BadParameter(message, param_hint="--target")
@@ -32,12 +32,16 @@ def inventory_command(
     payload = {
         "target": PlatformTarget.KUBERNETES.value,
         "closed": closure.closed,
+        "structurally_closed": closure.structurally_closed,
         "registry_ids": sorted(closure.registry_ids),
         "applicable_ids": sorted(closure.applicable_ids),
         "adapted_ids": sorted(closure.adapted_ids),
         "inapplicable_ids": sorted(closure.inapplicable_ids),
         "unknown_ids": sorted(closure.unknown_ids),
         "silent_skip_ids": sorted(closure.silent_skip_ids),
+        "evidence_required_ids": sorted(closure.evidence_required_ids),
+        "unexercised_ids": sorted(closure.unexercised_ids),
+        "evidence_errors": list(closure.evidence_errors),
         "errors": list(closure.errors),
         "records": [
             {
@@ -62,12 +66,15 @@ def inventory_command(
             f"health inventory: {len(closure.registry_ids)} registered; "
             f"{len(closure.applicable_ids)} applicable; "
             f"{len(closure.adapted_ids)} adapted; "
-            f"{len(closure.inapplicable_ids)} explicitly inapplicable"
+            f"{len(closure.inapplicable_ids)} explicitly inapplicable; "
+            f"{len(closure.unexercised_ids)} required evidence capabilities unexercised"
         )
         for error in (
             *closure.errors,
+            *closure.evidence_errors,
             *sorted(closure.unknown_ids),
             *sorted(closure.silent_skip_ids),
+            *(f"{check_id}: unexercised" for check_id in sorted(closure.unexercised_ids)),
         ):
             typer.echo(f"ERROR: {error}", err=True)
     if not closure.closed:

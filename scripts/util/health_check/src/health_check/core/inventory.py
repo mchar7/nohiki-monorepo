@@ -1,10 +1,13 @@
-"""Complete, value-free deployment metadata for every registered health check."""
+"""Fail-closed deployment metadata and external acceptance-evidence inventory."""
 
 from __future__ import annotations
 
+import json
 import math
+import os
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
@@ -14,6 +17,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from health_check.core.base import HealthCheck
+
+
+CDC_END_TO_END_CAPABILITY: Final[str] = "cdc_end_to_end"
+CDC_ACCEPTANCE_EVIDENCE_DEFAULT: Final[Path] = Path(".artifacts/k8s-local/live-cdc.json")
+EVIDENCE_REQUIRED_IDS: Final[frozenset[str]] = frozenset({CDC_END_TO_END_CAPABILITY})
 
 
 class EndpointClass(StrEnum):
@@ -89,7 +97,7 @@ class InventoryRecord:
 
 @dataclass(frozen=True, slots=True)
 class InventoryClosure:
-    """Static closure proof for a discovered registry."""
+    """Closure proof for a discovered registry and its required external evidence."""
 
     records: tuple[InventoryRecord, ...]
     registry_ids: frozenset[str]
@@ -99,10 +107,13 @@ class InventoryClosure:
     unknown_ids: frozenset[str]
     silent_skip_ids: frozenset[str]
     errors: tuple[str, ...]
+    evidence_required_ids: frozenset[str]
+    unexercised_ids: frozenset[str]
+    evidence_errors: tuple[str, ...]
 
     @property
-    def closed(self) -> bool:
-        """Whether every check is classified exactly once with valid metadata."""
+    def structurally_closed(self) -> bool:
+        """Whether every registered check is classified exactly once."""
         classified = self.applicable_ids | self.adapted_ids | self.inapplicable_ids
         return (
             not self.errors
@@ -112,6 +123,16 @@ class InventoryClosure:
             and not (self.applicable_ids & self.adapted_ids)
             and not (self.applicable_ids & self.inapplicable_ids)
             and not (self.adapted_ids & self.inapplicable_ids)
+        )
+
+    @property
+    def closed(self) -> bool:
+        """Whether structural classification and required acceptance evidence are complete."""
+        return (
+            self.structurally_closed
+            and not self.evidence_errors
+            and not self.unexercised_ids
+            and self.unexercised_ids <= self.evidence_required_ids
         )
 
 
@@ -360,6 +381,26 @@ INVENTORY_SPECS: Final[Mapping[str, InventorySpec]] = MappingProxyType(
 )
 
 
+def _cdc_acceptance_evidence_error() -> str | None:
+    """Return why the external CDC acceptance proof is unusable, if anything."""
+    evidence_path = Path(os.getenv("CDC_ACCEPTANCE_EVIDENCE") or CDC_ACCEPTANCE_EVIDENCE_DEFAULT)
+    try:
+        document = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return f"{CDC_END_TO_END_CAPABILITY}: evidence file is absent: {evidence_path}"
+    except OSError, UnicodeError, json.JSONDecodeError:
+        return f"{CDC_END_TO_END_CAPABILITY}: evidence file is unreadable or malformed: {evidence_path}"
+
+    from health_check.acceptance.live_cluster_cdc import evidence_is_valid
+
+    if not evidence_is_valid(document):
+        return (
+            f"{CDC_END_TO_END_CAPABILITY}: evidence did not pass status, restart-identity, "
+            "offset-continuity, projection, and cleanup validation"
+        )
+    return None
+
+
 def build_inventory(checks: list[HealthCheck]) -> InventoryClosure:
     """Generate and validate inventory closure for discovered checks."""
     by_id = {check.metadata.check_id: check for check in checks}
@@ -401,6 +442,7 @@ def build_inventory(checks: list[HealthCheck]) -> InventoryClosure:
     applicable = frozenset(r.check_id for r in records if r.k3s_disposition is _A)
     adapted = frozenset(r.check_id for r in records if r.k3s_disposition is _D)
     inapplicable = frozenset(r.check_id for r in records if r.k3s_disposition is _I)
+    evidence_error = _cdc_acceptance_evidence_error()
     return InventoryClosure(
         records=tuple(records),
         registry_ids=registry_ids,
@@ -410,4 +452,7 @@ def build_inventory(checks: list[HealthCheck]) -> InventoryClosure:
         unknown_ids=registry_ids ^ spec_ids,
         silent_skip_ids=frozenset(silent),
         errors=tuple(errors),
+        evidence_required_ids=EVIDENCE_REQUIRED_IDS,
+        unexercised_ids=EVIDENCE_REQUIRED_IDS if evidence_error else frozenset(),
+        evidence_errors=(evidence_error,) if evidence_error else (),
     )
