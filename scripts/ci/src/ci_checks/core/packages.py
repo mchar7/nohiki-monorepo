@@ -115,7 +115,7 @@ def _pytest_test_roots(path: Path, config: dict[str, object]) -> tuple[Path, ...
     if isinstance(pytest_options, dict):
         configured = pytest_options.get("testpaths")
         if isinstance(configured, list) and all(isinstance(value, str) for value in configured):
-            return tuple(path / value for value in configured)
+            return tuple(path / value for value in configured if isinstance(value, str))
     return (path / "tests",)
 
 
