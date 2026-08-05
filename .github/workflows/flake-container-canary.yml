@@ -175,6 +175,75 @@ jobs:
       - name: Verify downloaded evidence
         run: cmp canary-artifact/result.txt downloaded-canary/result.txt
 
+  hosted-native:
+    name: Hosted current-path comparison
+    if: github.event_name == 'pull_request' || inputs.run_hosted
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Mark native job ready
+        run: printf 'native_ready_epoch_ms=%s\n' "$(date +%s%3N)" | tee native-timings.txt
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+
+      - name: Export the CI shell PATH
+        run: |
+          started=$(date +%s%3N)
+          printf 'PATH=%s\n' "$(nix develop .#ci --command printenv PATH)" >> "$GITHUB_ENV"
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'nix_ci_path_ms=%s\n' "$elapsed" | tee -a native-timings.txt
+
+      - name: Run actionlint through current path
+        run: |
+          started=$(date +%s%3N)
+          actionlint .github/workflows/flake-container-canary.yml
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'actionlint_ms=%s\n' "$elapsed" | tee -a native-timings.txt
+
+      - name: Prepare Python gate environment
+        run: |
+          started=$(date +%s%3N)
+          uv sync --locked --group ci
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'uv_ci_sync_ms=%s\n' "$elapsed" | tee -a native-timings.txt
+
+      - name: Run Ruff format and check
+        run: |
+          started=$(date +%s%3N)
+          uv run --no-sync ruff format --check scripts/ci
+          uv run --no-sync ruff check scripts/ci
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'ruff_ms=%s\n' "$elapsed" | tee -a native-timings.txt
+
+      - name: Execute a Just recipe
+        run: |
+          started=$(date +%s%3N)
+          just lint
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'just_lint_ms=%s\n' "$elapsed" | tee -a native-timings.txt
+
+      - name: Run focused pytest package
+        env:
+          PYTHONPATH: scripts/ci/src
+        run: |
+          started=$(date +%s%3N)
+          uv run --no-sync pytest scripts/ci/tests/test_image_inventory.py
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'pytest_ms=%s\n' "$elapsed" | tee -a native-timings.txt
+
+      - name: Install one pnpm workspace package frozen
+        run: |
+          started=$(date +%s%3N)
+          env CI=true LEFTHOOK=0 pnpm install --frozen-lockfile --filter 'nohiki-frontend...'
+          elapsed=$(( $(date +%s%3N) - started ))
+          printf 'pnpm_install_ms=%s\n' "$elapsed" | tee -a native-timings.txt
+
   self-hosted:
     name: Self-hosted container and Docker proof
     if: github.event_name == 'pull_request' || inputs.run_self_hosted
