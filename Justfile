@@ -665,6 +665,20 @@ ast-scan service:
 ast-query kind:
     {{ ast_cmd }} query ../../.. --kind {{ kind }}
 
+# Scan a file or standard input before publishing GitHub-retained prose
+github-prose-scan path="-":
+    PYTHONDONTWRITEBYTECODE=1 {{ env_lock }} shared venv -- uv run --no-sync python -B scripts/dev/github_prose_guard.py scan '{{ path }}'
+
+# Audit every pull request, or one pull request when a number is supplied
+github-prose-sweep pr="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=(sweep)
+    if [[ -n '{{ pr }}' ]]; then
+        args+=(--pr '{{ pr }}')
+    fi
+    PYTHONDONTWRITEBYTECODE=1 {{ env_lock }} shared venv -- uv run --no-sync python -B scripts/dev/github_prose_guard.py "${args[@]}"
+
 # Git hooks
 
 hooks-install:
