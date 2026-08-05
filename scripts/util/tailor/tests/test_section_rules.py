@@ -244,6 +244,7 @@ class TestUniqueOpeningWordsRule:
             params=params,
         )
         assert len(result) == 2  # 2nd and 3rd items flagged
+
     def test_scope_section_aggregates_across_paths(self) -> None:
         """Section scope flags duplicates across every resolved path in one call."""
         rule = UniqueOpeningWordsRule()

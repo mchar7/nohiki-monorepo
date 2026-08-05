@@ -7,7 +7,6 @@ from uuid import UUID
 from nohiki.common.v1 import AccessScope, ProcessingStatus
 from nohiki.doc.template.v1 import (
     DocumentRenderCompleted,
-    TemplateAudience,
     TemplateCreated,
     TemplateDeleted,
     TemplateUpdated,
@@ -46,8 +45,6 @@ async def _upsert_template_from_snapshot(session: AsyncSession, msg: TemplateCre
     if (
         not snapshot.namespace
         or not snapshot.name
-        or not snapshot.display_name
-        or snapshot.audience == TemplateAudience.UNSPECIFIED
         or not version_snapshot.version
         or not version_snapshot.template_content
     ):

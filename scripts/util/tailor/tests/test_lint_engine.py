@@ -179,7 +179,7 @@ class TestScopeExcludes:
         result = engine.evaluate(data, config)
         paths = {issue.path for issue in result.issues}
         # Only the non-excluded record should produce an issue.
-        assert paths == {"records[1].items"}
+        assert paths == {"$.records[1].items"}
 
 
 class TestParamsValidation:

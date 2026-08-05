@@ -286,7 +286,6 @@ class TestRenderCompletedParams:
 class TestHandleTemplateRenderRequested:
     """Tests for handle_template_render_requested event handler."""
 
-
     @pytest.mark.asyncio
     async def test_invalid_metadata_publishes_one_correlated_terminal_failure(
         self,

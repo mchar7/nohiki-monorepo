@@ -16,7 +16,10 @@ from llm_benchmark.display.panels import (
     display_evaluation_results,
     display_multi_judge_results,
 )
-from llm_benchmark.display.progress import create_benchmark_progress, create_evaluation_progress
+from llm_benchmark.display.progress import (
+    create_benchmark_progress,
+    create_evaluation_progress,
+)
 from llm_benchmark.schemas.aggregation import (
     CategoryAggregate,
     Classification,
@@ -26,12 +29,7 @@ from llm_benchmark.schemas.aggregation import (
     compute_multi_judge_summary,
 )
 from llm_benchmark.schemas.metrics import BenchmarkResult as _BenchmarkResult
-from llm_benchmark.schemas.metrics import ModelResult
-from llm_benchmark.schemas.metrics import RunResult as _RunResult
-
-
-class RunResult(_RunResult):
-    retry_count: int | None = 0
+from llm_benchmark.schemas.metrics import ModelResult, RunResult
 
 
 class BenchmarkResult(_BenchmarkResult):
@@ -139,6 +137,7 @@ class TestDisplayBenchmarkResults:
                             latency_ms=1000.0,
                             input_tokens=100,
                             output_tokens=50,
+                            retry_count=0,
                         ),
                     ],
                 ),
@@ -244,7 +243,6 @@ class TestDisplayEvaluationResults:
         assert "PASSED" in output
 
 
-
 class TestDisplayBenchmarkResultsPassRates:
     """Tests for pass_rate colour branches in display_benchmark_results."""
 
@@ -260,6 +258,7 @@ class TestDisplayBenchmarkResultsPassRates:
                 latency_ms=100.0,
                 input_tokens=50,
                 output_tokens=20,
+                retry_count=0,
             )
             for i in range(total)
         ]

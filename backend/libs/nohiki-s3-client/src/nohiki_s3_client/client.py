@@ -677,7 +677,6 @@ class S3Client:
             )
         return self.__backend
 
-
     @property
     def _session(self) -> object:
         """Return the AWS session retained for health and instrumentation seams."""

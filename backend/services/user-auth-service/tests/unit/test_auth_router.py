@@ -668,7 +668,6 @@ class TestLogout:
             await logout(self.request(access=True), Response(), db, MagicMock())
         publish.assert_not_awaited()
 
-
     @pytest.mark.asyncio
     async def test_family_revocation_horizon_covers_configured_access_lifetime(self) -> None:
         db = create_mock_session()

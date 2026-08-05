@@ -266,6 +266,7 @@ def _extract_access_token_claims(request: Request) -> tuple[UUID, UUID, datetime
     access_token = get_access_token_from_cookie(request.cookies, settings)
     if not access_token:
         return None
+
     try:
         handler = get_jwt_handler()
         payload = pyjwt.decode(
@@ -280,8 +281,9 @@ def _extract_access_token_claims(request: Request) -> tuple[UUID, UUID, datetime
         jti = UUID(payload["jti"])
         expires_at = datetime.fromtimestamp(payload["exp"], UTC)
         session_family_id = UUID(payload["session_family_id"])
-    except (pyjwt.InvalidTokenError, KeyError, TypeError, ValueError, OverflowError, OSError):
+    except pyjwt.InvalidTokenError, KeyError, TypeError, ValueError, OverflowError, OSError:
         return None
+
     return user_id, jti, expires_at, session_family_id
 
 

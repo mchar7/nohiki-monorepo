@@ -839,7 +839,6 @@ class TestChargedCostRules:
         assert result.total_actual_cost == pytest.approx(0.01)
         assert result.total_charged_cost == pytest.approx(0.11)
 
-
     def test_charged_cost_round_trips_through_save_load(self, tmp_path: Path) -> None:
         result = BenchmarkResult(
             models={
@@ -863,7 +862,6 @@ class TestChargedCostRules:
         assert "charged_cost_usd" in json.loads(path.read_text())["models"]["m1"]["runs"][0]
         reloaded = BenchmarkResult.load(path)
         assert reloaded.total_charged_cost == pytest.approx(0.09)
-
 
     def test_nullable_unknown_retry_round_trips_through_save_load(self, tmp_path: Path) -> None:
         result = BenchmarkResult(

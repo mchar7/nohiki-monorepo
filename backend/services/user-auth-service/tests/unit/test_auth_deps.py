@@ -70,7 +70,6 @@ class TestGetCurrentUserIdFromCookie:
             result = await get_current_user_id_from_cookie(mock_request)
         assert str(result) == user_id
 
-
     @pytest.mark.asyncio
     async def test_rejects_locally_revoked_family_before_account_mutation(
         self,

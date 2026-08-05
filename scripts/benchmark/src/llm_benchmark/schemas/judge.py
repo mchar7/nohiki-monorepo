@@ -29,8 +29,6 @@ class CategoryScore(BaseModel):
     reasoning: Annotated[str, Field(min_length=10, max_length=60)]
 
 
-
-
 class PointwiseJudgment(BaseModel):
     """Residual subjective assessment for one blinded extraction output.
 

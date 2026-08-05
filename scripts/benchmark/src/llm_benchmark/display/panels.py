@@ -237,7 +237,6 @@ def _display_model_detail(evaluation: ModelEvaluation) -> None:
     console.print(detail_table)
 
 
-
 def display_evaluation_results(summary: EvaluationSummary) -> None:
     """Display complete evaluation results with rankings and category detail.
 

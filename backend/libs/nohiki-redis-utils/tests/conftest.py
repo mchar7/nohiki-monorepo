@@ -9,8 +9,14 @@ from collections.abc import Generator
 
 import pytest
 from nohiki_redis_utils.testing import redis_cache, redis_client, redis_container
+from pytest_unused_fixtures import ignore_unused_fixture
 
 __all__ = ["redis_cache", "redis_client", "redis_container"]
+
+# These fixtures are consumed only by the Docker and integration tests excluded
+# from the unit-only unused-fixture scan.
+ignore_unused_fixture(redis_client)
+ignore_unused_fixture(redis_cache)
 
 
 @pytest.fixture(autouse=True)

@@ -68,6 +68,7 @@ def _run_result(fixture_id: str, run_number: int = 1, *, cost: float = 0.01) -> 
         latency_ms=1.0,
         output_json={"cleaned_title": "Job"},
         actual_cost_usd=cost,
+        retry_count=0,
     )
 
 
@@ -503,6 +504,7 @@ class TestInterruptedStaleResumeDurability:
             latency_ms=1.0,
             output_json={"marker": marker},
             actual_cost_usd=0.5,
+            retry_count=0,
         )
 
     def test_interrupt_after_one_replacement_does_not_persist_unrerun_stale_cell(
@@ -549,6 +551,7 @@ class TestInterruptedStaleResumeDurability:
                     latency_ms=1.0,
                     output_json={"marker": "fresh"},
                     actual_cost_usd=0.01,
+                    retry_count=0,
                 )
                 assert progress_callback is not None
                 progress_callback(key, "senior_python_remote", 1, run_result=fresh)

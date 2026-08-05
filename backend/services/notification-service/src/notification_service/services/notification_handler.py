@@ -40,7 +40,7 @@ class NotificationSendParams:
     template_context: dict[str, str | int | None]
     email_address: str
     user_id: str
-    correlation_id: str
+    correlation_id: UUID | None
     rendered_body: str = ""
 
 
@@ -70,7 +70,7 @@ async def handle_notification_event(
         Exception: Re-raised if notification sending fails
 
     """
-    correlation_id = context.correlation_id or ""
+    correlation_id = UUID(context.correlation_id) if context.correlation_id else None
 
     # 1. Get template configuration
     template_config = get_template_config(event_type)
@@ -168,8 +168,6 @@ def _format_subject(template: str, context: dict[str, str | int | None]) -> str:
     return " ".join(subject.splitlines())
 
 
-
-
 async def _send_notification(params: NotificationSendParams, *, db: AsyncSession) -> None:
     """Send notification via MessageService.
 
@@ -195,7 +193,7 @@ async def _send_notification(params: NotificationSendParams, *, db: AsyncSession
         listings=[dict(params.template_context)],
         template_name=params.template_name,
         rendered_body=params.rendered_body,
-        correlation_id=UUID(params.correlation_id),
+        correlation_id=params.correlation_id,
     )
 
     service = NotificationService()
