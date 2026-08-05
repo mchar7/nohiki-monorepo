@@ -24,7 +24,7 @@ from nohiki_llm_client.config.settings import (
 )
 from pydantic import BaseModel, SecretStr, ValidationError
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
@@ -979,6 +979,57 @@ class TestLLMClientRun:
         )
         with patch.object(agent, "run", side_effect=group), pytest.raises(FallbackExceptionGroup):
             await client.run(agent, "test", deps=SampleContext(data="test"))
+
+    @pytest.mark.asyncio
+    async def test_real_openrouter_null_choices_chain_reaches_caller_nohiki_typed(
+        self, llm_settings: LLMSettings
+    ) -> None:
+        """A real multi-hop chain failing on a null-choices body never escapes untyped.
+
+        Drives the genuine library validation path over ``httpx.MockTransport`` rather than
+        constructing the exception, so the type is whatever the installed pydantic-ai raises.
+        That makes the assertion version-independent: the contract in ``exceptions.py`` is that
+        every failure carries a Nohiki class so a Kafka consumer can choose retry or DLQ, and a
+        raw ``FallbackExceptionGroup`` reaching the caller satisfies neither.
+
+        Deliberately asserts only the invariant. The concrete class and the number of hops
+        tried both legitimately change when the library reclassifies this body, and pinning
+        either would make this a version pin instead of a contract check.
+        """
+        import httpx
+        from nohiki_llm_client.exceptions import LLMError
+        from nohiki_llm_client.providers.openrouter import RobustOpenRouterModel
+        from openai import AsyncOpenAI
+        from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+        requests: list[str] = []
+
+        def make_hop(name: str) -> RobustOpenRouterModel:
+            def handle(_request: httpx.Request) -> httpx.Response:
+                requests.append(name)
+                # HTTP 200, null `choices`, no error envelope.
+                return httpx.Response(200, json={"id": None, "choices": None, "model": None, "object": None})
+
+            http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+            openai_client = AsyncOpenAI(
+                api_key="test-key",
+                base_url="https://openrouter.test/api/v1",
+                http_client=http_client,
+            )
+            return RobustOpenRouterModel(name, provider=OpenRouterProvider(openai_client=openai_client))
+
+        chain = FallbackModel(make_hop("vendor/hop0"), make_hop("vendor/hop1"), make_hop("vendor/hop2"))
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(chain, deps_type=SampleContext, output_type=SampleOutput),
+        )
+
+        with pytest.raises(LLMError) as caught:
+            await client.run(agent, "test", deps=SampleContext(data="test"))
+
+        assert not isinstance(caught.value, FallbackExceptionGroup)
+        assert requests, "the chain must actually have issued a request"
 
     @pytest.mark.asyncio
     async def test_run_falls_back_to_genai_prices_when_no_provider_cost(self, llm_settings: LLMSettings) -> None:
