@@ -261,7 +261,7 @@ def run_command(
         _emit_error(f"Initialisation error: {exc}", mode, console)
         raise typer.Exit(_EXIT_ERROR) from exc
 
-    if not checks:
+    if not checks and not unexercised_ids:
         _emit_warning("No checks matched the given filters.", mode, console)
         raise typer.Exit(_EXIT_PASS)
 

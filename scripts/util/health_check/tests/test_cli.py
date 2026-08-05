@@ -744,6 +744,19 @@ class TestRunCommand:
             result = _runner.invoke(app, ["run", "--output-mode", "boring"])
         assert result.exit_code == 0
 
+    def test_no_checks_exits_1_when_capabilities_remain_unexercised(self) -> None:
+        platform = mock.MagicMock()
+        platform.target = PlatformTarget.KUBERNETES
+        with mock.patch.multiple(
+            "health_check.cli.commands.run",
+            _init_run=mock.MagicMock(return_value=(platform, [], ("unprobed_check",))),
+        ):
+            result = _runner.invoke(app, ["run", "--no-progress", "--output-mode", "boring"])
+
+        assert result.exit_code == 1
+        assert "SUMMARY: INCOMPLETE" in result.output
+        assert "unprobed_check" in result.output
+
     def test_init_run_error_exits_2(self) -> None:
         with mock.patch(
             "health_check.cli.commands.run._init_run",
