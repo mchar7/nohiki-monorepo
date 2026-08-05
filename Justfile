@@ -409,10 +409,10 @@ workflow-lint:
     while IFS= read -r diagnostic; do
         # actionlint does not understand the runner's four native `parallel:` groups; suppress only their exact source locations.
         case "$diagnostic" in
-            '.github/workflows/checks.yml:286:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:364:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:509:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:520:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
+            '.github/workflows/checks.yml:344:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:422:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:567:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:578:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
                 ;;
             *)
                 printf '%s\n' "$diagnostic" >&2

@@ -1067,6 +1067,7 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
     ("changes", "Write Checks attestation"): _support("writes the proof document, runs no check"),
     ("changes", "Upload Checks attestation"): _ARTIFACT,
     ("changes", "Report router cost"): _TIMING,
+    ("label-sync", "Sync area labels"): _support("advisory pull request metadata update, runs no check"),
     # worker: every verification of the tree lives here.
     ("worker", "Start worker timing"): _TIMING,
     ("worker", "Open worker summary"): _SUMMARY,

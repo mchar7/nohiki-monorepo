@@ -26,7 +26,7 @@ from ci_checks.core.change_gate import (
     selected_test_packages,
 )
 from ci_checks.core.change_rules import BROAD_RULES, FLAG_NAMES, SURFACE_RULES
-from ci_checks.core.display import LANE_DISPLAY_NAMES, LANE_RUNNERS
+from ci_checks.core.display import GATE_LABELS, LANE_DISPLAY_NAMES, LANE_RUNNERS
 from ci_checks.core.image_inventory import load_inventory
 from ci_checks.core.packages import (
     REPO_ROOT,
@@ -920,6 +920,19 @@ def test_selected_test_packages_full_and_scoped_exclude_packages_without_tests(
 
 def test_lane_display_names_and_runners_cover_gate_flags_exactly() -> None:
     assert set(LANE_DISPLAY_NAMES) == set(LANE_RUNNERS) == set(FLAG_NAMES)
+
+
+def test_gate_labels_cover_typed_classifications_with_distinct_colors() -> None:
+    assert GATE_LABELS == {
+        "python_any": ("area:backend", "1D76DB"),
+        "frontend_tests": ("area:frontend", "D4C5F9"),
+        "lint_proto": ("area:proto", "FBCA04"),
+        "lint_docker": ("area:docker", "0E8A16"),
+        "lint_workflows": ("area:workflows", "5319E7"),
+        "lint_markdown": ("area:docs", "0075CA"),
+        "full": ("ci:full-run", "B60205"),
+    }
+    assert len({color for _, color in GATE_LABELS.values()}) == len(GATE_LABELS)
 
 
 def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
@@ -2218,6 +2231,25 @@ def _run_gate_producer(
         else {}
     )
     return result.exit_code, result.output, emitted, record
+
+
+def test_gate_cli_emits_typed_label_state_from_current_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exit_code, output, emitted, _record = _run_gate_producer(
+        tmp_path,
+        monkeypatch,
+        lambda _base, _head: {"README.md"},
+        event="pull_request",
+        with_record=False,
+    )
+
+    assert exit_code == 0, output
+    labels = {item["name"]: item for item in json.loads(emitted["labels"])}
+    assert set(labels) == {name for name, _color in GATE_LABELS.values()}
+    for flag, (name, color) in GATE_LABELS.items():
+        assert labels[name] == {"name": name, "color": color, "active": emitted[flag]}
 
 
 def test_record_holds_the_declaration_ordered_owner_union_for_a_service_diff(

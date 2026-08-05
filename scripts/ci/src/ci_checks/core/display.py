@@ -39,6 +39,16 @@ LANE_DISPLAY_NAMES: dict[str, str] = {
     "proto_breaking": "Protobuf compatibility",
 }
 
+GATE_LABELS: dict[str, tuple[str, str]] = {
+    "python_any": ("area:backend", "1D76DB"),
+    "frontend_tests": ("area:frontend", "D4C5F9"),
+    "lint_proto": ("area:proto", "FBCA04"),
+    "lint_docker": ("area:docker", "0E8A16"),
+    "lint_workflows": ("area:workflows", "5319E7"),
+    "lint_markdown": ("area:docs", "0075CA"),
+    "full": ("ci:full-run", "B60205"),
+}
+
 # Where each lane executes in the split worker. The frontend leg carries hygiene because moving
 # its Nix-dependent lanes to Python would turn the 344s Python long pole into a full-payload leg.
 # The workflow parity test keeps these labels aligned with the matrix-gated step definitions.
