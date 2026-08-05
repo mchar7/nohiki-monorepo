@@ -212,6 +212,75 @@ class TestLockOperations:
         assert metadata == {12345: "pod-1"}
 
     @pytest.mark.asyncio
+    async def test_waiter_probe_cannot_be_observed_owning_the_lock_without_metadata(self) -> None:
+        """A seed poll that momentarily takes the lock must stay invisible to a contender."""
+        from nohiki_db_utils.seeding import _probe_lock_released
+
+        guard = asyncio.Lock()
+        held = False
+        probe_owns_lock = asyncio.Event()
+        allow_probe_release = asyncio.Event()
+        contender_tried_lock = asyncio.Event()
+        metadata: dict[int, str] = {}
+        prober_conn = AsyncMock()
+        contender_conn = AsyncMock()
+        contender_ctx = SeedContext("svc", "pod-2", "postgresql://db", "seed", "1", 30)
+
+        async def acquire_guard(_conn: object, _lock_id: int) -> None:
+            await guard.acquire()
+
+        async def try_lock(conn: object, _lock_id: int) -> bool:
+            nonlocal held
+            if conn is contender_conn:
+                contender_tried_lock.set()
+            if held:
+                return False
+            held = True
+            return True
+
+        async def release(conn: object, _lock_id: int) -> None:
+            nonlocal held
+            if conn is prober_conn:
+                probe_owns_lock.set()
+                await allow_probe_release.wait()
+            held = False
+
+        async def set_metadata(_conn: object, lock_id: int, holder_id: str, _seed_name: str) -> None:
+            metadata[lock_id] = holder_id
+
+        async def get_metadata(_conn: object, lock_id: int) -> tuple[datetime, str, str] | None:
+            holder_id = metadata.get(lock_id)
+            return (datetime.now(UTC), holder_id, "seed") if holder_id else None
+
+        async def commit() -> None:
+            guard.release()
+
+        prober_conn.commit.side_effect = commit
+        contender_conn.commit.side_effect = commit
+
+        with (
+            patch("nohiki_db_utils.seeding._acquire_metadata_guard", side_effect=acquire_guard),
+            patch("nohiki_db_utils.seeding._try_acquire_lock", side_effect=try_lock),
+            patch("nohiki_db_utils.seeding._release_lock", side_effect=release),
+            patch("nohiki_db_utils.seeding._set_lock_metadata", side_effect=set_metadata),
+            patch("nohiki_db_utils.seeding._get_lock_metadata", side_effect=get_metadata),
+        ):
+            prober = asyncio.create_task(_probe_lock_released(prober_conn, 12345))
+            await probe_owns_lock.wait()
+            contender = asyncio.create_task(_acquire_lock_with_metadata(contender_conn, 12345, contender_ctx))
+            await asyncio.sleep(0)
+
+            # The prober owns the advisory lock with no metadata row. A contender able to observe
+            # this window would read (False, None) and raise "Seed lock metadata missing".
+            assert not contender_tried_lock.is_set()
+
+            allow_probe_release.set()
+            assert await prober is True
+            assert await contender == (True, None)
+
+        assert metadata == {12345: "pod-2"}
+
+    @pytest.mark.asyncio
     async def test_release_lock(self) -> None:
         """Test lock release."""
         mock_conn = AsyncMock()
@@ -225,13 +294,14 @@ class TestLockOperations:
         """Test waiting for lock release - success case."""
         mock_conn = AsyncMock()
 
-        # First call fails, second succeeds (lock acquired), third for release
+        # Each poll issues the metadata guard, then the try, then the release.
+        mock_guard = MagicMock()
         mock_result1 = MagicMock()
         mock_result1.scalar.return_value = False
         mock_result2 = MagicMock()
         mock_result2.scalar.return_value = True
         mock_result3 = MagicMock()  # For _release_lock call
-        mock_conn.execute.side_effect = [mock_result1, mock_result2, mock_result3]
+        mock_conn.execute.side_effect = [mock_guard, mock_result1, mock_guard, mock_result2, mock_result3]
 
         ctx = SeedContext(
             service_name="test-svc",
@@ -525,6 +595,32 @@ class TestHandleLockNotAcquiredSeeding:
 
         mock_wait.assert_called_once()
         assert state.status == "skipped"
+
+    @patch("nohiki_db_utils.seeding._get_seed_version")
+    @patch("nohiki_db_utils.seeding._wait_for_lock_release")
+    @pytest.mark.asyncio
+    async def test_missing_metadata_raises_without_waiting(
+        self,
+        mock_wait: AsyncMock,
+        mock_get_version: AsyncMock,
+    ) -> None:
+        """A held seed lock with no metadata row is impossible under the guard, so it is an error."""
+        mock_conn = AsyncMock()
+        ctx = SeedContext(
+            service_name="test-svc",
+            pod_id="pod-1",
+            database_url="postgresql://localhost/db",
+            seed_name="test_seed",
+            seed_version="1.0.0",
+            timeout_seconds=60,
+        )
+        state = SeedingState()
+
+        with pytest.raises(SeedingError, match="Seed lock metadata missing"):
+            await _handle_lock_not_acquired(mock_conn, 12345, ctx, state, None)
+
+        mock_wait.assert_not_called()
+        mock_get_version.assert_not_called()
 
     @patch("nohiki_db_utils.seeding._get_seed_version")
     @patch("nohiki_db_utils.seeding._wait_for_lock_release")

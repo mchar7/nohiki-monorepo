@@ -130,6 +130,26 @@ async def release_lock_with_metadata(conn: AsyncConnection, lock_id: int) -> Non
         raise
 
 
+async def probe_lock_released(conn: AsyncConnection, lock_id: int) -> bool:
+    """Report whether the lock is free, without ever owning it observably.
+
+    The probe takes the lock to learn it is free, which makes the prober a momentary owner
+    with no metadata row. Holding the metadata guard across the probe keeps that momentary
+    ownership invisible to a contender in ``acquire_lock_with_metadata``, which would
+    otherwise read no metadata and treat that state as impossible.
+    """
+    await _acquire_metadata_guard(conn, lock_id)
+    try:
+        released = await try_acquire_lock(conn, lock_id)
+        if released:
+            await release_lock(conn, lock_id)
+        await conn.commit()
+    except Exception, asyncio.CancelledError:
+        await conn.rollback()
+        raise
+    return released
+
+
 async def wait_for_lock_release(
     conn: AsyncConnection,
     lock_id: int,
@@ -144,8 +164,7 @@ async def wait_for_lock_release(
 
     while elapsed < max_wait_seconds:
         poll_count += 1
-        if await try_acquire_lock(conn, lock_id):
-            await release_lock(conn, lock_id)
+        if await probe_lock_released(conn, lock_id):
             logger.info(
                 "Migration lock released by holder",
                 service=service_name,
