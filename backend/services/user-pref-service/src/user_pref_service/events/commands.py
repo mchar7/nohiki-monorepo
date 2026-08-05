@@ -18,11 +18,12 @@ from nohiki_kafka_client import MessageContext, Topics
 from nohiki_observability import get_logger
 
 from user_pref_service.core.config import get_settings
-from user_pref_service.core.embedding import build_profile_embedding_text, profile_embedding_content_hash
+from user_pref_service.core.embedding import build_profile_embedding_text
 from user_pref_service.core.kafka import kafka_client
 from user_pref_service.core.saga_policy import NewEnrichmentSaga
 from user_pref_service.db.models import PrefEnrichmentAction, SearchPref
 from user_pref_service.events.publishers import (
+    publish_pref_command_rejected,
     publish_profile_deleted_event,
     publish_profile_updated_event,
     publish_settings_created_event,
@@ -35,15 +36,6 @@ settings = get_settings()
 
 USER_DOES_NOT_OWN_PROFILE = "User does not own profile"
 command_group_id = f"{settings.kafka.consumer_group}-commands"
-
-
-def _persist_embedding_identity(profile: SearchPref, embedding_text: str) -> str:
-    """Persist and return the hash for a profile's exact embedding text."""
-    if not isinstance(embedding_text, str):
-        return ""
-    content_hash = profile_embedding_content_hash(embedding_text)
-    profile.semantic_content_hash = content_hash
-    return content_hash
 
 
 def _profile_embedding_text(profile: SearchPref) -> str:
@@ -87,7 +79,7 @@ async def _start_enrichment_saga(
     db = context.require_db_session()
     outbox = context.require_outbox()
     embedding_text = _profile_embedding_text(profile)
-    semantic_hash = _persist_embedding_identity(profile, embedding_text)
+    semantic_hash = profile_service.set_profile_semantic_hash(profile, embedding_text)
     profile.enrichment_terminal_status = None
     await db.flush()
     saga = await saga_service.create_enrichment_saga(
@@ -103,7 +95,7 @@ async def _start_enrichment_saga(
             semantic_hash=semantic_hash,
         ),
     )
-    await saga_service.dispatch_next_step(db, outbox, saga)
+    await saga_service.dispatch_next_step(db, outbox, saga, profile)
 
 
 @kafka_client.message_handler(Topics.USER_PREF_CREATE_REQUESTED, PrefCreateRequested, group_id=command_group_id)
@@ -151,9 +143,21 @@ async def handle_pref_update_requested(message: PrefUpdateRequested, context: Me
         profile = await profile_service.get_profile_by_id_for_update(db, pref_id)
     except NotFoundError:
         logger.warning("Profile not found for update, skipping stale event", pref_id=str(pref_id))
+        await publish_pref_command_rejected(
+            db,
+            context.require_outbox(),
+            message,
+            error_message="Preference profile was not found or is not owned by this user",
+        )
         return
     if profile.user_id != user_id:
         logger.warning(USER_DOES_NOT_OWN_PROFILE, user_id=str(user_id), pref_id=str(pref_id))
+        await publish_pref_command_rejected(
+            db,
+            context.require_outbox(),
+            message,
+            error_message="Preference profile was not found or is not owned by this user",
+        )
         return
     if await saga_service.get_saga_by_request_id(db, request_id) is not None:
         logger.info("Command already processed after profile lock", request_id=message.request_id)
@@ -162,7 +166,7 @@ async def handle_pref_update_requested(message: PrefUpdateRequested, context: Me
     await saga_service.cancel_pending_enrichment(
         db,
         outbox,
-        pref_id,
+        profile,
         message="Preference enrichment superseded by a newer update",
     )
     profile = await profile_service.update_profile(db, pref_id, message)
@@ -188,8 +192,9 @@ async def handle_pref_delete_requested(message: PrefDeleteRequested, context: Me
     user_id = UUID(message.user_id)
     pref_id = UUID(message.pref_id)
     db = context.require_db_session()
-    profile = await profile_service.get_profile_by_id_optional(db, pref_id)
-    if profile is None:
+    try:
+        profile = await profile_service.get_profile_by_id_for_update(db, pref_id)
+    except NotFoundError:
         logger.info("Profile already deleted (idempotent)", pref_id=str(pref_id))
         return
     if profile.user_id != user_id:
@@ -199,7 +204,7 @@ async def handle_pref_delete_requested(message: PrefDeleteRequested, context: Me
     await saga_service.cancel_pending_enrichment(
         db,
         outbox,
-        pref_id,
+        profile,
         message="Profile deleted while preference enrichment was in flight",
     )
     await profile_service.delete_profile(db, pref_id)

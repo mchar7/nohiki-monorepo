@@ -161,6 +161,7 @@ def upgrade() -> None:
             last_error_message VARCHAR(512),
             CONSTRAINT pref_enrichment_saga_status_check
                 CHECK (status IN ('PENDING','COMPLETED','FAILED','EXPIRED','CANCELLED')),
+            CONSTRAINT pref_enrichment_saga_action_check CHECK (action IN ('CREATE','UPDATE')),
             CONSTRAINT pref_enrichment_saga_expected_callbacks_positive CHECK (expected_callbacks > 0),
             CONSTRAINT pref_enrichment_saga_received_callbacks_nonnegative CHECK (received_callbacks >= 0),
             CONSTRAINT pref_enrichment_saga_version_positive CHECK (version > 0),

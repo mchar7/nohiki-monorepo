@@ -12,6 +12,7 @@ from nohiki.user.pref.v1 import (
     PrefEnrichmentFailed,
     PrefEnrichmentFailedFailureReason,
     PrefUpdated,
+    PrefUpdateRequested,
     UserPrefSettingsCreated,
     UserPrefSettingsUpdated,
 )
@@ -195,6 +196,40 @@ async def publish_pref_enrichment_failed(
         saga_id=str(saga.id),
         request_id=str(saga.request_id),
         reason=reason.name,
+    )
+
+
+async def publish_pref_command_rejected(
+    db: AsyncSession,
+    outbox: OutboxWriter,
+    message: PrefUpdateRequested,
+    *,
+    error_message: str,
+) -> None:
+    """Write a correlated rejection for an update that cannot start a saga."""
+    correlation_id = (message.metadata.correlation_id if message.metadata else None) or message.request_id
+    event = PrefEnrichmentFailed(
+        metadata=create_event_metadata(settings.service_name, correlation_id),
+        pref_id=message.pref_id,
+        user_id=message.user_id,
+        reason=PrefEnrichmentFailedFailureReason.REJECTED,
+        error_message=error_message,
+        saga_id="",
+        request_id=message.request_id,
+    )
+    await outbox.write_event(
+        db=db,
+        params=OutboxEventParams(
+            aggregate_type=AGGREGATE_TYPE,
+            aggregate_id=message.pref_id,
+            event_type=Topics.USER_PREF_ENRICHMENT_FAILED,
+        ),
+        event=event,
+    )
+    logger.warning(
+        "Published rejected preference command",
+        request_id=message.request_id,
+        reason=PrefEnrichmentFailedFailureReason.REJECTED.name,
     )
 
 

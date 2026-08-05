@@ -1,10 +1,14 @@
+import asyncio
 import uuid
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from nohiki.common.v1 import CurrencyCode, PaymentFrequency, SeniorityLevel, WorkArrangement
 from nohiki_db_utils.testing import create_mock_session
+from nohiki_fastapi_utils import JWTClaims
 from pytest_mock import MockerFixture
 
 
@@ -222,6 +226,130 @@ def test_get_profile_command_status_returns_404_unless_owned(
     assert response.status_code == 404
     assert response.json() == {"detail": "Command request not found"}
     assert mock_service.get_command_status.await_args.args[1:] == (current_user_id, request_id)
+
+
+def _sse_principal(user_id: uuid.UUID) -> JWTClaims:
+    now = int(datetime.now(UTC).timestamp())
+    return JWTClaims(
+        sub=str(user_id),
+        iss="https://api.nohiki.com",
+        aud="https://app.nohiki.com",
+        exp=now + 3600,
+        iat=now,
+        jti=str(uuid.uuid4()),
+        roles=["user"],
+        permissions=[],
+        tenant_id=None,
+        session_family_id=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_profile_command_event_stream_accepts_owned_request_and_uses_command_event(
+    mocker: MockerFixture,
+) -> None:
+    from bff_service.api.routers.profiles import stream_profile_command_events
+    from bff_service.services.models import CommandStatusDetail
+    from bff_service.sse.events import SSE_EVENT_COMMAND_STATUS
+    from bff_service.sse.stream import SSEStreamContext
+    from sse_starlette.sse import EventSourceResponse
+
+    user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
+    principal = _sse_principal(user_id)
+    service = mocker.Mock()
+    service.get_command_status = mocker.AsyncMock(
+        return_value=CommandStatusDetail(
+            request_id=str(request_id),
+            command_type="create_profile",
+            status="failed",
+            error_message="Enrichment failed",
+        )
+    )
+    db = create_mock_session()
+    session_context = mocker.MagicMock()
+    session_context.__aenter__ = mocker.AsyncMock(return_value=db)
+    session_context.__aexit__ = mocker.AsyncMock(return_value=None)
+    session_factory = mocker.MagicMock(return_value=session_context)
+    settings = mocker.MagicMock()
+    settings.database = mocker.sentinel.database
+    settings.sse.heartbeat_interval_seconds = 10
+    settings.sse.max_stream_duration_seconds = 600
+    settings.sse.max_concurrent_streams_per_user = 3
+    mocker.patch("bff_service.api.routers.profiles.get_settings", return_value=settings)
+    mocker.patch("bff_service.api.routers.profiles.get_async_sessionmaker", return_value=session_factory)
+    mocker.patch(
+        "bff_service.api.routers.profiles.get_current_user_claims",
+        new=mocker.AsyncMock(return_value=principal),
+    )
+    bridge = mocker.MagicMock()
+    lease = mocker.sentinel.lease
+    bridge.acquire_stream_slot = mocker.AsyncMock(return_value=lease)
+    bridge.release_stream_slot = mocker.AsyncMock()
+    mocker.patch("bff_service.api.routers.profiles.get_sse_bridge", return_value=bridge)
+    shutdown = asyncio.Event()
+    mocker.patch("bff_service.api.routers.profiles.get_shutdown_event", return_value=shutdown)
+
+    async def _body() -> AsyncGenerator[str]:
+        yield "test"
+
+    body = _body()
+    construct = mocker.patch("bff_service.api.routers.profiles.sse_event_generator", return_value=body)
+
+    response = await stream_profile_command_events(request_id, principal, service, "41-0")
+
+    assert isinstance(response, EventSourceResponse)
+    assert response.body_iterator is body
+    service.get_command_status.assert_awaited_once_with(db, user_id, request_id)
+    construct.assert_called_once_with(
+        user_id=user_id,
+        principal=principal,
+        context=SSEStreamContext(
+            session_factory=session_factory,
+            bridge=bridge,
+            settings=settings.sse,
+            shutdown_event=shutdown,
+            event_type=SSE_EVENT_COMMAND_STATUS,
+        ),
+        request_id=request_id,
+        last_event_id="41-0",
+    )
+    assert response.background is not None
+    await response.background()
+    bridge.release_stream_slot.assert_awaited_once_with(lease)
+
+
+@pytest.mark.asyncio
+async def test_profile_command_event_stream_rejects_unowned_request(mocker: MockerFixture) -> None:
+    from bff_service.api.routers.profiles import stream_profile_command_events
+
+    user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
+    principal = _sse_principal(user_id)
+    service = mocker.Mock()
+    service.get_command_status = mocker.AsyncMock(return_value=None)
+    db = create_mock_session()
+    session_context = mocker.MagicMock()
+    session_context.__aenter__ = mocker.AsyncMock(return_value=db)
+    session_context.__aexit__ = mocker.AsyncMock(return_value=None)
+    session_factory = mocker.MagicMock(return_value=session_context)
+    settings = mocker.MagicMock()
+    settings.database = mocker.sentinel.database
+    mocker.patch("bff_service.api.routers.profiles.get_settings", return_value=settings)
+    mocker.patch("bff_service.api.routers.profiles.get_async_sessionmaker", return_value=session_factory)
+    mocker.patch(
+        "bff_service.api.routers.profiles.get_current_user_claims",
+        new=mocker.AsyncMock(return_value=principal),
+    )
+    bridge = mocker.patch("bff_service.api.routers.profiles.get_sse_bridge")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await stream_profile_command_events(request_id, principal, service)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Command request not found"
+    service.get_command_status.assert_awaited_once_with(db, user_id, request_id)
+    bridge.assert_not_called()
 
 
 def test_profile_create_accepts_omitted_salary_and_experience() -> None:

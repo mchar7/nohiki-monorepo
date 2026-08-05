@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from nohiki_db_utils.testing import create_mock_session
@@ -94,7 +94,10 @@ async def test_start_saga_persists_identity_and_outbound_dispatch() -> None:
     saga = MagicMock()
     with (
         patch("user_pref_service.events.commands._profile_embedding_text", return_value="python platform"),
-        patch("user_pref_service.events.commands._persist_embedding_identity", return_value="a" * 64),
+        patch(
+            "user_pref_service.events.commands.profile_service.set_profile_semantic_hash",
+            return_value="a" * 64,
+        ) as persist_identity,
         patch(
             "user_pref_service.events.commands.saga_service.create_enrichment_saga",
             new_callable=AsyncMock,
@@ -114,8 +117,9 @@ async def test_start_saga_persists_identity_and_outbound_dispatch() -> None:
         )
 
     assert profile.enrichment_terminal_status is None
+    persist_identity.assert_called_once_with(profile, "python platform")
     create.assert_awaited_once()
-    dispatch.assert_awaited_once_with(db, outbox, saga)
+    dispatch.assert_awaited_once_with(db, outbox, saga, profile)
 
 
 class TestHandlePrefCreateRequested:
@@ -271,12 +275,50 @@ class TestHandlePrefUpdateRequested:
                 side_effect=NotFoundError(resource="Profile", identifier=message.pref_id),
             ),
             patch(
+                "user_pref_service.events.commands.publish_pref_command_rejected",
+                new_callable=AsyncMock,
+            ) as reject,
+            patch(
                 "user_pref_service.events.commands._start_enrichment_saga",
                 new_callable=AsyncMock,
             ) as start,
         ):
             await handle_pref_update_requested(message, _make_context(db_session=create_mock_session()))
         start.assert_not_awaited()
+        reject.assert_awaited_once()
+        assert reject.await_args is not None
+        assert reject.await_args.args[2] is message
+
+    @pytest.mark.asyncio
+    async def test_foreign_profile_publishes_correlated_rejection(self) -> None:
+        message = _make_update_message()
+        profile = MagicMock(id=UUID(message.pref_id), user_id=uuid4())
+        with (
+            patch(
+                "user_pref_service.events.commands.saga_service.get_saga_by_request_id",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "user_pref_service.events.commands.profile_service.get_profile_by_id_for_update",
+                new_callable=AsyncMock,
+                return_value=profile,
+            ),
+            patch(
+                "user_pref_service.events.commands.publish_pref_command_rejected",
+                new_callable=AsyncMock,
+            ) as reject,
+            patch(
+                "user_pref_service.events.commands._start_enrichment_saga",
+                new_callable=AsyncMock,
+            ) as start,
+        ):
+            await handle_pref_update_requested(message, _make_context(db_session=create_mock_session()))
+
+        start.assert_not_awaited()
+        reject.assert_awaited_once()
+        assert reject.await_args is not None
+        assert reject.await_args.args[2] is message
 
 
 class TestHandlePrefDeleteRequested:
@@ -285,11 +327,11 @@ class TestHandlePrefDeleteRequested:
         user_id = uuid4()
         pref_id = uuid4()
         message = MagicMock(request_id=str(uuid4()), user_id=str(user_id), pref_id=str(pref_id))
-        profile = MagicMock(user_id=user_id)
+        profile = MagicMock(id=pref_id, user_id=user_id)
         order: list[str] = []
         with (
             patch(
-                "user_pref_service.events.commands.profile_service.get_profile_by_id_optional",
+                "user_pref_service.events.commands.profile_service.get_profile_by_id_for_update",
                 new_callable=AsyncMock,
                 return_value=profile,
             ),

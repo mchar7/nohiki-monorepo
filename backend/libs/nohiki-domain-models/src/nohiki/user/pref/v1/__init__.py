@@ -47,6 +47,8 @@ class PrefEnrichmentFailedFailureReason(betterproto2.Enum):
 
     CANCELLED = 4
 
+    REJECTED = 5
+
     @classmethod
     def betterproto_value_to_renamed_proto_names(cls) -> dict[int, str]:
         return {
@@ -55,6 +57,7 @@ class PrefEnrichmentFailedFailureReason(betterproto2.Enum):
             2: "FAILURE_REASON_EMBEDDING_FAILED",
             3: "FAILURE_REASON_EXPIRED",
             4: "FAILURE_REASON_CANCELLED",
+            5: "FAILURE_REASON_REJECTED",
         }
 
     @classmethod
@@ -65,6 +68,7 @@ class PrefEnrichmentFailedFailureReason(betterproto2.Enum):
             "FAILURE_REASON_EMBEDDING_FAILED": 2,
             "FAILURE_REASON_EXPIRED": 3,
             "FAILURE_REASON_CANCELLED": 4,
+            "FAILURE_REASON_REJECTED": 5,
         }
 
 

@@ -141,6 +141,7 @@ message PrefEnrichmentFailed {
     FAILURE_REASON_EMBEDDING_FAILED = 2;
     FAILURE_REASON_EXPIRED = 3;
     FAILURE_REASON_CANCELLED = 4;
+    FAILURE_REASON_REJECTED = 5;
   }
   FailureReason reason = 4;
 

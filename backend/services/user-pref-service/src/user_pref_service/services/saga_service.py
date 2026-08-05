@@ -11,6 +11,7 @@ from nohiki.ml.v1 import EmbeddingRequested, EntityType
 from nohiki.skill.v1 import SkillNormalizationRequested
 from nohiki.user.pref.v1 import PrefEnrichmentFailedFailureReason
 from nohiki_db_utils import OutboxEventParams, SagaStatus
+from nohiki_fastapi_utils.errors import NotFoundError
 from nohiki_kafka_client import Topics, create_event_metadata
 from sqlalchemy import or_, select
 from uuid_utils.compat import uuid7
@@ -40,6 +41,8 @@ from user_pref_service.services.enrichment_completion import load_user_skills_fr
 if TYPE_CHECKING:
     from nohiki_db_utils import OutboxWriter
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from user_pref_service.db.models import SearchPref
 
 
 def _action_value(saga: PrefEnrichmentSaga) -> str:
@@ -80,6 +83,25 @@ async def load_saga_for_update(db: AsyncSession, saga_id: UUID) -> PrefEnrichmen
     return result.scalar_one_or_none()
 
 
+async def lock_profile_then_saga(
+    db: AsyncSession,
+    saga_id: UUID,
+) -> tuple[SearchPref, PrefEnrichmentSaga] | None:
+    """Read immutable ownership, then lock the profile before the saga."""
+    result = await db.execute(select(PrefEnrichmentSaga.pref_id).where(PrefEnrichmentSaga.id == saga_id))
+    pref_id = result.scalar_one_or_none()
+    if pref_id is None:
+        return None
+    try:
+        profile = await profile_service.get_profile_by_id_for_update(db, pref_id)
+    except NotFoundError:
+        return None
+    saga = await load_saga_for_update(db, saga_id)
+    if saga is None or saga.pref_id != pref_id:
+        return None
+    return profile, saga
+
+
 async def find_pending_sagas_for_update(db: AsyncSession, pref_id: UUID) -> list[PrefEnrichmentSaga]:
     """Lock every pending saga owned by a profile."""
     result = await db.execute(
@@ -98,6 +120,7 @@ async def dispatch_next_step(
     db: AsyncSession,
     outbox: OutboxWriter,
     saga: PrefEnrichmentSaga,
+    profile: SearchPref | None = None,
 ) -> str:
     """Persist an operation identity and its outbound command atomically."""
     state = PrefEnrichmentSagaContext(saga_id=str(saga.id))
@@ -116,7 +139,7 @@ async def dispatch_next_step(
         )
     else:
         step = "embedding"
-        profile = await profile_service.get_profile_by_id(db, saga.pref_id)
+        profile = profile or await profile_service.get_profile_by_id(db, saga.pref_id)
         publisher = get_embedding_publisher()
         command = EmbeddingRequested(
             metadata=create_event_metadata(publisher.service_name),
@@ -139,7 +162,6 @@ async def dispatch_next_step(
     saga.failed_step = None
     saga.last_error_code = None
     saga.last_error_message = None
-    saga.expires_at = min(datetime.now(UTC) + CALLBACK_TIMEOUT, saga.created_at + WALL_CLOCK_CAP)
     saga.version += 1
     await db.flush()
     await outbox.write_event(
@@ -186,7 +208,6 @@ async def record_retryable_error(
     saga.failed_step = step
     saga.last_error_code = error_code[:64]
     saga.last_error_message = error_message[:512]
-    saga.expires_at = min(datetime.now(UTC) + CALLBACK_TIMEOUT, saga.created_at + WALL_CLOCK_CAP)
     saga.version += 1
     await db.flush()
 
@@ -194,14 +215,16 @@ async def record_retryable_error(
 async def retry_enrichment(
     db: AsyncSession,
     outbox: OutboxWriter,
+    profile: SearchPref,
     saga: PrefEnrichmentSaga,
 ) -> bool:
     """Consume one retry budget unit or terminalize an exhausted saga."""
     now = datetime.now(UTC)
-    if saga.attempts_remaining == 0 or saga.created_at + WALL_CLOCK_CAP <= now:
+    if saga.attempts_remaining == 0 or saga.expires_at <= now or saga.created_at + WALL_CLOCK_CAP <= now:
         await terminate_enrichment(
             db,
             outbox,
+            profile,
             saga,
             SagaTermination(
                 status=SagaStatus.EXPIRED,
@@ -211,20 +234,20 @@ async def retry_enrichment(
         )
         return False
     saga.attempts_remaining -= 1
-    await dispatch_next_step(db, outbox, saga)
+    await dispatch_next_step(db, outbox, saga, profile)
     return True
 
 
 async def complete_enrichment(
     db: AsyncSession,
     outbox: OutboxWriter,
+    profile: SearchPref,
     saga: PrefEnrichmentSaga,
 ) -> None:
     """Atomically mark completion and write the authoritative lifecycle fact."""
     if not saga.is_complete:
         msg = f"Saga {saga.id} completed before all callbacks arrived"
         raise ValueError(msg)
-    profile = await profile_service.get_profile_by_id_for_update(db, saga.pref_id)
     saga.transition_to(SagaStatus.COMPLETED)
     profile.enrichment_terminal_status = None
     user_skills = load_user_skills_from_profile(profile)
@@ -242,6 +265,7 @@ async def complete_enrichment(
 async def terminate_enrichment(
     db: AsyncSession,
     outbox: OutboxWriter,
+    profile: SearchPref,
     saga: PrefEnrichmentSaga,
     termination: SagaTermination,
 ) -> None:
@@ -249,9 +273,7 @@ async def terminate_enrichment(
     if saga.status != SagaStatus.PENDING:
         return
     saga.transition_to(termination.status)
-    profile = await profile_service.get_profile_by_id_optional(db, saga.pref_id)
-    if profile is not None:
-        profile.enrichment_terminal_status = termination.status.value.lower()
+    profile.enrichment_terminal_status = termination.status.value.lower()
     saga.last_error_message = termination.error_message[:512]
     await publish_pref_enrichment_failed(
         db,
@@ -266,15 +288,16 @@ async def terminate_enrichment(
 async def cancel_pending_enrichment(
     db: AsyncSession,
     outbox: OutboxWriter,
-    pref_id: UUID,
+    profile: SearchPref,
     *,
     message: str,
 ) -> None:
-    """Cancel active work so every later callback is a no-op."""
-    for saga in await find_pending_sagas_for_update(db, pref_id):
+    """Cancel active work after its owning profile has been locked."""
+    for saga in await find_pending_sagas_for_update(db, profile.id):
         await terminate_enrichment(
             db,
             outbox,
+            profile,
             saga,
             SagaTermination(
                 status=SagaStatus.CANCELLED,
@@ -285,10 +308,10 @@ async def cancel_pending_enrichment(
 
 
 async def sweep_due_enrichment_sagas(db: AsyncSession, outbox: OutboxWriter) -> int:
-    """Retry due work or expire it after the bounded budget or wall-clock cap."""
+    """Retry due work after locking each profile before its saga."""
     now = datetime.now(UTC)
     result = await db.execute(
-        select(PrefEnrichmentSaga)
+        select(PrefEnrichmentSaga.id)
         .where(
             PrefEnrichmentSaga.status == SagaStatus.PENDING,
             or_(
@@ -298,9 +321,15 @@ async def sweep_due_enrichment_sagas(db: AsyncSession, outbox: OutboxWriter) -> 
         )
         .order_by(PrefEnrichmentSaga.expires_at, PrefEnrichmentSaga.id)
         .limit(100)
-        .with_for_update(skip_locked=True)
     )
-    sagas = list(result.scalars().all())
-    for saga in sagas:
-        await retry_enrichment(db, outbox, saga)
-    return len(sagas)
+    processed = 0
+    for saga_id in result.scalars():
+        locked = await lock_profile_then_saga(db, saga_id)
+        if locked is None:
+            continue
+        profile, saga = locked
+        if saga.status != SagaStatus.PENDING or (saga.expires_at > now and saga.created_at > now - WALL_CLOCK_CAP):
+            continue
+        await retry_enrichment(db, outbox, profile, saga)
+        processed += 1
+    return processed

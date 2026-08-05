@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from nohiki.common.v1 import ErrorInfo
@@ -15,10 +16,14 @@ from nohiki_observability import get_logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from user_pref_service.core.config import get_manifest, get_settings
-from user_pref_service.core.embedding import PrefEnrichmentSagaContext, profile_embedding_content_hash
+from user_pref_service.core.embedding import (
+    PREF_EMBEDDING_SPEC,
+    PrefEnrichmentSagaContext,
+    profile_embedding_content_hash,
+)
 from user_pref_service.core.kafka import kafka_client
-from user_pref_service.core.saga_policy import SagaTermination
-from user_pref_service.db.models import PrefEnrichmentSaga
+from user_pref_service.core.saga_policy import WALL_CLOCK_CAP, SagaTermination
+from user_pref_service.db.models import PrefEnrichmentSaga, SearchPref
 from user_pref_service.services import profile_service, saga_service
 from user_pref_service.services.enrichment_completion import (
     persist_query_enrichment,
@@ -38,13 +43,32 @@ async def _load_current_saga(
     message: SkillNormalizationCallback | EmbeddingCallback,
     *,
     step: str,
-) -> tuple[AsyncSession, PrefEnrichmentSaga | None]:
+) -> tuple[AsyncSession, SearchPref | None, PrefEnrichmentSaga | None]:
     state = PrefEnrichmentSagaContext.from_bytes(message.callback.caller_context)
     db = context.require_db_session()
-    saga = await saga_service.load_saga_for_update(db, UUID(state.saga_id))
-    if saga is None or saga.status != SagaStatus.PENDING:
+    locked = await saga_service.lock_profile_then_saga(db, UUID(state.saga_id))
+    if locked is None:
+        logger.info("Ignoring callback for missing preference saga", saga_id=state.saga_id, step=step)
+        return db, None, None
+    profile, saga = locked
+    if saga.status != SagaStatus.PENDING:
         logger.info("Ignoring callback for non-pending preference saga", saga_id=state.saga_id, step=step)
-        return db, None
+        return db, None, None
+    deadline = min(saga.expires_at, saga.created_at + WALL_CLOCK_CAP)
+    if deadline <= datetime.now(UTC):
+        await saga_service.terminate_enrichment(
+            db,
+            context.require_outbox(),
+            profile,
+            saga,
+            SagaTermination(
+                status=SagaStatus.EXPIRED,
+                reason=PrefEnrichmentFailedFailureReason.EXPIRED,
+                error_message="Preference enrichment deadline expired",
+            ),
+        )
+        logger.info("Expired late preference enrichment callback", saga_id=state.saga_id, step=step)
+        return db, None, None
     if not saga_service.operation_matches(saga, step, _callback_operation_id(message)):
         logger.info(
             "Ignoring stale preference enrichment callback",
@@ -52,15 +76,16 @@ async def _load_current_saga(
             step=step,
             operation_id=_callback_operation_id(message),
         )
-        return db, None
+        return db, None, None
     if (step == "skill" and saga.skills_persisted) or (step == "embedding" and saga.embedding_persisted):
         logger.info("Ignoring duplicate preference enrichment callback", saga_id=state.saga_id, step=step)
-        return db, None
-    return db, saga
+        return db, None, None
+    return db, profile, saga
 
 
 async def _handle_declared_error(
     context: MessageContext,
+    profile: SearchPref,
     saga: PrefEnrichmentSaga,
     *,
     step: str,
@@ -90,6 +115,7 @@ async def _handle_declared_error(
     await saga_service.terminate_enrichment(
         db,
         context.require_outbox(),
+        profile,
         saga,
         SagaTermination(
             status=SagaStatus.FAILED,
@@ -110,23 +136,24 @@ async def handle_skill_normalization_callback(
     context: MessageContext,
 ) -> None:
     """Persist one operation-matched skill callback or classify its typed error."""
-    db, saga = await _load_current_saga(context, message, step="skill")
-    if saga is None:
+    db, profile, saga = await _load_current_saga(context, message, step="skill")
+    if profile is None or saga is None:
         return
     if (error := message.error) is not None:
-        await _handle_declared_error(context, saga, step="skill", error=error)
+        await _handle_declared_error(context, profile, saga, step="skill", error=error)
         return
     if (success := message.success) is None:
         msg = "Empty skill normalization callback result"
         raise ValidationError(msg)
 
-    profile = await persist_skill_enrichment(
+    persisted_profile = await persist_skill_enrichment(
         db,
         saga.pref_id,
         success,
         expected_generation=saga.semantic_generation,
+        locked_profile=profile,
     )
-    if profile is None:
+    if persisted_profile is None:
         logger.info("Ignoring superseded skill callback", saga_id=str(saga.id))
         return
     embedding_text = profile_service.build_profile_embedding_text_from_profile(profile)
@@ -134,7 +161,7 @@ async def handle_skill_normalization_callback(
     profile.semantic_content_hash = semantic_hash
     saga.semantic_hash = semantic_hash
     await saga_service.record_success(db, saga, "skill")
-    await saga_service.dispatch_next_step(db, context.require_outbox(), saga)
+    await saga_service.dispatch_next_step(db, context.require_outbox(), saga, profile)
 
 
 @kafka_client.message_handler(
@@ -145,11 +172,11 @@ async def handle_skill_normalization_callback(
 @kafka_client.with_db_session(schema=settings.database.schema_name)
 async def handle_embedding_callback(message: EmbeddingCallback, context: MessageContext) -> None:
     """Commit persisted query vectors, saga completion, and lifecycle fact atomically."""
-    db, saga = await _load_current_saga(context, message, step="embedding")
-    if saga is None:
+    db, profile, saga = await _load_current_saga(context, message, step="embedding")
+    if profile is None or saga is None:
         return
     if (error := message.error) is not None:
-        await _handle_declared_error(context, saga, step="embedding", error=error)
+        await _handle_declared_error(context, profile, saga, step="embedding", error=error)
         return
     if (success := message.success) is None:
         msg = "Empty embedding callback result"
@@ -157,7 +184,7 @@ async def handle_embedding_callback(message: EmbeddingCallback, context: Message
 
     current_version = get_manifest().get_entity_version(EntityType.PROFILE)
     if success.collection_version != current_version:
-        await saga_service.retry_enrichment(db, context.require_outbox(), saga)
+        await saga_service.retry_enrichment(db, context.require_outbox(), profile, saga)
         logger.info(
             "Replaced stale-version preference embedding callback",
             saga_id=str(saga.id),
@@ -175,19 +202,34 @@ async def handle_embedding_callback(message: EmbeddingCallback, context: Message
             error_message="Embedding callback content hash does not match the active preference workflow",
         )
         return
+    returned_types = [embedding.embedding_type for embedding in success.embeddings]
+    required_types = set(PREF_EMBEDDING_SPEC.requested_types)
+    if len(returned_types) != len(set(returned_types)) or set(returned_types) != required_types:
+        required_names = sorted(embedding_type.name for embedding_type in required_types)
+        returned_names = sorted(embedding_type.name for embedding_type in returned_types)
+        await saga_service.record_retryable_error(
+            db,
+            saga,
+            step="embedding",
+            error_code="EMBEDDING_RESULT_TYPES_MISMATCH",
+            error_message=(
+                f"Embedding callback types {returned_names} do not exactly match required types {required_names}"
+            ),
+        )
+        return
 
-    profile = await persist_query_enrichment(
+    persisted_profile = await persist_query_enrichment(
         db,
-        saga.pref_id,
+        profile,
         success,
         expected_generation=saga.semantic_generation,
         expected_hash=saga.semantic_hash,
     )
-    if profile is None:
+    if persisted_profile is None:
         logger.info("Ignoring superseded embedding callback", saga_id=str(saga.id))
         return
     await saga_service.record_success(db, saga, "embedding")
-    await saga_service.complete_enrichment(db, context.require_outbox(), saga)
+    await saga_service.complete_enrichment(db, context.require_outbox(), profile, saga)
     logger.info(
         "Preference enrichment completed",
         saga_id=str(saga.id),

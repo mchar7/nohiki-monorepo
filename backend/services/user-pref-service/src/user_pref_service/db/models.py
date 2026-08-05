@@ -168,6 +168,10 @@ class PrefEnrichmentSaga(SagaBaseMixin, Base):
             "status IN ('PENDING','COMPLETED','FAILED','EXPIRED','CANCELLED')",
             name="pref_enrichment_saga_status_check",
         ),
+        sa.CheckConstraint(
+            "action IN ('CREATE','UPDATE')",
+            name="pref_enrichment_saga_action_check",
+        ),
         sa.CheckConstraint("attempts_remaining >= 0", name="pref_enrichment_saga_attempts_nonnegative"),
         {"schema": SCHEMA_NAME},
     )
@@ -185,6 +189,8 @@ class PrefEnrichmentSaga(SagaBaseMixin, Base):
             native_enum=False,
             create_type=False,
             values_callable=lambda enum: [value.value for value in enum],
+            length=16,
+            validate_strings=True,
         ),
         nullable=False,
     )

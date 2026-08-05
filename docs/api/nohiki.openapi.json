@@ -596,6 +596,103 @@
         }
       }
     },
+    "/api/v1/profiles/commands/{request_id}": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Get Profile Command Status",
+        "description": "Return an owned profile command request's current status.",
+        "operationId": "get_profile_command_status_api_v1_profiles_commands__request_id__get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandStatusDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/commands/{request_id}/events": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Stream Profile Command Events",
+        "description": "Stream durable status events for an owned profile command request.",
+        "operationId": "stream_profile_command_events_api_v1_profiles_commands__request_id__events_get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/profiles/{pref_id}": {
       "get": {
         "tags": [
@@ -3541,6 +3638,63 @@
         ],
         "title": "CommandAcceptedResponse",
         "description": "Response indicating an async command has been accepted for processing.\n\nReturned by endpoints that publish Kafka commands rather than\nreturning results synchronously."
+      },
+      "CommandStatusDetail": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "command_type": {
+            "type": "string",
+            "title": "Command Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "command_type",
+          "status"
+        ],
+        "title": "CommandStatusDetail",
+        "description": "Command request status returned from the service layer."
       },
       "CompleteUploadRequest": {
         "properties": {

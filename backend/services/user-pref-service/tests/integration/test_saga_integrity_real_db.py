@@ -5,16 +5,21 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from nohiki.ml.v1 import EntityType
 from nohiki.user.pref.v1 import PrefUpdateRequested
 from nohiki_db_utils import OutboxWriter, SagaStatus
 from nohiki_kafka_client import MessageContext, Topics, create_event_metadata
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from user_pref_service.core.config import get_manifest
+from user_pref_service.core.embedding import PREF_EMBEDDING_SPEC, PrefEnrichmentSagaContext
 from user_pref_service.core.saga_policy import WALL_CLOCK_CAP, NewEnrichmentSaga
-from user_pref_service.db.models import PrefEnrichmentAction
+from user_pref_service.db.models import PrefEnrichmentAction, SearchPref
+from user_pref_service.events.callbacks import handle_embedding_callback
 from user_pref_service.events.commands import handle_pref_update_requested
 from user_pref_service.services import saga_service
 from user_pref_service.services.saga_service import (
@@ -57,6 +62,7 @@ async def _insert_saga(
     user_id: UUID,
     created_at: datetime | None = None,
     expires_at: datetime | None = None,
+    action: str = "UPDATE",
 ) -> UUID:
     saga_id = uuid4()
     await connection.execute(
@@ -68,7 +74,7 @@ async def _insert_saga(
                 semantic_hash, attempts_remaining
             ) VALUES (
                 :saga_id, 1, :created_at, :expires_at, :pref_id, :user_id,
-                :request_id, 'UPDATE', :correlation_id, 1, :semantic_hash, 2
+                :request_id, :action, :correlation_id, 1, :semantic_hash, 2
             )
             """
         ),
@@ -79,11 +85,32 @@ async def _insert_saga(
             "pref_id": pref_id,
             "user_id": user_id,
             "request_id": uuid4(),
+            "action": action,
             "correlation_id": str(uuid4()),
             "semantic_hash": "a" * 64,
         },
     )
     return saga_id
+
+
+@pytest.mark.asyncio
+async def test_saga_action_rejects_unknown_domain_value(
+    async_engine: AsyncEngine,
+    setup_database_schema: None,
+) -> None:
+    """The baseline schema rejects actions that cannot map to lifecycle facts."""
+    _ = setup_database_schema
+    async with async_engine.connect() as connection:
+        transaction = await connection.begin()
+        pref_id = await _insert_profile(connection, user_id=(user_id := uuid4()))
+        with pytest.raises(IntegrityError, match="pref_enrichment_saga_action_check"):
+            await _insert_saga(
+                connection,
+                pref_id=pref_id,
+                user_id=user_id,
+                action="DELETE",
+            )
+        await transaction.rollback()
 
 
 async def test_profile_delete_cascades_owned_saga(
@@ -228,6 +255,7 @@ async def test_concurrent_duplicate_callbacks_cannot_extend_absolute_deadline(
     _ = setup_database_schema
     user_id = uuid4()
     created_at = datetime.now(UTC) - WALL_CLOCK_CAP + timedelta(seconds=5)
+    original_deadline = datetime.now(UTC) + timedelta(minutes=1)
     async with async_engine.begin() as connection:
         pref_id = await _insert_profile(connection, user_id=user_id)
         saga_id = await _insert_saga(
@@ -235,7 +263,7 @@ async def test_concurrent_duplicate_callbacks_cannot_extend_absolute_deadline(
             pref_id=pref_id,
             user_id=user_id,
             created_at=created_at,
-            expires_at=datetime.now(UTC) + timedelta(minutes=1),
+            expires_at=original_deadline,
         )
 
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -277,7 +305,7 @@ async def test_concurrent_duplicate_callbacks_cannot_extend_absolute_deadline(
             {"saga_id": saga_id},
         )
 
-    assert expires_at == created_at + WALL_CLOCK_CAP
+    assert expires_at == original_deadline
 
 
 async def test_concurrent_updates_serialize_supersession_on_profile_owner(
@@ -320,7 +348,7 @@ async def test_concurrent_updates_serialize_supersession_on_profile_owner(
     async def controlled_cancel(
         db: AsyncSession,
         outbox: OutboxWriter,
-        cancel_pref_id: UUID,
+        profile: SearchPref,
         *,
         message: str,
     ) -> None:
@@ -330,7 +358,7 @@ async def test_concurrent_updates_serialize_supersession_on_profile_owner(
             await release_first.wait()
         elif task is not None and task.get_name() == "second-profile-update":
             second_cancel_entered.set()
-        await original_cancel(db, outbox, cancel_pref_id, message=message)
+        await original_cancel(db, outbox, profile, message=message)
 
     async def run_update(message: PrefUpdateRequested) -> None:
         async with session_factory.begin() as session:
@@ -380,3 +408,160 @@ async def test_concurrent_updates_serialize_supersession_on_profile_owner(
         (first_request_id, SagaStatus.CANCELLED.value),
         (second_request_id, SagaStatus.PENDING.value),
     ]
+
+
+async def test_concurrent_update_and_late_callback_follow_profile_then_saga_order(
+    async_engine: AsyncEngine,
+    setup_database_schema: None,
+) -> None:
+    """An update and late callback complete without preserving two current workflows."""
+    _ = setup_database_schema
+    user_id = uuid4()
+    async with async_engine.begin() as connection:
+        pref_id = await _insert_profile(connection, user_id=user_id)
+        old_saga_id = await _insert_saga(connection, pref_id=pref_id, user_id=user_id)
+        await connection.execute(
+            text(
+                """
+                UPDATE user_pref_schema.pref_enrichment_saga
+                SET last_dispatch_ids = '{"embedding": "old-operation"}'::jsonb
+                WHERE id = :saga_id
+                """
+            ),
+            {"saga_id": old_saga_id},
+        )
+
+    request_id = uuid4()
+    update = PrefUpdateRequested(
+        metadata=create_event_metadata("test-service", str(request_id)),
+        request_id=str(request_id),
+        user_id=str(user_id),
+        pref_id=str(pref_id),
+        updated_fields=["pref_name"],
+        pref_name="Concurrent update wins",
+    )
+    callback = MagicMock()
+    callback.callback.caller_context = PrefEnrichmentSagaContext(saga_id=str(old_saga_id)).to_bytes()
+    callback.callback.operation_id = "old-operation"
+    callback.error = None
+    callback.success = MagicMock(
+        collection_version=get_manifest().get_entity_version(EntityType.PROFILE),
+        content_hash="a" * 64,
+        embeddings=[MagicMock(embedding_type=embedding_type) for embedding_type in PREF_EMBEDDING_SPEC.requested_types],
+    )
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+    callback_about_to_lock_profile = asyncio.Event()
+    allow_callback_profile_lock = asyncio.Event()
+    update_holds_profile = asyncio.Event()
+    allow_update_cancel = asyncio.Event()
+    original_profile_lock = saga_service.profile_service.get_profile_by_id_for_update
+    original_cancel = saga_service.cancel_pending_enrichment
+
+    async def coordinated_profile_lock(db: AsyncSession, lock_pref_id: UUID) -> SearchPref:
+        task = asyncio.current_task()
+        if task is not None and task.get_name() == "late-callback":
+            callback_about_to_lock_profile.set()
+            await allow_callback_profile_lock.wait()
+        return await original_profile_lock(db, lock_pref_id)
+
+    async def controlled_cancel(
+        db: AsyncSession,
+        outbox: OutboxWriter,
+        profile: SearchPref,
+        *,
+        message: str,
+    ) -> None:
+        update_holds_profile.set()
+        await allow_update_cancel.wait()
+        await original_cancel(db, outbox, profile, message=message)
+
+    async def run_callback() -> None:
+        async with session_factory.begin() as session:
+            await handle_embedding_callback(
+                callback,
+                MessageContext(
+                    topic=Topics.USER_PREF_EMBEDDING_CALLBACK,
+                    partition=0,
+                    offset=0,
+                    timestamp=0,
+                    headers={},
+                    key=str(old_saga_id),
+                    db_session=session,
+                    outbox=OutboxWriter(schema="user_pref_schema"),
+                ),
+            )
+
+    async def run_update() -> None:
+        async with session_factory.begin() as session:
+            await handle_pref_update_requested(
+                update,
+                MessageContext(
+                    topic=Topics.USER_PREF_UPDATE_REQUESTED,
+                    partition=0,
+                    offset=0,
+                    timestamp=0,
+                    headers={},
+                    key=str(request_id),
+                    db_session=session,
+                    outbox=OutboxWriter(schema="user_pref_schema"),
+                ),
+            )
+
+    with (
+        patch(
+            "user_pref_service.services.profile_service.get_profile_by_id_for_update",
+            side_effect=coordinated_profile_lock,
+        ),
+        patch(
+            "user_pref_service.events.commands.saga_service.cancel_pending_enrichment",
+            side_effect=controlled_cancel,
+        ),
+    ):
+        callback_task = asyncio.create_task(run_callback(), name="late-callback")
+        await asyncio.wait_for(callback_about_to_lock_profile.wait(), timeout=5)
+        update_task = asyncio.create_task(run_update(), name="profile-update")
+        await asyncio.wait_for(update_holds_profile.wait(), timeout=5)
+        allow_callback_profile_lock.set()
+        allow_update_cancel.set()
+        await asyncio.wait_for(asyncio.gather(update_task, callback_task), timeout=5)
+
+    async with async_engine.connect() as connection:
+        profile_state = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT pref_name, semantic_content_generation, enrichment_terminal_status
+                    FROM user_pref_schema.search_prefs
+                    WHERE id = :pref_id
+                    """
+                ),
+                {"pref_id": pref_id},
+            )
+        ).one()
+        saga_states = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT id, request_id, status
+                    FROM user_pref_schema.pref_enrichment_saga
+                    WHERE pref_id = :pref_id
+                    """
+                ),
+                {"pref_id": pref_id},
+            )
+        ).all()
+
+    assert profile_state == ("Concurrent update wins", 2, None)
+    states_by_id = {saga_id: status for saga_id, _request_id, status in saga_states}
+    pending = [
+        (saga_id, saga_request_id)
+        for saga_id, saga_request_id, status in saga_states
+        if status == SagaStatus.PENDING.value
+    ]
+    assert states_by_id[old_saga_id] == SagaStatus.CANCELLED.value
+    assert len(pending) == 1
+    assert pending[0][1] == request_id
+    assert len(saga_states) == 2

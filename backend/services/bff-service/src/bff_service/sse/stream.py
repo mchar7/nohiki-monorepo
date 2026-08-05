@@ -1,14 +1,15 @@
-"""Request-scoped, durable SSE stream generation for document status changes."""
+"""Request-scoped, durable SSE stream generation for status changes."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
 from nohiki_fastapi_utils import JWTClaims
@@ -18,10 +19,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import ServerSentEvent
 
 from bff_service.core.config import SSESettings
-from bff_service.db.models.doc_projections import DocumentGenerationStatus
+from bff_service.db.models import CommandRequest, DocumentGenerationStatus
 from bff_service.services.auth_revocation import is_access_token_revoked
 from bff_service.sse.bridge import SSEBridge, StreamEvent
-from bff_service.sse.events import SSE_EVENT_DOCUMENT_STATUS, DocumentStatusPayload
+from bff_service.sse.events import (
+    SSE_EVENT_COMMAND_STATUS,
+    SSE_EVENT_DOCUMENT_STATUS,
+    CommandStatusPayload,
+    DocumentStatusPayload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +67,7 @@ class SSEStreamContext:
     bridge: SSEBridge
     settings: SSESettings
     shutdown_event: asyncio.Event
+    event_type: str = SSE_EVENT_DOCUMENT_STATUS
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,19 +118,42 @@ async def _stream_authorized(context: SSEStreamContext, authorization: _Authoriz
         return False
 
 
-def _snapshot_event(row: DocumentGenerationStatus) -> ServerSentEvent:
-    return ServerSentEvent(
-        data=DocumentStatusPayload(
-            type=SSE_EVENT_DOCUMENT_STATUS,
-            request_id=str(row.request_id),
-            status=row.status,
-            storage_key=row.storage_key,
-            error_message=row.error_message,
-            file_size=row.file_size,
-            content_hash=row.content_hash,
-        ).to_sse_data(),
-        event=SSE_EVENT_DOCUMENT_STATUS,
-    )
+def _snapshot_event(
+    row: DocumentGenerationStatus | CommandRequest,
+    event_type: str,
+) -> ServerSentEvent:
+    if event_type == SSE_EVENT_COMMAND_STATUS:
+        command = cast(CommandRequest, row)
+        payload = CommandStatusPayload(
+            type=event_type,
+            request_id=str(command.request_id),
+            command_type=command.command_type,
+            status=command.status,
+            error_message=command.error_message,
+        )
+    else:
+        document = cast(DocumentGenerationStatus, row)
+        payload = DocumentStatusPayload(
+            type=event_type,
+            request_id=str(document.request_id),
+            status=document.status,
+            storage_key=document.storage_key,
+            error_message=document.error_message,
+            file_size=document.file_size,
+            content_hash=document.content_hash,
+        )
+    return ServerSentEvent(data=payload.to_sse_data(), event=event_type)
+
+
+def _stream_event_name(event: StreamEvent) -> str | None:
+    """Read the SSE event name from the durable payload discriminator."""
+    try:
+        event_type = json.loads(event.data).get("type")
+    except AttributeError, json.JSONDecodeError, TypeError:
+        return None
+    if event_type in (SSE_EVENT_COMMAND_STATUS, SSE_EVENT_DOCUMENT_STATUS):
+        return event_type
+    return None
 
 
 async def _read_or_shutdown(
@@ -154,7 +184,8 @@ async def _initial_stream_state(
     authorization: _AuthorizationContext,
     request_id: UUID,
     last_event_id: str | None,
-) -> tuple[str, DocumentGenerationStatus | None] | None:
+    event_type: str,
+) -> tuple[str, DocumentGenerationStatus | CommandRequest | None] | None:
     async with context.session_factory() as db_session:
         if not await _authorization_valid(
             db_session=db_session,
@@ -172,10 +203,11 @@ async def _initial_stream_state(
             return last_event_id, None
 
         cursor = await context.bridge.latest_id(authorization.user_id, request_id)
+        model = CommandRequest if event_type == SSE_EVENT_COMMAND_STATUS else DocumentGenerationStatus
         result = await db_session.execute(
-            select(DocumentGenerationStatus).where(
-                DocumentGenerationStatus.user_id == authorization.user_id,
-                DocumentGenerationStatus.request_id == request_id,
+            select(model).where(
+                model.user_id == authorization.user_id,
+                model.request_id == request_id,
             )
         )
         return cursor, result.scalar_one_or_none()
@@ -225,9 +257,13 @@ async def _live_events(
 
         for event in events:
             cursor = event.event_id
+            event_name = _stream_event_name(event)
+            if event_name is None:
+                logger.warning("Ignoring SSE event without a recognized type for request %s", request_id)
+                continue
             yield ServerSentEvent(
                 data=event.data,
-                event=SSE_EVENT_DOCUMENT_STATUS,
+                event=event_name,
                 id=event.event_id,
             )
             if event.terminal:
@@ -242,7 +278,7 @@ async def sse_event_generator(
     request_id: UUID,
     last_event_id: str | None = None,
 ) -> AsyncGenerator[ServerSentEvent]:
-    """Yield one document request's durable events while authorization remains valid."""
+    """Yield one request's durable events while authorization remains valid."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + context.settings.max_stream_duration_seconds
     authorization = _AuthorizationContext(
@@ -253,12 +289,18 @@ async def sse_event_generator(
     )
 
     try:
-        state = await _initial_stream_state(context, authorization, request_id, last_event_id)
+        state = await _initial_stream_state(
+            context,
+            authorization,
+            request_id,
+            last_event_id,
+            context.event_type,
+        )
         if state is None or loop.time() >= deadline:
             return
         cursor, snapshot = state
         if snapshot is not None:
-            yield _snapshot_event(snapshot)
+            yield _snapshot_event(snapshot, context.event_type)
             if snapshot.status in _TERMINAL_STATUSES:
                 return
 
