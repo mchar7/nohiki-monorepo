@@ -256,18 +256,6 @@
       "allowedVersions": "/^4\\.3\\./"
     },
     {
-      // why: one PR must move the Nix JDK and Gradle language toolchain together.
-      "description": "Keep duplicate JDK major declarations aligned",
-      "matchPackageNames": ["java-jdk"],
-      "groupName": "JDK major parity"
-    },
-    {
-      // why: the wrapper, Nix package, and builder image must use one Gradle release.
-      "description": "Keep Gradle toolchain declarations aligned",
-      "matchPackageNames": ["gradle"],
-      "groupName": "Gradle toolchain parity"
-    },
-    {
       // why: workspace members are never published to PyPI, so a lookup can only fail.
       "description": "Disable PyPI lookups for uv workspace members",
       "matchDatasources": ["pypi"],
@@ -477,6 +465,18 @@
       "description": "Keep duplicate Playwright declarations aligned",
       "matchPackageNames": ["@playwright/test"],
       "groupName": "Playwright version parity"
+    },
+    {
+      // why: one PR must move the Nix JDK and Gradle language toolchain together.
+      "description": "Keep duplicate JDK major declarations aligned",
+      "matchPackageNames": ["java-jdk"],
+      "groupName": "JDK major parity"
+    },
+    {
+      // why: the wrapper, Nix package, and builder image must use one Gradle release.
+      "description": "Keep Gradle toolchain declarations aligned",
+      "matchPackageNames": ["gradle"],
+      "groupName": "Gradle toolchain parity"
     },
     {
       // why: replacing bytes under an unchanged chart version is an immutable-release violation, not an update.
