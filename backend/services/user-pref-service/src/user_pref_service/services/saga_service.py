@@ -6,12 +6,16 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from nohiki.ml.v1 import EntityType
+from nohiki.common.v1 import CommandHeader
+from nohiki.ml.v1 import EmbeddingRequested, EntityType
+from nohiki.skill.v1 import SkillNormalizationRequested
 from nohiki.user.pref.v1 import PrefEnrichmentFailedFailureReason
-from nohiki_db_utils import SagaStatus
-from nohiki_kafka_client import CommandContext
-from sqlalchemy import select
+from nohiki_db_utils import OutboxEventParams, SagaStatus
+from nohiki_kafka_client import Topics, create_event_metadata
+from sqlalchemy import or_, select
+from uuid_utils.compat import uuid7
 
+from user_pref_service.core.config import get_settings
 from user_pref_service.core.embedding import (
     PREF_EMBEDDING_SPEC,
     PrefEnrichmentSagaContext,
@@ -32,7 +36,6 @@ from user_pref_service.events.publishers import (
 )
 from user_pref_service.services import profile_service
 from user_pref_service.services.enrichment_completion import load_user_skills_from_profile
-from user_pref_service.services.skill_integration import request_skill_normalization
 
 if TYPE_CHECKING:
     from nohiki_db_utils import OutboxWriter
@@ -91,35 +94,64 @@ async def find_pending_sagas_for_update(db: AsyncSession, pref_id: UUID) -> list
     return list(result.scalars().all())
 
 
-async def dispatch_next_step(db: AsyncSession, saga: PrefEnrichmentSaga) -> str:
-    """Dispatch the next incomplete step and persist its operation identity."""
-    profile = await profile_service.get_profile_by_id(db, saga.pref_id)
+async def dispatch_next_step(
+    db: AsyncSession,
+    outbox: OutboxWriter,
+    saga: PrefEnrichmentSaga,
+) -> str:
+    """Persist an operation identity and its outbound command atomically."""
     state = PrefEnrichmentSagaContext(saga_id=str(saga.id))
+    operation_id = str(uuid7())
     if saga.raw_skills and not saga.skills_persisted:
         step = "skill"
-        operation_id = await request_skill_normalization(
+        topic = Topics.SKILL_NORMALIZATION_REQUESTED
+        command = SkillNormalizationRequested(
+            metadata=create_event_metadata(get_settings().service_name, saga.correlation_id),
+            command=CommandHeader(
+                operation_id=operation_id,
+                callback_topic=Topics.USER_PREF_SKILL_CALLBACK,
+                caller_context=state.to_bytes(),
+            ),
             canonical_skill_ids=saga.raw_skills,
-            profile_id=saga.pref_id,
-            correlation_id=saga.correlation_id,
-            saga_id=str(saga.id),
         )
     else:
         step = "embedding"
-        embedding_text = profile_service.build_profile_embedding_text_from_profile(profile)
-        operation_id = await get_embedding_publisher().request_embedding(
-            text=embedding_text,
+        profile = await profile_service.get_profile_by_id(db, saga.pref_id)
+        publisher = get_embedding_publisher()
+        command = EmbeddingRequested(
+            metadata=create_event_metadata(publisher.service_name),
+            command=CommandHeader(
+                operation_id=operation_id,
+                callback_topic=publisher.callback_topic,
+                caller_context=state.to_bytes(),
+            ),
             entity_id=str(saga.pref_id),
             entity_type=EntityType.PROFILE,
-            spec=PREF_EMBEDDING_SPEC,
-            context=CommandContext(caller_context=state.to_bytes()),
+            text=profile_service.build_profile_embedding_text_from_profile(profile),
+            collection_version=publisher.collection_version,
+            requested_types=list(PREF_EMBEDDING_SPEC.requested_types),
+            encoding_mode=PREF_EMBEDDING_SPEC.encoding_mode,
+            publish_to_index=PREF_EMBEDDING_SPEC.publish_to_index,
         )
+        topic = Topics.ML_EMBEDDING_REQUESTED
+
     saga.last_dispatch_ids = saga.last_dispatch_ids | {step: operation_id}
     saga.failed_step = None
     saga.last_error_code = None
     saga.last_error_message = None
-    saga.expires_at = datetime.now(UTC) + CALLBACK_TIMEOUT
+    saga.expires_at = min(datetime.now(UTC) + CALLBACK_TIMEOUT, saga.created_at + WALL_CLOCK_CAP)
     saga.version += 1
     await db.flush()
+    await outbox.write_event(
+        db=db,
+        params=OutboxEventParams(
+            aggregate_type="pref_enrichment_dispatch",
+            aggregate_id=str(saga.id),
+            event_type=topic,
+            correlation_id=saga.correlation_id,
+        ),
+        event=command,
+    )
     return operation_id
 
 
@@ -154,9 +186,33 @@ async def record_retryable_error(
     saga.failed_step = step
     saga.last_error_code = error_code[:64]
     saga.last_error_message = error_message[:512]
-    saga.expires_at = datetime.now(UTC) + CALLBACK_TIMEOUT
+    saga.expires_at = min(datetime.now(UTC) + CALLBACK_TIMEOUT, saga.created_at + WALL_CLOCK_CAP)
     saga.version += 1
     await db.flush()
+
+
+async def retry_enrichment(
+    db: AsyncSession,
+    outbox: OutboxWriter,
+    saga: PrefEnrichmentSaga,
+) -> bool:
+    """Consume one retry budget unit or terminalize an exhausted saga."""
+    now = datetime.now(UTC)
+    if saga.attempts_remaining == 0 or saga.created_at + WALL_CLOCK_CAP <= now:
+        await terminate_enrichment(
+            db,
+            outbox,
+            saga,
+            SagaTermination(
+                status=SagaStatus.EXPIRED,
+                reason=PrefEnrichmentFailedFailureReason.EXPIRED,
+                error_message=saga.last_error_message or "Preference enrichment deadline expired",
+            ),
+        )
+        return False
+    saga.attempts_remaining -= 1
+    await dispatch_next_step(db, outbox, saga)
+    return True
 
 
 async def complete_enrichment(
@@ -173,9 +229,13 @@ async def complete_enrichment(
     profile.enrichment_terminal_status = None
     user_skills = load_user_skills_from_profile(profile)
     if _action_value(saga) == "update":
-        await publish_profile_updated_event(db, outbox, profile, user_skills=user_skills)
+        await publish_profile_updated_event(
+            db, outbox, profile, user_skills=user_skills, correlation_id=saga.correlation_id
+        )
     else:
-        await publish_profile_created_event(db, outbox, profile, user_skills=user_skills)
+        await publish_profile_created_event(
+            db, outbox, profile, user_skills=user_skills, correlation_id=saga.correlation_id
+        )
     await db.flush()
 
 
@@ -231,7 +291,10 @@ async def sweep_due_enrichment_sagas(db: AsyncSession, outbox: OutboxWriter) -> 
         select(PrefEnrichmentSaga)
         .where(
             PrefEnrichmentSaga.status == SagaStatus.PENDING,
-            PrefEnrichmentSaga.expires_at <= now,
+            or_(
+                PrefEnrichmentSaga.expires_at <= now,
+                PrefEnrichmentSaga.created_at <= now - WALL_CLOCK_CAP,
+            ),
         )
         .order_by(PrefEnrichmentSaga.expires_at, PrefEnrichmentSaga.id)
         .limit(100)
@@ -239,19 +302,5 @@ async def sweep_due_enrichment_sagas(db: AsyncSession, outbox: OutboxWriter) -> 
     )
     sagas = list(result.scalars().all())
     for saga in sagas:
-        wall_clock_expired = saga.created_at + WALL_CLOCK_CAP <= now
-        if wall_clock_expired or saga.attempts_remaining == 0:
-            await terminate_enrichment(
-                db,
-                outbox,
-                saga,
-                SagaTermination(
-                    status=SagaStatus.EXPIRED,
-                    reason=PrefEnrichmentFailedFailureReason.EXPIRED,
-                    error_message=saga.last_error_message or "Preference enrichment deadline expired",
-                ),
-            )
-            continue
-        saga.attempts_remaining -= 1
-        await dispatch_next_step(db, saga)
+        await retry_enrichment(db, outbox, saga)
     return len(sagas)

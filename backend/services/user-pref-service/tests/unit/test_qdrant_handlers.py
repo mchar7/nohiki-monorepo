@@ -39,6 +39,8 @@ def _searchable_profile() -> MagicMock:
     profile.is_active = True
     profile.enrichment_terminal_status = None
     profile.semantic_content_hash = "a" * 64
+    profile.semantic_content_generation = 1
+    profile.collection_version = "v2"
     profile.query_artifacts_data = [
         EmbeddingVector(embedding_type=EmbeddingType.MUVERA, dense=DenseData(values=[0.1])).to_dict(),
         EmbeddingVector(
@@ -65,30 +67,86 @@ async def test_committed_lifecycle_handler_loads_owned_state_and_only_then_upser
     pref_id = uuid4()
     profile = _searchable_profile()
     message = message_type(pref_id=str(pref_id), user_id=str(uuid4()))
-    profile_from_event = MagicMock()
+    profile_from_event = MagicMock(
+        semantic_content_generation=1,
+        semantic_content_hash=profile.semantic_content_hash,
+        collection_version=profile.collection_version,
+    )
     message.pref_snapshot = profile_from_event
+    order: list[str] = []
+
+    with (
+        patch(
+            "user_pref_service.events.qdrant_handlers.profile_service.get_profile_by_id_optional",
+            new_callable=AsyncMock,
+            side_effect=lambda *_args: (order.append("load"), profile)[1],
+        ) as load,
+        patch(
+            "user_pref_service.events.qdrant_handlers.upsert_profile_point",
+            side_effect=lambda *_args: order.append("upsert"),
+        ) as upsert,
+    ):
+        assert order == []
+        await cast(Callable[[PrefCreated | PrefUpdated, MessageContext], Awaitable[None]], handler)(
+            message,
+            _context(),
+        )
+
+    assert order == ["load", "upsert"]
+    load.assert_awaited_once()
+    assert load.await_args is not None
+    assert load.await_args.args[1] == pref_id
+    upsert.assert_awaited_once_with(profile)
+    assert upsert.await_args is not None
+    assert upsert.await_args.args[0] is not profile_from_event
+
+
+@pytest.mark.asyncio
+async def test_delayed_generation_fact_cannot_project_newer_pending_profile_state() -> None:
+    profile = _searchable_profile()
+    profile.semantic_content_generation = 2
+    profile.semantic_content_hash = "b" * 64
+    profile.query_artifacts_data = [
+        EmbeddingVector(
+            embedding_type=EmbeddingType.MUVERA,
+            dense=DenseData(values=[0.1]),
+            content_hash="a" * 64,
+            collection_version="v2",
+        ).to_dict(),
+        EmbeddingVector(
+            embedding_type=EmbeddingType.SPARSE,
+            sparse=SparseData(indices=[1], values=[0.2]),
+            content_hash="a" * 64,
+            collection_version="v2",
+        ).to_dict(),
+        EmbeddingVector(
+            embedding_type=EmbeddingType.COLBERT,
+            multi_vector=MultiVectorData(values=[0.3, 0.4], num_tokens=1, token_dim=2),
+            content_hash="a" * 64,
+            collection_version="v2",
+        ).to_dict(),
+    ]
+    message = PrefUpdated(pref_id=str(profile.id), user_id=str(profile.user_id))
+    message.pref_snapshot = MagicMock(
+        semantic_content_generation=1,
+        semantic_content_hash="a" * 64,
+        collection_version="v2",
+    )
 
     with (
         patch(
             "user_pref_service.events.qdrant_handlers.profile_service.get_profile_by_id_optional",
             new_callable=AsyncMock,
             return_value=profile,
-        ) as load,
+        ),
         patch(
             "user_pref_service.events.qdrant_handlers.upsert_profile_point",
             new_callable=AsyncMock,
         ) as upsert,
     ):
-        upsert.assert_not_awaited()
-        await cast(Callable[[PrefCreated | PrefUpdated, MessageContext], Awaitable[None]], handler)(
-            message,
-            _context(),
-        )
+        await handle_pref_updated(message, _context())
 
-    load.assert_awaited_once()
-    assert load.await_args.args[1] == pref_id
-    upsert.assert_awaited_once_with(profile)
-    assert upsert.await_args.args[0] is not profile_from_event
+    upsert.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -96,6 +154,12 @@ async def test_qdrant_write_failure_raises_from_committed_handler() -> None:
     profile = _searchable_profile()
     client = AsyncMock()
     client.upsert_vector_points_batch.side_effect = RuntimeError("qdrant unavailable")
+    message = PrefUpdated(pref_id=str(profile.id), user_id=str(profile.user_id))
+    message.pref_snapshot = MagicMock(
+        semantic_content_generation=profile.semantic_content_generation,
+        semantic_content_hash=profile.semantic_content_hash,
+        collection_version=profile.collection_version,
+    )
 
     with (
         patch(
@@ -106,10 +170,7 @@ async def test_qdrant_write_failure_raises_from_committed_handler() -> None:
         patch("user_pref_service.services.profile_vector_service.get_qdrant_client", return_value=client),
         pytest.raises(RuntimeError, match="qdrant unavailable"),
     ):
-        await handle_pref_updated(
-            PrefUpdated(pref_id=str(profile.id), user_id=str(profile.user_id)),
-            _context(),
-        )
+        await handle_pref_updated(message, _context())
 
     client.upsert_vector_points_batch.assert_awaited_once()
 

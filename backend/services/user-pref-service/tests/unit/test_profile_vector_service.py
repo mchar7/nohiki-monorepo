@@ -31,13 +31,13 @@ def _profile() -> MagicMock:
     profile.user_id = uuid4()
     profile.pref_name = "Platform roles"
     profile.is_active = True
-    profile.collection_version = "stale-version"
+    profile.collection_version = "v2"
     profile.query_artifacts_data = [vector.to_dict() for vector in _retrieval_vectors()]
     profile.semantic_content_hash = "b" * 64
     return profile
 
 
-def test_build_point_reconstructs_persisted_vectors_and_uses_manifest_version() -> None:
+def test_build_point_reconstructs_persisted_vectors_in_their_validated_version() -> None:
     profile = _profile()
 
     point = build_profile_vector_point(profile)
@@ -51,7 +51,7 @@ def test_build_point_reconstructs_persisted_vectors_and_uses_manifest_version() 
     ]
     assert point.payload.entity_id == str(profile.id)
     assert point.payload.entity_type == "profile"
-    assert point.payload.collection_version == "v2"
+    assert point.payload.collection_version == profile.collection_version
     assert point.payload.content_hash == "b" * 64
     assert point.payload.is_active is True
     assert point.payload.extra == {
@@ -59,6 +59,17 @@ def test_build_point_reconstructs_persisted_vectors_and_uses_manifest_version() 
         "pref_id": str(profile.id),
         "pref_name": "Platform roles",
     }
+
+
+def test_stale_collection_artifacts_are_not_relabelled_or_routed_to_current_collection() -> None:
+    profile = _profile()
+    profile.collection_version = "v1"
+
+    with patch("user_pref_service.services.profile_vector_service.get_manifest") as manifest:
+        manifest.return_value.get_entity_version.return_value = "v2"
+        point = build_profile_vector_point(profile)
+
+    assert point is None
 
 
 @pytest.mark.parametrize("missing", ["vectors", "hash"])

@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
 
-from bff_service.sse.events import DocumentStatusPayload, build_stream_name
+from bff_service.sse.events import CommandStatusPayload, DocumentStatusPayload, build_stream_name
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ class SSEBridge:
             raise RuntimeError(msg)
         return self._client
 
-    async def publish(self, user_id: UUID, payload: DocumentStatusPayload) -> str:
+    async def publish(self, user_id: UUID, payload: DocumentStatusPayload | CommandStatusPayload) -> str:
         """Append a status event to its bounded request-scoped stream."""
         client = self._connected_client()
         stream = build_stream_name(user_id, payload.request_id)

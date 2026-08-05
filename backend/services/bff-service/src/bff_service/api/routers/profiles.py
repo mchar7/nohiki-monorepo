@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bff_service.api.deps.auth import get_current_user_id_from_cookie
 from bff_service.api.schemas import CommandAcceptedResponse
 from bff_service.core.db import get_async_db
+from bff_service.services.models import CommandStatusDetail
 from bff_service.services.profile_service import ProfileService
 
 logger = get_logger(__name__)
@@ -230,6 +231,20 @@ async def create_profile(
     """
     request_id = await service.create_profile_command(db, user_id, data.model_dump())
     return CommandAcceptedResponse(request_id=request_id)
+
+
+@router.get("/commands/{request_id}", response_model=CommandStatusDetail)
+async def get_profile_command_status(
+    request_id: UUID,
+    user_id: Annotated[UUID, Depends(get_current_user_id_from_cookie)],
+    db: Annotated[AsyncSession, Depends(get_async_db)],
+    service: Annotated[ProfileService, Depends(get_profile_service)],
+) -> CommandStatusDetail:
+    """Return an owned profile command request's current status."""
+    command = await service.get_command_status(db, user_id, request_id)
+    if command is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Command request not found")
+    return command
 
 
 @router.get("/{pref_id}", response_model=ProfileResponse)

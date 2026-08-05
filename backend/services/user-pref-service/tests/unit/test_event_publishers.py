@@ -31,6 +31,7 @@ class TestPublishProfileCreatedEvent:
         mock_outbox = AsyncMock()
         mock_outbox.write_event = AsyncMock(return_value=uuid.uuid4())
 
+        correlation_id = str(uuid.uuid4())
         profile = MagicMock(spec=SearchPref)
         profile.id = uuid.uuid4()
         profile.user_id = uuid.uuid4()
@@ -71,7 +72,7 @@ class TestPublishProfileCreatedEvent:
                 return_value=profile,
             ),
         ):
-            await publish_profile_created_event(mock_db, mock_outbox, profile)
+            await publish_profile_created_event(mock_db, mock_outbox, profile, correlation_id=correlation_id)
 
         mock_outbox.write_event.assert_awaited_once()
         call_kwargs = mock_outbox.write_event.call_args.kwargs
@@ -86,6 +87,7 @@ class TestPublishProfileCreatedEvent:
         assert event.pref_id == str(profile.id)
         assert event.user_id == str(profile.user_id)
         assert event.pref_snapshot == mock_snapshot
+        assert event.metadata.correlation_id == correlation_id
 
 
 class TestPublishProfileUpdatedEvent:
@@ -98,6 +100,7 @@ class TestPublishProfileUpdatedEvent:
         mock_outbox = AsyncMock()
         mock_outbox.write_event = AsyncMock(return_value=uuid.uuid4())
 
+        correlation_id = str(uuid.uuid4())
         profile = MagicMock(spec=SearchPref)
         profile.id = uuid.uuid4()
         profile.user_id = uuid.uuid4()
@@ -138,7 +141,7 @@ class TestPublishProfileUpdatedEvent:
                 return_value=profile,
             ),
         ):
-            await publish_profile_updated_event(mock_db, mock_outbox, profile)
+            await publish_profile_updated_event(mock_db, mock_outbox, profile, correlation_id=correlation_id)
 
         mock_outbox.write_event.assert_awaited_once()
         call_kwargs = mock_outbox.write_event.call_args.kwargs
@@ -150,6 +153,7 @@ class TestPublishProfileUpdatedEvent:
         assert event.pref_id == str(profile.id)
         assert event.user_id == str(profile.user_id)
         assert event.pref_snapshot == mock_snapshot
+        assert event.metadata.correlation_id == correlation_id
 
 
 class TestPublishProfileUpdatedBatch:

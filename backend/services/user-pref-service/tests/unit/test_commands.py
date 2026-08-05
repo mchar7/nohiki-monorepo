@@ -9,8 +9,10 @@ import pytest
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_fastapi_utils.errors import NotFoundError
 from nohiki_kafka_client import MessageContext
+from user_pref_service.db.models import PrefEnrichmentAction
 from user_pref_service.events.commands import (
     _collect_canonical_skill_ids,
+    _start_enrichment_saga,
     handle_pref_attach_upload_requested,
     handle_pref_create_requested,
     handle_pref_delete_requested,
@@ -35,7 +37,7 @@ def _make_context(
         headers={},
         key=None,
         db_session=db_session,
-        outbox=outbox,
+        outbox=outbox or MagicMock(),
     )
 
 
@@ -77,6 +79,45 @@ def _make_update_message(
     return msg
 
 
+@pytest.mark.asyncio
+async def test_start_saga_persists_identity_and_outbound_dispatch() -> None:
+    message = _make_create_message()
+    profile = MagicMock(
+        id=uuid4(),
+        user_id=uuid4(),
+        semantic_content_generation=4,
+        enrichment_terminal_status="failed",
+    )
+    db = create_mock_session()
+    outbox = MagicMock()
+    context = _make_context(db_session=db, outbox=outbox)
+    saga = MagicMock()
+    with (
+        patch("user_pref_service.events.commands._profile_embedding_text", return_value="python platform"),
+        patch("user_pref_service.events.commands._persist_embedding_identity", return_value="a" * 64),
+        patch(
+            "user_pref_service.events.commands.saga_service.create_enrichment_saga",
+            new_callable=AsyncMock,
+            return_value=saga,
+        ) as create,
+        patch(
+            "user_pref_service.events.commands.saga_service.dispatch_next_step",
+            new_callable=AsyncMock,
+        ) as dispatch,
+    ):
+        await _start_enrichment_saga(
+            context,
+            profile=profile,
+            message=message,
+            action=PrefEnrichmentAction.CREATE,
+            canonical_skill_ids=["python"],
+        )
+
+    assert profile.enrichment_terminal_status is None
+    create.assert_awaited_once()
+    dispatch.assert_awaited_once_with(db, outbox, saga)
+
+
 class TestHandlePrefCreateRequested:
     @pytest.mark.asyncio
     async def test_rejects_missing_work_arrangements(self) -> None:
@@ -113,6 +154,7 @@ class TestHandlePrefCreateRequested:
         ):
             await handle_pref_create_requested(message, _make_context(db_session=create_mock_session()))
 
+        assert start.await_args is not None
         kwargs = start.await_args.kwargs
         assert kwargs["message"] is message
         assert kwargs["canonical_skill_ids"] == ["python", "java"]
@@ -140,6 +182,7 @@ class TestHandlePrefCreateRequested:
             ) as start,
         ):
             await handle_pref_create_requested(message, _make_context(db_session=create_mock_session()))
+        assert start.await_args is not None
         assert start.await_args.kwargs["canonical_skill_ids"] == []
 
     @pytest.mark.asyncio
@@ -177,10 +220,15 @@ class TestHandlePrefUpdateRequested:
                 return_value=None,
             ),
             patch(
+                "user_pref_service.events.commands.profile_service.get_profile_by_id_for_update",
+                new_callable=AsyncMock,
+                return_value=profile,
+            ) as locked_load,
+            patch(
                 "user_pref_service.events.commands.profile_service.get_profile_by_id",
                 new_callable=AsyncMock,
                 return_value=profile,
-            ),
+            ) as unlocked_load,
             patch(
                 "user_pref_service.events.commands.saga_service.cancel_pending_enrichment",
                 new_callable=AsyncMock,
@@ -203,6 +251,9 @@ class TestHandlePrefUpdateRequested:
             )
 
         assert order == ["cancel", "update", "start"]
+        assert start.await_args is not None
+        locked_load.assert_awaited_once_with(start.await_args.args[0].db_session, pref_id)
+        unlocked_load.assert_not_awaited()
         assert start.await_args.kwargs["message"] is message
 
     @pytest.mark.asyncio
@@ -215,7 +266,7 @@ class TestHandlePrefUpdateRequested:
                 return_value=None,
             ),
             patch(
-                "user_pref_service.events.commands.profile_service.get_profile_by_id",
+                "user_pref_service.events.commands.profile_service.get_profile_by_id_for_update",
                 new_callable=AsyncMock,
                 side_effect=NotFoundError(resource="Profile", identifier=message.pref_id),
             ),

@@ -53,10 +53,11 @@ def _build_profile_updated_request(
     profile: SearchPref,
     *,
     user_skills: list[UserSkillEntry] | None = None,
+    correlation_id: str | None = None,
 ) -> tuple[OutboxEventParams, PrefUpdated]:
     """Build the outbox request for a profile updated event."""
     event = PrefUpdated(
-        metadata=create_event_metadata(settings.service_name),
+        metadata=create_event_metadata(settings.service_name, correlation_id),
         pref_id=str(profile.id),
         user_id=str(profile.user_id),
         pref_snapshot=build_profile_snapshot(profile, user_skills=user_skills),
@@ -75,6 +76,7 @@ async def publish_profile_created_event(
     profile: SearchPref,
     *,
     user_skills: list[UserSkillEntry] | None = None,
+    correlation_id: str | None = None,
 ) -> None:
     """Publish profile created event with SearchPrefSnapshot (ECST) via outbox."""
     await db.flush()
@@ -82,7 +84,7 @@ async def publish_profile_created_event(
     snapshot = build_profile_snapshot(fresh, user_skills=user_skills)
 
     event = PrefCreated(
-        metadata=create_event_metadata(settings.service_name),
+        metadata=create_event_metadata(settings.service_name, correlation_id),
         pref_id=str(fresh.id),
         user_id=str(fresh.user_id),
         pref_snapshot=snapshot,
@@ -106,11 +108,12 @@ async def publish_profile_updated_event(
     profile: SearchPref,
     *,
     user_skills: list[UserSkillEntry] | None = None,
+    correlation_id: str | None = None,
 ) -> None:
     """Publish profile updated event with SearchPrefSnapshot (ECST) via outbox."""
     await db.flush()
     fresh = await get_profile_by_id(db, profile.id)
-    params, event = _build_profile_updated_request(fresh, user_skills=user_skills)
+    params, event = _build_profile_updated_request(fresh, user_skills=user_skills, correlation_id=correlation_id)
 
     await outbox.write_event(db=db, params=params, event=event)
     logger.info("Published profile updated event", pref_id=str(fresh.id))

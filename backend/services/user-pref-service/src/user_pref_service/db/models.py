@@ -149,6 +149,12 @@ class PrefEnrichmentSaga(SagaBaseMixin, Base):
     __table_args__ = (
         sa.Index("ix_pref_enrichment_saga_pref_id", "pref_id"),
         sa.Index(
+            "uq_pref_enrichment_saga_pending_pref",
+            "pref_id",
+            unique=True,
+            postgresql_where=sa.text("status = 'PENDING'"),
+        ),
+        sa.Index(
             "ix_pref_enrichment_saga_status_pending",
             "status",
             postgresql_where=sa.text("status = 'PENDING'"),
@@ -166,7 +172,11 @@ class PrefEnrichmentSaga(SagaBaseMixin, Base):
         {"schema": SCHEMA_NAME},
     )
 
-    pref_id: Mapped[uuid.UUID] = mapped_column(UUID(), nullable=False)
+    pref_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(),
+        ForeignKey(f"{SCHEMA_NAME}.search_prefs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(), nullable=False)
     request_id: Mapped[uuid.UUID] = mapped_column(UUID(), nullable=False, unique=True)
     action: Mapped[PrefEnrichmentAction] = mapped_column(

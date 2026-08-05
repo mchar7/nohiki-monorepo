@@ -805,6 +805,17 @@ class SearchPrefSnapshot(betterproto2.Message):
         betterproto2.field(85, betterproto2.TYPE_MESSAGE, repeated=True)
     )
 
+    semantic_content_generation: "int" = betterproto2.field(
+        86, betterproto2.TYPE_UINT64
+    )
+    """
+    Projection identity for generation-safe asynchronous index updates.
+    """
+
+    semantic_content_hash: "str" = betterproto2.field(87, betterproto2.TYPE_STRING)
+
+    collection_version: "str" = betterproto2.field(88, betterproto2.TYPE_STRING)
+
     is_active: "bool" = betterproto2.field(50, betterproto2.TYPE_BOOL)
     """
     Status

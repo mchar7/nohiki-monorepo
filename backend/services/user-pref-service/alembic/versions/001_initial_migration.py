@@ -135,7 +135,6 @@ def upgrade() -> None:
     op.execute(f"CREATE INDEX ix_search_prefs_request_id ON {SCHEMA_NAME}.search_prefs (request_id)")
     op.execute(f"CREATE INDEX ix_search_prefs_active ON {SCHEMA_NAME}.search_prefs (is_active) WHERE is_active = true")
 
-
     op.execute(f"""
         CREATE TABLE {SCHEMA_NAME}.pref_enrichment_saga (
             id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -145,7 +144,7 @@ def upgrade() -> None:
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             expires_at TIMESTAMPTZ NOT NULL,
             version INTEGER NOT NULL DEFAULT 1,
-            pref_id UUID NOT NULL,
+            pref_id UUID NOT NULL REFERENCES {SCHEMA_NAME}.search_prefs(id) ON DELETE CASCADE,
             user_id UUID NOT NULL,
             request_id UUID NOT NULL UNIQUE,
             action VARCHAR(16) NOT NULL,
@@ -168,9 +167,10 @@ def upgrade() -> None:
             CONSTRAINT pref_enrichment_saga_attempts_nonnegative CHECK (attempts_remaining >= 0)
         )
     """)
+    op.execute(f"CREATE INDEX ix_pref_enrichment_saga_pref_id ON {SCHEMA_NAME}.pref_enrichment_saga (pref_id)")
     op.execute(
-        f"CREATE INDEX ix_pref_enrichment_saga_pref_id "
-        f"ON {SCHEMA_NAME}.pref_enrichment_saga (pref_id)"
+        f"CREATE UNIQUE INDEX uq_pref_enrichment_saga_pending_pref "
+        f"ON {SCHEMA_NAME}.pref_enrichment_saga (pref_id) WHERE status = 'PENDING'"
     )
     op.execute(
         f"CREATE INDEX ix_pref_enrichment_saga_status_pending "

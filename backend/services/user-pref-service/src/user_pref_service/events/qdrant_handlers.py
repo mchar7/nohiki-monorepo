@@ -27,9 +27,15 @@ async def _project_current_profile(message: PrefCreated | PrefUpdated, context: 
         await delete_profile_points([pref_id])
         return
 
-    if profile.enrichment_terminal_status is not None:
+    snapshot = message.pref_snapshot
+    if profile.enrichment_terminal_status is not None or snapshot is None:
         return
-
+    if (
+        snapshot.semantic_content_generation != profile.semantic_content_generation
+        or snapshot.semantic_content_hash != profile.semantic_content_hash
+        or snapshot.collection_version != profile.collection_version
+    ):
+        return
     await upsert_profile_point(profile)
 
 

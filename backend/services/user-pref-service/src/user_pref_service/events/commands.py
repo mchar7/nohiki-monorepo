@@ -16,7 +16,6 @@ from nohiki.user.pref.v1 import (
 from nohiki_fastapi_utils.errors import NotFoundError
 from nohiki_kafka_client import MessageContext, Topics
 from nohiki_observability import get_logger
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from user_pref_service.core.config import get_settings
 from user_pref_service.core.embedding import build_profile_embedding_text, profile_embedding_content_hash
@@ -77,7 +76,7 @@ def _collect_canonical_skill_ids(message: PrefCreateRequested | PrefUpdateReques
 
 
 async def _start_enrichment_saga(
-    db: AsyncSession,
+    context: MessageContext,
     *,
     profile: SearchPref,
     message: PrefCreateRequested | PrefUpdateRequested,
@@ -85,6 +84,8 @@ async def _start_enrichment_saga(
     canonical_skill_ids: list[str],
 ) -> None:
     """Persist the current workflow identity before dispatching enrichment."""
+    db = context.require_db_session()
+    outbox = context.require_outbox()
     embedding_text = _profile_embedding_text(profile)
     semantic_hash = _persist_embedding_identity(profile, embedding_text)
     profile.enrichment_terminal_status = None
@@ -102,7 +103,7 @@ async def _start_enrichment_saga(
             semantic_hash=semantic_hash,
         ),
     )
-    await saga_service.dispatch_next_step(db, saga)
+    await saga_service.dispatch_next_step(db, outbox, saga)
 
 
 @kafka_client.message_handler(Topics.USER_PREF_CREATE_REQUESTED, PrefCreateRequested, group_id=command_group_id)
@@ -126,7 +127,7 @@ async def handle_pref_create_requested(message: PrefCreateRequested, context: Me
     if profile is None:
         profile = await profile_service.create_profile(db, user_id, message)
     await _start_enrichment_saga(
-        db,
+        context,
         profile=profile,
         message=message,
         action=PrefEnrichmentAction.CREATE,
@@ -147,12 +148,15 @@ async def handle_pref_update_requested(message: PrefUpdateRequested, context: Me
         logger.info("Command already processed", request_id=message.request_id)
         return
     try:
-        profile = await profile_service.get_profile_by_id(db, pref_id)
+        profile = await profile_service.get_profile_by_id_for_update(db, pref_id)
     except NotFoundError:
         logger.warning("Profile not found for update, skipping stale event", pref_id=str(pref_id))
         return
     if profile.user_id != user_id:
         logger.warning(USER_DOES_NOT_OWN_PROFILE, user_id=str(user_id), pref_id=str(pref_id))
+        return
+    if await saga_service.get_saga_by_request_id(db, request_id) is not None:
+        logger.info("Command already processed after profile lock", request_id=message.request_id)
         return
     outbox = context.require_outbox()
     await saga_service.cancel_pending_enrichment(
@@ -167,7 +171,7 @@ async def handle_pref_update_requested(message: PrefUpdateRequested, context: Me
         updated_fields = ()
     skill_fields_updated = bool(set(updated_fields) & {"user_skills", "required_skills", "preferred_skills"})
     await _start_enrichment_saga(
-        db,
+        context,
         profile=profile,
         message=message,
         action=PrefEnrichmentAction.UPDATE,

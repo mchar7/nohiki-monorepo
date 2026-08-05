@@ -134,7 +134,7 @@ async def handle_skill_normalization_callback(
     profile.semantic_content_hash = semantic_hash
     saga.semantic_hash = semantic_hash
     await saga_service.record_success(db, saga, "skill")
-    await saga_service.dispatch_next_step(db, saga)
+    await saga_service.dispatch_next_step(db, context.require_outbox(), saga)
 
 
 @kafka_client.message_handler(
@@ -157,7 +157,7 @@ async def handle_embedding_callback(message: EmbeddingCallback, context: Message
 
     current_version = get_manifest().get_entity_version(EntityType.PROFILE)
     if success.collection_version != current_version:
-        await saga_service.dispatch_next_step(db, saga)
+        await saga_service.retry_enrichment(db, context.require_outbox(), saga)
         logger.info(
             "Replaced stale-version preference embedding callback",
             saga_id=str(saga.id),

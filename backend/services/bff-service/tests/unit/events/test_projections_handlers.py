@@ -41,6 +41,7 @@ from bff_service.events.projections.user_upload import (
     handle_attachment_created,
     handle_attachment_deleted,
 )
+from bff_service.sse.events import CommandStatusPayload, DocumentStatusPayload
 from nohiki.common.v1 import (
     CommutePreferences,
     CurrencyCode,
@@ -110,17 +111,24 @@ def _make_context(*, db_session: AsyncMock | None = None) -> MessageContext:
     )
 
 
-def _assert_command_marked_completed(mock_session: AsyncMock, request_id: uuid.UUID) -> None:
-    """Assert a correlated CDC event transitions only its pending command row."""
+def _assert_command_marked_completed(
+    mock_session: AsyncMock,
+    request_id: uuid.UUID,
+    active_statuses: str | list[str] = "pending",
+    user_id: uuid.UUID | None = None,
+) -> None:
+    """Assert a correlated CDC event transitions only an active command row."""
     assert mock_session.execute.await_count == 2
     statement = mock_session.execute.await_args_list[1].args[0]
     compiled = statement.compile(compile_kwargs={"literal_binds": False})
     sql = str(compiled).lower()
     assert "command_requests" in sql
     assert "status" in sql
-    assert "pending" in compiled.params.values()
+    assert active_statuses in compiled.params.values()
     assert "completed" in compiled.params.values()
     assert request_id in compiled.params.values()
+    if user_id is not None:
+        assert user_id in compiled.params.values()
 
 
 @pytest.mark.asyncio
@@ -455,6 +463,7 @@ async def test_handle_profile_created(experience_years: int) -> None:
     """Created projections preserve exact experience years under API field names."""
     pref_id = uuid.uuid4()
     user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
 
     snapshot = SearchPrefSnapshot()
     snapshot.id = str(pref_id)
@@ -467,13 +476,17 @@ async def test_handle_profile_created(experience_years: int) -> None:
     event = PrefCreated()
     event.pref_id = str(pref_id)
     event.pref_snapshot = snapshot
+    event.user_id = str(user_id)
+    event.metadata = MagicMock(correlation_id=str(request_id))
 
     mock_session = create_mock_session()
     ctx = _make_context(db_session=mock_session)
 
     await handle_profile_created(event, ctx)
 
-    statement = mock_session.execute.await_args.args[0]
+    _assert_command_marked_completed(mock_session, request_id, ["pending", "in_progress"], user_id)
+    mock_session.commit.assert_not_awaited()
+    statement = mock_session.execute.await_args_list[0].args[0]
     assert {
         "experience_years": experience_years,
         "seniority_levels": [],
@@ -486,6 +499,7 @@ async def test_handle_profile_updated(experience_years: int) -> None:
     """Updated projections preserve exact experience years under API field names."""
     pref_id = uuid.uuid4()
     user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
 
     snapshot = SearchPrefSnapshot()
     snapshot.id = str(pref_id)
@@ -498,13 +512,17 @@ async def test_handle_profile_updated(experience_years: int) -> None:
     event = PrefUpdated()
     event.pref_id = str(pref_id)
     event.pref_snapshot = snapshot
+    event.user_id = str(user_id)
+    event.metadata = MagicMock(correlation_id=str(request_id))
 
     mock_session = create_mock_session()
     ctx = _make_context(db_session=mock_session)
 
     await handle_profile_updated(event, ctx)
 
-    statement = mock_session.execute.await_args.args[0]
+    _assert_command_marked_completed(mock_session, request_id, ["pending", "in_progress"], user_id)
+    mock_session.commit.assert_not_awaited()
+    statement = mock_session.execute.await_args_list[0].args[0]
     assert {
         "experience_years": experience_years,
         "seniority_levels": [],
@@ -522,7 +540,7 @@ async def test_pref_enrichment_failure_updates_only_active_command_and_emits_sta
         error_message="Embedding service unavailable",
     )
     result = MagicMock()
-    result.scalar_one_or_none.return_value = user_id
+    result.one_or_none.return_value = (user_id, "create_profile")
     session = create_mock_session()
     session.execute.return_value = result
     bridge = MagicMock()
@@ -539,12 +557,16 @@ async def test_pref_enrichment_failure_updates_only_active_command_and_emits_sta
     assert "failed" in params
     assert "Embedding service unavailable" in params
     assert any(isinstance(value, datetime) for value in params)
-    session.commit.assert_awaited_once()
+    session.commit.assert_not_awaited()
     bridge.publish.assert_awaited_once()
+    assert bridge.publish.await_args is not None
     published_user_id, payload = bridge.publish.await_args.args
     assert published_user_id == user_id
+    assert isinstance(payload, CommandStatusPayload)
+    assert not isinstance(payload, DocumentStatusPayload)
     assert payload.request_id == str(request_id)
-    assert payload.type == "document_status"
+    assert payload.type == "command_status"
+    assert payload.command_type == "create_profile"
     assert payload.status == "failed"
     assert payload.error_message == "Embedding service unavailable"
 
@@ -558,7 +580,7 @@ async def test_pref_enrichment_failure_without_active_command_emits_no_status() 
         error_message="Late failure",
     )
     result = MagicMock()
-    result.scalar_one_or_none.return_value = None
+    result.one_or_none.return_value = None
     session = create_mock_session()
     session.execute.return_value = result
     bridge = MagicMock()
@@ -567,7 +589,7 @@ async def test_pref_enrichment_failure_without_active_command_emits_no_status() 
     with patch("bff_service.events.projections.user_pref.get_sse_bridge", return_value=bridge):
         await handle_pref_enrichment_failed(event, _make_context(db_session=session))
 
-    session.commit.assert_awaited_once()
+    session.commit.assert_not_awaited()
     bridge.publish.assert_not_awaited()
 
 

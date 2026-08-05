@@ -29,10 +29,7 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import selectinload
 
 from user_pref_service.core.config import get_settings
-from user_pref_service.core.embedding import (
-    build_profile_embedding_text,
-    profile_embedding_content_hash,
-)
+from user_pref_service.core.embedding import build_profile_embedding_text
 from user_pref_service.db.models import SearchPref, SearchPrefUpload
 from user_pref_service.services.geo_integration import geocode_locations
 
@@ -67,13 +64,6 @@ def build_profile_embedding_text_from_profile(profile: SearchPref) -> str:
     """Build embedding text from the complete persisted profile row."""
     keywords = profile.search_keywords if isinstance(profile.search_keywords, list) else []
     return build_profile_embedding_text(profile.pref_name, keywords, extract_canonical_skill_names(profile))
-
-
-def set_profile_semantic_hash(profile: SearchPref, embedding_text: str) -> str:
-    """Persist the identity of the profile semantic text and return it."""
-    content_hash = profile_embedding_content_hash(embedding_text)
-    profile.semantic_content_hash = content_hash
-    return content_hash
 
 
 def _extract_locations(profile: SearchPref) -> tuple[list[Location], list[Location]]:
@@ -168,6 +158,9 @@ def build_profile_snapshot(
         user_skills_embedding=_extract_skills_embedding(profile),
         query_embedding=_extract_query_embedding(profile),
         query_retrieval_embeddings=_extract_query_retrieval_embeddings(profile),
+        semantic_content_generation=profile.semantic_content_generation,
+        semantic_content_hash=profile.semantic_content_hash or "",
+        collection_version=profile.collection_version or "",
     )
 
 

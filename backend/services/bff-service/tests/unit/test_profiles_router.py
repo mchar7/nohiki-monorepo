@@ -173,6 +173,57 @@ async def test_create_profile_publishes_command(mocker: MockerFixture) -> None:
     assert mock_service.create_profile_command.call_args.args[:2] == (mock_db, user_id)
 
 
+def test_get_profile_command_status_route_is_reachable(mocker: MockerFixture) -> None:
+    from bff_service.services.models import CommandStatusDetail
+
+    user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
+    mock_service = mocker.Mock()
+    mock_service.get_command_status = mocker.AsyncMock(
+        return_value=CommandStatusDetail(
+            request_id=str(request_id),
+            command_type="create_profile",
+            status="completed",
+        )
+    )
+
+    response = _build_profiles_client(mock_service, user_id).get(f"/api/v1/profiles/commands/{request_id}")
+
+    assert response.status_code == 200
+    assert response.json()["request_id"] == str(request_id)
+    assert response.json()["status"] == "completed"
+    assert mock_service.get_command_status.await_args.args[1:] == (user_id, request_id)
+
+
+@pytest.mark.parametrize("existing_owner", [None, "other_user"], ids=["absent", "other_user"])
+def test_get_profile_command_status_returns_404_unless_owned(
+    mocker: MockerFixture,
+    existing_owner: str | None,
+) -> None:
+    from bff_service.services.models import CommandStatusDetail
+
+    current_user_id = uuid.uuid4()
+    other_user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
+    command = CommandStatusDetail(
+        request_id=str(request_id),
+        command_type="update_profile",
+        status="failed",
+        error_message="Enrichment failed",
+    )
+    owned_commands = {other_user_id: command} if existing_owner else {}
+    mock_service = mocker.Mock()
+    mock_service.get_command_status = mocker.AsyncMock(
+        side_effect=lambda _db, user_id, _request_id: owned_commands.get(user_id)
+    )
+
+    response = _build_profiles_client(mock_service, current_user_id).get(f"/api/v1/profiles/commands/{request_id}")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Command request not found"}
+    assert mock_service.get_command_status.await_args.args[1:] == (current_user_id, request_id)
+
+
 def test_profile_create_accepts_omitted_salary_and_experience() -> None:
     from bff_service.api.routers.profiles import ProfileCreate
 

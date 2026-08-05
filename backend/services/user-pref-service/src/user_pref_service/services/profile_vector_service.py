@@ -20,17 +20,23 @@ _REQUIRED_RETRIEVAL_TYPES = (EmbeddingType.MUVERA, EmbeddingType.SPARSE, Embeddi
 
 def build_profile_vector_point(profile: SearchPref) -> VectorPoint | None:
     """Build a deterministic profile point from persisted owned state."""
-    if not profile.query_artifacts_data or not profile.semantic_content_hash:
+    if not profile.query_artifacts_data or not profile.semantic_content_hash or not profile.collection_version:
+        return None
+    if profile.collection_version != get_manifest().get_entity_version(EntityType.PROFILE):
         return None
 
     by_type: dict[EmbeddingType, EmbeddingVector] = {}
     for data in profile.query_artifacts_data:
         embedding = EmbeddingVector.from_dict(data)
         by_type[embedding.embedding_type] = embedding
+        if embedding.collection_version and embedding.collection_version != profile.collection_version:
+            return None
+        if embedding.content_hash and embedding.content_hash != profile.semantic_content_hash:
+            return None
     if any(kind not in by_type for kind in _REQUIRED_RETRIEVAL_TYPES):
         return None
 
-    collection_version = get_manifest().get_entity_version(EntityType.PROFILE)
+    collection_version = profile.collection_version
     return VectorPoint(
         point_id=str(profile.id),
         embeddings=[by_type[kind] for kind in _REQUIRED_RETRIEVAL_TYPES],

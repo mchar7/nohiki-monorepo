@@ -86,6 +86,7 @@ async def test_embedding_declared_error_is_classified(retryability: int) -> None
     else:
         record_retry.assert_not_awaited()
         terminate.assert_awaited_once()
+        assert terminate.await_args is not None
         termination = terminate.await_args.args[3]
         assert termination.status == SagaStatus.FAILED
         assert termination.reason == PrefEnrichmentFailedFailureReason.EMBEDDING_FAILED
@@ -112,6 +113,7 @@ async def test_skill_terminal_error_uses_skill_failure_reason() -> None:
     ):
         await handle_skill_normalization_callback(message, context)
 
+    assert terminate.await_args is not None
     assert terminate.await_args.args[3].reason == PrefEnrichmentFailedFailureReason.SKILL_NORMALIZATION_FAILED
 
 
@@ -142,6 +144,25 @@ async def test_cancelled_saga_makes_late_callback_a_noop() -> None:
 async def test_stale_operation_id_is_a_noop() -> None:
     saga = _saga()
     saga.last_dispatch_ids = {"embedding": "op-new"}
+    message = _message(str(saga.id))
+    context = _context()
+    with (
+        patch(
+            "user_pref_service.events.callbacks.saga_service.load_saga_for_update",
+            new_callable=AsyncMock,
+            return_value=saga,
+        ),
+        patch("user_pref_service.events.callbacks.persist_query_enrichment", new_callable=AsyncMock) as persist,
+    ):
+        await handle_embedding_callback(message, context)
+
+    persist.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_persisted_callback_is_a_noop() -> None:
+    saga = _saga()
+    saga.embedding_persisted = True
     message = _message(str(saga.id))
     context = _context()
     with (
@@ -224,4 +245,32 @@ async def test_hash_mismatch_stays_pending_for_bounded_retry() -> None:
         await handle_embedding_callback(message, context)
 
     record_retry.assert_awaited_once()
+    persist.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_collection_callback_uses_budgeted_redispatch() -> None:
+    saga = _saga()
+    message = _message(str(saga.id))
+    message.success = MagicMock(
+        collection_version="v1",
+        content_hash=saga.semantic_hash,
+        embeddings=[],
+    )
+    context = _context()
+    with (
+        patch(
+            "user_pref_service.events.callbacks.saga_service.load_saga_for_update",
+            new_callable=AsyncMock,
+            return_value=saga,
+        ),
+        patch(
+            "user_pref_service.events.callbacks.saga_service.retry_enrichment",
+            new_callable=AsyncMock,
+        ) as retry,
+        patch("user_pref_service.events.callbacks.persist_query_enrichment", new_callable=AsyncMock) as persist,
+    ):
+        await handle_embedding_callback(message, context)
+
+    retry.assert_awaited_once_with(context.db_session, context.outbox, saga)
     persist.assert_not_awaited()
