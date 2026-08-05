@@ -238,6 +238,10 @@ class TestKubernetesPlatformInit:
         platform = KubernetesPlatform(namespace="audit", local_mode=False)
         assert platform.service_url("qdrant", 6333) == "http://qdrant.audit.svc.cluster.local:6333"
 
+    def test_service_url_resolves_canonical_kafka_connect_name(self) -> None:
+        platform = KubernetesPlatform(namespace="audit", local_mode=False)
+        assert platform.service_url("kafka-connect", 8083) == "http://nohiki-connect-api.audit.svc.cluster.local:8083"
+
 
 class TestKubernetesPlatformKafkaBootstrap:
     """Tests for kafka_bootstrap_server property."""
@@ -483,7 +487,7 @@ class TestKubernetesPlatformRestartKafkaConnector:
             result = platform.restart_kafka_connector(connector, timeout=4)
         assert result == (22, "", "denied")
         request.assert_called_once_with(
-            f"http://kafka-connect.audit.svc.cluster.local:8083/connectors/{connector}/restart?includeTasks=true&onlyFailed=true",
+            f"http://nohiki-connect-api.audit.svc.cluster.local:8083/connectors/{connector}/restart?includeTasks=true&onlyFailed=true",
             4,
         )
 

@@ -29,15 +29,9 @@ _METADATA: Final[CheckMetadata] = CheckMetadata(
     description="Verify Kafka Connect REST API is reachable and connectors are registered.",
 )
 
-_CONNECT_CONNECTORS_PATH: Final[str] = f"http://localhost:{KAFKA_CONNECT_DEFAULT_PORT}/connectors"
-
 
 def _connectors_path(platform: Platform) -> str:
-    return (
-        "http://nohiki-connect-api:8083/connectors"
-        if platform.target is PlatformTarget.KUBERNETES
-        else _CONNECT_CONNECTORS_PATH
-    )
+    return f"{platform.service_url('kafka-connect', KAFKA_CONNECT_DEFAULT_PORT)}/connectors"
 
 
 class KafkaEventFlowCheck(HealthCheck):

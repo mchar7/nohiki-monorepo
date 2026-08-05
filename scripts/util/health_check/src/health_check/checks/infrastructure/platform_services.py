@@ -21,6 +21,7 @@ from health_check.core.models import (
     CheckResult,
     CheckStatus,
 )
+from health_check.platform.kubernetes import resolve_kubernetes_service_name
 from health_check.platform.models import PlatformTarget
 
 if TYPE_CHECKING:
@@ -67,7 +68,10 @@ _KUBERNETES_ENDPOINTS: Final[tuple[_ServiceEndpoint, ...]] = (
     _ServiceEndpoint("Qdrant", "http://qdrant:6333/readyz"),
     _ServiceEndpoint("Gotenberg", "http://gotenberg:3000/health"),
     _ServiceEndpoint("Docling", "http://docling:5001/readyz"),
-    _ServiceEndpoint("Kafka Connect", "http://nohiki-connect-api:8083/connector-plugins"),
+    _ServiceEndpoint(
+        "Kafka Connect",
+        f"http://{resolve_kubernetes_service_name('kafka-connect')}:{KAFKA_CONNECT_DEFAULT_PORT}/connector-plugins",
+    ),
 )
 
 
