@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from nohiki_test_utils import plugins
+from nohiki_test_utils.utils.docker import DOCKER_ENDPOINT_VERDICT_ENV, resolve_docker_endpoint
 
 
 class TestPytestConfigure:
@@ -27,7 +28,7 @@ class TestPytestConfigure:
         endpoint = "unix:///run/user/1000/podman/podman.sock"
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch("nohiki_test_utils.plugins.resolve_docker_endpoint", return_value=endpoint),
+            patch("nohiki_test_utils.plugins.publish_docker_endpoint_verdict", return_value=endpoint),
         ):
             plugins._configure_docker_host()
 
@@ -38,12 +39,52 @@ class TestPytestConfigure:
         endpoint = "tcp://explicit.example:2375"
         with (
             patch.dict(os.environ, {"DOCKER_HOST": endpoint}, clear=True),
-            patch("nohiki_test_utils.plugins.resolve_docker_endpoint") as mock_resolve,
+            patch(
+                "nohiki_test_utils.plugins.publish_docker_endpoint_verdict",
+                return_value="unix:///var/run/docker.sock",
+            ),
         ):
             plugins._configure_docker_host()
 
             assert os.environ["DOCKER_HOST"] == endpoint
-            mock_resolve.assert_not_called()
+
+    def test_settles_availability_even_when_docker_host_is_preset(self) -> None:
+        """A preset endpoint must not defer resolution into a guarded window.
+
+        Session start is the only moment no test has installed the outbound-network guard, so
+        resolution has to happen here whatever DOCKER_HOST says. Skipping it leaves the probe
+        to fire at collection time, where a nested session resolves a hostname and dies.
+        """
+        with (
+            patch.dict(os.environ, {"DOCKER_HOST": "tcp://dind:2375"}, clear=True),
+            patch(
+                "nohiki_test_utils.plugins.publish_docker_endpoint_verdict",
+                return_value="tcp://dind:2375",
+            ) as mock_publish,
+        ):
+            plugins._configure_docker_host()
+
+            mock_publish.assert_called_once_with()
+
+    def test_nested_session_start_inherits_the_verdict_without_probing(self) -> None:
+        """A nested session runs this hook too, from inside a test that already guards the network.
+
+        pytester.runpytest starts a whole session while the outer test holds the outbound guard,
+        so session start cannot probe unconditionally either: it has to take the answer the first
+        session published.
+        """
+        with (
+            patch.dict(
+                os.environ,
+                {"DOCKER_HOST": "tcp://dind:2375", DOCKER_ENDPOINT_VERDICT_ENV: ""},
+                clear=True,
+            ),
+            patch("nohiki_test_utils.utils.docker._docker_endpoint_available") as mock_available,
+        ):
+            plugins._configure_docker_host()
+
+            mock_available.assert_not_called()
+            assert os.environ["DOCKER_HOST"] == "tcp://dind:2375"
 
     def test_plugin_and_package_exports_reload_cleanly(self) -> None:
         """Entrypoint and lazy package exports remain valid on a fresh import."""
@@ -92,6 +133,21 @@ class TestCollectionModifyItems:
 
         docker_item.add_marker.assert_called_once()
         normal_item.add_marker.assert_not_called()
+
+    def test_collection_policy_never_resolves_a_hostname(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Collection runs inside a nested session, where the outbound guard forbids resolution.
+
+        A pytester run collects while the outer test's guard is installed, so a probe issued from
+        this hook resolves a hostname the guard rejects and kills the inner session during
+        collection. The session verdict must already be published, leaving nothing to probe.
+        """
+        monkeypatch.setenv("DOCKER_HOST", "tcp://dind:2375")
+        resolve_docker_endpoint.cache_clear()
+        item = MagicMock(spec=pytest.Item)
+        item.keywords = {}
+        item.fixturenames = []
+
+        plugins.pytest_collection_modifyitems([item])
 
     def test_errors_list_every_unmarked_container_fixture(self) -> None:
         """One usage error identifies every container-backed test missing the marker."""

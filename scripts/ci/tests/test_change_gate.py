@@ -1720,6 +1720,20 @@ def _reuse_fixture(tmp_path: Path, tree_sha: str) -> Path:
         "artifact_expired": {"runs": runs(206), "attestations": {}},
         "no_successful_run": {"runs": {"workflow_runs": []}, "attestations": {}},
         "api_failure": {"fail_api": "runs", "runs": {}, "attestations": {}},
+        # A legacy attestation predating base binding carries no base_sha at all. It proves
+        # nothing about this base, and it must not cost the older candidates their scan.
+        "malformed_newer_candidate": {
+            "runs": runs(207, 208),
+            "attestations": {
+                "208": {
+                    "tested_tree_sha": tree_sha,
+                    "event_action": "synchronize",
+                    "commit_class": "standard",
+                    "run_id": 208,
+                },
+                "207": attested(207),
+            },
+        },
     }
     path = tmp_path / "reuse_scenarios.json"
     path.write_text(json.dumps(scenarios), encoding="utf-8")
@@ -1801,6 +1815,61 @@ def test_gate_reuse_defines_both_outputs_without_calling_github_off_an_edit(
     # The renderer reads these on every event, so a skipped lookup must still define them.
     assert values == {"title_only": "false", "reused_run_id": ""}
     assert not log.exists()
+
+
+def test_attestation_without_a_base_sha_key_is_rejected_as_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """base_sha is mandatory: a missing key is a schema failure, not an empty default."""
+
+    def fake_gh(args: list[str]) -> subprocess.CompletedProcess[str]:
+        destination = Path(args[args.index("--dir") + 1])
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "checks-attestation.json").write_text(
+            json.dumps(
+                {
+                    "tested_tree_sha": "tree-merge",
+                    "event_action": "synchronize",
+                    "commit_class": "standard",
+                    "run_id": 301,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(checks_gate, "_run_gh", fake_gh)
+
+    with pytest.raises(checks_gate._EvidenceError, match="attestation schema is invalid"):
+        checks_gate._download_attestation("mchar7/nohiki-monorepo", 301)
+
+
+def test_gate_reuse_skips_a_malformed_candidate_instead_of_abandoning_the_scan(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    """One unusable attestation must cost only its own entry, not every older candidate."""
+    fixtures = _reuse_fixture(tmp_path, _checked_out_tree())
+    values = _run_gate_reuse(tmp_path, gate_evidence_harness, "malformed_newer_candidate", fixtures)
+
+    assert values == {"title_only": "true", "reused_run_id": "207"}
+
+
+def test_gate_evidence_skips_a_malformed_attestation_and_keeps_scanning(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    values, calls, _output = _run_gate_evidence(tmp_path, gate_evidence_harness, "malformed_then_valid")
+
+    assert values == {
+        "CI_ASSOCIATED_PR_MERGED": "true",
+        "CI_MERGE_COMMIT_SHA": "merge-sha",
+        "CI_CHECKS_RUN_SUCCESS": "true",
+        "CI_TESTED_TREE_SHA": "tree-merge",
+        "CI_PUSHED_TREE_SHA": "tree-merge",
+    }
+    assert any(call[:3] == ["run", "download", "105"] for call in calls)
+    assert any(call[:3] == ["run", "download", "101"] for call in calls)
 
 
 def _consumer_packages(tmp_path: Path) -> list[Package]:

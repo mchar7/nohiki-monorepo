@@ -312,6 +312,74 @@ class TestLockOperations:
         assert metadata == {12345: "pod-1"}
 
     @pytest.mark.asyncio
+    async def test_waiter_probe_cannot_be_observed_owning_the_lock_without_metadata(self) -> None:
+        """A poll that momentarily takes the lock must not make a contender see a metadata-less lock."""
+        from nohiki_db_utils.migrations.lock import probe_lock_released as _probe_lock_released
+
+        guard = asyncio.Lock()
+        held = False
+        probe_owns_lock = asyncio.Event()
+        allow_probe_release = asyncio.Event()
+        contender_tried_lock = asyncio.Event()
+        metadata: dict[int, str] = {}
+        prober_conn = AsyncMock()
+        contender_conn = AsyncMock()
+
+        async def acquire_guard(_conn: object, _lock_id: int) -> None:
+            await guard.acquire()
+
+        async def try_lock(conn: object, _lock_id: int) -> bool:
+            nonlocal held
+            if conn is contender_conn:
+                contender_tried_lock.set()
+            if held:
+                return False
+            held = True
+            return True
+
+        async def release(conn: object, _lock_id: int) -> None:
+            nonlocal held
+            if conn is prober_conn:
+                probe_owns_lock.set()
+                await allow_probe_release.wait()
+            held = False
+
+        async def set_metadata(_conn: object, lock_id: int, holder_id: str) -> None:
+            metadata[lock_id] = holder_id
+
+        async def get_metadata(_conn: object, lock_id: int) -> tuple[datetime, str] | None:
+            holder_id = metadata.get(lock_id)
+            return (datetime.now(UTC), holder_id) if holder_id else None
+
+        async def commit() -> None:
+            guard.release()
+
+        prober_conn.commit.side_effect = commit
+        contender_conn.commit.side_effect = commit
+
+        with (
+            patch("nohiki_db_utils.migrations.lock._acquire_metadata_guard", side_effect=acquire_guard),
+            patch("nohiki_db_utils.migrations.lock.try_acquire_lock", side_effect=try_lock),
+            patch("nohiki_db_utils.migrations.lock.release_lock", side_effect=release),
+            patch("nohiki_db_utils.migrations.lock.set_lock_metadata", side_effect=set_metadata),
+            patch("nohiki_db_utils.migrations.lock.get_lock_metadata", side_effect=get_metadata),
+        ):
+            prober = asyncio.create_task(_probe_lock_released(prober_conn, 12345))
+            await probe_owns_lock.wait()
+            contender = asyncio.create_task(_acquire_lock_with_metadata(contender_conn, 12345, "pod-2"))
+            await asyncio.sleep(0)
+
+            # The prober owns the advisory lock with no metadata row. A contender that could
+            # observe this window would read (False, None) and raise "metadata missing".
+            assert not contender_tried_lock.is_set()
+
+            allow_probe_release.set()
+            assert await prober is True
+            assert await contender == (True, None)
+
+        assert metadata == {12345: "pod-2"}
+
+    @pytest.mark.asyncio
     async def test_release_lock(self) -> None:
         """Test lock release."""
         mock_conn = AsyncMock()
@@ -325,15 +393,18 @@ class TestLockOperations:
         """Test waiting for lock release - success case."""
         mock_conn = AsyncMock()
 
-        # First call fails to acquire, second succeeds, third for release
+        # Every poll issues the metadata guard before it tries the lock.
+        mock_result_guard = MagicMock()
         mock_result_locked = MagicMock()
         mock_result_locked.scalar.return_value = False
         mock_result_acquired = MagicMock()
         mock_result_acquired.scalar.return_value = True
-        mock_result_release = MagicMock()  # For _release_lock call
+        mock_result_release = MagicMock()  # For release_lock call
 
         mock_conn.execute.side_effect = [
+            mock_result_guard,  # First poll - metadata guard
             mock_result_locked,  # First poll - still locked
+            mock_result_guard,  # Second poll - metadata guard
             mock_result_acquired,  # Second poll - acquired
             mock_result_release,  # Release lock call
         ]
@@ -813,6 +884,26 @@ class TestHandleLockNotAcquired:
 
         mock_wait.assert_called_once()
         mock_get_version.assert_called_once()
+
+    @patch("nohiki_db_utils.migrations.coordinator.get_db_version_info")
+    @patch("nohiki_db_utils.migrations.coordinator.wait_for_lock_release")
+    @pytest.mark.asyncio
+    async def test_missing_metadata_raises_without_waiting(
+        self,
+        mock_wait: AsyncMock,
+        mock_get_version: MagicMock,
+    ) -> None:
+        """A held lock with no metadata row is impossible under the guard, so it is an error."""
+        from nohiki_db_utils.migrations.coordinator import _handle_lock_not_acquired
+
+        conn = AsyncMock()
+        ctx = LockContext("test-service", "pod-1", "postgresql://localhost/db", "alembic.ini")
+
+        with pytest.raises(MigrationError, match="Migration lock metadata missing"):
+            await _handle_lock_not_acquired(conn, 12345, 30, ctx, None)
+
+        mock_wait.assert_not_called()
+        mock_get_version.assert_not_called()
 
 
 class TestRunMigrationsWithCoordination:

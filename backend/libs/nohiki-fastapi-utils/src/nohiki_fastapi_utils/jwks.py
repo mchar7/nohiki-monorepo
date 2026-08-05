@@ -193,8 +193,6 @@ def init_jwks_verifier(config: JWKSConfig) -> JWKSVerifier:
 def get_current_user_id_from_cookie(request: Request) -> UUID:
     """FastAPI dependency to extract and validate user ID from JWT cookie.
 
-    This replaces the old X-Account-Id header-based authentication.
-
     Usage:
         ```python
         @router.get("/protected")

@@ -24,6 +24,19 @@ LOCK_POLL_INTERVAL = 1
 
 # Two-key advisory locks occupy a namespace separate from the one-key migration
 # locks. This transaction-scoped lock serializes lock ownership and metadata.
+#
+# Three properties this guard rests on are unverified: no test here runs against a live
+# PostgreSQL, so they need checking the first time one is available.
+#   1. pg_advisory_xact_lock(0x4E4F4849, lock_id) shares no lock space with the one-key
+#      pg_try_advisory_lock(lock_id) it guards. The two-key and one-key forms are documented
+#      as distinct spaces; the guard is worthless if they are not.
+#   2. The guard is held until COMMIT or ROLLBACK, not released at statement end.
+#   3. Migration lock ids are crc32("migration:<service>") & 0x7FFFFFFF and seed lock ids are
+#      crc32("seed:<service>:<seed>") & 0x7FFFFFFF (seeding.py). Both fit int4, which the
+#      two-key call requires, and both are guarded under this same namespace constant, so a
+#      crc32 collision across those two prefixes makes one migration and one unrelated seed
+#      share a guard. That over-serializes; it does not corrupt. A bigint lock id would not
+#      fit the two-key call at all.
 LOCK_METADATA_GUARD_NAMESPACE = 0x4E4F4849
 
 _lock_meta = MetaData()
@@ -130,6 +143,26 @@ async def release_lock_with_metadata(conn: AsyncConnection, lock_id: int) -> Non
         raise
 
 
+async def probe_lock_released(conn: AsyncConnection, lock_id: int) -> bool:
+    """Report whether the lock is free, without ever owning it observably.
+
+    The probe takes the lock to learn it is free, which makes the prober a momentary owner
+    with no metadata row. Holding the metadata guard across the probe keeps that momentary
+    ownership invisible to a contender in ``acquire_lock_with_metadata``, which would
+    otherwise read no metadata and treat that state as impossible.
+    """
+    await _acquire_metadata_guard(conn, lock_id)
+    try:
+        released = await try_acquire_lock(conn, lock_id)
+        if released:
+            await release_lock(conn, lock_id)
+        await conn.commit()
+    except Exception, asyncio.CancelledError:
+        await conn.rollback()
+        raise
+    return released
+
+
 async def wait_for_lock_release(
     conn: AsyncConnection,
     lock_id: int,
@@ -144,8 +177,7 @@ async def wait_for_lock_release(
 
     while elapsed < max_wait_seconds:
         poll_count += 1
-        if await try_acquire_lock(conn, lock_id):
-            await release_lock(conn, lock_id)
+        if await probe_lock_released(conn, lock_id):
             logger.info(
                 "Migration lock released by holder",
                 service=service_name,

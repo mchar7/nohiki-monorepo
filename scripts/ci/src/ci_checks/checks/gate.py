@@ -122,10 +122,6 @@ class _EvidenceError(RuntimeError):
     pass
 
 
-class _AttestationUnavailableError(_EvidenceError):
-    pass
-
-
 def _json_object(value: object) -> dict[str, object] | None:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         return None
@@ -262,7 +258,7 @@ def _download_attestation(repository: str, run_id: int) -> _Attestation:
             )
         except _EvidenceError as exc:
             msg = f"run {run_id} has no downloadable {_EVIDENCE_ARTIFACT} artifact"
-            raise _AttestationUnavailableError(msg) from exc
+            raise _EvidenceError(msg) from exc
         members = list(destination.rglob(_EVIDENCE_MEMBER))
         if len(members) != 1:
             msg = f"run {run_id} yielded {len(members)} attestation members"
@@ -328,7 +324,10 @@ def _extract_gate_evidence(repository: str, head_sha: str) -> _GateEvidence:
     for candidate in candidates:
         try:
             attestation = _download_attestation(repository, candidate.run_id)
-        except _AttestationUnavailableError:
+        except _EvidenceError:
+            # Every failure _download_attestation raises is a property of this one candidate:
+            # an expired artifact, an unreadable member, a malformed schema. Skipping keeps the
+            # scan fail-closed, since an empty match set still raises below.
             continue
         if attestation.event_action == "edited" or attestation.base_sha != identity.first_parent_sha:
             continue
@@ -448,7 +447,9 @@ def _prove_tree_already_checked(
     for candidate in _successful_runs(runs, pr_head_sha):
         try:
             attestation = _download_attestation(repository, candidate.run_id)
-        except _AttestationUnavailableError:
+        except _EvidenceError:
+            # One malformed or missing candidate is not evidence about the others; skipping it
+            # leaves the terminal raise below as the only fail-closed exit.
             continue
         # An edited run's verdict is never proof: it may itself have been short-circuited.
         if attestation.event_action == "edited":

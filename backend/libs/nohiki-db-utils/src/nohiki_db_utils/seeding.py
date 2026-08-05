@@ -62,7 +62,9 @@ logger = get_logger(__name__)
 SEEDING_LOCK_TIMEOUT_DEFAULT = 120
 SEEDING_POLL_INTERVAL = 1
 
-# Two-key advisory locks occupy a namespace separate from one-key seed locks.
+# Two-key advisory locks occupy a namespace separate from one-key seed locks. This is the same
+# constant the migration guard uses; see migrations/lock.py for the three properties it rests on
+# that no test here verifies, the crc32 collision case between the two prefixes included.
 _LOCK_METADATA_GUARD_NAMESPACE = 0x4E4F4849
 
 # SQLAlchemy table definitions for seeding coordination
@@ -300,6 +302,26 @@ async def _release_lock_with_metadata(conn: AsyncConnection, lock_id: int) -> No
         raise
 
 
+async def _probe_lock_released(conn: AsyncConnection, lock_id: int) -> bool:
+    """Report whether the seed lock is free, without ever owning it observably.
+
+    The probe takes the lock to learn it is free, which makes the prober a momentary owner
+    with no metadata row. Holding the metadata guard across the probe keeps that momentary
+    ownership invisible to a contender in ``_acquire_lock_with_metadata``, which would
+    otherwise read no metadata and treat that state as impossible.
+    """
+    await _acquire_metadata_guard(conn, lock_id)
+    try:
+        released = await _try_acquire_lock(conn, lock_id)
+        if released:
+            await _release_lock(conn, lock_id)
+        await conn.commit()
+    except Exception, asyncio.CancelledError:
+        await conn.rollback()
+        raise
+    return released
+
+
 async def _wait_for_lock_release(
     conn: AsyncConnection,
     lock_id: int,
@@ -314,8 +336,7 @@ async def _wait_for_lock_release(
 
     while elapsed < max_wait_seconds:
         poll_count += 1
-        if await _try_acquire_lock(conn, lock_id):
-            await _release_lock(conn, lock_id)
+        if await _probe_lock_released(conn, lock_id):
             logger.info(
                 "Seed lock released by holder",
                 service=ctx.service_name,
