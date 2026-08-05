@@ -580,6 +580,38 @@ def test_node_workspace_contracts_ignores_paths_the_marked_tests_never_execute(p
     assert "node_workspace_contracts" not in evaluate({path}, _synthetic_packages()).flags
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "jvm/nohiki-wal-router-smt/build.gradle.kts",
+        "jvm/nohiki-wal-router-smt/gradle/wrapper/gradle-wrapper.properties",
+        "jvm/nohiki-wal-router-smt/gradle/wrapper/gradle-wrapper.jar",
+        "jvm/nohiki-wal-router-smt/src/main/java/ai/nohiki/kafka/connect/transforms/NohikiWalRouterSmt.java",
+        "jvm/nohiki-wal-router-smt/src/test/java/ai/nohiki/kafka/connect/transforms/NohikiWalRouterSmtTest.java",
+        "infra/k8s/kafka-connect/Dockerfile",
+    ],
+)
+def test_jvm_tests_select_every_module_and_image_build_input(path: str) -> None:
+    decision = evaluate({path}, _synthetic_packages())
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert decision.flag_value("jvm_tests")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "backend/libs/lib-a/src/lib_a.py",
+        "typescript/apps/frontend/src/App.tsx",
+        "infra/k8s/helm/values.yaml",
+    ],
+)
+def test_jvm_tests_ignore_unrelated_registered_paths(path: str) -> None:
+    decision = evaluate({path}, _synthetic_packages())
+
+    assert not decision.flag_value("jvm_tests")
+
+
 def test_flake_broad_change_selects_every_devshell_sourced_lane() -> None:
     packages = load_packages_with_deps(Scope.ALL)
     decision = evaluate({"flake.nix"}, packages)

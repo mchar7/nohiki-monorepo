@@ -32,6 +32,7 @@ FLAG_NAMES: tuple[str, ...] = (
     "build_backend",
     "typecheck_frontend",
     "python_any",
+    "jvm_tests",
     "frontend_tests",
     "frontend_smoke",
     "frontend_e2e",
@@ -97,6 +98,7 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
         # can select it. playwright-image runs bare docker and remains excluded.
         flags=(
             "nix",
+            "jvm_tests",
             *BROAD_PYTHON_FLAGS,
             "build_backend",
             "lint_proto",
@@ -280,6 +282,15 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         ),
     ),
     SurfaceRule(("biome.json", "biome.jsonc"), flags=("lint_frontend", "edge_worker")),
+    SurfaceRule(
+        (
+            ".dockerignore",
+            "jvm/nohiki-wal-router-smt/*",
+            "jvm/nohiki-wal-router-smt/**/*",
+            "infra/k8s/kafka-connect/Dockerfile",
+        ),
+        flags=("jvm_tests",),
+    ),
     SurfaceRule(("**/pyproject.toml",), flags=("build_backend",)),
     SurfaceRule(
         ("Dockerfile", "**/Dockerfile", "**/Dockerfile.*", ".hadolint.yaml"),
@@ -388,7 +399,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         # Both steps shell out to `just`. Proto compatibility does not: the
         # workflow runs `buf breaking` inline and Justfile:335-342 is local-only.
         ("Justfile",),
-        flags=("image_matrix_parity", "api_schema_freshness"),
+        flags=("jvm_tests", "image_matrix_parity", "api_schema_freshness"),
         packages=("ci-checks",),
     ),
     SurfaceRule(

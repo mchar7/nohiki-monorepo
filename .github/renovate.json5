@@ -99,6 +99,28 @@
       "datasourceTemplate": "java-version",
       "versioningTemplate": "loose",
       "extractVersionTemplate": "^(?<version>\\d+)"
+    },
+    {
+      // why: the Nix Gradle version must move with the wrapper and container builder pins.
+      "customType": "regex",
+      "managerFilePatterns": ["/^flake\\.nix$/"],
+      "matchStrings": [
+        "gradle\\s*=\\s*pkgs\\.gradle-packages\\.mkGradle\\s*\\{\\s*version\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)\";"
+      ],
+      "depNameTemplate": "gradle",
+      "packageNameTemplate": "gradle",
+      "datasourceTemplate": "gradle-version"
+    },
+    {
+      // why: Spotless does not expose its formatter tool pin to Renovate's Gradle manager.
+      "customType": "regex",
+      "managerFilePatterns": ["/^jvm\\/nohiki-wal-router-smt\\/build\\.gradle\\.kts$/"],
+      "matchStrings": [
+        "googleJavaFormat\\(\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"\\)"
+      ],
+      "depNameTemplate": "com.google.googlejavaformat:google-java-format",
+      "packageNameTemplate": "com.google.googlejavaformat:google-java-format",
+      "datasourceTemplate": "maven"
     }
   ],
   "packageRules": [
@@ -115,19 +137,25 @@
     },
     {
       // why: the SMT must compile against the Kafka line shipped by the Debezium runtime image.
-      "description": "Keep Kafka Connect APIs aligned with the 4.1 runtime",
+      "description": "Keep Kafka Connect APIs aligned with the 4.3 runtime",
       "matchManagers": ["gradle"],
       "matchPackageNames": [
         "org.apache.kafka:connect-api",
         "org.apache.kafka:connect-transforms"
       ],
-      "allowedVersions": "/^4\\.1\\./"
+      "allowedVersions": "/^4\\.3\\./"
     },
     {
       // why: one PR must move the Nix JDK and Gradle language toolchain together.
       "description": "Keep duplicate JDK major declarations aligned",
       "matchPackageNames": ["java-jdk"],
       "groupName": "JDK major parity"
+    },
+    {
+      // why: the wrapper, Nix package, and builder image must use one Gradle release.
+      "description": "Keep Gradle toolchain declarations aligned",
+      "matchPackageNames": ["gradle"],
+      "groupName": "Gradle toolchain parity"
     },
     {
       // why: workspace members are never published to PyPI, so a lookup can only fail.

@@ -1033,8 +1033,20 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     custom_by_dependency = {
         manager.get("depNameTemplate"): manager for manager in custom_managers if isinstance(manager, dict)
     }
-    assert set(custom_by_dependency) == {"pnpm", "@playwright/test", "java-jdk"}
-    expected_datasources = {"pnpm": "npm", "@playwright/test": "npm", "java-jdk": "java-version"}
+    assert set(custom_by_dependency) == {
+        "pnpm",
+        "@playwright/test",
+        "java-jdk",
+        "gradle",
+        "com.google.googlejavaformat:google-java-format",
+    }
+    expected_datasources = {
+        "pnpm": "npm",
+        "@playwright/test": "npm",
+        "java-jdk": "java-version",
+        "gradle": "gradle-version",
+        "com.google.googlejavaformat:google-java-format": "maven",
+    }
     for dependency, manager in custom_by_dependency.items():
         assert manager.get("customType") == "regex"
         assert manager.get("datasourceTemplate") == expected_datasources[dependency]
@@ -1043,6 +1055,27 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         assert isinstance(match_strings, list)
         assert match_strings
         assert all(isinstance(pattern, str) and "(?<currentValue>" in pattern for pattern in match_strings)
+
+    managed_jvm_pins = {
+        "gradle": (_FLAKE, r"/^flake\.nix$/"),
+        "com.google.googlejavaformat:google-java-format": (
+            _KAFKA_BUILD,
+            r"/^jvm\/nohiki-wal-router-smt\/build\.gradle\.kts$/",
+        ),
+    }
+    for dependency, (source_path, file_pattern) in managed_jvm_pins.items():
+        manager = custom_by_dependency[dependency]
+        manager_file_patterns = manager["managerFilePatterns"]
+        assert isinstance(manager_file_patterns, list)
+        assert file_pattern in manager_file_patterns
+        match_strings = manager["matchStrings"]
+        assert isinstance(match_strings, list)
+        assert len(match_strings) == 1
+        pattern = match_strings[0]
+        assert isinstance(pattern, str)
+        match = re.search(pattern.replace("(?<currentValue>", "(?P<currentValue>"), _read_text(source_path))
+        assert match
+        assert match.group("currentValue")
 
     rules = config["packageRules"]
     assert isinstance(rules, list)
@@ -1057,6 +1090,7 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         "pnpm": "pnpm version parity",
         "@playwright/test": "Playwright version parity",
         "java-jdk": "JDK major parity",
+        "gradle": "Gradle toolchain parity",
     }
     for dependency, group_name in parity_groups.items():
         parity_rule = next(

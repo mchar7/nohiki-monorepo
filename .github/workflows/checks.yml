@@ -44,6 +44,7 @@ jobs:
       typecheck_backend: ${{ steps.gate.outputs.typecheck_backend }}
       typecheck_frontend: ${{ steps.gate.outputs.typecheck_frontend }}
       python_any: ${{ steps.gate.outputs.python_any }}
+      jvm_tests: ${{ steps.gate.outputs.jvm_tests }}
       frontend_tests: ${{ steps.gate.outputs.frontend_tests }}
       frontend_smoke: ${{ steps.gate.outputs.frontend_smoke }}
       frontend_e2e: ${{ steps.gate.outputs.frontend_e2e }}
@@ -214,7 +215,7 @@ jobs:
       actions: write
       contents: read
     env:
-      NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.otel_collector == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' }}
+      NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.jvm_tests == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.otel_collector == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' }}
       NODE_SETUP_SELECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true') }}
       DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.lint_markdown == 'true' && needs.changes.outputs.affected_packages == '' }}
       SKYLOS_CACHE_DIR: ${{ github.workspace }}/.skylos
@@ -440,6 +441,9 @@ jobs:
             --no-coverage --summary "$GITHUB_STEP_SUMMARY" \
             --summary-title "job-correlation integration"
 
+      - name: Test JVM module
+        if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.jvm_tests == 'true')
+        run: nix develop .#jvm --command just test-jvm
       # These assert the Playwright config by executing it, so they need the installed pnpm
       # workspace and not just a `node` binary. The `python` payload restores no node_modules,
       # so selection follows the payload: they run in the unit that carries one. The gate names

@@ -18,6 +18,9 @@
         nodejs = pkgs.nodejs_26;
         corepackPackage = pkgs.corepack.override { nodejs-slim = nodejs; };
         jdk = pkgs.jdk25;
+        # Renovate manages the version but the gradle-version datasource does not publish
+        # the Nix source hash. For a bump, set hash = pkgs.lib.fakeHash, run
+        # `nix develop .#jvm --command gradle --version`, then use the reported "got" hash.
         gradle = pkgs.gradle-packages.mkGradle {
           version = "9.6.1";
           hash = "sha256-nA9/ruswbLFOQnmj4ITKa1lolAiaBjjmigfJRaMsnhQ=";
