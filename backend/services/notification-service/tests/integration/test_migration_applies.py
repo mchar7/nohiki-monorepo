@@ -1,9 +1,7 @@
 """The service's Alembic revision applies cleanly and carries the TTL schema.
 
-The revision is edited in place rather than extended (DATABASE.md, clean-cut
-deployment), so any schema change lands as a diff to `001_initial_migration.py`.
-Every other test builds the schema from SQLAlchemy metadata, which means a typo
-in the revision's DDL would otherwise reach a deploy unnoticed.
+Most tests build the schema from SQLAlchemy metadata, which means a typo in the
+revision's DDL would otherwise reach a deploy unnoticed.
 """
 
 from __future__ import annotations

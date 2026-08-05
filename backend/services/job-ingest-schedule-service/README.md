@@ -91,7 +91,7 @@ its next run one frequency interval ahead.
 Schema `job_schedule_schema` holds one `ingestion_schedules` row per registered query and
 `processed_events` for consumer idempotency. It has no transactional outbox table.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and scheduling lifecycle documentation.
 
 ### Redis
 

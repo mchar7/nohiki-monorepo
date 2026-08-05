@@ -187,7 +187,7 @@ and query embedding vectors. The `search_pref_uploads` junction table tracks whi
 documents (resumes, portfolios) are associated with each preference. The `user_pref_settings`
 table holds user-level defaults that apply across all preferences.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ### Redis
 

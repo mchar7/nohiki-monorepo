@@ -68,7 +68,7 @@ Schema `user_auth_schema` stores accounts, refresh tokens (with session family t
 detection), OAuth provider links, and the outbox. The schema is the source of truth for user
 identity; all other services hold projection copies derived from CDC events.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ### Redis
 

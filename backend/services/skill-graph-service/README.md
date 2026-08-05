@@ -144,7 +144,7 @@ co-occurrence edges. Governance tables (`proposed_skill`) stage novel skills bef
 the taxonomy. Occupation data (`occupation_node`, `occupation_skill_relation`,
 `occupation_skill_observation`) links skills to job roles for demand signal computation.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ### Vector Store
 

@@ -138,7 +138,7 @@ table holds ECST snapshots of all active user preferences, serialized as JSONB. 
 `feedback` schema holds `asymmetric_feedback` and `manual_adjustments` tables for granular
 score quality signals.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ### Object Storage
 
