@@ -1,5 +1,7 @@
 /// <reference types="vitest" />
 
+import { readFileSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
@@ -131,8 +133,100 @@ const jsdomUiTests = [
   'src/widgets/layout/ui/BottomNav.test.tsx',
 ];
 
-const gateCpuCount = Number.parseInt(process.env.NOHIKI_GATE_CPUS ?? '', 10);
-const gateMaxWorkers = Number.isSafeInteger(gateCpuCount) && gateCpuCount > 0 ? Math.max(1, gateCpuCount - 1) : undefined;
+function positiveInt(raw: string | undefined): number | undefined {
+  const value = Number.parseInt(raw ?? '', 10);
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function readOrUndefined(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * This process's OWN cgroup v2 `memory.max`, or undefined when it declares none.
+ *
+ * Deliberately not a walk up the chain, which is what `scripts/dev/test-run.sh` does for
+ * `cpu.max` and what this first did. A quota anywhere above you throttles you, so walking is
+ * right for `cpu.max`; a memory fence on an enclosing slice is somebody else's runaway guard
+ * and says nothing about this process's share of the machine. Measured 2026-08-05: walking the
+ * chain found a `memory.max` on an enclosing systemd slice that had nothing to do with this
+ * process's share, and cut a local run from 19 workers to 6 for no reason a developer could see.
+ *
+ * A container's own fence lands on its own cgroup, which is the leaf here under the private
+ * cgroup namespace containers get on cgroup v2 (`/proc/self/cgroup` reads `0::/`), so the leaf
+ * is both narrower and more correct. The bare-mount fallback covers a host cgroup namespace,
+ * where the leaf path is not mounted at the path it names.
+ */
+function cgroupMemoryLimitBytes(): number | undefined {
+  const own =
+    readOrUndefined('/proc/self/cgroup')
+      ?.split('\n')
+      .find((line) => line.startsWith('0::'))
+      ?.slice(3)
+      .trim() ?? '';
+  return (
+    positiveInt(readOrUndefined(`/sys/fs/cgroup${own}/memory.max`)) ??
+    positiveInt(readOrUndefined('/sys/fs/cgroup/memory.max'))
+  );
+}
+
+function hostMemoryTotalBytes(): number | undefined {
+  const kib = positiveInt(
+    readOrUndefined('/proc/meminfo')
+      ?.split('\n')
+      .find((line) => line.startsWith('MemTotal:'))
+      ?.split(/\s+/)[1],
+  );
+  return kib === undefined ? undefined : kib * 1024;
+}
+
+/**
+ * Worker count for one test run, as a share of the host this process is actually on.
+ *
+ * Exported for `scripts/worker-bound.test.mjs`, which pins the host shapes this has to stay
+ * correct on. Pure: every environment read happens in the callers above.
+ *
+ * The share is the container's own memory fence over the host's total memory. That is the only
+ * declaration of "how much of this machine is mine" that a container can actually read, and it
+ * costs nothing to be wrong about on a host that declares none.
+ */
+export function resolveMaxWorkers(
+  visibleCpus: number,
+  memoryLimitBytes: number | undefined,
+  hostMemoryBytes: number | undefined,
+): number {
+  const share =
+    memoryLimitBytes !== undefined && hostMemoryBytes !== undefined && memoryLimitBytes < hostMemoryBytes
+      ? memoryLimitBytes / hostMemoryBytes
+      : 1;
+  // One main thread plus the workers, so a slot never claims more of the host than its share.
+  return Math.max(1, Math.floor(share * visibleCpus) - 1);
+}
+
+// Concurrent test slots can share one host that fences their memory but not their CPU: no
+// cpuset, no `cpu.max`, only a per-container memory limit. Node takes its worker count from
+// scheduler affinity via libuv's `uv_available_parallelism()` and never from a cgroup CPU
+// quota, so a slot in that shape sizes its pool against every thread on the host and concurrent
+// slots oversubscribe it once per slot. `maxWorkers` here used to be bounded only when
+// NOHIKI_GATE_CPUS was set, which only the pre-push gate does, so that was every other lane.
+//
+// A container cannot see its siblings, so the number of slots is not derivable from inside one.
+// Its own memory fence is, so the bound is that fence as a share of the host: a slot fenced to
+// half the host's memory takes half the threads it can see. No slot count, no host names, no
+// out-of-band configuration and no coefficient to go stale, and a host that fences nothing
+// keeps every thread it can see, so unfenced runners and developer machines are untouched.
+//
+// It reproduces whatever overcommit the memory fences already declare rather than targeting
+// none, because removing an overcommit is a provisioning decision and not this file's to make.
+const maxWorkers = resolveMaxWorkers(
+  positiveInt(process.env.NOHIKI_GATE_CPUS) ?? availableParallelism(),
+  cgroupMemoryLimitBytes(),
+  hostMemoryTotalBytes(),
+);
 
 export default defineConfig({
   envDir: false,
@@ -142,7 +236,7 @@ export default defineConfig({
     globals: true,
     // Threads measured 7.6% faster than Vitest's default forks pool on two CPUs.
     pool: 'threads',
-    maxWorkers: gateMaxWorkers,
+    maxWorkers,
     exclude: ['**/node_modules/**', '**/e2e/**'],
     projects: [
       {

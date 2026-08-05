@@ -161,8 +161,14 @@ def test_workflow_validators_are_pinned_in_hosted_and_local_paths() -> None:
     policy = _JUSTFILE.read_text(encoding="utf-8")
     assert "actionlint -ignore" not in policy
     assert "actionlint -oneline" in policy
-    assert policy.count(parallel_diagnostic) == 4
-    assert "suppress only their exact source locations" in policy
+    # The narrowness this defends is the exact diagnostic text, not how many times it is written
+    # out. The four source locations are read from the workflow rather than pinned, because pinned
+    # line numbers drift on any edit above them and then silently stop suppressing, and re-pinning
+    # at the new numbers only rearms that. A pinned literal would pass a count and still be aimed
+    # at the wrong lines, so the count is replaced by a ban on the pinned form.
+    assert parallel_diagnostic in policy
+    assert "- parallel:" in policy
+    assert not re.search(r"checks\.yml:\d+:", policy), "workflow-lint must not pin suppressions by line number"
     assert "check-jsonschema" in policy
     assert "--builtin-schema vendor.github-workflows .github/workflows/*.yml" in policy
 

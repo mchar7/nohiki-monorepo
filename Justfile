@@ -429,20 +429,19 @@ workflow-lint:
     ((status <= 1)) || exit "$status"
     ((status == 0)) || [[ -s "$diagnostics" ]] || exit "$status"
 
+    # actionlint does not understand the runner's native `parallel:` groups. Their source
+    # locations are read out of the file rather than pinned here, because pinned line numbers
+    # drift the moment anything above them is edited and then suppress nothing.
+    expected="$(grep -n '^      - parallel:$' .github/workflows/checks.yml | sed 's|^\([0-9]*\):.*|.github/workflows/checks.yml:\1:9: step must run script with "run" section or run action with "uses" section [syntax-check]|')"
+    [[ -n "$expected" ]] || { printf 'no parallel: groups found; drop this suppression\n' >&2; exit 1; }
+
     unexpected=0
     while IFS= read -r diagnostic; do
-        # actionlint does not understand the runner's four native `parallel:` groups; suppress only their exact source locations.
-        case "$diagnostic" in
-            '.github/workflows/checks.yml:344:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:422:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:567:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:578:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
-                ;;
-            *)
-                printf '%s\n' "$diagnostic" >&2
-                unexpected=1
-                ;;
-        esac
+        if printf '%s\n' "$expected" | grep -qxF -- "$diagnostic"; then
+            continue
+        fi
+        printf '%s\n' "$diagnostic" >&2
+        unexpected=1
     done <"$diagnostics"
     ((unexpected == 0)) || exit 1
 
