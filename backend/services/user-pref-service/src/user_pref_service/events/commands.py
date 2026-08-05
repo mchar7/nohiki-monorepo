@@ -36,6 +36,7 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 USER_DOES_NOT_OWN_PROFILE = "User does not own profile"
+MAX_WORK_ARRANGEMENTS = 5
 command_group_id = f"{settings.kafka.consumer_group}-commands"
 
 
@@ -110,6 +111,12 @@ async def handle_pref_create_requested(message: PrefCreateRequested, context: Me
             field_name="work_arrangements",
             invalid_value=message.work_arrangements,
             constraint="must contain at least one work arrangement",
+        )
+    if len(message.work_arrangements) > MAX_WORK_ARRANGEMENTS:
+        raise ValidationError(
+            field_name="work_arrangements",
+            invalid_value=message.work_arrangements,
+            constraint="must contain at most five work arrangements",
         )
 
     logger.info(

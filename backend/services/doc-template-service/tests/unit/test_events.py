@@ -233,11 +233,11 @@ class TestValidateRenderRequest:
         )
         mock_message.template_id = "template-123"
         mock_message.template_content = "<html></html>"
-        mock_message.template_version = "1.0.0"
+        mock_message.template_version = "1.2.3-rc.1+build.7"
 
         result = _validate_render_request(mock_message)
 
-        assert result == ("corr-id", "template-123", "1.0.0")
+        assert result == ("corr-id", "template-123", "1.2.3-rc.1+build.7")
 
 
 class TestRenderAndStore:
