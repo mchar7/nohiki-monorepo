@@ -608,6 +608,9 @@ class EmbeddingVector(betterproto2.Message):
     )
 
     content_hash: "str" = betterproto2.field(20, betterproto2.TYPE_STRING)
+    """
+    Optional for derived aggregate vectors whose canonical builders have no source-text hash.
+    """
 
     model_id: "str" = betterproto2.field(21, betterproto2.TYPE_STRING)
 

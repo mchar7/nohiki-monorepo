@@ -94,6 +94,37 @@ class TestHandleDiscoveryTriggered:
             assert call_kwargs["query"].query_id == "q-1"
 
     @pytest.mark.asyncio
+    async def test_empty_keyword_query_is_acknowledged_without_provider_work(
+        self,
+        mock_context: MessageContext,
+    ) -> None:
+        """A legacy empty query has an explicit no-discovery outcome."""
+        message = IngestionTriggered(
+            metadata=EventMetadata(
+                event_id="e-empty",
+                source_service="test",
+                correlation_id="corr-empty",
+                version="v1",
+            ),
+            query=IngestionQuery(query_id="q-empty", search_keywords=[]),
+        )
+
+        with (
+            patch(
+                "job_ingest_discovery_service.events.handlers.check_and_mark_processed",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "job_ingest_discovery_service.events.handlers.run_discovery",
+                new_callable=AsyncMock,
+            ) as run,
+        ):
+            await handle_discovery_triggered(message, mock_context)
+
+        run.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_completed_event_claim_skips_redelivery(self) -> None:
         """A committed deterministic claim prevents a second scrape."""
         message = IngestionTriggered(

@@ -159,7 +159,9 @@ message EmbeddingVector {
     MultiVectorData multi_vector = 12;
   }
 
+  // Optional for derived aggregate vectors whose canonical builders have no source-text hash.
   string content_hash = 20 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
     (buf.validate.field).string = {len: 64, pattern: "^[a-f0-9]+$"}
   ];
   string model_id = 21 [

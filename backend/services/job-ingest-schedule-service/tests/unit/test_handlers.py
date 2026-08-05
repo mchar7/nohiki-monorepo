@@ -57,12 +57,13 @@ def _create_query_changed_message(
     *,
     is_active: bool = True,
     frequency_seconds: int = 3600,
+    search_keywords: list[str] | None = None,
 ) -> IngestionQueryChanged:
     """Create a test IngestionQueryChanged message."""
     return IngestionQueryChanged(
         metadata=_create_metadata(),
         query_id=query_id or str(uuid.uuid4()),
-        search_keywords=["python", "developer"],
+        search_keywords=["python", "developer"] if search_keywords is None else search_keywords,
         locations=[
             Location(
                 country=CountryCode.USA,
@@ -151,6 +152,25 @@ class TestHandleQueryCreated:
             await handle_query_created(message, _make_context(db_session=db))
 
         schedule = db.add.call_args.args[0]
+        assert schedule.next_run_at is None
+        publish.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_keyword_query_is_stored_inactive_without_dispatch(self) -> None:
+        """An upstream active flag cannot schedule a query with no executable keywords."""
+        message = _create_query_changed_message(is_active=True, search_keywords=[])
+        db = create_mock_session()
+        db.get = AsyncMock(return_value=None)
+        db.add = MagicMock()
+
+        with patch(
+            "job_ingest_schedule_service.events.handlers.publish_scrape_triggered",
+            new_callable=AsyncMock,
+        ) as publish:
+            await handle_query_created(message, _make_context(db_session=db))
+
+        schedule = db.add.call_args.args[0]
+        assert schedule.is_active is False
         assert schedule.next_run_at is None
         publish.assert_not_awaited()
 

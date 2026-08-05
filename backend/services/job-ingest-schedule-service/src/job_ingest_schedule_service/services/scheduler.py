@@ -51,7 +51,17 @@ async def process_due_schedules(
     if not due_schedules:
         return 0
 
+    triggered = 0
     for schedule in due_schedules:
+        if not schedule.search_keywords:
+            schedule.is_active = False
+            schedule.next_run_at = None
+            logger.warning(
+                "Deactivated schedule without search keywords",
+                query_id=str(schedule.query_id),
+            )
+            continue
+
         scheduled_for = schedule.next_run_at
         if scheduled_for is None:
             raise InvalidScheduleStateError
@@ -59,13 +69,12 @@ async def process_due_schedules(
         schedule.last_run_at = current_time
         next_run_at = current_time + schedule.frequency
         schedule.next_run_at = next_run_at
+        triggered += 1
         logger.debug(
             "Published scheduled scrape",
             query_id=str(schedule.query_id),
             next_run_at=next_run_at.isoformat(),
         )
-
-    triggered = len(due_schedules)
 
     if triggered:
         logger.info("Schedule tick complete", triggered=triggered)

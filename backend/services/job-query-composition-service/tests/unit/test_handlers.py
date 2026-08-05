@@ -356,6 +356,52 @@ class TestHandleProfileUpdated:
         await handle_profile_updated(message, _make_context())
 
     @pytest.mark.asyncio
+    async def test_empty_keyword_update_deactivates_discovery_contributor(self) -> None:
+        """An active preference without keywords must not keep a scrape query runnable."""
+        pref_id = uuid4()
+        snapshot = SearchPrefSnapshot(
+            id=str(pref_id),
+            user_id=str(uuid4()),
+            pref_name="Discovery paused",
+            search_keywords=[],
+            work_arrangements=[],
+            is_active=True,
+        )
+        message = MagicMock(pref_snapshot=snapshot)
+        db = create_mock_session()
+        query = MagicMock(id=uuid4(), total_contributor_count=0)
+        contributor = MagicMock(previous_query_id=None)
+
+        with (
+            patch(
+                "job_query_composition_service.events.handlers.find_or_create_query",
+                new_callable=AsyncMock,
+                return_value=query,
+            ) as find_query,
+            patch(
+                "job_query_composition_service.events.handlers.create_or_update_contributor",
+                new_callable=AsyncMock,
+                return_value=contributor,
+            ) as upsert_contributor,
+            patch(
+                "job_query_composition_service.events.handlers.recompute_query_aggregates",
+                new_callable=AsyncMock,
+                return_value=query,
+            ),
+            patch(
+                "job_query_composition_service.events.handlers.publish_query_created",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await handle_profile_updated(message, _make_context(db_session=db, outbox=MagicMock()))
+
+        find_query.assert_awaited_once_with(db, [], [])
+        upsert_contributor.assert_awaited_once()
+        call = upsert_contributor.await_args
+        assert call is not None
+        assert call.args[1].is_active is False
+
+    @pytest.mark.asyncio
     async def test_lone_recent_update_recomputes_and_publishes_immediately(self) -> None:
         """A material update is never suppressed by the removed time throttle."""
         pref_id = uuid4()

@@ -295,7 +295,7 @@ class IngestionQuery(betterproto2.Message):
         2, betterproto2.TYPE_STRING, repeated=True
     )
     """
-    Search parameters (REQUIRED for scraping)
+    Empty keywords disable discovery; inactive queries may carry this canonical state.
     """
 
     locations: "list[___common__v1__.Location]" = betterproto2.field(
@@ -309,6 +309,9 @@ class IngestionQuery(betterproto2.Message):
     sources: "list[___common__v1__.JobBoardSource]" = betterproto2.field(
         6, betterproto2.TYPE_ENUM, repeated=True
     )
+    """
+    Empty sources select the discovery service's default providers.
+    """
 
     hours_old: "int" = betterproto2.field(7, betterproto2.TYPE_INT32)
     """

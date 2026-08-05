@@ -114,9 +114,9 @@ message IngestionQuery {
     (buf.validate.field).string.uuid = true
   ];
 
-  // Search parameters (REQUIRED for scraping)
+  // Empty keywords disable discovery; inactive queries may carry this canonical state.
   repeated string search_keywords = 2 [
-    (buf.validate.field).repeated = {min_items: 1, max_items: 20},
+    (buf.validate.field).repeated = {max_items: 20},
     (buf.validate.field).repeated.items.string = {min_len: 2, max_len: 100}
   ];
 
@@ -126,8 +126,8 @@ message IngestionQuery {
     (buf.validate.field).repeated.items.enum.defined_only = true
   ];
 
+  // Empty sources select the discovery service's default providers.
   repeated nohiki.common.v1.JobBoardSource sources = 6 [
-    (buf.validate.field).repeated = {min_items: 1},
     (buf.validate.field).repeated.items.enum.defined_only = true
   ];
 

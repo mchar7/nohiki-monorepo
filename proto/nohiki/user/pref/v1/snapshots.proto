@@ -30,13 +30,12 @@ message SearchPrefSnapshot {
     (buf.validate.field).string = {min_len: 1, max_len: 100}
   ];
 
-  // REQUIRED - Search preferences (user-configurable)
-  repeated string search_keywords = 10 [(buf.validate.field).repeated.min_items = 1];
+  // Search preferences (user-configurable; empty values are canonical)
+  repeated string search_keywords = 10;
   repeated string disallowed_keywords = 11;
   repeated nohiki.common.v1.Location physical_locations = 12;
   repeated nohiki.common.v1.Location remote_locations = 13;
   repeated nohiki.common.v1.WorkArrangement work_arrangements = 14 [
-    (buf.validate.field).repeated.min_items = 1,
     (buf.validate.field).repeated.items.enum.defined_only = true
   ];
 

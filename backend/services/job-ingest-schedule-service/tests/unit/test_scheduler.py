@@ -19,13 +19,14 @@ def _create_schedule(
     *,
     is_active: bool = True,
     next_run_at: datetime | None = None,
+    search_keywords: list[str] | None = None,
 ) -> IngestionSchedule:
     """Create a test schedule."""
     from job_ingest_schedule_service.db.models import IngestionSchedule as Schedule
 
     return Schedule(
         query_id=uuid.uuid4(),
-        search_keywords=["python"],
+        search_keywords=["python"] if search_keywords is None else search_keywords,
         locations=[
             Location(
                 country=CountryCode.USA,
@@ -89,6 +90,27 @@ class TestProcessDueSchedules:
             triggered = await scheduler.process_due_schedules(db, batch_limit=25)
 
         assert triggered == 0
+        publish.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_due_schedule_without_keywords_is_deactivated_not_published(self) -> None:
+        """Legacy active empty schedules are repaired when their next run becomes due."""
+        from job_ingest_schedule_service.services import scheduler
+
+        schedule = _create_schedule(search_keywords=[])
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [schedule]
+        db = create_mock_session()
+        db.execute = AsyncMock(return_value=result)
+        publish = AsyncMock()
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(scheduler, "publish_scrape_triggered", publish)
+            triggered = await scheduler.process_due_schedules(db, batch_limit=25)
+
+        assert triggered == 0
+        assert schedule.is_active is False
+        assert schedule.next_run_at is None
         publish.assert_not_awaited()
 
     @pytest.mark.asyncio
