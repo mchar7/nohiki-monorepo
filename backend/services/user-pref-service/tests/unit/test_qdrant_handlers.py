@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -104,48 +105,45 @@ async def test_committed_lifecycle_handler_loads_owned_state_and_only_then_upser
 @pytest.mark.asyncio
 async def test_delayed_generation_fact_cannot_project_newer_pending_profile_state() -> None:
     profile = _searchable_profile()
-    profile.semantic_content_generation = 2
-    profile.semantic_content_hash = "b" * 64
-    profile.query_artifacts_data = [
-        EmbeddingVector(
-            embedding_type=EmbeddingType.MUVERA,
-            dense=DenseData(values=[0.1]),
-            content_hash="a" * 64,
-            collection_version="v2",
-        ).to_dict(),
-        EmbeddingVector(
-            embedding_type=EmbeddingType.SPARSE,
-            sparse=SparseData(indices=[1], values=[0.2]),
-            content_hash="a" * 64,
-            collection_version="v2",
-        ).to_dict(),
-        EmbeddingVector(
-            embedding_type=EmbeddingType.COLBERT,
-            multi_vector=MultiVectorData(values=[0.3, 0.4], num_tokens=1, token_dim=2),
-            content_hash="a" * 64,
-            collection_version="v2",
-        ).to_dict(),
-    ]
     message = PrefUpdated(pref_id=str(profile.id), user_id=str(profile.user_id))
     message.pref_snapshot = MagicMock(
         semantic_content_generation=1,
         semantic_content_hash="a" * 64,
         collection_version="v2",
     )
+    load_started = asyncio.Event()
+    update_committed = asyncio.Event()
+    order: list[str] = []
+
+    async def load_after_concurrent_update(*_args: object) -> MagicMock:
+        order.append("load_started")
+        load_started.set()
+        await update_committed.wait()
+        order.append("load_returned")
+        return profile
 
     with (
         patch(
             "user_pref_service.events.qdrant_handlers.profile_service.get_profile_by_id_optional",
             new_callable=AsyncMock,
-            return_value=profile,
+            side_effect=load_after_concurrent_update,
         ),
         patch(
             "user_pref_service.events.qdrant_handlers.upsert_profile_point",
             new_callable=AsyncMock,
+            side_effect=lambda *_args: order.append("upsert"),
         ) as upsert,
     ):
-        await handle_pref_updated(message, _context())
+        projection = asyncio.create_task(handle_pref_updated(message, _context()))
+        await load_started.wait()
+        profile.semantic_content_generation = 2
+        profile.semantic_content_hash = "b" * 64
+        profile.enrichment_terminal_status = None
+        order.append("update_committed")
+        update_committed.set()
+        await projection
 
+    assert order == ["load_started", "update_committed", "load_returned"]
     upsert.assert_not_awaited()
 
 

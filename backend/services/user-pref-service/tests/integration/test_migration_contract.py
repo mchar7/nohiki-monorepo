@@ -1,7 +1,7 @@
 """PostgreSQL regression coverage for empty repeated preference updates."""
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -54,10 +54,11 @@ async def test_empty_repeated_update_completes_through_consumer(
         headers={},
         key=None,
         db_session=async_session,
+        outbox=MagicMock(),
     )
 
     with patch(
-        "user_pref_service.events.commands._request_profile_embedding",
+        "user_pref_service.events.commands._start_enrichment_saga",
         new_callable=AsyncMock,
     ):
         await handle_pref_update_requested(command, context)
