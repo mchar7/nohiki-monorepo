@@ -36,6 +36,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = ["error"]
 
 [project.scripts]
 tailor = "tailor.cli:main"

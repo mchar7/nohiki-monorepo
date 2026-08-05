@@ -44,6 +44,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-n auto --dist=worksteal"
+filterwarnings = ["error"]
 markers = [
     "requires_docker: tests that build and run real container images",
     "requires_node_modules: tests that execute the installed pnpm workspace",

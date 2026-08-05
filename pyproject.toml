@@ -586,8 +586,7 @@ markers = [
 cache_dir = "$HOME/.cache/nohiki/pytest"
 filterwarnings = [
     "error",
-    # TODO(google-genai): remove once googleapis/python-genai#1939 is merged and released.
-    # google-genai v1.68.0 uses typing._UnionGenericAlias at import time, deprecated in 3.14.
+    # google-genai 1.75.0 triggers this inside its Python 3.14 typing compatibility code (googleapis/python-genai#1939).
     "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning:google.genai",
 ]
 

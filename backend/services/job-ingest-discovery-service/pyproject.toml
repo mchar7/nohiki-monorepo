@@ -45,10 +45,4 @@ markers = [
     "requires_docker: mark tests that require Docker/testcontainers",
     "unit: mark unit tests (default)",
 ]
-filterwarnings = [
-    "ignore::urllib3.exceptions.InsecureRequestWarning",
-    "ignore:The `dict` method is deprecated:pydantic.warnings.PydanticDeprecatedSince20",
-    "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning:testcontainers",
-    "ignore:loop is closed:ResourceWarning",
-    "ignore::pytest.PytestUnraisableExceptionWarning",
-]
+filterwarnings = ["error"]

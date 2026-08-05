@@ -40,11 +40,4 @@ addopts = "-m 'not integration'"
 markers = [
     "integration: marks tests as integration tests (requires Docker/testcontainers)",
 ]
-filterwarnings = [
-    # grpcio async interceptor cleanup bug - library issue we cannot fix
-    # https://github.com/grpc/grpc/issues/35020
-    "ignore:Exception ignored in.*InterceptedCall.__del__:pytest.PytestUnraisableExceptionWarning",
-    "ignore:coroutine 'InterceptedUnaryUnaryCall._invoke' was never awaited:RuntimeWarning",
-    # testcontainers library deprecation - not our code, will be fixed in future testcontainers release
-    "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning",
-]
+filterwarnings = ["error"]
