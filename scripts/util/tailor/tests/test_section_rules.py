@@ -223,7 +223,7 @@ class TestUniqueOpeningWordsRule:
 
     def test_passes_when_all_opening_words_unique(self) -> None:
         rule = UniqueOpeningWordsRule()
-        params = UniqueOpeningWordsParams(enabled=True, scope="entry")
+        params = UniqueOpeningWordsParams(scope="entry")
         resolved: Resolved = _resolved(["Led team", "Built system", "Designed API"])
         result = rule.check(
             rule_id="test.unique_words",
@@ -235,7 +235,7 @@ class TestUniqueOpeningWordsRule:
 
     def test_fails_when_duplicate_opening_words(self) -> None:
         rule = UniqueOpeningWordsRule()
-        params = UniqueOpeningWordsParams(enabled=True, scope="entry")
+        params = UniqueOpeningWordsParams(scope="entry")
         resolved: Resolved = _resolved(["Led team", "Led project", "Led initiative"])
         result = rule.check(
             rule_id="test.unique_words",
@@ -245,22 +245,10 @@ class TestUniqueOpeningWordsRule:
         )
         assert len(result) == 2  # 2nd and 3rd items flagged
 
-    def test_disabled_returns_empty(self) -> None:
-        rule = UniqueOpeningWordsRule()
-        params = UniqueOpeningWordsParams(enabled=False, scope="entry")
-        resolved: Resolved = _resolved(["Led team", "Led project"])
-        result = rule.check(
-            rule_id="test.unique_words",
-            severity=Severity.WARNING,
-            resolved=resolved,
-            params=params,
-        )
-        assert result == []
-
     def test_scope_section_aggregates_across_paths(self) -> None:
         """Section scope flags duplicates across every resolved path in one call."""
         rule = UniqueOpeningWordsRule()
-        params = UniqueOpeningWordsParams(enabled=True, scope="section")
+        params = UniqueOpeningWordsParams(scope="section")
         resolved: Resolved = [
             ("experience.entries[0].bullets", ["Led the migration", "Shipped the API"]),
             (
@@ -281,7 +269,7 @@ class TestUniqueOpeningWordsRule:
     def test_scope_document_is_alias_for_section(self) -> None:
         """Document scope aggregates the same way as section in the flat schema."""
         rule = UniqueOpeningWordsRule()
-        params = UniqueOpeningWordsParams(enabled=True, scope="document")
+        params = UniqueOpeningWordsParams(scope="document")
         resolved: Resolved = [
             ("a", ["Built system X"]),
             ("b", ["Built system Y"]),
@@ -298,7 +286,7 @@ class TestUniqueOpeningWordsRule:
     def test_scope_entry_still_isolates_paths(self) -> None:
         """Entry scope (default) does NOT flag the same opener across different paths."""
         rule = UniqueOpeningWordsRule()
-        params = UniqueOpeningWordsParams(enabled=True, scope="entry")
+        params = UniqueOpeningWordsParams(scope="entry")
         resolved: Resolved = [
             ("a", ["Led the migration"]),
             ("b", ["Led the launch"]),
@@ -318,10 +306,10 @@ class TestUniqueOpeningWordsRule:
         with pytest.raises(ValidationError):
             # ``model_validate`` takes an untyped mapping, so the invalid scope is
             # exercised at Pydantic's validation layer (not the static call).
-            UniqueOpeningWordsParams.model_validate({"enabled": True, "scope": "paragraph"})
+            UniqueOpeningWordsParams.model_validate({"scope": "paragraph"})
         # Sanity: the rule happily accepts the three valid scopes.
         for valid_scope in ("entry", "section", "document"):
-            validated = UniqueOpeningWordsParams.model_validate({"enabled": True, "scope": valid_scope})
+            validated = UniqueOpeningWordsParams.model_validate({"scope": valid_scope})
             rule.check(
                 rule_id="test.unique_words",
                 severity=Severity.WARNING,

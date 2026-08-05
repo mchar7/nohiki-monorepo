@@ -2983,7 +2983,7 @@
           "auth-listings"
         ],
         "summary": "Get Auth Listings",
-        "description": "Serve weighted, diversity-filtered job listings for the auth page.\n\nArgs:\n    db: Async database session.\n    settings: Application settings.\n    country: ISO 3166-1 alpha-3 country code (3 uppercase letters).\n    _lat: Latitude (accepted for forward compatibility, unused in v1).\n    _lon: Longitude (accepted for forward compatibility, unused in v1).\n    lang: Language preference for weighting.\n\nReturns:\n    Geo-targeted, diversity-filtered job listings.",
+        "description": "Serve weighted, diversity-filtered job listings for the auth page.\n\nArgs:\n    db: Async database session.\n    settings: Application settings.\n    country: ISO 3166-1 alpha-3 country code (3 uppercase letters).\n    lang: Language preference for weighting.\n\nReturns:\n    Geo-targeted, diversity-filtered job listings.",
         "operationId": "get_auth_listings_api_v1_auth_listings__get",
         "parameters": [
           {
@@ -2994,38 +2994,6 @@
               "type": "string",
               "pattern": "^[A-Z]{3}$",
               "title": "Country"
-            }
-          },
-          {
-            "name": "lat",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Lat"
-            }
-          },
-          {
-            "name": "lon",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Lon"
             }
           },
           {

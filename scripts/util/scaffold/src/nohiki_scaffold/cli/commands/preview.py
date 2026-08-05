@@ -7,9 +7,19 @@ from typing import Annotated
 
 import typer
 
+from nohiki_scaffold.cli.display import (
+    render_file_content_preview,
+    render_hints,
+    render_plan_files,
+    render_root_edits,
+    render_spec_panel,
+    render_validation_errors,
+)
+from nohiki_scaffold.cli.prompts import prompt_lib_spec, prompt_service_spec
 from nohiki_scaffold.config.paths import get_repo_root
 from nohiki_scaffold.core.build import build_plan
 from nohiki_scaffold.core.exceptions import ScaffoldError, ValidationError
+from nohiki_scaffold.core.spec_loader import load_lib_spec, load_service_spec
 from nohiki_scaffold.core.validators import validate_lib_spec, validate_service_spec
 
 _EXIT_SUCCESS = 0
@@ -147,84 +157,53 @@ def preview_service_command(
         repo_root = get_repo_root()
 
         if config_file:
-            try:
-                from nohiki_scaffold.core.spec_loader import load_service_spec
-
-                spec = load_service_spec(Path(config_file))
-            except ImportError:
-                msg = "spec_loader module not available (Phase E parallel workstream pending)"
-                typer.echo(f"Error: {msg}", err=True)
-                raise typer.Exit(code=_EXIT_APPLY_ERROR) from None
+            spec = load_service_spec(Path(config_file))
         else:
-            try:
-                from nohiki_scaffold.cli.prompts import prompt_service_spec
-
-                spec = prompt_service_spec(
-                    name=name,
-                    friendly_name=friendly_name,
-                    description=description,
-                    owner=owner,
-                    shape=shape,
-                    env_prefix=env_prefix,
-                    module_name=module_name,
-                    db=db,
-                    schema_name=schema_name,
-                    outbox=outbox,
-                    alembic=alembic,
-                    redis=redis,
-                    kafka_role=kafka_role,
-                    handler=handler,
-                    embedding_callback=embedding_callback,
-                    max_concurrent_handlers=max_concurrent_handlers,
-                    s3=s3,
-                    s3_bucket=s3_bucket,
-                    s3_key_prefix=s3_key_prefix,
-                    llm=llm,
-                    llm_provider=llm_provider,
-                    llm_model=llm_model,
-                    llm_api_key_env=llm_api_key_env,
-                    qdrant=qdrant,
-                    qdrant_collection_entity=qdrant_collection_entity,
-                    manifest=manifest,
-                    service_holder_pattern=service_holder_pattern,
-                    fail_fast_validation=fail_fast_validation,
-                    non_interactive=False,
-                )
-            except ImportError:
-                msg = "prompts module not available (Phase E parallel workstream pending)"
-                typer.echo(f"Error: {msg}", err=True)
-                raise typer.Exit(code=_EXIT_APPLY_ERROR) from None
+            spec = prompt_service_spec(
+                name=name,
+                friendly_name=friendly_name,
+                description=description,
+                owner=owner,
+                shape=shape,
+                env_prefix=env_prefix,
+                module_name=module_name,
+                db=db,
+                schema_name=schema_name,
+                outbox=outbox,
+                alembic=alembic,
+                redis=redis,
+                kafka_role=kafka_role,
+                handler=handler,
+                embedding_callback=embedding_callback,
+                max_concurrent_handlers=max_concurrent_handlers,
+                s3=s3,
+                s3_bucket=s3_bucket,
+                s3_key_prefix=s3_key_prefix,
+                llm=llm,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+                llm_api_key_env=llm_api_key_env,
+                qdrant=qdrant,
+                qdrant_collection_entity=qdrant_collection_entity,
+                manifest=manifest,
+                service_holder_pattern=service_holder_pattern,
+                fail_fast_validation=fail_fast_validation,
+                non_interactive=False,
+            )
 
         problems = validate_service_spec(spec, repo_root)
         if problems:
-            try:
-                from nohiki_scaffold.cli.display import render_validation_errors
-
-                render_validation_errors(problems)
-            except ImportError, AttributeError:
-                for problem in problems:
-                    typer.echo(f"Error: {problem}", err=True)
+            render_validation_errors(problems)
             raise typer.Exit(code=_EXIT_VALIDATION) from None  # noqa: TRY301
 
         plan = build_plan(spec, repo_root=repo_root)
 
-        try:
-            from nohiki_scaffold.cli.display import (
-                render_file_content_preview,
-                render_hints,
-                render_plan_files,
-                render_root_edits,
-                render_spec_panel,
-            )
-
-            render_spec_panel(spec)
-            render_plan_files(plan, explain=explain)
-            render_root_edits(plan)
-            if full:
-                render_file_content_preview(plan, max_lines=30)
-            render_hints(plan)
-        except ImportError, AttributeError:
-            typer.echo("(display module not available — skipping preview)")
+        render_spec_panel(spec)
+        render_plan_files(plan, explain=explain)
+        render_root_edits(plan)
+        if full:
+            render_file_content_preview(plan, max_lines=30)
+        render_hints(plan)
 
         raise typer.Exit(code=_EXIT_SUCCESS) from None  # noqa: TRY301
 
@@ -288,63 +267,32 @@ def preview_lib_command(
         repo_root = get_repo_root()
 
         if config_file:
-            try:
-                from nohiki_scaffold.core.spec_loader import load_lib_spec
-
-                spec = load_lib_spec(Path(config_file))
-            except ImportError:
-                msg = "spec_loader module not available (Phase E parallel workstream pending)"
-                typer.echo(f"Error: {msg}", err=True)
-                raise typer.Exit(code=_EXIT_APPLY_ERROR) from None
+            spec = load_lib_spec(Path(config_file))
         else:
-            try:
-                from nohiki_scaffold.cli.prompts import prompt_lib_spec
-
-                spec = prompt_lib_spec(
-                    name=name,
-                    description=description,
-                    owner=owner,
-                    module_name=module_name,
-                    namespace_package=namespace_package,
-                    ships_testing_module=ships_testing_module,
-                    ships_exceptions_module=ships_exceptions_module,
-                    non_interactive=False,
-                )
-            except ImportError:
-                msg = "prompts module not available (Phase E parallel workstream pending)"
-                typer.echo(f"Error: {msg}", err=True)
-                raise typer.Exit(code=_EXIT_APPLY_ERROR) from None
+            spec = prompt_lib_spec(
+                name=name,
+                description=description,
+                owner=owner,
+                module_name=module_name,
+                namespace_package=namespace_package,
+                ships_testing_module=ships_testing_module,
+                ships_exceptions_module=ships_exceptions_module,
+                non_interactive=False,
+            )
 
         problems = validate_lib_spec(spec, repo_root)
         if problems:
-            try:
-                from nohiki_scaffold.cli.display import render_validation_errors
-
-                render_validation_errors(problems)
-            except ImportError, AttributeError:
-                for problem in problems:
-                    typer.echo(f"Error: {problem}", err=True)
+            render_validation_errors(problems)
             raise typer.Exit(code=_EXIT_VALIDATION) from None  # noqa: TRY301
 
         plan = build_plan(spec, repo_root=repo_root)
 
-        try:
-            from nohiki_scaffold.cli.display import (
-                render_file_content_preview,
-                render_hints,
-                render_plan_files,
-                render_root_edits,
-                render_spec_panel,
-            )
-
-            render_spec_panel(spec)
-            render_plan_files(plan, explain=explain)
-            render_root_edits(plan)
-            if full:
-                render_file_content_preview(plan, max_lines=30)
-            render_hints(plan)
-        except ImportError, AttributeError:
-            typer.echo("(display module not available — skipping preview)")
+        render_spec_panel(spec)
+        render_plan_files(plan, explain=explain)
+        render_root_edits(plan)
+        if full:
+            render_file_content_preview(plan, max_lines=30)
+        render_hints(plan)
 
         raise typer.Exit(code=_EXIT_SUCCESS) from None  # noqa: TRY301
 

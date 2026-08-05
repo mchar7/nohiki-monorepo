@@ -31,8 +31,6 @@ async def get_auth_listings(
     db: Annotated[AsyncSession, Depends(get_async_db)],
     settings: Annotated[Settings, Depends(get_settings)],
     country: Annotated[str, Query(pattern=r"^[A-Z]{3}$")],
-    _lat: Annotated[float | None, Query(alias="lat")] = None,
-    _lon: Annotated[float | None, Query(alias="lon")] = None,
     lang: Annotated[str | None, Query()] = None,
 ) -> AuthListingsResponse:
     """Serve weighted, diversity-filtered job listings for the auth page.
@@ -41,8 +39,6 @@ async def get_auth_listings(
         db: Async database session.
         settings: Application settings.
         country: ISO 3166-1 alpha-3 country code (3 uppercase letters).
-        _lat: Latitude (accepted for forward compatibility, unused in v1).
-        _lon: Longitude (accepted for forward compatibility, unused in v1).
         lang: Language preference for weighting.
 
     Returns:

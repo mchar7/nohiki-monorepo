@@ -236,16 +236,6 @@ def _display_model_detail(evaluation: ModelEvaluation) -> None:
 
     console.print(detail_table)
 
-    if evaluation.disqualification_details:
-        dq_lines = [f"  [red]•[/red] [{dq.category}] {dq.reason}" for dq in evaluation.disqualification_details]
-        console.print(
-            Panel(
-                "\n".join(dq_lines),
-                title=f"[red]Disqualifications ({evaluation.total_disqualifications})[/red]",
-                border_style="red",
-            )
-        )
-
 
 def display_evaluation_results(summary: EvaluationSummary) -> None:
     """Display complete evaluation results with rankings and category detail.
@@ -261,7 +251,6 @@ def display_evaluation_results(summary: EvaluationSummary) -> None:
     ranking_table.add_column("Model", style="cyan")
     ranking_table.add_column("Classification", justify="center")
     ranking_table.add_column("Overall", justify="right")
-    ranking_table.add_column("DQs", justify="right")
     ranking_table.add_column("Evals", justify="right", style="dim")
 
     for evaluation in summary.model_evaluations:
@@ -271,7 +260,6 @@ def display_evaluation_results(summary: EvaluationSummary) -> None:
             evaluation.model,
             f"[{cls_color}]{evaluation.classification.value}[/{cls_color}]",
             _format_score(evaluation.overall_mean),
-            str(evaluation.total_disqualifications) if evaluation.total_disqualifications else "[dim]0[/dim]",
             str(evaluation.evaluation_count),
         )
 

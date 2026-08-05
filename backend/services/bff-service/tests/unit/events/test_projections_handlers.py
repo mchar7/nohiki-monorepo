@@ -51,6 +51,7 @@ from nohiki.common.v1 import (
     SalaryPreference,
     TransitMode,
 )
+from nohiki.doc.template.v1 import TemplateAudience
 from nohiki.job.correlation.v1 import (
     FitFactor,
     FitFactorContribution,
@@ -415,30 +416,6 @@ async def test_revocation_handlers_reject_malformed_user_uuid(
     """Malformed event user identifiers fail before a ledger write."""
     with pytest.raises(ValueError, match="badly formed hexadecimal UUID string"):
         await handler(event, _make_context(db_session=create_mock_session()))
-
-
-@pytest.mark.asyncio
-async def test_handle_legacy_account_deleted_creates_permanent_tombstone() -> None:
-    """Legacy deletion replay without metadata still blocks resurrection."""
-    user_id = uuid.uuid4()
-    mock_session = create_mock_session()
-
-    with patch(
-        "bff_service.events.projections.user_auth.record_user_revocation_cutoff",
-        new_callable=AsyncMock,
-    ) as record:
-        await handle_account_deleted(
-            AccountDeleted(user_id=str(user_id), metadata=None),
-            _make_context(db_session=mock_session),
-        )
-
-    record.assert_awaited_once_with(
-        mock_session,
-        user_id=user_id,
-        revoked_before=datetime.min.replace(tzinfo=UTC),
-        is_permanent=True,
-    )
-    assert any("DELETE FROM" in str(call.args[0]) for call in mock_session.execute.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -1227,6 +1204,42 @@ async def test_handle_template_updated() -> None:
     _assert_command_marked_completed(mock_session, request_id)
     projection_stmt = mock_session.execute.await_args_list[0].args[0]
     assert projection_stmt.compile().params["display_name"] == "Modern Résumé"
+
+
+@pytest.mark.asyncio
+async def test_handle_template_updated_preserves_protobuf_defaults() -> None:
+    """Default-valued optional snapshot fields are projected, not treated as absent."""
+    template_id = uuid.uuid4()
+    request_id = uuid.uuid4()
+    version_snapshot = MagicMock(
+        version_id="",
+        version="2.0.0",
+        template_content="<html>{{ title }}</html>",
+        content_schema_json="",
+    )
+    snapshot = MagicMock(
+        namespace="default",
+        name="resume-modern",
+        display_name="",
+        audience=TemplateAudience.UNSPECIFIED,
+        description="",
+        access_scope=None,
+        owner_id="",
+        version_snapshot=version_snapshot,
+    )
+    event = TemplateUpdated()
+    event.template_id = str(template_id)
+    event.template_snapshot = snapshot
+    event.metadata = MagicMock(correlation_id=str(request_id))
+    mock_session = create_mock_session()
+
+    await handle_template_updated(event, _make_context(db_session=mock_session))
+
+    _assert_command_marked_completed(mock_session, request_id)
+    projection_stmt = mock_session.execute.await_args_list[0].args[0]
+    projection_params = projection_stmt.compile().params
+    assert projection_params["display_name"] == ""
+    assert projection_params["audience"] == TemplateAudience.UNSPECIFIED
 
 
 @pytest.mark.asyncio

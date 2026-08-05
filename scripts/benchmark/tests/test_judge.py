@@ -48,6 +48,7 @@ from llm_benchmark.schemas.metrics import RunResult as _RunResult
 
 
 class RunResult(_RunResult):
+    retry_count: int | None = 0
     treatment_fingerprint: str = "test-treatment"
     cell_fingerprint: str = "test-cell"
 
@@ -933,7 +934,7 @@ class TestEvaluateBenchmark:
         mock_fixture.return_value = MagicMock()
         mock_prompt.return_value = "source"
         benchmark = _make_benchmark(models={"openrouter:qwen/synthetic-candidate": [("f1", 1, True, OUTPUT_A)]})
-        judgment = PointwiseJudgment.model_construct(disqualifications=[])
+        judgment = PointwiseJudgment.model_construct()
         unit = JudgmentUnit(
             fixture_id="f1",
             treatment="openrouter:qwen/synthetic-candidate",

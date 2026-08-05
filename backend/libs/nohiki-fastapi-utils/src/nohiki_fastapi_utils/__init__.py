@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from uuid import UUID
 
-from fastapi import Header, HTTPException, status
 from nohiki_observability import (
     CORRELATION_ID_HEADER,
     CorrelationIdMiddleware,
@@ -22,26 +20,6 @@ from .health_router import (
 )
 from .pagination import PaginatedResponse, PaginationParams, SortParams
 from .root_router import build_root_router
-
-
-def get_current_user_id_from_header(
-    x_account_id: str | None = Header(default=None, alias="X-Account-Id"),
-) -> UUID:
-    """Extract and validate user ID from X-Account-Id header."""
-    if not x_account_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing X-Account-Id header",
-        )
-
-    try:
-        return UUID(x_account_id)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid X-Account-Id header",
-        ) from e
-
 
 _JWT_AVAILABLE = False
 _RATE_LIMITER_AVAILABLE = False
@@ -113,7 +91,6 @@ __all__ = [
     "build_stateless_health_router",
     "create_csrf_middleware",
     "get_correlation_id",
-    "get_current_user_id_from_header",
     "set_correlation_id",
     "setup_error_handlers",
     "validate_csrf",

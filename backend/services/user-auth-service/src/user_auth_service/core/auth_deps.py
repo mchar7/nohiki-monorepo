@@ -44,11 +44,10 @@ async def get_current_user_id_from_cookie(
             algorithms=[JWT_ALGORITHM],
             audience=handler.config.audience,
             issuer=handler.config.issuer,
-            options={"require": ["sub", "iat", "exp", "jti"]},
+            options={"require": ["sub", "iat", "exp", "jti", "session_family_id"]},
         )
         user_id_str = str(payload["sub"])
-        raw_family_id = payload.get("session_family_id")
-        session_family_id = UUID(raw_family_id) if raw_family_id is not None else None
+        session_family_id = UUID(payload["session_family_id"])
         jti = payload["jti"]
         iat = payload["iat"]
     except (pyjwt.InvalidTokenError, KeyError, TypeError, ValueError, OverflowError, OSError) as exc:
@@ -77,7 +76,7 @@ async def get_current_user_id_from_cookie(
             detail="Token has been revoked",
         )
 
-    if db is not None and session_family_id is not None:
+    if db is not None:
         try:
             family_revoked = await get_refresh_token_service().is_session_family_revoked(
                 db,

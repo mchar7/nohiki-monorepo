@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from uuid import UUID
-
-import pytest
-from fastapi import HTTPException
 from nohiki_fastapi_utils import (
     CORRELATION_ID_HEADER,
     CorrelationIdMiddleware,
@@ -15,7 +11,6 @@ from nohiki_fastapi_utils import (
     build_root_router,
     build_stateless_health_router,
     get_correlation_id,
-    get_current_user_id_from_header,
     set_correlation_id,
     setup_error_handlers,
     validate_csrf,
@@ -76,34 +71,3 @@ class TestPackageExports:
         """Test validate_csrf is exported."""
         assert validate_csrf is not None
         assert callable(validate_csrf)
-
-
-class TestGetCurrentUserIdFromHeader:
-    """Tests for get_current_user_id_from_header function."""
-
-    def test_returns_uuid_for_valid_header(self) -> None:
-        """Test returns UUID for valid X-Account-Id header."""
-        valid_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        result = get_current_user_id_from_header(valid_uuid)
-        assert isinstance(result, UUID)
-        assert str(result) == valid_uuid
-
-    def test_raises_for_missing_header(self) -> None:
-        """Test raises HTTPException for missing header."""
-        with pytest.raises(HTTPException) as exc_info:
-            get_current_user_id_from_header(None)
-        assert exc_info.value.status_code == 401
-        assert "Missing" in exc_info.value.detail
-
-    def test_raises_for_invalid_uuid(self) -> None:
-        """Test raises HTTPException for invalid UUID."""
-        with pytest.raises(HTTPException) as exc_info:
-            get_current_user_id_from_header("not-a-valid-uuid")
-        assert exc_info.value.status_code == 401
-        assert "Invalid" in exc_info.value.detail
-
-    def test_raises_for_empty_string(self) -> None:
-        """Test raises HTTPException for empty string."""
-        with pytest.raises(HTTPException) as exc_info:
-            get_current_user_id_from_header("")
-        assert exc_info.value.status_code == 401

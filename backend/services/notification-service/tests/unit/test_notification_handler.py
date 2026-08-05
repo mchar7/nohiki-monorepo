@@ -159,7 +159,7 @@ class TestSendNotification:
                 template_context=template_context,
                 email_address="test@example.com",
                 user_id=user_id,
-                correlation_id="corr-123",
+                correlation_id=uuid.UUID("00000000-0000-4000-8000-000000000001"),
             )
             await _send_notification(params, db=create_mock_session())
 
@@ -189,7 +189,7 @@ class TestSendNotification:
                 template_context=template_context,
                 email_address="test@example.com",
                 user_id=user_id,
-                correlation_id="corr-123",
+                correlation_id=uuid.UUID("00000000-0000-4000-8000-000000000001"),
             )
             await _send_notification(params, db=create_mock_session())
 
@@ -216,7 +216,7 @@ class TestSendNotification:
                 template_context=template_context,
                 email_address="test@example.com",
                 user_id=user_id,
-                correlation_id="corr-123",
+                correlation_id=uuid.UUID("00000000-0000-4000-8000-000000000001"),
             )
             with pytest.raises(RuntimeError, match="Send failed"):
                 await _send_notification(params, db=create_mock_session())
@@ -367,6 +367,37 @@ class TestHandleNotificationEvent:
             await handle_notification_event(EVENT_TYPE_CORRELATION_EVALUATED, event, context)
 
             mock_service.send_job_notification_ecst.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_sends_without_optional_message_correlation_id(self) -> None:
+        """An absent message correlation ID remains explicitly absent."""
+        context = _create_context()
+        context.correlation_id = None
+        listing_snapshot = _create_listing_snapshot(str(uuid.uuid4()))
+        pref_snapshot = _create_pref_snapshot(
+            str(uuid.uuid4()),
+            str(uuid.uuid4()),
+            threshold=80,
+            email="test@example.com",
+        )
+        event = CorrelationEvaluated(
+            correlation_id=str(uuid.uuid4()),
+            fit_score=85,
+            listing_snapshot=listing_snapshot,
+            pref_snapshot=pref_snapshot,
+        )
+
+        with patch("notification_service.services.notification_handler.NotificationService") as service_class:
+            service = AsyncMock()
+            service.send_job_notification_ecst = AsyncMock(return_value=[MagicMock()])
+            service_class.return_value = service
+
+            await handle_notification_event(EVENT_TYPE_CORRELATION_EVALUATED, event, context)
+
+        call = service.send_job_notification_ecst.await_args
+        assert call is not None
+        params = call.kwargs["params"]
+        assert params.correlation_id is None
 
     @pytest.mark.asyncio
     async def test_inline_template_is_persisted_ready_with_dedupe_identity(self) -> None:

@@ -22,6 +22,10 @@ logger = get_logger(__name__)
 
 LOCK_POLL_INTERVAL = 1
 
+# Two-key advisory locks occupy a namespace separate from the one-key migration
+# locks. This transaction-scoped lock serializes lock ownership and metadata.
+LOCK_METADATA_GUARD_NAMESPACE = 0x4E4F4849
+
 _lock_meta = MetaData()
 lock_meta_table = Table(
     "alembic_lock_meta",
@@ -77,10 +81,53 @@ async def try_acquire_lock(conn: AsyncConnection, lock_id: int) -> bool:
     return bool(result.scalar())
 
 
+async def _acquire_metadata_guard(conn: AsyncConnection, lock_id: int) -> None:
+    """Serialize advisory-lock ownership changes with metadata changes."""
+    await conn.execute(select(func.pg_advisory_xact_lock(LOCK_METADATA_GUARD_NAMESPACE, lock_id)))
+
+
+async def acquire_lock_with_metadata(
+    conn: AsyncConnection,
+    lock_id: int,
+    holder_id: str,
+) -> tuple[bool, tuple[datetime, str] | None]:
+    """Acquire the lock and observe holder metadata under the same guard."""
+    await _acquire_metadata_guard(conn, lock_id)
+    acquired = False
+    try:
+        acquired = await try_acquire_lock(conn, lock_id)
+        metadata = None
+        if acquired:
+            await set_lock_metadata(conn, lock_id, holder_id)
+        else:
+            metadata = await get_lock_metadata(conn, lock_id)
+        await conn.commit()
+    except Exception, asyncio.CancelledError:
+        try:
+            if acquired:
+                await release_lock(conn, lock_id)
+        finally:
+            await conn.rollback()
+        raise
+    return acquired, metadata
+
+
 async def release_lock(conn: AsyncConnection, lock_id: int) -> None:
     """Release advisory lock using SQLAlchemy func."""
     stmt = select(func.pg_advisory_unlock(lock_id))
     await conn.execute(stmt)
+
+
+async def release_lock_with_metadata(conn: AsyncConnection, lock_id: int) -> None:
+    """Release the lock and remove its metadata as one observable transition."""
+    await _acquire_metadata_guard(conn, lock_id)
+    try:
+        await release_lock(conn, lock_id)
+        await clear_lock_metadata(conn, lock_id)
+        await conn.commit()
+    except Exception, asyncio.CancelledError:
+        await conn.rollback()
+        raise
 
 
 async def wait_for_lock_release(

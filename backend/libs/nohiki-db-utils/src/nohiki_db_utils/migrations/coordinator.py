@@ -16,12 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .executor import execute_migrations
 from .lock import (
-    clear_lock_metadata,
+    acquire_lock_with_metadata,
     ensure_lock_meta_table,
-    get_lock_metadata,
-    release_lock,
-    set_lock_metadata,
-    try_acquire_lock,
+    release_lock_with_metadata,
     wait_for_lock_release,
 )
 from .protocols import DatabaseSettingsProvider, LockContext
@@ -83,24 +80,31 @@ async def run_migrations_with_coordination(
         service=service_name,
         lock_id=lock_id,
     )
-    engine = create_async_engine_with_ssl(database_url, isolation_level="AUTOCOMMIT")
+    engine = create_async_engine_with_ssl(database_url)
 
     lock_context = LockContext(service_name, pod_id, database_url, alembic_config_path)
 
     try:
         async with engine.connect() as conn:
             await ensure_lock_meta_table(conn)
+            await conn.commit()
             logger.info(
                 "Acquiring migration lock",
                 service=service_name,
                 lock_id=lock_id,
             )
-            acquired = await try_acquire_lock(conn, lock_id)
+            acquired, lock_meta = await acquire_lock_with_metadata(conn, lock_id, pod_id)
 
             if acquired:
                 await _run_with_lock(conn, lock_id, lock_context, timeout_seconds, head_rev)
             else:
-                await _handle_lock_not_acquired(conn, lock_id, timeout_seconds, lock_context)
+                await _handle_lock_not_acquired(
+                    conn,
+                    lock_id,
+                    timeout_seconds,
+                    lock_context,
+                    lock_meta,
+                )
 
     except MigrationError:
         raise
@@ -126,7 +130,6 @@ async def _run_with_lock(
         pod_id=ctx.pod_id,
         lock_id=lock_id,
     )
-    await set_lock_metadata(conn, lock_id, ctx.pod_id)
 
     try:
         await execute_migrations(ctx.service_name, ctx.database_url, timeout_seconds, ctx.alembic_config_path)
@@ -145,8 +148,8 @@ async def _run_with_lock(
         set_migration_status("failed", error=str(err))
         raise
     finally:
-        await clear_lock_metadata(conn, lock_id)
-        await release_lock(conn, lock_id)
+        await conn.rollback()
+        await release_lock_with_metadata(conn, lock_id)
         logger.info(
             "Migration lock released",
             service=ctx.service_name,
@@ -159,45 +162,41 @@ async def _handle_lock_not_acquired(
     lock_id: int,
     timeout_seconds: int,
     context: LockContext,
+    lock_meta: tuple[datetime, str] | None,
 ) -> None:
     """Handle case when lock is held by another pod."""
-    lock_meta = await get_lock_metadata(conn, lock_id)
+    if lock_meta is None:
+        msg = "Migration lock metadata missing"
+        raise MigrationError(msg)
 
-    if lock_meta:
-        acquired_at, holder_id = lock_meta
-        age_seconds = (datetime.now(UTC) - acquired_at).total_seconds()
+    acquired_at, holder_id = lock_meta
+    age_seconds = (datetime.now(UTC) - acquired_at).total_seconds()
 
-        logger.info(
-            "Migration lock held by another pod",
+    logger.info(
+        "Migration lock held by another pod",
+        service=context.service_name,
+        holder_pod=holder_id,
+        lock_age_seconds=round(age_seconds, 1),
+        max_wait_seconds=timeout_seconds,
+    )
+
+    if age_seconds > timeout_seconds:
+        logger.warning(
+            "Stale migration lock detected",
             service=context.service_name,
             holder_pod=holder_id,
             lock_age_seconds=round(age_seconds, 1),
-            max_wait_seconds=timeout_seconds,
+            timeout_seconds=timeout_seconds,
         )
+        logger.info("Waiting for stale lock to expire...", service=context.service_name)
 
-        if age_seconds > timeout_seconds:
-            logger.warning(
-                "Stale migration lock detected",
-                service=context.service_name,
-                holder_pod=holder_id,
-                lock_age_seconds=round(age_seconds, 1),
-                timeout_seconds=timeout_seconds,
-            )
-            logger.info("Waiting for stale lock to expire...", service=context.service_name)
-
-        remaining_wait = max(0, timeout_seconds - age_seconds)
-        if remaining_wait > 0:
-            logger.info(
-                "Waiting for lock release",
-                service=context.service_name,
-                max_wait_seconds=round(remaining_wait, 1),
-            )
-    else:
+    remaining_wait = max(0, timeout_seconds - age_seconds)
+    if remaining_wait > 0:
         logger.info(
-            "Migration lock held (no metadata - legacy lock)",
+            "Waiting for lock release",
             service=context.service_name,
+            max_wait_seconds=round(remaining_wait, 1),
         )
-        remaining_wait = timeout_seconds
 
     await wait_for_lock_release(conn, lock_id, int(remaining_wait) + 5, context.service_name)
 
@@ -221,14 +220,14 @@ async def _handle_lock_not_acquired(
             "Acquiring lock to complete migration",
             service=context.service_name,
         )
-        acquired = await try_acquire_lock(conn, lock_id)
+        await conn.rollback()
+        acquired, _ = await acquire_lock_with_metadata(conn, lock_id, context.pod_id)
         if acquired:
             logger.info(
                 "Migration lock acquired (recovery)",
                 service=context.service_name,
                 pod_id=context.pod_id,
             )
-            await set_lock_metadata(conn, lock_id, context.pod_id)
             try:
                 await execute_migrations(
                     context.service_name,
@@ -244,8 +243,8 @@ async def _handle_lock_not_acquired(
                     final_version=final_rev,
                 )
             finally:
-                await clear_lock_metadata(conn, lock_id)
-                await release_lock(conn, lock_id)
+                await conn.rollback()
+                await release_lock_with_metadata(conn, lock_id)
                 logger.info(
                     "Migration lock released",
                     service=context.service_name,

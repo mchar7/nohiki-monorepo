@@ -1,9 +1,9 @@
 """Score aggregation and model classification from pointwise judge evaluations.
 
 Aggregates per-model pointwise judge scores into overall model rankings and
-classifies each model into tiers based on disqualification counts and average
-scores. Also provides multi-judge consensus computation and the
-``EvaluationResult`` container returned by the judge engine.
+classifies each model into tiers based on average scores. Also provides
+multi-judge consensus computation and the ``EvaluationResult`` container
+returned by the judge engine.
 """
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from statistics import mean, stdev
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from llm_benchmark.config.constants import CAUTION_THRESHOLD, FAIL_THRESHOLD, WARNING_THRESHOLD
-from llm_benchmark.schemas.judge import CATEGORY_NAMES, Disqualification, PointwiseJudgment
+from llm_benchmark.schemas.judge import CATEGORY_NAMES, PointwiseJudgment
 
 
 class Classification(StrEnum):
@@ -56,8 +56,6 @@ class ModelEvaluation(BaseModel):
         classification: Tier classification.
         overall_mean: Mean of all category means (single headline number).
         category_aggregates: Per-category aggregated statistics.
-        total_disqualifications: Total DQ flags across all evaluated runs.
-        disqualification_details: All individual DQ records.
         rank: 1-indexed rank among all evaluated models.
         evaluation_count: Number of pointwise evaluations for this model.
     """
@@ -66,8 +64,6 @@ class ModelEvaluation(BaseModel):
     classification: Classification
     overall_mean: float
     category_aggregates: list[CategoryAggregate]
-    total_disqualifications: int = 0
-    disqualification_details: list[Disqualification] = Field(default_factory=list)
     rank: int = 0
     evaluation_count: int = 0
 
@@ -88,17 +84,9 @@ class EvaluationSummary(BaseModel):
     total_cost_usd: float = 0.0
 
 
-def _classify_model(overall_mean: float, disqualification_count: int) -> Classification:
-    """Classify a model into a tier based on score and disqualifications.
-
-    Args:
-        overall_mean: Mean of all category means.
-        disqualification_count: Total DQ flags.
-
-    Returns:
-        Classification tier.
-    """
-    if disqualification_count > 0 or overall_mean < FAIL_THRESHOLD:
+def _classify_model(overall_mean: float) -> Classification:
+    """Classify a model into a tier based on its score."""
+    if overall_mean < FAIL_THRESHOLD:
         return Classification.FAIL
     if overall_mean < WARNING_THRESHOLD:
         return Classification.WARNING
@@ -114,7 +102,6 @@ class _ModelAccumulator:
     scores_by_category: dict[str, list[int]] = field(
         default_factory=lambda: defaultdict(list),
     )
-    disqualifications: list[Disqualification] = field(default_factory=list)
     eval_count: int = 0
 
 
@@ -137,7 +124,6 @@ def _accumulate_pointwise_judgments(
         for judgment in judgments:
             total += 1
             acc.eval_count += 1
-            acc.disqualifications.extend(judgment.disqualifications)
 
             for category, score in judgment.category_scores.items():
                 acc.scores_by_category[category].append(score)
@@ -210,19 +196,14 @@ def aggregate_evaluations(
         evaluations.append(
             ModelEvaluation(
                 model=model_name,
-                classification=_classify_model(
-                    overall_mean,
-                    len(acc.disqualifications),
-                ),
+                classification=_classify_model(overall_mean),
                 overall_mean=round(overall_mean, 1),
                 category_aggregates=category_aggregates,
-                total_disqualifications=len(acc.disqualifications),
-                disqualification_details=acc.disqualifications,
                 evaluation_count=acc.eval_count,
             )
         )
 
-    evaluations.sort(key=lambda e: (-e.overall_mean, e.total_disqualifications))
+    evaluations.sort(key=lambda e: -e.overall_mean)
     for rank, evaluation in enumerate(evaluations, start=1):
         evaluation.rank = rank
 
@@ -349,7 +330,7 @@ def compute_multi_judge_summary(
         consensus_evaluations.append(
             ModelEvaluation(
                 model=treatment,
-                classification=_classify_model(overall, 0),
+                classification=_classify_model(overall),
                 overall_mean=round(overall, 1),
                 category_aggregates=categories,
                 evaluation_count=evaluation_count,

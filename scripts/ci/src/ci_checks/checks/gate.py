@@ -97,9 +97,7 @@ class _Attestation:
     event_action: str
     commit_class: str
     run_id: int
-    # Absent from every attestation written before the reuse short-circuit existed. Empty
-    # never equals a real base SHA, so an old proof fails the reuse check closed.
-    base_sha: str = ""
+    base_sha: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,7 +280,7 @@ def _download_attestation(repository: str, run_id: int) -> _Attestation:
     event_action = item.get("event_action")
     commit_class = item.get("commit_class")
     attested_run_id = item.get("run_id")
-    base_sha = item.get("base_sha", "")
+    base_sha = item.get("base_sha")
     if (
         not isinstance(tested_tree_sha, str)
         or not tested_tree_sha

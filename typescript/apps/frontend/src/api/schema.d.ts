@@ -1224,8 +1224,6 @@ export interface paths {
          *         db: Async database session.
          *         settings: Application settings.
          *         country: ISO 3166-1 alpha-3 country code (3 uppercase letters).
-         *         _lat: Latitude (accepted for forward compatibility, unused in v1).
-         *         _lon: Longitude (accepted for forward compatibility, unused in v1).
          *         lang: Language preference for weighting.
          *
          *     Returns:
@@ -4474,8 +4472,6 @@ export interface operations {
         parameters: {
             query: {
                 country: string;
-                lat?: number | null;
-                lon?: number | null;
                 lang?: string | null;
             };
             header?: {

@@ -98,7 +98,7 @@ class TestSiblingPathResolution:
 
         assert len(result) == 1
         concrete_path, items = result[0]
-        assert concrete_path == "items"
+        assert concrete_path == "$.items"
         assert items == [1, 2, 3]
 
     def test_multiple_siblings_loaded(self) -> None:

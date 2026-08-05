@@ -8,11 +8,22 @@ from typing import Annotated
 
 import typer
 
+from nohiki_scaffold.cli.display import (
+    console,
+    render_hints,
+    render_plan_files,
+    render_root_edits,
+    render_spec_panel,
+    render_validation_errors,
+)
+from nohiki_scaffold.cli.prompts import prompt_service_spec
 from nohiki_scaffold.config.paths import get_repo_root
 from nohiki_scaffold.core.build import apply_plan, build_plan
 from nohiki_scaffold.core.exceptions import ScaffoldError, ValidationError, WorkspaceEditError
 from nohiki_scaffold.core.features import VerifyMode
+from nohiki_scaffold.core.spec_loader import load_service_spec
 from nohiki_scaffold.core.validators import validate_service_spec
+from nohiki_scaffold.verify.runner import run_verify
 
 _EXIT_SUCCESS = 0
 _EXIT_VALIDATION = 2
@@ -33,12 +44,7 @@ def _check_git_dirty(repo_root: Path) -> None:
     )
     if result.stdout.strip():
         msg = "[yellow]Warning[/yellow]: Repository has uncommitted changes. Use [bold]--yes[/bold] to proceed anyway."
-        try:
-            from nohiki_scaffold.cli.display import console
-
-            console.print(msg)
-        except ImportError, AttributeError:
-            typer.echo(f"WARNING: {msg}")
+        console.print(msg)
         raise typer.Exit(code=_EXIT_GIT_DIRTY)
 
 
@@ -186,81 +192,51 @@ def new_service_command(
             _check_git_dirty(repo_root)
 
         if config_file:
-            try:
-                from nohiki_scaffold.core.spec_loader import load_service_spec
-
-                spec = load_service_spec(Path(config_file))
-            except ImportError:
-                msg = "spec_loader module not available (Phase E parallel workstream pending)"
-                typer.echo(f"Error: {msg}", err=True)
-                raise typer.Exit(code=_EXIT_APPLY_ERROR) from None
+            spec = load_service_spec(Path(config_file))
         else:
-            try:
-                from nohiki_scaffold.cli.prompts import prompt_service_spec
-
-                spec = prompt_service_spec(
-                    name=name,
-                    friendly_name=friendly_name,
-                    description=description,
-                    owner=owner,
-                    shape=shape,
-                    env_prefix=env_prefix,
-                    module_name=module_name,
-                    db=db,
-                    schema_name=schema_name,
-                    outbox=outbox,
-                    alembic=alembic,
-                    redis=redis,
-                    kafka_role=kafka_role,
-                    handler=handler,
-                    embedding_callback=embedding_callback,
-                    max_concurrent_handlers=max_concurrent_handlers,
-                    s3=s3,
-                    s3_bucket=s3_bucket,
-                    s3_key_prefix=s3_key_prefix,
-                    llm=llm,
-                    llm_provider=llm_provider,
-                    llm_model=llm_model,
-                    llm_api_key_env=llm_api_key_env,
-                    qdrant=qdrant,
-                    qdrant_collection_entity=qdrant_collection_entity,
-                    manifest=manifest,
-                    service_holder_pattern=service_holder_pattern,
-                    fail_fast_validation=fail_fast_validation,
-                    non_interactive=non_interactive,
-                )
-            except ImportError:
-                msg = "prompts module not available (Phase E parallel workstream pending)"
-                typer.echo(f"Error: {msg}", err=True)
-                raise typer.Exit(code=_EXIT_APPLY_ERROR) from None
+            spec = prompt_service_spec(
+                name=name,
+                friendly_name=friendly_name,
+                description=description,
+                owner=owner,
+                shape=shape,
+                env_prefix=env_prefix,
+                module_name=module_name,
+                db=db,
+                schema_name=schema_name,
+                outbox=outbox,
+                alembic=alembic,
+                redis=redis,
+                kafka_role=kafka_role,
+                handler=handler,
+                embedding_callback=embedding_callback,
+                max_concurrent_handlers=max_concurrent_handlers,
+                s3=s3,
+                s3_bucket=s3_bucket,
+                s3_key_prefix=s3_key_prefix,
+                llm=llm,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+                llm_api_key_env=llm_api_key_env,
+                qdrant=qdrant,
+                qdrant_collection_entity=qdrant_collection_entity,
+                manifest=manifest,
+                service_holder_pattern=service_holder_pattern,
+                fail_fast_validation=fail_fast_validation,
+                non_interactive=non_interactive,
+            )
 
         problems = validate_service_spec(spec, repo_root)
         if problems:
-            try:
-                from nohiki_scaffold.cli.display import render_validation_errors
-
-                render_validation_errors(problems)
-            except ImportError, AttributeError:
-                for problem in problems:
-                    typer.echo(f"Error: {problem}", err=True)
+            render_validation_errors(problems)
             raise typer.Exit(code=_EXIT_VALIDATION) from None  # noqa: TRY301
 
         plan = build_plan(spec, repo_root=repo_root)
 
-        try:
-            from nohiki_scaffold.cli.display import (
-                render_hints,
-                render_plan_files,
-                render_root_edits,
-                render_spec_panel,
-            )
-
-            render_spec_panel(spec)
-            render_plan_files(plan, explain=False)
-            render_root_edits(plan)
-            render_hints(plan)
-        except ImportError, AttributeError:
-            typer.echo("(display module not available — skipping preview)")
+        render_spec_panel(spec)
+        render_plan_files(plan, explain=False)
+        render_root_edits(plan)
+        render_hints(plan)
 
         if dry_run:
             raise typer.Exit(code=_EXIT_SUCCESS) from None  # noqa: TRY301
@@ -277,26 +253,11 @@ def new_service_command(
         verify = VerifyMode(verify_mode) if verify_mode else VerifyMode.DEFAULT
         if verify != VerifyMode.NONE:
             try:
-                from nohiki_scaffold.verify.runner import run_verify
-
                 run_verify(plan, mode=verify)
-            except ModuleNotFoundError:
-                try:
-                    from nohiki_scaffold.cli.display import console
-
-                    console.print("[yellow]Info[/yellow]: Phase F verification not yet available (skipping)")
-                except ImportError, AttributeError:
-                    typer.echo("Info: Phase F verification not yet available (skipping)")
             except Exception as exc:  # noqa: BLE001
                 typer.echo(f"Verification failed: {exc}", err=True)
                 raise typer.Exit(code=_EXIT_VERIFY_FAIL) from None
-
-        try:
-            from nohiki_scaffold.cli.display import console
-
-            console.print(f"[green]✓[/green] Scaffold complete: [bold]backend/services/{spec.name}[/bold]")
-        except ImportError, AttributeError:
-            typer.echo(f"Scaffold complete: backend/services/{spec.name}")
+        console.print(f"[green]✓[/green] Scaffold complete: [bold]backend/services/{spec.name}[/bold]")
 
     except typer.Exit:
         raise

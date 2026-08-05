@@ -30,7 +30,7 @@ from doc_template_service.services.template_service import (
     TemplateVersionError,
 )
 from nohiki.common.v1 import AccessScope, EventMetadata, RenderOutputFormat
-from nohiki.doc.template.v1 import DocumentRenderRequested, TemplateAudience
+from nohiki.doc.template.v1 import TemplateAudience
 from nohiki_common_exceptions import ValidationError
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import MessageContext
@@ -285,25 +285,6 @@ class TestRenderCompletedParams:
 
 class TestHandleTemplateRenderRequested:
     """Tests for handle_template_render_requested event handler."""
-
-    def test_old_v1_render_payload_defaults_new_optional_fields(self) -> None:
-        """v1 requests without later ECST fields retain protobuf defaults when decoded."""
-        legacy = DocumentRenderRequested(
-            metadata=EventMetadata(
-                event_id="legacy-event",
-                correlation_id="legacy-correlation",
-                source_service="legacy-service",
-            ),
-            template_id="legacy-template",
-        )
-
-        decoded = DocumentRenderRequested().parse(bytes(legacy))
-
-        assert decoded.template_id == "legacy-template"
-        assert decoded.template_version is None
-        assert decoded.template_name is None
-        assert decoded.template_content is None
-        assert decoded.validation_schema is None
 
     @pytest.mark.asyncio
     async def test_invalid_metadata_publishes_one_correlated_terminal_failure(
