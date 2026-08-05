@@ -54,9 +54,9 @@ class OutboxContext:
 class PublishContext(OutboxContext):
     """Extended context that also carries the originating listing reference.
 
-    Functions that build ListingReference-bearing events (accepted, created,
-    duplicate) require this. Functions that only need outbox plumbing
-    (updated) accept the narrower OutboxContext.
+    Functions that build ListingReference-bearing events (accepted and created)
+    require this. Functions that only need outbox plumbing (updated) accept the
+    narrower OutboxContext.
     """
 
     listing_reference: ListingReference

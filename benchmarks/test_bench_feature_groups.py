@@ -199,23 +199,23 @@ def _extract_work_arrangement_features(
     profile: _ProfileStub,
     listing: _ListingStub,
 ) -> None:
-    """Work arrangement extraction (index 25)."""
+    """Work arrangement extraction (index 24)."""
     profile_arrangements = profile.work_arrangements
     job_arrangement = listing.work_arrangement
 
     if job_arrangement == 0 or not profile_arrangements:
-        features[25] = math.nan
+        features[24] = math.nan
     else:
-        features[25] = 1.0 if job_arrangement in profile_arrangements else 0.0
+        features[24] = 1.0 if job_arrangement in profile_arrangements else 0.0
 
 
 def _extract_validity_flags(features: NDArray[np.float32]) -> None:
-    """Validity flags extraction (indices 26-30)."""
-    features[26] = 0.0 if math.isnan(features[2]) else 1.0  # HAS_LOCATION_DATA
-    features[27] = 0.0 if (math.isnan(features[7]) and math.isnan(features[8])) else 1.0  # HAS_EXPERIENCE_DATA
-    features[28] = 0.0 if math.isnan(features[13]) else 1.0  # HAS_SALARY_DATA
-    features[29] = 1.0 if features[19] > 0 else 0.0  # HAS_SKILL_DATA (SKILL_TOTAL_REQUIRED)
-    features[30] = 0.0 if math.isnan(features[23]) else 1.0  # HAS_LISTING_QUALITY
+    """Validity flags extraction (indices 25-29)."""
+    features[25] = 0.0 if math.isnan(features[2]) else 1.0  # HAS_LOCATION_DATA
+    features[26] = 0.0 if (math.isnan(features[7]) and math.isnan(features[8])) else 1.0  # HAS_EXPERIENCE_DATA
+    features[27] = 0.0 if math.isnan(features[13]) else 1.0  # HAS_SALARY_DATA
+    features[28] = 1.0 if features[19] > 0 else 0.0  # HAS_SKILL_DATA (SKILL_TOTAL_REQUIRED)
+    features[29] = 0.0  # HAS_LISTING_QUALITY (reserved)
 
 
 def _cosine_similarity_inline(vec_a: list[float], vec_b: list[float]) -> float:
@@ -454,7 +454,7 @@ def test_bench_work_arrangement_extract(
     realistic_profile: _ProfileStub,
     realistic_listing: _ListingStub,
 ) -> None:
-    """Benchmark WorkArrangementFeatureGroup.extract (index 25)."""
+    """Benchmark WorkArrangementFeatureGroup.extract (index 24)."""
     features = np.full(FEATURE_COUNT, math.nan, dtype=np.float32)
     benchmark(
         _extract_work_arrangement_features,
@@ -465,7 +465,7 @@ def test_bench_work_arrangement_extract(
 
 
 def test_bench_validity_flags_extract(benchmark: pytest.BenchmarkFixture) -> None:
-    """Benchmark ValidityFlagsFeatureGroup.extract (indices 26-30)."""
+    """Benchmark ValidityFlagsFeatureGroup.extract (indices 25-29)."""
     rng = np.random.default_rng(42)
     features = rng.standard_normal(FEATURE_COUNT).astype(np.float32)
     features[2] = 45.0  # DISTANCE_KM
@@ -473,8 +473,10 @@ def test_bench_validity_flags_extract(benchmark: pytest.BenchmarkFixture) -> Non
     features[8] = 10.0  # JOB_EXPERIENCE_MAX
     features[13] = 18000000.0  # JOB_SALARY
     features[19] = 8.0  # SKILL_TOTAL_REQUIRED
-    features[23] = 0.75  # LISTING_QUALITY_SCORE
+    features[23] = math.nan  # LISTING_QUALITY_SCORE (reserved)
+    features[30] = 2.5  # SKILL_GRAPH_MIN_DISTANCE sentinel
     benchmark(_extract_validity_flags, features)
+    np.testing.assert_allclose(features[[29, 30]], [0.0, 2.5])
 
 
 # Full composer simulation (all groups sequentially)
@@ -496,13 +498,15 @@ def test_bench_full_feature_extraction(
         _extract_skill_features(features, realistic_profile, realistic_listing)
         _extract_semantic_features(features, realistic_profile, realistic_listing)
         _extract_work_arrangement_features(features, realistic_profile, realistic_listing)
-        features[22] = 72.0  # JOB_AGE_HOURS stub
-        features[23] = 0.75  # LISTING_QUALITY_SCORE stub
-        features[24] = 5.0  # LISTING_FEEDBACK_COUNT stub
+        features[21] = 72.0  # JOB_AGE_HOURS stub
+        features[22] = 0.0  # LISTING_FEEDBACK_COUNT (reserved)
+        features[23] = math.nan  # LISTING_QUALITY_SCORE (reserved)
         _extract_validity_flags(features)
         return features
 
-    benchmark(extract_all)
+    features = benchmark(extract_all)
+    np.testing.assert_allclose(features[[22, 29]], [0.0, 0.0])
+    np.testing.assert_equal(features[23], math.nan)
 
 
 def test_bench_full_feature_extraction_batch_150(
@@ -522,11 +526,14 @@ def test_bench_full_feature_extraction_batch_150(
             _extract_skill_features(features, realistic_profile, realistic_listing)
             _extract_semantic_features(features, realistic_profile, realistic_listing)
             _extract_work_arrangement_features(features, realistic_profile, realistic_listing)
-            features[22] = 72.0
-            features[23] = 0.75
-            features[24] = 5.0
+            features[21] = 72.0  # JOB_AGE_HOURS stub
+            features[22] = 0.0  # LISTING_FEEDBACK_COUNT (reserved)
+            features[23] = math.nan  # LISTING_QUALITY_SCORE (reserved)
             _extract_validity_flags(features)
             vectors.append(features)
         return np.stack(vectors)
 
-    benchmark(extract_batch)
+    vectors = benchmark(extract_batch)
+    np.testing.assert_array_equal(vectors[:, 22], 0.0)
+    np.testing.assert_array_equal(vectors[:, 23], np.full(150, math.nan, dtype=np.float32))
+    np.testing.assert_array_equal(vectors[:, 29], 0.0)

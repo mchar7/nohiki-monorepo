@@ -64,7 +64,9 @@ class FeatureComposer:
         11-13: Salary features (user_min, user_target, job_salary)
         14-19: Skill features (match_count, missing_count, total_required, avg_prof, avg_prov, relationship_count)
         20: Semantic similarity (skills_cosine_sim)
-        21-24: Job metadata (age_hours, feedback_count, quality_score, work_arrangement_match)
+        21: Job age (age_hours)
+        22-23: Reserved listing-quality slots (feedback_count=0, quality_score=NaN)
+        24: Work arrangement match
         25-29: Validity flags
         30-31: Taxonomy features (skill_graph_min_distance, skill_graph_mean_distance)
 

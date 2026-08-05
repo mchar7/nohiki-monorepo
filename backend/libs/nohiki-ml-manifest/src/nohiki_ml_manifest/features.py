@@ -184,14 +184,14 @@ MONOTONE_CONSTRAINTS: Final[list[int]] = [
     0,  # SKILL_RELATIONSHIP_COUNT - not monotonic (indirect matches)
     0,  # SKILLS_COSINE_SIM - model learns
     -1,  # JOB_AGE_HOURS - fresher always better
-    0,  # LISTING_FEEDBACK_COUNT - not monotonic
-    0,  # LISTING_QUALITY_SCORE - model learns
+    0,  # LISTING_FEEDBACK_COUNT - reserved, always 0
+    0,  # LISTING_QUALITY_SCORE - reserved, always NaN
     1,  # WORK_ARRANGEMENT_MATCH - match always better
     0,  # HAS_LOCATION_DATA - not monotonic
     0,  # HAS_EXPERIENCE_DATA - not monotonic
     0,  # HAS_SALARY_DATA - not monotonic
     0,  # HAS_SKILL_DATA - not monotonic
-    0,  # HAS_LISTING_QUALITY - not monotonic
+    0,  # HAS_LISTING_QUALITY - reserved, always 0
     -1,  # SKILL_GRAPH_MIN_DISTANCE - closer skills always better
     -1,  # SKILL_GRAPH_MEAN_DISTANCE - closer skills always better
 ]
