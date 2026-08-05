@@ -15,7 +15,7 @@ setTokenRefreshQueryClient(queryClient);
 
 const router: AppRouter = createAppRouter(queryClient);
 
-const rootElement: HTMLElement | null = document.getElementById('root');
+const rootElement = document.querySelector<HTMLElement>('#root');
 if (!rootElement) {
   throw new Error('Root element not found');
 }

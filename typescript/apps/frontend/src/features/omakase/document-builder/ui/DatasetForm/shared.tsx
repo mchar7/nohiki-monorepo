@@ -33,17 +33,20 @@ export function getInputType(fieldSchema: JSONSchemaProperty): string {
 
 export function getFieldWidget(fieldSchema: JSONSchemaProperty, key: string): string | undefined {
   const fieldUIHints = getUIHints(fieldSchema);
-
-  return (
-    fieldUIHints.widget ||
-    (fieldSchema.type === 'string' &&
-    ((fieldSchema.maxLength && fieldSchema.maxLength > TEXTAREA_AUTO_THRESHOLD_LENGTH) ||
-      key.includes('description') ||
-      key.includes('summary') ||
-      key.includes('details'))
-      ? 'textarea'
-      : undefined)
-  );
+  if (fieldUIHints.widget) {
+    return fieldUIHints.widget;
+  }
+  if (fieldSchema.type !== 'string') {
+    return undefined;
+  }
+  const exceedsTextareaThreshold =
+    fieldSchema.maxLength !== undefined && fieldSchema.maxLength > TEXTAREA_AUTO_THRESHOLD_LENGTH;
+  return exceedsTextareaThreshold ||
+    key.includes('description') ||
+    key.includes('summary') ||
+    key.includes('details')
+    ? 'textarea'
+    : undefined;
 }
 
 export function renderFieldLabel(

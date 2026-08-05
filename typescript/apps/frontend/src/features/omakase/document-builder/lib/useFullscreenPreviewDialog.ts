@@ -38,6 +38,7 @@ function preparePreviewData(
   getDataset: (id: string) => Dataset | undefined,
 ): Record<string, unknown> {
   const dataset = datasetId ? getDataset(datasetId) : null;
+  // biome-ignore lint/suspicious/noUnnecessaryConditions: Both optional preview sources can be undefined, so the empty object fallback is reachable.
   return sanitizeData(data ?? dataset?.data ?? {});
 }
 

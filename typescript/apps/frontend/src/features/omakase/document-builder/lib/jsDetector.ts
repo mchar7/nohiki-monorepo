@@ -63,7 +63,7 @@ function matchTemplatePatterns(template: string): string[] {
  * @returns `true` if any script block contains DOM manipulation patterns.
  */
 function containsDomManipulation(template: string): boolean {
-  const scriptContentRegex = /<script[^>]*>([\s\S]*?)<\/script>/giu;
+  const scriptContentRegex = /<script[^>]*>(?<scriptContent>[\s\S]*?)<\/script>/giu;
   let scriptMatch = scriptContentRegex.exec(template);
   while (scriptMatch !== null) {
     const [, scriptContent] = scriptMatch;

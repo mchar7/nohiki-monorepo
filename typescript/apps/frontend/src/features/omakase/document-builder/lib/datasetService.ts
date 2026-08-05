@@ -34,7 +34,7 @@ export function cloneDataset(
   customName?: string,
 ): Omit<Dataset, 'id' | 'createdAt' | 'updatedAt'> {
   return {
-    name: customName || `${dataset.name} (Copy)`,
+    name: customName !== undefined && customName.length > 0 ? customName : `${dataset.name} (Copy)`,
     templateVersionId: dataset.templateVersionId,
     data: { ...dataset.data },
   };

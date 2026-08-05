@@ -262,6 +262,8 @@ export function checkUnusedKeys(locales, getAllFiles, srcDir) {
 
   applyDynamicPrefixes(translationKeys, dynamicPrefixes, usedKeys);
 
-  const unusedKeys = [...translationKeys].filter((key) => !usedKeys.has(key)).sort();
+  const unusedKeys = [...translationKeys]
+    .filter((key) => !usedKeys.has(key))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   return reportUnusedKeys(unusedKeys);
 }

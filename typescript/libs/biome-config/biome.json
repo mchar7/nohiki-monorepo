@@ -19,7 +19,7 @@
         "noUnresolvedImports": "off",
         "useImportExtensions": "off"
       },
-      "nursery": "on",
+      "nursery": "error",
       "performance": {
         "noBarrelFile": "off",
         "noReExportAll": "off"
@@ -34,7 +34,7 @@
           }
         }
       },
-      "suspicious": "on"
+      "suspicious": "error"
     }
   },
   "formatter": {

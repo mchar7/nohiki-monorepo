@@ -41,7 +41,7 @@ export const THEME_COLOR_STORAGE_KEY = `${config.storage.keys.theme}-color`;
 export const SYSTEM_THEME_STORAGE_KEY = `${config.storage.keys.theme}-system`;
 
 export function getStoredThemeColor(): ThemeColor {
-  if (globalThis.window === undefined) {
+  if (typeof globalThis.window === 'undefined') {
     return DEFAULT_THEME_COLOR;
   }
 
@@ -53,28 +53,28 @@ export function getStoredThemeColor(): ThemeColor {
 }
 
 export function setStoredThemeColor(color: ThemeColor): void {
-  if (globalThis.window === undefined) {
+  if (typeof globalThis.window === 'undefined') {
     return;
   }
   localStorage.setItem(THEME_COLOR_STORAGE_KEY, color);
 }
 
 export function getUseSystemTheme(): boolean {
-  if (globalThis.window === undefined) {
+  if (typeof globalThis.window === 'undefined') {
     return false;
   }
   return localStorage.getItem(SYSTEM_THEME_STORAGE_KEY) === 'true';
 }
 
 export function setUseSystemTheme(useSystem: boolean): void {
-  if (globalThis.window === undefined) {
+  if (typeof globalThis.window === 'undefined') {
     return;
   }
   localStorage.setItem(SYSTEM_THEME_STORAGE_KEY, useSystem ? 'true' : 'false');
 }
 
 export function getSystemPreferredTheme(): ThemeColor {
-  if (globalThis.window === undefined) {
+  if (typeof globalThis.window === 'undefined') {
     return DEFAULT_THEME_COLOR;
   }
 
@@ -85,7 +85,7 @@ export function getSystemPreferredTheme(): ThemeColor {
 }
 
 export function applyThemeColor(color: ThemeColor, withTransition: boolean = true): void {
-  if (globalThis.window === undefined) {
+  if (typeof globalThis.window === 'undefined') {
     return;
   }
 
