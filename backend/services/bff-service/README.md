@@ -232,7 +232,7 @@ Kafka events. The projections cover four domains: user data (`account_projection
 than projections: `command_requests` for command idempotency tracking, and the standard outbox and
 processed_events tables created by shared migration helpers.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ### Object Storage
 

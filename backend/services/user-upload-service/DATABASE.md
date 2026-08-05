@@ -1,136 +1,77 @@
-# User Upload Service Database Schema
+# User Upload Database Design
 
-Schema `user_upload_schema` stores metadata for every document a user has uploaded to Nohiki:
-the file name, MIME type, RustFS object key, file size, SHA-256 content hash, soft-delete flag,
-and document category.
+Schema `user_upload_schema` is the user-upload-service's authoritative store for uploaded-document
+metadata. The file bytes remain in RustFS object storage; PostgreSQL records who owns each upload,
+how the object is identified and classified, and the state needed to publish upload lifecycle
+events.
 
-## Entity Overview
+## Metadata and Object-Storage Boundary
 
-| Table | Purpose |
-| ------- | --------- |
-| `uploads` | One row per user-uploaded document; references the RustFS object by storage key |
-| `outbox` | Transactional outbox for CDC event publishing via Debezium |
+Each metadata record represents one file owned by one user. Its owner corresponds to an account
+managed by user-auth-service, and all user-facing reads are scoped to that owner. The owner lookup
+path is optimized because both upload listings and account-deletion cascades operate over all
+uploads for one user.
 
-Each `uploads` row represents a single file owned by one user. The `outbox` table receives an
-entry in the same database transaction as every insert or soft-delete on `uploads`, guaranteeing
-that the corresponding `USER_UPLOAD_CREATED` or `USER_UPLOAD_DELETED` event reaches Kafka even
-if the process crashes immediately after committing.
+The BFF constructs the RustFS key as
+`user-uploads/{user_id}/{upload_id}/{filename}` and sends it to this service unchanged. The BFF
+validates the downloaded object's size and MIME metadata and computes the SHA-256 content hash
+before requesting creation. This service maps the forwarded MIME value to its content
+classification before persisting the metadata rather than fetching file bytes. Downstream services
+use the hash to determine whether content has changed since processing, and receive the storage key
+in upload snapshots so they can retrieve the object directly. Document category records the
+upload's intended use.
 
-## Table Details
+## Identity, Ownership, and Invariants
 
-### `uploads`
+The BFF generates a UUIDv7 before publishing `USER_UPLOAD_CREATE_REQUESTED`, uses it as the
+command's `request_id`, and this service uses it unchanged as the upload identity. The same value
+therefore correlates the Kafka command, persisted metadata, and downstream CDC events. A repeated
+create command with an identity already present is a no-op, making creation idempotent under
+redelivery.
 
-#### Purpose
+Upload names are unique within a user's uploads. A duplicate name for the same user is rejected
+rather than silently overwriting metadata. Delete handling also verifies that the requesting user
+owns the upload, preventing one user from deleting another user's object.
 
-Stores the metadata record for a user-uploaded document. The actual file bytes live in RustFS;
-this table holds everything needed to identify, classify, and reference the file without fetching
-it from object storage.
+## Lifecycle and Retention
 
-#### Key Columns
+Creation follows `USER_UPLOAD_CREATE_REQUESTED` after the BFF has validated the RustFS object.
+Deletion is soft:
 
-- **`id`** (`UUID`): UUIDv7 primary key. The BFF generates this before publishing
-  `USER_UPLOAD_CREATE_REQUESTED` and sets it as the command's `request_id`. The handler
-  uses it verbatim as the row's `id`, so the same UUID links the Kafka command, the database
-  record, and all downstream CDC events.
-- **`user_id`** (`UUID`): References `user_auth_schema.accounts.id` (no FK constraint --
-  cross-schema UUID reference). Every query that fetches a user's uploads filters on this column.
-- **`name`** (`VARCHAR(255)`): Original filename as provided by the user. Subject to the unique
-  constraint with `user_id` -- a user cannot have two uploads with the same name.
-- **`category`** (`document_category_enum`): Classifies the document's intended use. Possible
-  values: `RESUME`, `COVER_LETTER`, `PORTFOLIO`, `OTHER`, `UNSPECIFIED`. Set by the BFF based
-  on user input at upload time.
-- **`content_type`** (`content_type_enum`): The file format. Possible values: `PDF`, `DOCX`,
-  `DOC`, `RTF`, `TXT`, `MARKDOWN`, `HTML`, `JSON`, `PNG`, `JPEG`, `WEBP`, `UNSPECIFIED`. Derived
-  from the MIME type the BFF receives from the browser and mapped to the enum at ingest.
-- **`content_hash`** (`VARCHAR(64)`): SHA-256 hex digest of the file content, computed by the
-  BFF after downloading the object from RustFS during upload completion. Used by downstream
-  services (e.g., doc-process-service) to detect whether a file has changed since it was last
-  processed.
-- **`file_size`** (`INTEGER`): File size in bytes. The BFF validates this matches the actual
-  downloaded object before publishing the command.
-- **`storage_key`** (`TEXT`): The RustFS object key, constructed by the BFF as
-  `user-uploads/{user_id}/{upload_id}/{filename}`. This service stores it verbatim and passes
-  it through to the `UploadSnapshot` in CDC events so consumers can access the file directly.
-- **`is_deleted`** (`BOOLEAN`, default `false`): Soft-delete flag. Rows are never hard-deleted;
-  `is_deleted = true` excludes a row from all list and get queries. This preserves the audit
-  trail even after the RustFS object has been removed.
-- **`created_at`** / **`updated_at`** (`TIMESTAMPTZ`): Server-generated by PostgreSQL on insert.
-  `updated_at` is refreshed on any update by the ORM layer.
+- `USER_UPLOAD_DELETE_REQUESTED` removes one owned RustFS object and marks its metadata deleted.
+- `USER_AUTH_ACCOUNT_DELETED` removes every active object for that user, soft-deletes the
+  corresponding metadata together, and emits one deletion event per upload.
 
-#### Indexes
+The metadata change and its outbox event are not committed until object deletion succeeds. A
+storage failure therefore leaves the upload active so Kafka redelivery can retry; repeating an
+already successful object deletion is safe. Soft-deleted uploads are excluded from list and get
+operations, but their metadata remains as an audit trail after the RustFS object is gone.
+Application code never hard-deletes upload records. Audit timestamps record creation and are
+refreshed when metadata changes.
 
-- **`ix_uploads_user_id`** (`user_id`): Supports the primary read pattern: fetching all uploads
-  belonging to a user. Every list query and the account-deletion cascade use this index.
+## Transactional Event Publication
 
-#### Constraints
+The transactional outbox is stored beside upload metadata. Creation and soft-deletion write their
+respective `USER_UPLOAD_CREATED` or `USER_UPLOAD_DELETED` event in the same database transaction as
+the domain change. Cascading account deletion follows the same rule for every affected upload.
+This atomicity preserves committed events even if the service crashes immediately afterward.
 
-- **UNIQUE** on `(user_id, name)` (`uq_uploads_user_name`): Prevents a user from having two
-  uploads with identical filenames. If the BFF attempts to create a duplicate name for the same
-  user, the handler receives an integrity error rather than silently overwriting.
+Debezium reads committed outbox records from the PostgreSQL WAL through the Outbox Event Router
+SMT, publishes them to Kafka, and removes them after successful publication. Event metadata
+provides the destination, an event identity used as the Kafka message key, and the affected upload
+identity used for partitioning so events for one upload remain ordered. Payloads are
+Protobuf-serialized, and trace context supports cross-service tracing. Kafka delivery remains at
+least once, so consumers must be idempotent.
 
-#### Data Lifecycle
+Created events are routed to `user-upload.cdc.upload-created.v1`; single and cascading deletion
+events are routed to `user-upload.cdc.upload-deleted.v1`.
 
-- **Created** when the `USER_UPLOAD_CREATE_REQUESTED` command is processed. The handler first
-  checks for an existing row with the same `id`; if found, it exits without inserting, making
-  the operation idempotent.
-- **Soft-deleted** in two scenarios:
-  - Single file: when `USER_UPLOAD_DELETE_REQUESTED` is processed. The handler validates user
-    ownership before setting `is_deleted = true` and removes the RustFS object.
-  - Bulk cascade: when `USER_AUTH_ACCOUNT_DELETED` is received. All non-deleted uploads for
-    the user are soft-deleted in a single flush and their RustFS objects are removed.
-- **Never hard-deleted** by application code. The downgrade migration drops the entire schema
-  (`DROP SCHEMA ... CASCADE`) for clean-cut redeployment.
+## Operational Signals
 
-### `outbox`
+The outbox should remain near-empty during normal operation. Its insertion time provides the basis
+for lag monitoring, while a growing record count indicates that the Debezium connector is lagging
+or has stopped. Connector configuration lives under `infra/k8s/kafka-connect/connectors/`.
 
-#### Purpose
-
-Implements the transactional outbox pattern. Each row represents a Kafka event that must be
-published. Debezium reads new rows from the PostgreSQL WAL via the Outbox Event Router SMT
-and publishes them to the appropriate Kafka topic, then deletes the row.
-
-#### Key Columns
-
-- **`id`** (`UUID`): UUIDv7 primary key, used by Debezium as the Kafka message key.
-- **`aggregatetype`** (`VARCHAR(255)`): Fixed value `"upload"` for all events from this service.
-  The Debezium SMT uses this to route to the correct topic.
-- **`aggregateid`** (`VARCHAR(255)`): The `upload_id` of the affected record. Used as the Kafka
-  message partition key, ensuring all events for a given upload are ordered within a partition.
-- **`type`** (`VARCHAR(255)`): The Kafka topic name (e.g., `user-upload.cdc.upload-created.v1`).
-  The Debezium SMT reads this field to determine the destination topic.
-- **`payload`** (`BYTEA`): Protobuf-serialized event message (betterproto2 binary encoding).
-- **`timestamp`** (`TIMESTAMPTZ`): Row insertion time; used for monitoring outbox lag.
-- **`tracingspancontext`** (`VARCHAR(255)`, nullable): OpenTelemetry trace context for
-  distributed tracing across service boundaries.
-
-#### Events Published via Outbox
-
-- `user-upload.cdc.upload-created.v1` -- written atomically with the `uploads` insert
-- `user-upload.cdc.upload-deleted.v1` -- written atomically with each single or cascading soft-delete
-
-#### Data Lifecycle
-
-Rows are inserted by the application and deleted by Debezium after successful Kafka publish.
-Under normal operation, the table remains near-empty. A growing row count indicates the Debezium
-connector is lagging or has stopped; see `infra/kafka-connect/connectors/` for the connector
-configuration.
-
-## Migration Strategy
-
-Nohiki uses **clean-cut deployment**: all services are stopped, schemas are dropped and recreated,
-and the single `001_` migration is applied fresh. The migration file is edited in place rather
-than creating incremental migrations.
-
-This is possible because Nohiki is pre-release with zero production data. There are no data
-migrations or backward compatibility concerns.
-
-```bash
-# Apply migration
-alembic upgrade head
-
-# Generate updated migration after model changes
-alembic revision --autogenerate -m "description"
-
-# View current state
-alembic current
-```
+The schema itself is defined by the service's SQLAlchemy models in
+`backend/services/user-upload-service/src/user_upload_service/db/models.py` and Alembic revision
+in `backend/services/user-upload-service/alembic/versions/001_initial_migration.py`.

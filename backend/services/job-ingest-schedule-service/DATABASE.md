@@ -1,145 +1,70 @@
-# Job Ingest Schedule Service Database Schema
+# Job Ingest Schedule Database Design
 
-Schema `job_schedule_schema` stores the materialized scheduling state for all registered search
-queries: their configuration, activation status, and next/last execution timestamps. This schema
-is a projection of events from the job-query-composition-service; it does not own the query
-definitions, only the scheduling metadata derived from them.
+The `job_schedule_schema` schema stores the materialized scheduling state for registered search
+queries: the search configuration needed for dispatch, activation state, and previous and planned
+execution times. It is a projection of events from the job-query-composition-service. That service
+remains the source of truth for query definitions; this service owns only the scheduling metadata
+derived from them.
 
-## Entity Overview
+## Projection and Ownership Boundaries
 
-| Table | Purpose |
-| ------- | --------- |
-| `ingestion_schedules` | One row per registered search query; tracks scheduling state and denormalized query parameters |
-| `processed_events` | Consumer-side idempotency log; prevents duplicate processing of Kafka messages |
+Each schedule represents one query owned by the job-query-composition-service. Its identity and
+search criteria are copied from query-created and query-updated CDC events, making the query
+identity a logical cross-service reference rather than a locally generated identity. Keeping the
+keywords, locations, work arrangements, and job-board sources in the projection lets the scheduler
+publish a complete discovery command without reading the source service when a query becomes due.
+Unspecified work-arrangement and source values are not retained in the projection.
 
-`ingestion_schedules` is the sole domain table. Each row corresponds to a query owned by
-`job_query_schema`, referenced by `query_id` (UUID, no cross-schema FK). `processed_events`
-guards consumed Kafka messages against at-least-once redelivery. Discovery commands are
-published directly to Kafka; this schema has no outbox table.
+The scraper lookback and result target come from this service's configuration rather than the CDC
+payload. The schedule frequency comes from the event payload. This separation keeps query-owned
+configuration synchronized through CDC while leaving scheduler-controlled dispatch parameters
+under this service's control.
 
-## Table Details
+## Scheduling Lifecycle
 
-### `ingestion_schedules`
+A query-created event creates its schedule. Processing the same creation more than once does not
+create another schedule: the handler first checks whether the query already has one.
 
-#### Purpose
+A query-updated event refreshes the projected query parameters and activation state. If an update
+arrives before its corresponding creation event, the handler creates the missing schedule, allowing
+out-of-order delivery to converge on a usable projection.
 
-Represents the scheduling state for a single search query. Stores the full set of search
-parameters denormalized from the job-query-composition-service's CDC events alongside
-the scheduling fields (`frequency`, `is_active`, `next_run_at`, `last_run_at`) that the
-tick handler uses to determine which queries are due for execution.
+An active query is dispatched immediately when it is activated, then planned for one frequency
+interval after that dispatch. Scheduler ticks consider only active schedules whose planned execution
+time has arrived. After a successful dispatch, the schedule records that dispatch as its most recent
+successful run and advances the next execution by one frequency interval. The successful-run
+marker remains absent until the first tick dispatch. Inactive schedules have no planned execution
+time and are excluded from due processing.
 
-#### Key Columns
+A query-deleted event removes the schedule. Deleting an already missing schedule is treated as
+success, so deletion is idempotent.
 
-- **`query_id`** (`UUID`): Primary key. Carries the `query_id` from the
-  `job-query-composition-service`. Not generated here: it is sourced directly from the
-  `JOB_QUERY_CREATED` / `JOB_QUERY_UPDATED` event payload. Acts as the cross-schema
-  reference to `job_query_composition_schema.queries.id`.
-- **`search_keywords`** (`VARCHAR[]`): Array of keyword strings for the scrape query,
-  e.g., `["software engineer", "python"]`.
-- **`locations`** (`JSONB`): Array of location objects, each with integer-encoded `country`
-  (proto `CountryCode` enum value), `location_type` (proto `LocationType` enum value),
-  and optional string fields `city` and `state_province`. Validated by the
-  `chk_locations_json_array` check constraint.
-- **`work_arrangements`** (`work_arrangement_enum[]`): PostgreSQL enum array. Values are the
-  string names of the proto `WorkArrangement` enum: `ON_SITE`, `HYBRID`, `REMOTE`. The
-  `UNSPECIFIED` variant is filtered out on write. Python property accessors convert between
-  string names and proto enum instances at the ORM boundary.
-- **`sources`** (`job_board_source_enum[]`): PostgreSQL enum array of job board platforms to
-  scrape: `INDEED`, `LINKEDIN`, `ZIPRECRUITER`, `GOOGLE`, `GLASSDOOR`, `BAYT`, `NAUKRI`,
-  `COMPANY_WEBSITE`. `UNSPECIFIED` is filtered out on write.
-- **`hours_old`** (`INTEGER`): How many hours back the scraper should search for listings.
-  Defaults to `72`, with persisted values limited to `1` through `168`. Set by service
-  configuration, not from the event payload.
-- **`results_wanted`** (`INTEGER`): Target number of results per scrape run. Defaults to `50`,
-  with persisted values limited to `1` through `100`. Set by service configuration, not from
-  the event payload.
-- **`frequency`** (`INTERVAL`): How often this query runs, stored as a PostgreSQL interval.
-  Sourced from `frequency_seconds` in the event payload (converted to `timedelta`). Defaults
-  to `1 day`.
-- **`is_active`** (`BOOLEAN`): Whether the scheduler should dispatch this query on ticks.
-  Inactive queries are skipped entirely by the due-schedule query. Defaults to `false`.
-- **`next_run_at`** (`TIMESTAMPTZ`): The next time the scheduler should dispatch this query.
-  `NULL` for inactive queries. On activation it is set one frequency interval after the immediate
-  dispatch timestamp; the scheduler advances it by `frequency` after each successful dispatch.
-- **`last_run_at`** (`TIMESTAMPTZ`): The timestamp of the most recent successful dispatch.
-  `NULL` until the first tick processes this query. Updated alongside `next_run_at` after
-  each dispatch.
-- **`created_at`** / **`updated_at`** (`TIMESTAMPTZ`): Standard audit timestamps, both
-  defaulting to `now()` at row creation.
+## Delivery and Idempotency
 
-#### Indexes
+Kafka messages are delivered at least once. A consumer-side processing log, provided by
+`nohiki-db-utils`, records the message offset or correlation identifier after successful processing
+so redeliveries can be skipped. These records are not updated or deleted; the log grows
+monotonically as the service processes messages.
 
-- **`idx_schedules_due`** (partial B-tree on `next_run_at` WHERE `is_active = true AND next_run_at IS NOT NULL`):
-  The primary read path for the tick handler. The `process_due_schedules` query filters on
-  `is_active = true` and `next_run_at <= now()`; this partial index covers both predicates and
-  eliminates inactive rows from the index entirely, keeping it compact.
-- **`idx_schedules_active_hash`** (HASH on `is_active`): Supports equality lookups on
-  `is_active`. Hash indexes are smaller and faster than B-tree for single-value equality
-  predicates on low-cardinality boolean columns.
-- **`idx_schedules_created_at_brin`** (BRIN on `created_at`, `pages_per_range = 32`):
-  Supports time-range queries on creation timestamp. BRIN is appropriate here because rows are
-  largely append-ordered and the index has minimal storage overhead.
+Discovery commands are published directly to Kafka. The schema has no transactional outbox, so
+command delivery is not mediated by database outbox state.
 
-#### Constraints
+## Due-Query and Storage Design
 
-- **PRIMARY KEY** on `query_id`: Enforces one schedule row per query. Also serves as the
-  idempotency key for `JOB_QUERY_CREATED` handlers: the handler checks for an existing row
-  before inserting.
-- **CHECK `chk_locations_json_array`** (`locations IS JSON ARRAY`): Database-level validation
-  that the `locations` JSONB column always contains a JSON array, not a bare object or scalar.
+The scheduler's primary read path selects active schedules whose planned execution time is due.
+The corresponding storage optimization excludes inactive schedules and schedules without a planned
+execution, matching that predicate while keeping the due-read structure compact.
 
-- **CHECK `ck_schedule_frequency_positive`** (`frequency > INTERVAL '0 seconds'`): Rejects
-  invalid non-positive schedule intervals even if an application boundary is bypassed.
-- **CHECK `ck_schedule_hours_old_range`** (`hours_old BETWEEN 1 AND 168`): Keeps the
-  persisted scraper lookback within the command contract.
-- **CHECK `ck_schedule_results_wanted_range`** (`results_wanted BETWEEN 1 AND 100`): Keeps
-  the persisted result target within the command contract.
+Activation-state equality lookups use an equality-oriented structure because single-value equality
+access on a low-cardinality value is smaller and faster than a general ordered structure.
+Creation-time range access uses a low-overhead range summary because rows
+are expected to be largely append-ordered. These choices support the service's operational reads
+without changing the projection's ownership boundaries.
 
-#### Data Lifecycle
+The most recent successful dispatch and next planned execution retain their distinct operational
+meaning: one records completed dispatch progress, while the other drives future due selection.
 
-- **Created** when `JOB_QUERY_CREATED` (`job-query.cdc.query-created.v1`) is consumed. The
-  handler also creates a row when `JOB_QUERY_UPDATED` arrives for a `query_id` that has no
-  existing row (out-of-order delivery guard).
-- **Updated** when `JOB_QUERY_UPDATED` (`job-query.cdc.query-updated.v1`) is consumed
-  (query parameters or activation state changed), or when `SYS_SCHEDULE_TICK` processing
-  advances `last_run_at` and `next_run_at` after a successful dispatch.
-- **Deleted** when `JOB_QUERY_DELETED` (`job-query.cdc.query-deleted.v1`) is consumed.
-  The handler is idempotent: a missing row is treated as already deleted.
-
-### `processed_events`
-
-#### Purpose
-
-Consumer-side idempotency store provided by `nohiki-db-utils`. Kafka delivers messages
-at-least-once; this table records processed message IDs so handlers can skip redeliveries.
-
-#### Key Columns
-
-- **`id`** (`UUID`): UUIDv7 primary key, generated server-side.
-- **`event_id`** (`VARCHAR`): The Kafka message offset or correlation ID used as the
-  deduplication key.
-- **`processed_at`** (`TIMESTAMPTZ`): When the event was first processed successfully.
-
-#### Data Lifecycle
-
-- **Created** on first successful processing of any Kafka message.
-- **Never updated or deleted** -- the table grows monotonically as a deduplication log.
-
-## Migration Strategy
-
-Migrations are applied incrementally through Alembic. Revision `001` creates the scheduling and
-consumer-idempotency tables, including the positive-frequency constraint. The schema has no
-outbox table.
-
-**Commands:**
-
-```bash
-# Apply migration
-alembic upgrade head
-
-# Generate updated migration after model changes
-alembic revision --autogenerate -m "description"
-
-# View current state
-alembic current
-```
+The schema itself is defined by the service's SQLAlchemy models in
+`backend/services/job-ingest-schedule-service/src/job_ingest_schedule_service/db/models.py` and
+Alembic revision
+`backend/services/job-ingest-schedule-service/alembic/versions/001_initial_migration.py`.

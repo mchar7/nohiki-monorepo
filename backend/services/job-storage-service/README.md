@@ -121,7 +121,7 @@ every accepted job listing, storing the full enriched state alongside pre-comput
 two deduplication keys. The `listing_versions` table preserves a JSONB snapshot of each listing
 state at the moment it was overwritten.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ## Key Design Patterns
 

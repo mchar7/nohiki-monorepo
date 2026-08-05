@@ -1,256 +1,128 @@
-# User Pref Service Database Schema
+# User Pref Service Database Design
 
-Schema `user_pref_schema` stores user job target profiles and their enrichment state, including
-raw preference data, normalized skill mappings, query embedding vectors, and document attachment
+The `user_pref_schema` schema is the authoritative store for user job target profiles, user-level
+job-search settings, profile-to-document associations, and the state needed to complete profile
+enrichment. It retains the raw targeting intent together with normalized skills and retrieval
+artifacts so downstream services can consume complete profile snapshots without querying this
+service.
+
+`user-auth-service` remains the source of truth for user identity. This service owns job-search
+preferences and settings and removes its records when it consumes
+`user-auth.cdc.account-deleted.v1`. Uploaded documents remain owned by `user-upload-service`;
+this schema owns only their associations with preferences.
+
+## Profile State and Enrichment
+
+A profile is a named, complete job-search targeting specification: titles and keywords,
+disallowed terms, physical and remote locations, work arrangements, seniority, salary
+preferences, required skills, source exclusions, relocation openness, commute preferences,
+scoring thresholds, and document-tailoring configuration. Physical locations retain city,
+country, and geocoded coordinates. Salary preferences retain their range, currency, and period.
+A minimum fit threshold can automatically
+disqualify weak matches, while an auto-tailor threshold can trigger document tailoring for strong
+matches. Per-profile feature importance controls how strongly
+`job-correlation-evaluation-service` weights skill match, location, work arrangement, experience,
+salary, and recency. Profiles can also select a schema family from `doc_template_schema` and
+retain tailoring preferences consumed by `doc-content-service`.
+
+The profile record deliberately keeps enrichment results beside the targeting intent. Canonical
+skill identifiers, skill embeddings, and skill entries preserving proficiency, provenance, and
+extraction confidence come from `skill-graph-service`. Dense query embeddings and the MUVERA,
+SPARSE, and COLBERT retrieval artifacts come from `ml-gateway-service` and are used for retrieval
+by `job-correlation-evaluation-service`. The recorded collection version, together with the
+content hash, allows stale embeddings to be detected when the encoding manifest changes.
+
+Enrichment is sequential:
+
+1. **Skill normalization** -- when a profile contains skills, the service requests normalization
+   from `skill-graph-service`. The callback persists the canonical identifiers, complete skill
+   entries, and skills embedding.
+2. **Query embedding** -- the normalized skill result feeds the combined skill-and-keyword query
+   sent to `ml-gateway-service`. Its callback persists the query retrieval artifacts, reloads the
+   skill data saved by the first stage, marks enrichment complete, and permits lifecycle event
+   publication.
+
+Persisting the first-stage result lets the second callback load it locally instead of carrying an
+unbounded skill list through Kafka state. A profile without skills skips skill normalization but
+still requests query embedding, which remains the gate for completion and publication.
+
+Enrichment completeness is both a publication gate and an idempotency boundary. No profile CDC
+event is published while enrichment is incomplete. The BFF-assigned request identifier admits at
+most one profile creation for an originating command. If that command is redelivered while the
+existing profile is incomplete, the handler re-enters enrichment from the beginning rather than
+creating another profile; a completed delivery does not restart the flow. Persisted consumed-event
+markers provide the corresponding idempotency boundary for other Kafka redeliveries.
+
+## Profile Lifecycle and Activity
+
+A profile is created when `user-pref.cmd.create-requested` is consumed and the originating request
+has not already created one. Enrichment callbacks add normalized skill state and query artifacts.
+The profile can then be changed by `user-pref.cmd.update-requested`, attachment and detachment
+commands, or `user-pref.cmd.pref-importance-update-requested`.
+
+An active profile participates in job matching. An inactive profile is retained for the user but
+excluded from correlation scoring. The active-only access path is intentionally optimized so
+matching queries do not scan retained inactive profiles. Other database access paths support the
+BFF-driven per-user listing path and account cleanup, and locate an originating request during
+create-command redelivery.
+
+A single preference is removed on `user-pref.cmd.delete-requested`. Account deletion removes all
+profiles for the user in one bulk operation. Profile deletion also removes its document
 associations.
 
-## Entity Overview
+## Document Associations
 
-| Table | Purpose |
-| ------- | --------- |
-| `search_prefs` | Job target profiles with enrichment state (skills, embeddings, targeting criteria) |
-| `search_pref_uploads` | Junction table linking preferences to uploaded documents |
-| `user_pref_settings` | Per-user defaults (timezone, locale, feature importance weights) |
-| `outbox` | Transactional outbox for CDC event publishing via Debezium |
-| `processed_events` | Idempotency tracking for consumed Kafka events |
+A preference can reference documents owned by `user-upload-service`. Each preference-upload pair
+has one association. Attach-command categories 1 and 2 classify the document as an example, such
+as a resume or work sample used for tailoring; all other categories classify it as additional
+context for `doc-content-service`.
 
-`search_prefs` is the central entity. `search_pref_uploads` has a hard FK constraint to
-`search_prefs.id` with `ON DELETE CASCADE`, so preference deletion automatically removes all
-attachment associations. `user_pref_settings` references `user_id` without an FK constraint --
-cross-schema ownership means `user-auth-service` owns the authoritative user record, but this
-service cleans up its own data when it receives `user-auth.cdc.account-deleted.v1`. The `outbox`
-table captures CDC events transactionally alongside domain writes; Debezium publishes them to
-Kafka from the PostgreSQL WAL.
+`user-pref.cmd.attach-upload.v1` creates the association. Reattaching the same document with a new
+category updates the existing association, which makes attachment and recategorization
+idempotent. `user-pref.cmd.detach-upload.v1` removes it. Associations are also removed with their
+parent profile or when `user-upload.cdc.upload-deleted.v1` reports that an upload was deleted. The
+reverse upload lookup is intentionally optimized because upload deletion must find associations
+across every preference without scanning the entire association set.
 
-## Table Details
+## User-Level Settings
 
-### `search_prefs`
+This service owns one settings record per user because timezone, locale, and default feature
+importance are job-search preferences rather than account settings. Default feature importance
+applies across the user's profiles unless a profile overrides it. The IANA timezone supports
+display-layer date formatting, while the BCP 47 locale supports currency and number formatting in
+notifications.
 
-#### Purpose
+The first `user-pref.cmd.settings-update-requested` for a user creates the settings state.
+Subsequent deliveries update only the fields named by the command, preserving all other values.
+The one-record-per-user invariant and update-on-conflict behavior make repeated settings updates
+safe. Settings are removed when the owning account deletion event is consumed, and the per-user
+lookup is optimized for both updates and cleanup.
 
-Stores one row per user job target profile. A profile is the complete targeting specification for
-a job search: what titles to look for, where, at what seniority and salary, with what required
-skills. The row also holds the results of the two-stage enrichment pipeline: canonical skill IDs
-and the skills embedding vector from `skill-graph-service`, and query retrieval embedding vectors
-from `ml-gateway-service`.
+## Event Publication and Outbox Boundary
 
-#### Key Columns
+CDC state-change events are written to the transactional outbox in the same database transaction
+as the domain write through `nohiki-db-utils`'s `OutboxWriter`. Debezium reads committed outbox
+records from the PostgreSQL WAL and the Outbox Event Router SMT publishes them to Kafka. This
+atomic boundary prevents a crash from committing a domain change without its corresponding CDC
+outbox record.
 
-- **`id`** (`UUID`): UUIDv7 primary key, generated by `uuidv7()` database function
-- **`user_id`** (`UUID`): References the owning user (no FK constraint, cross-schema, owned by
-  `user-auth-service`)
-- **`pref_name`** (`VARCHAR(100)`): Human-readable name for the profile, e.g.
-  "Senior Backend: Remote US"
-- **`search_keywords`** (`VARCHAR(100)[]`): Job title and keyword terms to match against listings
-- **`disallowed_keywords`** (`VARCHAR(100)[]`): Terms that disqualify a listing from consideration
-- **`physical_locations`** (`JSONB`): Array of `Location` proto objects serialized via `.to_dict()`,
-  each containing city, country, and geocoded coordinates
-- **`remote_locations`** (`JSONB`): Array of `Location` objects for remote-eligible countries
-- **`work_arrangements`** (`work_arrangement_enum[]`): Accepted arrangements --
-  `ON_SITE`, `HYBRID`, `REMOTE`
-- **`seniority_levels`** (`seniority_level_enum[]`): Target seniority bands --
-  `INTERN`, `ENTRY`, `MID`, `SENIOR`, `STAFF`, `MANAGER`, `DIRECTOR`, `VP`, `EXECUTIVE`
-- **`salary_preference`** (`JSONB`): `SalaryPreference` proto serialized via `.to_dict()`,
-  containing min/max, currency, and period
-- **`feature_importance`** (`JSONB`): Per-preference L2R feature weighting --
-  `{"skill_match_importance": int, "location_importance": int, ...}`. Controls how much weight
-  `job-correlation-evaluation-service` gives each signal for this specific preference
-- **`excluded_scrape_sources`** (`job_board_source_enum[]`): Job boards to skip for this
-  preference -- `INDEED`, `LINKEDIN`, `ZIPRECRUITER`, `GOOGLE`, `GLASSDOOR`, `BAYT`, `NAUKRI`,
-  `COMPANY_WEBSITE`
-- **`min_fit_score_disqualify`** (`INTEGER`): Minimum correlation score below which matched jobs
-  are auto-disqualified (0-100)
-- **`auto_tailor_threshold`** (`INTEGER`): Minimum correlation score above which document
-  tailoring is triggered automatically
-- **`tailoring_schema_id`** (`UUID`): References `doc_template_schema.schema_families.id` (no FK
-  -- cross-schema), identifying the document schema to use for auto-tailoring
-- **`tailoring_preferences`** (`JSONB`): User-level tailoring configuration passed to
-  `doc-content-service`
-- **`request_id`** (`UUID`): The BFF-assigned idempotency key from the originating command.
-  Unique constraint enforces one preference per create request
-- **`user_skill_ids`** (`VARCHAR(100)[]`): Canonical skill IDs returned by `skill-graph-service`
-  after normalization
-- **`user_skills_data`** (`JSONB`): Array of `UserSkillEntry` protos serialized via `.to_dict()`,
-  preserving proficiency, provenance, and extraction confidence for each skill. Persisted during
-  the skill callback stage so the embedding callback stage can load them from the DB rather than
-  carrying them in Kafka state
-- **`user_skills_embedding`** (`DOUBLE_PRECISION[]`): Dense vector representing the user's skill
-  set, computed by `skill-graph-service` alongside normalization
-- **`query_embedding`** (`DOUBLE_PRECISION[]`): Dense vector for the combined skills+keywords
-  query text, computed by `ml-gateway-service`
-- **`query_artifacts_data`** (`JSONB`): Array of non-DENSE retrieval vectors (MUVERA, SPARSE,
-  COLBERT) serialized via `.to_dict()`. These are the vectors used for ANN retrieval in
-  `job-correlation-evaluation-service`
-- **`collection_version`** (`VARCHAR(10)`): Qdrant collection version at the time embeddings were
-  computed (e.g., `"v1"`). Used alongside content hash to detect stale embeddings when the
-  encoding manifest changes
-- **`is_enrichment_complete`** (`BOOLEAN`): `false` while the preference is awaiting skill
-  normalization or embedding callbacks. CDC events are only published once this flips to `true`.
-  Also the idempotency gate: a redelivered create command re-enters the enrichment flow only if
-  this is `false`
-- **`is_active`** (`BOOLEAN`): Whether this preference is actively used for job matching.
-  Inactive preferences are retained but excluded from correlation scoring
+The service publishes:
 
-#### Indexes
+- `user-pref.cdc.pref-created.v1` after a new profile completes enrichment.
+- `user-pref.cdc.pref-updated.v1` after an updated profile completes enrichment, and immediately
+  after attachment or feature-importance changes.
+- `user-pref.cdc.pref-deleted.v1` when a profile is deleted.
+- `user-pref.cdc.settings-created.v1` when user-level settings are first created.
+- `user-pref.cdc.settings-updated.v1` when user-level settings change.
 
-- **`ix_search_prefs_user_id`** (`user_id`): Supports all per-user listing queries, including the
-  BFF's "list my preferences" read path and account-deletion bulk delete
-- **`ix_search_prefs_request_id`** (`request_id`): Supports the idempotency check in the create
-  handler: looking up an existing preference by the BFF's `request_id` before deciding whether
-  to create or re-enter enrichment
-- **`ix_search_prefs_active`** (`is_active`) WHERE `is_active = true`: Partial index for queries
-  that only need active preferences, avoiding full scans over inactive rows
+The skill-normalization and embedding requests are outgoing commands, not CDC state-change events.
+They are published directly through the Kafka client rather than through the transactional outbox.
+As commands, they sit outside the exactly-once guarantee used for source-of-truth CDC publication;
+the outbox atomicity guarantee applies only to the CDC events above. The
+enrichment-completeness gate and create-command redelivery behavior allow an interrupted,
+incomplete enrichment flow to be requested again. Debezium connector configuration lives under
+`infra/k8s/kafka-connect/connectors/`.
 
-#### Constraints & Invariants
-
-- **UNIQUE** on `request_id`: Prevents duplicate preference creation when the BFF command is
-  redelivered. The create handler uses this to distinguish "first delivery" from "redelivery of
-  in-progress enrichment"
-- **`is_enrichment_complete = false`** invariant during enrichment: No CDC event is published
-  while this is `false`. If the service crashes mid-enrichment and the Kafka command is
-  redelivered, the handler detects `is_enrichment_complete = false` and re-requests enrichment
-  from the beginning
-
-#### Data Lifecycle
-
-- **Created** when `user-pref.cmd.create-requested` is consumed and no row with that `request_id`
-  exists
-- **Updated** during enrichment (skill callback writes `user_skill_ids`, `user_skills_data`,
-  `user_skills_embedding`; embedding callback writes `query_embedding`, `query_artifacts_data`,
-  `collection_version`, `is_enrichment_complete`)
-- **Updated** when `user-pref.cmd.update-requested`, `user-pref.cmd.attach-upload.v1`,
-  `user-pref.cmd.detach-upload.v1`, or `user-pref.cmd.pref-importance-update-requested` is
-  consumed
-- **Deleted** (bulk) when `user-auth.cdc.account-deleted.v1` is consumed: all rows for that
-  `user_id` are deleted in a single `DELETE WHERE user_id = ?`
-- **Deleted** (single) when `user-pref.cmd.delete-requested` is consumed
-
----
-
-### `search_pref_uploads`
-
-#### Purpose
-
-Junction table linking a search preference to an uploaded document stored in
-`user-upload-service`. Tracks whether each upload is an "example" (a resume or work sample used
-for tailoring) or "additional_context" (supplementary materials).
-
-#### Key Columns
-
-- **`pref_id`** (`UUID`): FK to `search_prefs.id` with `ON DELETE CASCADE` -- upload associations
-  are automatically removed when the preference is deleted
-- **`upload_id`** (`UUID`): References `user_upload_schema.uploads.id` (no FK constraint --
-  cross-schema)
-- **`upload_type`** (`VARCHAR(50)`): Either `"example"` (upload category 1 or 2 from the attach
-  command) or `"additional_context"` (all other categories). Determines how `doc-content-service`
-  uses the document during tailoring
-
-#### Indexes
-
-- **`PRIMARY KEY (pref_id, upload_id)`**: Composite PK enforcing one row per preference-upload
-  pair and serving as the idempotency key for the attach handler
-- **`ix_search_pref_uploads_upload_id`** (`upload_id`): Supports the
-  `user-upload.cdc.upload-deleted.v1` handler, which must find and remove all associations across
-  all preferences for a deleted upload without scanning every row
-
-#### Constraints & Invariants
-
-- **PRIMARY KEY** on `(pref_id, upload_id)`: Prevents duplicate associations. The attach handler
-  uses `UPDATE...SET upload_type` on conflict rather than failing, so re-categorizing an
-  already-attached upload is idempotent
-
-#### Data Lifecycle
-
-- **Created** when `user-pref.cmd.attach-upload.v1` is consumed
-- **Updated** (`upload_type` only) when the same upload is re-attached with a different category
-- **Deleted** when `user-pref.cmd.detach-upload.v1` is consumed, or when the parent
-  `search_prefs` row is deleted (cascade), or when `user-upload.cdc.upload-deleted.v1` is
-  consumed (bulk delete by `upload_id`)
-
----
-
-### `user_pref_settings`
-
-#### Purpose
-
-Stores per-user defaults that apply across all of a user's search preferences unless overridden
-at the preference level. Owned by this service (not `user-auth-service`) because these are
-job-search preferences, not account settings.
-
-#### Key Columns
-
-- **`id`** (`UUID`): UUIDv7 primary key
-- **`user_id`** (`UUID`): UNIQUE: one settings row per user. References the user identity owned
-  by `user-auth-service` (no FK constraint: cross-schema)
-- **`default_feature_importance`** (`JSONB`): Default L2R feature weights applied to all
-  preferences that do not set their own `feature_importance`. Structure:
-  `{"skill_match_importance": int, "location_importance": int, "work_arrangement_importance": int,
-  "experience_importance": int, "salary_importance": int, "recency_importance": int}`
-- **`preferred_timezone`** (`VARCHAR(50)`): IANA timezone string (e.g., `"America/New_York"`) for
-  display-layer date formatting
-- **`preferred_locale`** (`VARCHAR(10)`): BCP 47 locale code (e.g., `"en-US"`) for currency and
-  number formatting in notifications
-
-#### Indexes
-
-- **`ix_user_pref_settings_user_id`** (`user_id`): Supports the settings lookup on every
-  `user-pref.cmd.settings-update-requested` command (upsert requires reading the current row
-  first)
-
-#### Constraints & Invariants
-
-- **UNIQUE** on `user_id`: Enforced at both the DB level and via the upsert handler, which uses
-  `ON CONFLICT (user_id) DO UPDATE`
-
-#### Data Lifecycle
-
-- **Created** the first time `user-pref.cmd.settings-update-requested` is consumed for a given
-  user
-- **Updated** on subsequent `user-pref.cmd.settings-update-requested` events; only fields listed
-  in `updated_fields` are written
-- **Deleted** when `user-auth.cdc.account-deleted.v1` is consumed (bulk delete on `user_id`)
-
----
-
-## Outbox Table
-
-This service uses the transactional outbox pattern for guaranteed event delivery. All CDC events
-are written to the `outbox` table in the same database transaction as the domain data write, using
-`nohiki-db-utils`'s `OutboxWriter`. Debezium's PostgreSQL connector reads the outbox table from
-the WAL and publishes events to Kafka via the Outbox Event Router SMT.
-
-Events published via outbox:
-
-- `user-pref.cdc.pref-created.v1` -- Published after enrichment completes for a new preference
-- `user-pref.cdc.pref-updated.v1` -- Published after enrichment completes for an updated
-  preference, and immediately on attachment and feature importance changes
-- `user-pref.cdc.pref-deleted.v1` -- Published when a preference is deleted
-- `user-pref.cdc.settings-created.v1` -- Published when user-level settings are first created
-- `user-pref.cdc.settings-updated.v1` -- Published when user-level settings are updated
-
-The skill normalization request (`skill.cmd.normalization-requested.v1`) and embedding request
-(`ml.cmd.embedding-requested.v1`) are published directly via `kafka_client.publish()`, not
-through the outbox. These are outgoing commands, not state change events, so they do not need the
-exactly-once guarantee that the outbox provides for CDC events.
-
-See `infra/kafka-connect/` for the Debezium connector configuration.
-
-## Migration Strategy
-
-Nohiki uses **clean-cut deployment**: all services are stopped, schemas are dropped and recreated,
-and the single `001_initial_migration.py` is applied fresh. The migration file is edited in place
-rather than creating incremental migrations.
-
-This is possible because Nohiki is pre-release with zero production data. There are no data
-migrations or backward compatibility concerns.
-
-```bash
-# Apply migration
-alembic upgrade head
-
-# Generate updated migration after model changes
-alembic revision --autogenerate -m "description"
-
-# View current state
-alembic current
-```
+The schema itself is defined by the SQLAlchemy models in
+`backend/services/user-pref-service/src/user_pref_service/db/models.py` and the Alembic revision
+in `backend/services/user-pref-service/alembic/versions/001_initial_migration.py`.

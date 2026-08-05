@@ -1,131 +1,88 @@
-# User Entitlement Service Database Schema
+# User Entitlement Database Design
 
-Schema `user_entitlement_schema` stores one entitlement record per Nohiki user, capturing
-their active subscription tier, computed per-tier limits, and billing provider references.
+The user-entitlement service owns `user_entitlement_schema` and is the authority for each
+Nohiki user's active subscription tier, billing lifecycle, and effective access limits. A user
+has one entitlement record, identified by the account owned by `user-auth-service`. Downstream
+services consume the resulting `EntitlementSnapshot`; they do not query this service for limits.
 
-## Entity Overview
+## Entitlement Lifecycle
 
-| Table | Purpose |
-| ------- | --------- |
-| `entitlements` | One row per user; stores tier, subscription status, computed limits, and billing provider references |
-| `outbox` | Transactional outbox for Debezium CDC pickup of `USER_ENTITLEMENT_CHANGED` events |
-| `processed_events` | Consumer idempotency log, prevents duplicate processing of incoming Kafka messages |
+### Provisioning and Idempotency
 
-The `entitlements` table is the only domain table. Every write to it is paired with an `outbox`
-row in the same transaction, ensuring the `USER_ENTITLEMENT_CHANGED` event reaches Kafka if
-and only if the entitlement row commits.
+`USER_AUTH_ACCOUNT_UPDATED` provisions an entitlement when the user has none. Provisioning
+starts the user on the free tier with no billing relationship. The service deliberately attempts
+the create rather than performing a read-before-write check. Concurrent or repeated delivery for
+the same user is resolved by the one-entitlement-per-user invariant: the losing create is rolled
+back and the existing entitlement is returned. This keeps provisioning safe under Kafka's
+at-least-once delivery model.
 
-## Table Details
+Incoming event identities are also recorded so that repeated Kafka messages do not repeat
+consumer side effects.
 
-### `entitlements`
+### Tier-Derived Access
 
-#### Purpose
+The active tier determines the complete effective limit set. `src/user_entitlement_service/core/tiers.py`
+is the source of truth for these grants:
 
-Stores the subscription tier and computed access limits for each user account. One row per user,
-identified by `user_id`. This row is the authoritative record that drives the
-`EntitlementSnapshot` carried in all downstream events.
+- **Free** -- daily discovery, one preference profile, three uploads per preference, Indeed as
+  the allowed source, and no additional features.
+- **Basic** -- daily discovery, two preference profiles, five uploads per preference, Indeed and
+  LinkedIn as allowed sources, and no additional features.
+- **Pro** -- twice-daily discovery, five preference profiles, ten uploads per preference, Indeed,
+  LinkedIn, and Glassdoor as allowed sources, with automatic tailoring and priority matching.
+- **Enterprise** -- hourly discovery, twenty preference profiles, twenty-five uploads per
+  preference, the Pro sources plus ZipRecruiter and Google, with the Pro features plus API access.
 
-#### Key Columns
+A tier change rewrites the entire derived limit set from that configuration in the same
+transaction. The stored limits are therefore a materialized entitlement decision, not an
+independent configuration to edit piecemeal. They are included in the downstream snapshot so
+consumers can enforce access without querying this database. In particular,
+`job-ingest-schedule-service` uses the discovery frequency decision to schedule discovery work.
 
-- **`id`** (`UUID`): UUIDv7 primary key, generated server-side via `uuidv7()`.
-- **`user_id`** (`UUID`): References `user_auth_schema.accounts.id` (no FK constraint --
-  cross-schema). UNIQUE: enforces one entitlement per account and serves as the idempotency
-  key for the `USER_AUTH_ACCOUNT_UPDATED` handler.
-- **`tier`** (`subscription_tier_enum`): The active subscription tier. Values: `UNSPECIFIED`,
-  `FREE`, `BASIC`, `PRO`, `ENTERPRISE`. Defaults to `FREE`. Changing the tier automatically
-  updates all computed limit columns via `core/tiers.py`.
-- **`subscription_status`** (`subscription_status_enum`): Billing lifecycle state. Values:
-  `UNSPECIFIED`, `NONE`, `TRIALING`, `ACTIVE`, `PAST_DUE`, `CANCELED`, `EXPIRED`, `PAUSED`.
-  The ORM enforces valid transitions via `StateMachineMixin`. Defaults to `NONE` (no billing
-  relationship yet, as set for free-tier accounts at provisioning).
-- **`billing_provider`** (`billing_provider_enum`): The payment provider handling the
-  subscription. Values: `UNSPECIFIED`, `NONE`, `STRIPE`, `PADDLE`, `MANUAL`. Defaults to
-  `NONE` for free-tier accounts.
-- **`external_subscription_id`** (`VARCHAR(255)`, nullable): Subscription identifier from
-  the billing provider (e.g., a Stripe subscription ID). Null until a paid subscription is
-  activated.
-- **`external_customer_id`** (`VARCHAR(255)`, nullable): Customer identifier from the billing
-  provider. Null until a paid subscription is activated.
-- **`current_period_start`** / **`current_period_end`** (`TIMESTAMPTZ`, nullable): Billing
-  period boundaries from the payment provider. Null for free-tier accounts.
-- **`discovery_frequency_limit`** (`discovery_frequency_enum`): How often the
-  job-ingest-schedule-service runs discovery for this user. Values: `UNSPECIFIED`, `DAILY`,
-  `TWICE_DAILY`, `HOURLY`, `REALTIME`. Derived from tier: FREE/BASIC → `DAILY`, PRO →
-  `TWICE_DAILY`, ENTERPRISE → `HOURLY`.
-- **`max_prefs`** (`INTEGER`): Maximum number of job search preference profiles the user can
-  create. Derived from tier: FREE → 1, BASIC → 2, PRO → 5, ENTERPRISE → 20.
-- **`max_uploads_per_pref`** (`INTEGER`): Maximum document uploads per preference profile.
-  Derived from tier: FREE → 3, BASIC → 5, PRO → 10, ENTERPRISE → 25.
-- **`allowed_sources`** (`job_board_source_enum[]`): Job board sources the user's discovery
-  runs may scrape. Derived from tier: FREE → `[INDEED]`, BASIC → `[INDEED, LINKEDIN]`, PRO →
-  `[INDEED, LINKEDIN, GLASSDOOR]`, ENTERPRISE → `[INDEED, LINKEDIN, GLASSDOOR, ZIPRECRUITER, GOOGLE]`.
-- **`features_enabled`** (`JSONB`): Feature flag map derived from tier. Structure:
-  `{"feature_name": bool}`. FREE and BASIC have `{}` (no extra features). PRO adds
-  `{"auto_tailor": true, "priority_matching": true}`. ENTERPRISE adds those plus
-  `{"api_access": true}`. Defaults to `{}`.
+### Billing Lifecycle
 
-#### Indexes
+Free-tier provisioning begins with no billing relationship. Paid activation associates the
+entitlement with its billing provider, external customer and subscription identities, and the
+provider's current billing period.
 
-- **`ix_entitlements_user`** (`user_id`): Supports the primary lookup pattern in all handlers
-  -- fetch entitlement by user ID.
-- **`ix_entitlements_tier`** (`tier`): Supports bulk queries scoped to a tier (e.g., backfill
-  all PRO users when tier limits change).
-- **`ix_entitlements_status`** (`subscription_status`): Supports queries scoped to subscription
-  state (e.g., find all `PAST_DUE` accounts for billing retry jobs).
+The model enforces billing lifecycle transitions before persistence:
 
-#### Constraints
+- No billing relationship can enter trialing or active service.
+- Trialing service can become active, canceled, or expired.
+- Active service can become past due, canceled, or paused.
+- Past-due service can return to active or become canceled or expired.
+- Canceled service can become expired or reactivate.
+- Paused service can return to active or become canceled or expired.
+- Expired service can reactivate or begin another trial.
 
-- **UNIQUE** on `user_id`: Enforces one entitlement per account. The `create_default_entitlements`
-  function exploits this as an idempotency mechanism, catching `IntegrityError` on duplicate
-  insert and returns the existing row, making the handler safe under at-least-once Kafka delivery.
-- **PRIMARY KEY** on `id`: Standard row identifier; not used as a join key by other services
-  (those use `user_id` instead).
+Attempts to move outside this graph fail before a database write.
 
-#### Data Lifecycle
+### Deletion
 
-- **Created** when `USER_AUTH_ACCOUNT_UPDATED` is consumed for a user that has no existing
-  entitlement row. The initial tier is always `FREE` with `subscription_status = NONE`.
-- **Updated** when `update_entitlements` is called with new tier or status data. Updating the
-  tier atomically rewrites all computed limit columns (`discovery_frequency_limit`, `max_prefs`,
-  `max_uploads_per_pref`, `allowed_sources`, `features_enabled`) from `core/tiers.py`.
-- **Deleted** when `USER_AUTH_ACCOUNT_DELETED` is consumed. No cascade exists; this is a direct
-  `DELETE WHERE user_id = ?`. No outbox event is published on deletion.
+`USER_AUTH_ACCOUNT_DELETED` causes the service to hard-delete the user's entitlement directly.
+Deletion does not publish an entitlement-change outbox event, so consumers that retain an
+entitlement projection must use the account-deleted lifecycle event to remove it.
 
-## Outbox Table
+## Transactional Event Publication
 
-The service uses the transactional outbox pattern for guaranteed event delivery. The `outbox`
-table is written in the same database transaction as every entitlement insert or update.
-Debezium's PostgreSQL connector with the Outbox Event Router SMT reads the table from the
-PostgreSQL WAL and publishes events to Kafka.
+Every entitlement create or update writes a `USER_ENTITLEMENT_CHANGED` event to the transactional
+outbox alongside the domain change. A transaction commits both the entitlement state and its
+corresponding event record, or neither, eliminating an application-level database/Kafka dual
+write. The event is associated with the user as the entitlement aggregate and carries the full
+snapshot of tier, billing status, derived limits, allowed sources, and enabled features.
 
-**Event published via outbox:**
+Debezium reads committed outbox records from the PostgreSQL WAL and publishes them to
+`user-entitlement.cdc.entitlement-changed.v1` after the database transaction. Publication is
+therefore asynchronous, while the durable outbox record remains atomic with the entitlement
+change. Connector behavior is configured under `infra/k8s/kafka-connect/connectors/`.
 
-- `USER_ENTITLEMENT_CHANGED` (`user-entitlement.cdc.entitlement-changed.v1`) -- Published after
-  every entitlement create or update. The `aggregateid` column is set to `user_id`; the
-  `aggregatetype` column is `"entitlement"`.
+## Operational Use
 
-The `outbox` table columns follow the standard Debezium Outbox Event Router schema:
-`id` (UUIDv7 PK), `aggregatetype`, `aggregateid`, `type`, `payload` (binary-serialized
-protobuf), `timestamp`, and `tracingspancontext`.
+The primary access path is by user identity. Tier-scoped selection supports recomputing and
+backfilling materialized limits when tier policy changes, while billing-lifecycle selection
+supports operational work such as retrying past-due subscriptions. These uses explain the
+service's lookup design without making this database a query surface for other services.
 
-See `infra/kafka-connect/` for the Debezium connector configuration.
-
-## Migration Strategy
-
-Nohiki uses **clean-cut deployment**: all services are stopped, schemas are dropped and
-recreated, and the single `001_` migration is applied fresh. The migration file is edited in
-place rather than creating incremental migrations.
-
-This is possible because Nohiki is pre-release with zero production data. There are no data
-migrations or backward compatibility concerns.
-
-```bash
-# Apply migration
-alembic upgrade head
-
-# Generate updated migration after model changes
-alembic revision --autogenerate -m "description"
-
-# View current state
-alembic current
-```
+The schema itself is defined by the service's SQLAlchemy models in
+[`src/user_entitlement_service/db/models.py`](./src/user_entitlement_service/db/models.py) and
+Alembic revision [`alembic/versions/001_initial_migration.py`](./alembic/versions/001_initial_migration.py).

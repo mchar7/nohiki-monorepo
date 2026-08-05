@@ -69,7 +69,7 @@ idempotency. The entitlement row stores the active tier, subscription status, bi
 references, and the computed per-tier limits (discovery frequency, max preferences, allowed job
 board sources, feature flags).
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for the semantic database design and lifecycle documentation.
 
 ## Key Design Patterns
 

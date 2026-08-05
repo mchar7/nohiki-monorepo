@@ -104,7 +104,7 @@ template share `(namespace, name, owner_id)` but differ by `version` (a SemVer-v
 The `outbox` and `processed_events` tables support the transactional outbox and idempotency
 mechanisms respectively.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ### Object Storage
 

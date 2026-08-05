@@ -129,7 +129,7 @@ frequency. `query_contributors` records the many-to-many mapping between `Ingest
 and user preferences (`pref_id`), storing each preference's individual parameters so aggregates
 can be recomputed from first principles when any contributor changes.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for the database design, aggregation, and lifecycle guide.
 
 ### Redis
 
