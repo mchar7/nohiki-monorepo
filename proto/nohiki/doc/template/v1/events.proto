@@ -22,7 +22,8 @@ message DocumentRenderRequested {
     (buf.validate.field).string.uuid = true
   ];
 
-  optional string template_version = 3 [
+  string template_version = 3 [
+    (buf.validate.field).required = true,
     (buf.validate.field).string.pattern = "^[0-9]+\\.[0-9]+\\.[0-9]+$"
   ];
   optional string template_name = 10 [(buf.validate.field).string.max_len = 255];
@@ -44,7 +45,7 @@ message DocumentRenderRequested {
 
   // ECST: Layout content embedded - no DB lookup needed
   optional string template_content = 20 [
-    (buf.validate.field).string = {min_len: 10, max_len: 1048576}
+    (buf.validate.field).string = {min_len: 10, max_bytes: 102400}
   ];
 
   // ECST: Schema snapshot for validation - embedded directly, no external lookup

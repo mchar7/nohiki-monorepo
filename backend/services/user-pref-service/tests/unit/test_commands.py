@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from nohiki_common_exceptions import ValidationError
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_fastapi_utils.errors import NotFoundError
 from nohiki_kafka_client import MessageContext
@@ -124,12 +125,23 @@ async def test_start_saga_persists_identity_and_outbound_dispatch() -> None:
 
 class TestHandlePrefCreateRequested:
     @pytest.mark.asyncio
-    async def test_rejects_missing_work_arrangements(self) -> None:
+    @pytest.mark.parametrize(
+        ("work_arrangements", "constraint"),
+        [([], "at least one"), ([0, 1, 2, 3, 4, 5], "at most five")],
+    )
+    async def test_rejects_invalid_work_arrangements(
+        self,
+        work_arrangements: list[int],
+        constraint: str,
+    ) -> None:
         message = _make_create_message()
-        message.work_arrangements = []
-        with patch("user_pref_service.events.commands.profile_service") as profiles:
+        message.work_arrangements = work_arrangements
+        with (
+            patch("user_pref_service.events.commands.profile_service") as profiles,
+            pytest.raises(ValidationError, match=constraint),
+        ):
             await handle_pref_create_requested(message, _make_context(db_session=create_mock_session()))
-        profiles.create_profile.assert_not_called()
+        profiles.get_profile_by_request_id.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_creates_request_owned_saga_before_dispatch(self) -> None:

@@ -205,8 +205,26 @@ class TestValidateRenderRequest:
         with pytest.raises(ValidationError, match="template_version"):
             _validate_render_request(mock_message)
 
-    def test_returns_tuple_on_success(self) -> None:
-        """Test successful validation returns tuple."""
+    def test_raises_error_when_template_version_is_not_semver(self) -> None:
+        """ValidationError is raised for a nonempty invalid template version."""
+        message = DocumentRenderRequested(
+            metadata=EventMetadata(
+                event_id="test-id",
+                correlation_id="corr-id",
+                source_service="test",
+            ),
+            template_id="template-123",
+            template_content="<html></html>",
+            template_version="not-a-version",
+        )
+
+        with pytest.raises(ValidationError, match="template_version") as exc_info:
+            _validate_render_request(message)
+
+        assert exc_info.value.field_name == "template_version"
+
+    def test_accepts_valid_semver(self) -> None:
+        """Valid semantic versions return the extracted request fields."""
         mock_message = MagicMock()
         mock_message.metadata = EventMetadata(
             event_id="test-id",
@@ -285,6 +303,7 @@ class TestRenderCompletedParams:
 
 class TestHandleTemplateRenderRequested:
     """Tests for handle_template_render_requested event handler."""
+
 
     @pytest.mark.asyncio
     async def test_invalid_metadata_publishes_one_correlated_terminal_failure(

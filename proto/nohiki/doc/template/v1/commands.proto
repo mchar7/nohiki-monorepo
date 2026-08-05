@@ -36,7 +36,7 @@ message TemplateCreateRequested {
 
   string template_content = 6 [
     (buf.validate.field).required = true,
-    (buf.validate.field).string = {min_len: 10, max_len: 1048576}
+    (buf.validate.field).string = {min_len: 10, max_bytes: 102400}
   ];
 
   optional string description = 7 [
@@ -89,7 +89,7 @@ message TemplateVersionAddRequested {
 
   string template_content = 6 [
     (buf.validate.field).required = true,
-    (buf.validate.field).string = {min_len: 10, max_len: 1048576}
+    (buf.validate.field).string = {min_len: 10, max_bytes: 102400}
   ];
 
   optional string description = 7 [

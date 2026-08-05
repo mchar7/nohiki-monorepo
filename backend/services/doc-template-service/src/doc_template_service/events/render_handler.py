@@ -26,6 +26,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from doc_template_service.core.config import get_settings
 from doc_template_service.core.generator import GenerationError, TextAlternativeMode, generate_document
 from doc_template_service.core.kafka import kafka_client
+from doc_template_service.core.semver_validation import SemanticVersionError, validate_semantic_version
 from doc_template_service.services import store_rendered_document
 from doc_template_service.services.template_service import get_template_model_by_id
 
@@ -134,6 +135,13 @@ def _validate_render_request(message: DocumentRenderRequested) -> tuple[str, str
             field_name="template_version",
             constraint=f"template_version is required for template_id={template_id}",
         )
+    try:
+        validate_semantic_version(template_version)
+    except SemanticVersionError as exc:
+        raise ValidationError(
+            field_name="template_version",
+            constraint="template_version must be a valid semantic version",
+        ) from exc
 
     return correlation_id, template_id, template_version
 

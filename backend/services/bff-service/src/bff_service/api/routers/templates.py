@@ -19,7 +19,7 @@ from nohiki_domain_utils import BetterprotoEnumAdapter
 from nohiki_fastapi_utils import PaginatedResponse, PaginationParams
 from nohiki_kafka_client import Topics, create_event_metadata
 from nohiki_observability import get_logger
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -42,6 +42,18 @@ router = APIRouter()
 SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[\w.]+)?(?:\+[\w.]+)?$")
 NAMESPACE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 TEMPLATE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,126}$")
+_TEMPLATE_CONTENT_MAX_BYTES = 102400
+
+
+def _validate_template_content_size(value: str) -> str:
+    """Reject template content above the UTF-8 byte limit."""
+    if len(value.encode("utf-8")) > _TEMPLATE_CONTENT_MAX_BYTES:
+        message = f"template content exceeds {_TEMPLATE_CONTENT_MAX_BYTES} bytes"
+        raise ValueError(message)
+    return value
+
+
+_TemplateContent = Annotated[str, AfterValidator(_validate_template_content_size)]
 
 
 class TemplateValidationIssue(BaseModel):
@@ -55,7 +67,7 @@ class TemplateValidationIssue(BaseModel):
 class TemplateValidationRequest(BaseModel):
     """Request to validate template content."""
 
-    template: str = Field(max_length=1048576, description="Template HTML/Jinja2 content to validate")
+    template: _TemplateContent = Field(description="Template HTML/Jinja2 content to validate")
 
 
 class TemplateValidationResponse(BaseModel):
@@ -457,7 +469,7 @@ class TemplateCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     display_name: str = Field(..., min_length=1, max_length=255)
     namespace: str = Field(default="default", max_length=50)
-    template_content: str = Field(..., min_length=10, max_length=1048576)
+    template_content: _TemplateContent = Field(..., min_length=10)
     description: str | None = Field(default=None, max_length=1000)
     schema_compatibility: list[str] | None = Field(default=None, max_length=20)
 
@@ -466,7 +478,7 @@ class TemplateVersionAddRequest(BaseModel):
     """Request to add a new version to a template family."""
 
     version: str = Field(..., pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")
-    template_content: str = Field(..., min_length=10, max_length=1048576)
+    template_content: _TemplateContent = Field(..., min_length=10)
     description: str | None = Field(default=None, max_length=1000)
     schema_compatibility: list[str] | None = Field(default=None, max_length=20)
 

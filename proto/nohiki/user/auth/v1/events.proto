@@ -45,6 +45,12 @@ message AccountDeleted {
 // expiration when session_family_id revokes an entire session family.
 // ════════════════════════════════════════════════════════════════════
 message AccessTokenRevoked {
+  option (buf.validate.message).cel = {
+    id: "access_token_revoked.revocation_target_required"
+    message: "jti or session_family_id is required"
+    expression: "this.jti != '' || this.session_family_id != ''"
+  };
+
   nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
   string user_id = 2 [
     (buf.validate.field).required = true,

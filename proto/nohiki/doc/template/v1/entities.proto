@@ -53,7 +53,7 @@ message DocumentTemplateVersion {
   // === CONTENT ===
   string template_content = 10 [
     (buf.validate.field).required = true,
-    (buf.validate.field).string = {min_len: 10, max_len: 1048576}
+    (buf.validate.field).string = {min_len: 10, max_bytes: 102400}
   ];
 
   optional string content_schema_json = 11 [(buf.validate.field).string.max_len = 1048576];

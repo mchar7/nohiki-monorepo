@@ -13,6 +13,7 @@ from nohiki.user.pref.v1 import (
     PrefUpdateRequested,
     UserPrefSettingsUpdateRequested,
 )
+from nohiki_common_exceptions import ValidationError
 from nohiki_fastapi_utils.errors import NotFoundError
 from nohiki_kafka_client import MessageContext, Topics
 from nohiki_observability import get_logger
@@ -105,12 +106,17 @@ async def handle_pref_create_requested(message: PrefCreateRequested, context: Me
     user_id = UUID(message.user_id)
     request_id = UUID(message.request_id)
     if not message.work_arrangements:
-        logger.warning(
-            "Rejecting pref create without work arrangements",
-            request_id=message.request_id,
-            user_id=str(user_id),
+        raise ValidationError(
+            field_name="work_arrangements",
+            invalid_value=message.work_arrangements,
+            constraint="must contain at least one work arrangement",
         )
-        return
+
+    logger.info(
+        "Processing pref create command",
+        request_id=message.request_id,
+        user_id=str(user_id),
+    )
     db = context.require_db_session()
     if await saga_service.get_saga_by_request_id(db, request_id) is not None:
         logger.info("Command already processed", request_id=message.request_id)

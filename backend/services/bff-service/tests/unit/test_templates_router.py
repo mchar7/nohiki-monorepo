@@ -16,6 +16,7 @@ import pytest
 from fastapi import HTTPException
 from nohiki_db_utils.testing import create_mock_session
 from pydantic import BaseModel
+from pydantic import ValidationError as PydanticValidationError
 
 from ._helpers import make_scalar_all, make_template_version_projection
 
@@ -279,6 +280,56 @@ class TestResponseModels:
         response = TemplateValidationResponse(valid=False, issues=[issue])
         assert response.valid is False
         assert len(response.issues) == 1
+
+
+class TestTemplateContentSize:
+    """Tests for template request UTF-8 byte limits."""
+
+    @pytest.mark.parametrize("request_type", ["validate", "create", "version"])
+    def test_accepts_102400_ascii_bytes(self, request_type: str) -> None:
+        from bff_service.api.routers.templates import (
+            TemplateCreateRequest,
+            TemplateValidationRequest,
+            TemplateVersionAddRequest,
+        )
+
+        content = "x" * 102400
+        if request_type == "validate":
+            accepted_content = TemplateValidationRequest(template=content).template
+        elif request_type == "create":
+            accepted_content = TemplateCreateRequest(
+                name="test",
+                display_name="Test",
+                template_content=content,
+            ).template_content
+        else:
+            accepted_content = TemplateVersionAddRequest(
+                version="1.0.0",
+                template_content=content,
+            ).template_content
+
+        assert len(accepted_content.encode("utf-8")) == 102400
+
+    @pytest.mark.parametrize("request_type", ["validate", "create", "version"])
+    def test_rejects_102401_ascii_bytes(self, request_type: str) -> None:
+        from bff_service.api.routers.templates import (
+            TemplateCreateRequest,
+            TemplateValidationRequest,
+            TemplateVersionAddRequest,
+        )
+
+        content = "x" * 102401
+
+        def build_request() -> None:
+            if request_type == "validate":
+                TemplateValidationRequest(template=content)
+            elif request_type == "create":
+                TemplateCreateRequest(name="test", display_name="Test", template_content=content)
+            else:
+                TemplateVersionAddRequest(version="1.0.0", template_content=content)
+
+        with pytest.raises(PydanticValidationError):
+            build_request()
 
 
 # Template Handler Tests

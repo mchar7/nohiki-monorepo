@@ -13,6 +13,12 @@ import "google/protobuf/struct.proto";
 // Implements Event-Carried State Transfer (ECST) to eliminate gRPC calls
 // ════════════════════════════════════════════════════════════════════
 message ContentGenerationContext {
+  option (buf.validate.message).cel = {
+    id: "content_generation_context.uploads_total_limit",
+    message: "example_uploads and context_uploads must contain at most 20 uploads in total",
+    expression: "size(this.example_uploads) + size(this.context_uploads) <= 20"
+  };
+
   // REQUIRED - Listing context for content generation
   nohiki.job.listing.v1.ListingSnapshot listing = 1 [(buf.validate.field).required = true];
 

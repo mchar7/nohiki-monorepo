@@ -333,6 +333,38 @@ async def test_tailored_command_rejects_foreign_or_empty_upload_references() -> 
 
 
 @pytest.mark.asyncio
+async def test_tailored_command_rejects_more_than_twenty_uploads_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid.uuid4()
+    correlation, listing, template, pref = _successful_rows(user_id)
+    pref.example_uploads = [
+        _upload(user_id, f"users/example-{index}.pdf", name=f"example-{index}") for index in range(20)
+    ]
+    correlation.pref_snapshot = pref.to_dict()
+    correlation.pref_uploads = []
+    db = create_mock_session()
+    db.execute.side_effect = [_result(correlation), _result(listing), _result(template)]
+    publish = AsyncMock()
+    monkeypatch.setattr("bff_service.api.routers.documents.kafka_client.publish", publish)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await generate_tailored_document(
+            GenerateTailoredDocumentRequest(
+                job_correlation_id=correlation.id,
+                template_id=template.id,
+            ),
+            user_id,
+            db,
+        )
+
+    assert exc_info.value.status_code == 409
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+    publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_direct_render_route_still_publishes_direct_render_topic(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
