@@ -82,6 +82,7 @@ _WORKER_COMMANDS = (
     ("lint_proto", "frontend", "buf lint"),
     ("lint_workflows", "frontend", "actionlint; check-jsonschema"),
     ("lint_docker", "frontend", "hadolint (tracked Dockerfiles)"),
+    ("container_contracts", "frontend", "ci-checks tests all --scope all --requires-docker"),
     ("lint_frontend", "frontend", "Biome; i18n:check"),
     ("lint_steiger", "frontend", "Steiger FSD architecture"),
     ("typecheck_backend", "python", "ty check native source surface"),
@@ -544,6 +545,7 @@ def render_report_summary(job: str, values: dict[str, str], *, now: int) -> str:
                     f"| Production frontend image build | {values.get('IMAGE_OUTCOME', '')} |",
                     f"| Frontend container hardened-runtime smoke | {values.get('SMOKE_OUTCOME', '')} |",
                     f"| OpenTelemetry collector image and rendered configs | {values.get('OTEL_OUTCOME', '')} |",
+                    f"| Routed `requires_docker` test suite | {values.get('CONTAINER_TESTS_OUTCOME', '')} |",
                 ]
             )
         lines.extend(
@@ -882,6 +884,11 @@ def verdict_cmd(kind: str, github_output: Path | None = None) -> None:
             values.get("OTEL_OUTCOME", ""),
             expected=_true(values.get("OTEL_EXPECTED")),
             name="otel-collector",
+        )
+        require_outcome(
+            values.get("CONTAINER_TESTS_OUTCOME", ""),
+            expected=_true(values.get("CONTAINER_TESTS_EXPECTED")),
+            name="container-tests",
         )
         if github_output is None:
             msg = "container verdict requires a GitHub output path"

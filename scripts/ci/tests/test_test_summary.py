@@ -80,6 +80,9 @@ def test_marker_expressions_keep_slow_tests_out_of_unit_lane(
     )
     assert test_checks._build_markers(integration=False) == test_checks._UNIT_TEST_MARKERS
     assert test_checks._build_markers(integration=True) == "integration"
+    assert test_checks._build_markers(integration=False, requires_docker=True) == "requires_docker"
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        test_checks._build_markers(integration=True, requires_docker=True)
 
     pytester.makeini(
         """
@@ -825,9 +828,7 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
     assert len(environment_syncs) == 1
     assert "steps.ready-cache-result.outputs.restore-exact != 'true'" in str(environment_syncs[0]["if"])
 
-    test_steps = [step for step in unit_steps if "ci-checks tests all --scope all" in str(step.get("run", ""))]
-    assert len(test_steps) == 1
-    test = test_steps[0]
+    test = next(step for step in unit_steps if step.get("name") == "Run selected Python tests")
     test_command = str(test["run"])
     assert worker["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
     assert '--packages "$TEST_PACKAGES"' in test_command

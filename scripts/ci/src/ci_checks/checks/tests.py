@@ -1311,8 +1311,13 @@ def _load_testable_packages(scope_str: str) -> list[Package]:
     return [p for p in packages.values() if p.has_tests]
 
 
-def _build_markers(*, integration: bool) -> str:
-    """Build the pytest -m expression for the given flags."""
+def _build_markers(*, integration: bool, requires_docker: bool = False) -> str:
+    """Build the pytest -m expression for the requested test class."""
+    if integration and requires_docker:
+        msg = "--integration and --requires-docker are mutually exclusive"
+        raise ValueError(msg)
+    if requires_docker:
+        return "requires_docker"
     return "integration" if integration else _UNIT_TEST_MARKERS
 
 
@@ -1399,6 +1404,10 @@ def all_packages_cmd(
         typer.Option("--scope", "-s", help="Filter: all, services, libs, jobs, scripts, other"),
     ] = "all",
     integration: Annotated[bool, typer.Option("--integration", "-i", help="Run integration tests")] = False,
+    requires_docker: Annotated[
+        bool,
+        typer.Option("--requires-docker", help="Run tests requiring a container runtime"),
+    ] = False,
     workers: Annotated[int, typer.Option("--workers", "-w", help="Max parallel workers")] = 4,
     ci: Annotated[bool, typer.Option("--ci", help="CI mode (simple output)")] = False,
     coverage: Annotated[bool, typer.Option("--coverage/--no-coverage", help="Enable coverage")] = True,
@@ -1431,7 +1440,7 @@ def all_packages_cmd(
         return
 
     console.print(f"[bold]Running tests for {len(testable)} packages with coverage...[/bold]")
-    markers = _build_markers(integration=integration)
+    markers = _build_markers(integration=integration, requires_docker=requires_docker)
     results = asyncio.run(
         run_tests_parallel(testable, markers, (), workers, console, ci_mode=ci, with_coverage=coverage)
     )

@@ -49,6 +49,7 @@ jobs:
       lint_markdown: ${{ steps.gate.outputs.lint_markdown }}
       lint_workflows: ${{ steps.gate.outputs.lint_workflows }}
       lint_docker: ${{ steps.gate.outputs.lint_docker }}
+      container_contracts: ${{ steps.gate.outputs.container_contracts }}
       typecheck_backend: ${{ steps.gate.outputs.typecheck_backend }}
       typecheck_frontend: ${{ steps.gate.outputs.typecheck_frontend }}
       python_any: ${{ steps.gate.outputs.python_any }}
@@ -284,15 +285,15 @@ jobs:
       contents: read
       security-events: write
     env:
-      NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.jvm_tests == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.otel_collector == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' }}
+      NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.container_contracts == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.otel_collector == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' || needs.changes.outputs.jvm_tests == 'true' }}
       NODE_SETUP_SELECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true') }}
       DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.lint_markdown == 'true' && needs.changes.outputs.affected_packages == '' }}
       SKYLOS_CACHE_DIR: ${{ github.workspace }}/.skylos
       # One selector for the deploy key, the static cache and the scan, so the three cannot drift.
       DEADCODE_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.affected_packages != '') && github.event.pull_request.head.repo.fork != true }}
-      # Mirrors the removed container job gate. The matrix selector keeps the work on the
-      # frontend leg while preserving every original router condition.
-      CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
+      # The routed marker suite is opt-in locally but mandatory on the hosted
+      # container worker whenever the gate selects its flag.
+      CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true') }}
     outputs:
       # Single-writer: the runner skips an output whose expression is the empty string
       # (actions/runner JobExtension.cs:789-805), so a unit that did not run contributes
@@ -727,6 +728,22 @@ jobs:
           nix develop .#ci --command uv run --no-sync pytest
           scripts/ci/tests/test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary
 
+      - name: Run container contract tests
+        id: container-tests
+        if: env.CONTAINER_CONTRACTS_SELECTED == 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true')
+        env:
+          CI_CHECKS_SKIP_WORKSPACE_SYNC: "1"
+          OTEL_SDK_DISABLED: "true"
+          UV_NO_SYNC: "1"
+          FRONTEND_SMOKE_SELECTED: ${{ needs.changes.outputs.frontend_smoke }}
+        run: |
+          if [[ "$FRONTEND_SMOKE_SELECTED" == true ]]; then
+            export FRONTEND_SMOKE_IMAGE=nohiki-frontend-smoke:ci
+          fi
+          nix develop .#ci --command uv run --no-sync ci-checks tests all --scope all \
+            --requires-docker --ci --workers 1 --no-coverage \
+            --summary "$GITHUB_STEP_SUMMARY" --summary-title "container contracts"
+
       - name: Attest container contract execution
         id: container-contracts
         if: always() && env.CONTAINER_CONTRACTS_SELECTED == 'true'
@@ -736,6 +753,8 @@ jobs:
           SMOKE_OUTCOME: ${{ steps.frontend-smoke.outcome }}
           OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
           FRONTEND_SMOKE_EXPECTED: ${{ needs.changes.outputs.frontend_smoke }}
+          CONTAINER_TESTS_OUTCOME: ${{ steps.container-tests.outcome }}
+          CONTAINER_TESTS_EXPECTED: ${{ needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true' }}
           OTEL_EXPECTED: ${{ needs.changes.outputs.otel_collector }}
         run: >
           python3 scripts/ci/src/ci_checks/checks/workflow.py
@@ -781,12 +800,14 @@ jobs:
           IMAGE_OUTCOME: ${{ steps.frontend-image.outcome }}
           SMOKE_OUTCOME: ${{ steps.frontend-smoke.outcome }}
           OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
+          CONTAINER_TESTS_OUTCOME: ${{ steps.container-tests.outcome }}
           FLAG_NIX: ${{ needs.changes.outputs.nix }}
           FLAG_LINT_PYTHON: ${{ needs.changes.outputs.lint_python }}
           FLAG_LINT_MARKDOWN: ${{ needs.changes.outputs.lint_markdown }}
           FLAG_LINT_PROTO: ${{ needs.changes.outputs.lint_proto }}
           FLAG_LINT_WORKFLOWS: ${{ needs.changes.outputs.lint_workflows }}
           FLAG_LINT_DOCKER: ${{ needs.changes.outputs.lint_docker }}
+          FLAG_CONTAINER_CONTRACTS: ${{ needs.changes.outputs.container_contracts }}
           FLAG_LINT_FRONTEND: ${{ needs.changes.outputs.lint_frontend }}
           FLAG_LINT_STEIGER: ${{ needs.changes.outputs.lint_steiger }}
           FLAG_TYPECHECK_BACKEND: ${{ needs.changes.outputs.typecheck_backend }}
@@ -965,7 +986,7 @@ jobs:
           # composite provisions the Node group, and is evaluated identically in both classes.
           NODE_GROUP_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true') }}
           WORKER_NODE_GROUP: ${{ needs.worker.outputs.node_group_executed }}
-          CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
+          CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true') }}
           WORKER_CONTAINER_CONTRACTS: ${{ needs.worker.outputs.container_contracts_executed }}
           PLAYWRIGHT_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true') }}
           CHANGES_RESULT: ${{ needs.changes.result }}

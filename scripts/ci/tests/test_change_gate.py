@@ -1,3 +1,4 @@
+import ast
 import fnmatch
 import json
 import os
@@ -447,11 +448,24 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
     [
         (
             "typescript/apps/frontend/src/App.tsx",
-            {"lint_frontend", "lint_steiger", "typecheck_frontend", "frontend_tests", "frontend_smoke"},
+            {
+                "lint_frontend",
+                "lint_steiger",
+                "typecheck_frontend",
+                "frontend_tests",
+                "frontend_smoke",
+                "container_contracts",
+            },
         ),
         (
             "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
-            {"lint_frontend", "typecheck_frontend", "frontend_smoke", "node_workspace_contracts"},
+            {
+                "lint_frontend",
+                "typecheck_frontend",
+                "frontend_smoke",
+                "node_workspace_contracts",
+                "container_contracts",
+            },
         ),
         (
             "typescript/edge/auth-listings-worker/src/index.ts",
@@ -466,6 +480,7 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
                 "frontend_tests",
                 "edge_worker",
                 "frontend_smoke",
+                "container_contracts",
             },
         ),
     ],
@@ -647,6 +662,7 @@ def test_flake_broad_change_selects_every_devshell_sourced_lane() -> None:
         "lint_proto",
         "lint_workflows",
         "lint_docker",
+        "container_contracts",
         "proto_breaking",
         "image_matrix_parity",
         "api_schema_freshness",
@@ -676,7 +692,7 @@ def test_broad_change_can_co_select_frontend_smoke_and_otel_collector() -> None:
     )
 
     assert decision.commit_class is CommitClass.BROAD
-    assert {"frontend_smoke", "frontend_e2e", "otel_collector"} <= decision.flags
+    assert {"frontend_smoke", "frontend_e2e", "otel_collector", "container_contracts"} <= decision.flags
 
 
 def _tracked_paths() -> set[str]:
@@ -691,7 +707,7 @@ def _tracked_paths() -> set[str]:
     )
 
 
-@pytest.mark.parametrize("flag", ["frontend_e2e", "frontend_smoke"])
+@pytest.mark.parametrize("flag", ["frontend_e2e", "container_contracts"])
 def test_container_image_rule_patterns_each_match_a_tracked_path(flag: str) -> None:
     tracked = _tracked_paths()
 
@@ -716,17 +732,17 @@ def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
         (
             "typescript/apps/frontend/Dockerfile",
             "false",
-            {"frontend_smoke", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
+            {"frontend_smoke", "container_contracts", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "typescript/apps/frontend/Dockerfile.playwright-runner",
             "false",
-            {"frontend_e2e", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
+            {"frontend_e2e", "container_contracts", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "infra/k8s/observability/base/otel/collector.yaml",
             "false",
-            {"otel_collector", "python_any", "hygiene", "typecheck_backend"},
+            {"otel_collector", "container_contracts", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "scripts/util/export-openapi.py",
@@ -736,7 +752,7 @@ def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
         (
             "infra/k8s/local/images.json",
             "false",
-            {"image_matrix_parity", "python_any", "hygiene", "typecheck_backend"},
+            {"image_matrix_parity", "container_contracts", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "unknown.bin",
@@ -2033,12 +2049,31 @@ def test_single_file_contract_inputs_seed_ci_checks(path: str) -> None:
     assert "ci-checks" in evaluate({path}, load_packages_with_deps(Scope.ALL)).affected
 
 
-def test_container_only_assertion_files_select_the_job_that_runs_them() -> None:
-    """Both assertions are requires_docker, which the Python lane deselects."""
-    packages = load_packages_with_deps(Scope.ALL)
+def test_every_requires_docker_test_file_routes_to_container_contracts() -> None:
+    def has_marker(path: str) -> bool:
+        module = ast.parse((REPO_ROOT / path).read_bytes(), filename=path)
+        return any(
+            isinstance(node, ast.Attribute)
+            and node.attr == "requires_docker"
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "mark"
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == "pytest"
+            for node in ast.walk(module)
+        )
 
-    assert "otel_collector" in evaluate({"scripts/ci/tests/test_otel_collector_manifest.py"}, packages).flags
-    assert "frontend_smoke" in evaluate({"scripts/ci/tests/test_frontend_delivery.py"}, packages).flags
+    packages = load_packages_with_deps(Scope.ALL)
+    marked = {
+        path
+        for path in _tracked_paths()
+        if "/tests/" in f"/{path}"
+        and Path(path).name.startswith("test_")
+        and Path(path).suffix == ".py"
+        and has_marker(path)
+    }
+
+    assert marked
+    assert {path for path in marked if "container_contracts" not in evaluate({path}, packages).flags} == set()
 
 
 @pytest.mark.parametrize(

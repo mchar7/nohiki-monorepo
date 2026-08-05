@@ -28,6 +28,7 @@ FLAG_NAMES: tuple[str, ...] = (
     "lint_markdown",
     "lint_workflows",
     "lint_docker",
+    "container_contracts",
     "typecheck_backend",
     "build_backend",
     "typecheck_frontend",
@@ -92,10 +93,10 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
         ("flake.nix", "flake.lock"),
         # Every lane listed here runs its binary from the .#ci devshell, so a
         # flake bump can move its verdict: buf, actionlint, hadolint, just and
-        # the CI Python come from flake.nix ciPolicyTools. container-contracts
-        # runs its two pytest assertions the same way and, unlike the worker
-        # steps, carries no broad disjunct, so its flags are the only thing that
-        # can select it. playwright-image runs bare docker and remains excluded.
+        # the CI Python come from flake.nix ciPolicyTools. The container-contract
+        # marker suite uses the same shell and has no bounded broad disjunct, so
+        # its flag is the only way this source can select it. playwright-image
+        # runs bare docker and remains excluded.
         flags=(
             "nix",
             "jvm_tests",
@@ -104,6 +105,7 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
             "lint_proto",
             "lint_workflows",
             "lint_docker",
+            "container_contracts",
             "proto_breaking",
             "image_matrix_parity",
             "api_schema_freshness",
@@ -248,7 +250,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
             "typescript/apps/frontend/e2e/**/*",
             "typescript/libs/tsconfig/*",
         ),
-        flags=("frontend_smoke",),
+        flags=("frontend_smoke", "container_contracts"),
     ),
     SurfaceRule(
         # vitest.config.ts:48 excludes **/e2e/**, so a Playwright spec cannot
@@ -300,17 +302,40 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         # Image contract tests live in the ci-checks suite.
         packages=("ci-checks",),
     ),
-    SurfaceRule(("typescript/apps/frontend/Dockerfile",), flags=("frontend_smoke",)),
-    # requires_docker assertions that the Python lane deselects: the
-    # container-contracts job is their only executor, so each file must select
-    # the job that runs it.
+    SurfaceRule(
+        (
+            ".dockerignore",
+            ".github/workflows/build-push.yml",
+            "**/Dockerfile",
+            "**/Dockerfile.*",
+            "infra/k8s/local/images.json",
+            "backend/**/tests/integration/*",
+            "tests/integration/*",
+            "backend/libs/nohiki-db-utils/tests/test_health.py",
+            "backend/libs/nohiki-db-utils/tests/test_testing.py",
+            "backend/libs/nohiki-redis-utils/tests/test_redis_cache.py",
+            "backend/libs/nohiki-redis-utils/tests/test_testing_module.py",
+            "backend/libs/nohiki-test-utils/tests/test_plugins.py",
+            "backend/services/bff-service/tests/api/test_auth_listings_rate_limit.py",
+            "scripts/ci/tests/test_compose_portability.py",
+            "scripts/ci/tests/test_frontend_delivery.py",
+            "scripts/ci/tests/test_otel_collector_manifest.py",
+        ),
+        flags=("container_contracts",),
+    ),
+    SurfaceRule(
+        ("typescript/apps/frontend/Dockerfile",),
+        flags=("frontend_smoke", "container_contracts"),
+    ),
+    # These tests also own specialized flags for their prerequisite image work;
+    # the common flag routes their requires_docker marker through the same worker.
     SurfaceRule(
         ("scripts/ci/tests/test_frontend_delivery.py",),
-        flags=("frontend_smoke",),
+        flags=("frontend_smoke", "container_contracts"),
     ),
     SurfaceRule(
         ("scripts/ci/tests/test_otel_collector_manifest.py",),
-        flags=("otel_collector",),
+        flags=("otel_collector", "container_contracts"),
     ),
     SurfaceRule(
         # The Playwright runner image's last RUN is `pnpm install
@@ -390,7 +415,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
             "infra/compose/observability/otel/*",
             "infra/compose/observability/otel/**/*",
         ),
-        flags=("otel_collector",),
+        flags=("otel_collector", "container_contracts"),
     ),
     # Migration-truth contract tests pin every service's Alembic head.
     SurfaceRule(("backend/services/*/alembic/**/*",), packages=("ci-checks",)),
@@ -406,7 +431,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     ),
     SurfaceRule(
         ("infra/k8s/local/images.json",),
-        flags=("image_matrix_parity",),
+        flags=("image_matrix_parity", "container_contracts"),
         packages=("ci-checks",),
     ),
     # just api-schema-check diffs only schema.d.ts and never reads the committed

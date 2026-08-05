@@ -514,6 +514,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Build production frontend image",
             "Smoke production frontend container",
             "Validate OpenTelemetry collector image and configs",
+            "Run container contract tests",
         },
         "python": {
             "Typecheck backend",
@@ -697,6 +698,18 @@ def test_python_test_lane_uses_gate_scope_once_per_class() -> None:
     condition = str(run_tests["if"])
     assert "matrix.unit == 'python'" in condition
     assert "matrix.unit == 'frontend'" not in condition
+
+
+def test_container_contract_lane_runs_the_routed_marker_suite() -> None:
+    step = next(step for step in _steps(_jobs()["worker"]) if step.get("name") == "Run container contract tests")
+    command = str(step["run"])
+
+    assert "needs.changes.outputs.container_contracts == 'true'" in str(step["if"])
+    assert "ci-checks tests all --scope all" in command
+    assert "--requires-docker --ci --workers 1 --no-coverage" in command
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in command
+    assert '--summary-title "container contracts"' in command
+    assert step["env"]["CI_CHECKS_SKIP_WORKSPACE_SYNC"] == "1"
 
 
 def test_backend_typecheck_keeps_gate_trigger_parity_and_executes_once() -> None:
@@ -1205,6 +1218,8 @@ def test_container_verdict_entrypoint_enforces_and_attests_the_parsed_step(tmp_p
         "OTEL_EXPECTED": "false",
         "OTEL_OUTCOME": "skipped",
         "SMOKE_OUTCOME": "success",
+        "CONTAINER_TESTS_EXPECTED": "true",
+        "CONTAINER_TESTS_OUTCOME": "success",
     }
 
     succeeded = _run_workflow_step(
