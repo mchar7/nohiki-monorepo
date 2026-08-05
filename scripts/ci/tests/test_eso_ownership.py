@@ -12,8 +12,10 @@ manifests or in-tree metadata; no secret values are inspected.
 
 import hashlib
 import importlib.util
+import re
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -28,15 +30,10 @@ _OBSERVABILITY = _ROOT / "infra" / "k8s" / "observability"
 _AKS_TF = _ROOT / "infra" / "terraform" / "aks.tf"
 _LOCAL_SECRET_CONTRACT = _ROOT / "scripts" / "infra" / "local_secret_contract.py"
 
-_ESO_CHART_VERSION = "2.7.0"
-_ESO_CHART_SHA256 = "a2ce165cc59b74c88451c9e21eb72c329b392506c53763df19061e62ec29ac60"
-_ESO_REPOSITORY = "https://charts.external-secrets.io"
-_ESO_IMAGE = (
-    "ghcr.io/external-secrets/external-secrets:v2.7.0"
-    "@sha256:6615aaea8ff44924d9d7dbc99982a130c82913f7583e212fa3aeebc6dc21fbf9"
-)
+_ESO_CHART_LEDGER = ("2.7.0", "a2ce165cc59b74c88451c9e21eb72c329b392506c53763df19061e62ec29ac60")
 _STORE_NAME = "nohiki-secret-store"
 _SA_NAME = "external-secrets-sa"
+_PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
 
 # Shared (non per-service-database) secrets every managed environment must project.
 _SHARED_SECRETS = frozenset(
@@ -185,19 +182,37 @@ def test_foundation_owns_the_single_external_secrets_operator_and_crds() -> None
     dependencies = [dep for dep in chart["dependencies"] if dep["name"] == "external-secrets"]
     assert len(dependencies) == 1
     dependency = dependencies[0]
-    assert dependency["version"] == _ESO_CHART_VERSION
-    assert dependency["repository"] == _ESO_REPOSITORY
+
+    lock = _load(_FOUNDATION / "Chart.lock")
+    locked_dependencies = [dep for dep in lock["dependencies"] if dep["name"] == dependency["name"]]
+    assert len(locked_dependencies) == 1
+    locked_dependency = locked_dependencies[0]
+    assert dependency["version"] == locked_dependency["version"]
+    ledger_version, ledger_sha256 = _ESO_CHART_LEDGER
+    assert locked_dependency["version"] == ledger_version
+    assert dependency["repository"] == locked_dependency["repository"]
 
     values = _load(_FOUNDATION / "values.yaml")
     eso = values["external-secrets"]
     assert eso["enabled"] is True
     assert eso["installCRDs"] is True
 
-    lock = _load(_FOUNDATION / "Chart.lock")
-    assert "external-secrets" in {dep["name"] for dep in lock["dependencies"]}
-    archive = _FOUNDATION / "charts" / f"external-secrets-{_ESO_CHART_VERSION}.tgz"
+    archive = _FOUNDATION / "charts" / f"{locked_dependency['name']}-{locked_dependency['version']}.tgz"
     assert archive.exists()
-    assert hashlib.sha256(archive.read_bytes()).hexdigest() == _ESO_CHART_SHA256
+    with tarfile.open(archive, mode="r:gz") as chart_archive:
+        metadata_file = chart_archive.extractfile(f"{locked_dependency['name']}/Chart.yaml")
+        assert metadata_file is not None
+        metadata: object = yaml.safe_load(metadata_file)
+    assert isinstance(metadata, dict)
+    assert metadata["name"] == locked_dependency["name"]
+    assert metadata["version"] == locked_dependency["version"]
+    image_tags = {
+        eso["image"]["tag"],
+        eso["webhook"]["image"]["tag"],
+        eso["certController"]["image"]["tag"],
+    }
+    assert {tag.partition("@")[0] for tag in image_tags} == {metadata["appVersion"]}
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == ledger_sha256
 
 
 def test_umbrella_no_longer_owns_external_secrets() -> None:
@@ -223,15 +238,22 @@ def test_foundation_operator_workloads_are_exact_and_pinned(
         if doc.get("kind") == "Deployment"
         and doc.get("metadata", {}).get("name", "").startswith("nohiki-foundation-external-secrets")
     }
-    assert set(workloads) == {
-        "nohiki-foundation-external-secrets",
-        "nohiki-foundation-external-secrets-webhook",
-        "nohiki-foundation-external-secrets-cert-controller",
+    values = _load(_FOUNDATION / "values.yaml")["external-secrets"]
+    expected_images = {
+        "nohiki-foundation-external-secrets": f"{values['image']['repository']}:{values['image']['tag']}",
+        "nohiki-foundation-external-secrets-webhook": (
+            f"{values['webhook']['image']['repository']}:{values['webhook']['image']['tag']}"
+        ),
+        "nohiki-foundation-external-secrets-cert-controller": (
+            f"{values['certController']['image']['repository']}:{values['certController']['image']['tag']}"
+        ),
     }
-    for workload in workloads.values():
+    assert set(workloads) == expected_images.keys()
+    assert all(_PINNED_IMAGE.fullmatch(image) for image in expected_images.values())
+    for name, workload in workloads.items():
         containers = workload["spec"]["template"]["spec"]["containers"]
         assert len(containers) == 1
-        assert containers[0]["image"] == _ESO_IMAGE
+        assert containers[0]["image"] == expected_images[name]
 
 
 def test_foundation_external_secrets_crds_are_stable_v1_only(

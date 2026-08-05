@@ -40,6 +40,7 @@ RUN for connector in /kafka/connect/debezium-connector-*; do \
 # Debezium 3.6.0 predates fixes in its Kafka runtime dependencies. Replace each
 # active family as a unit; omit JLine and Plexus because the distributed worker
 # does not run Kafka's console or build tooling.
+# Bump procedure: update the Netty family version and every Maven Central SHA-256 together.
 RUN set -eu; \
     fetch_jar() { \
       artifact="$1"; checksum="$2"; destination="$3"; \
@@ -159,6 +160,7 @@ RUN set -eu; \
 
 # Install Qdrant Kafka Sink Connector
 # https://github.com/qdrant/qdrant-kafka
+# Bump procedure: verify the release archive and descriptor patch, then update the version and SHA-256 together.
 ARG QDRANT_CONNECTOR_VERSION=1.3.3
 ARG QDRANT_CONNECTOR_SHA256=f35b1eef7db212e561019b9e9218e4674d231ca577b603a40e028e1de8f59fa6
 RUN mkdir -p /kafka/connect/qdrant-kafka

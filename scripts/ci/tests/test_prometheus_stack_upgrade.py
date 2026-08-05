@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 from _documents import Manifest, load_manifests, load_mapping
 from helm_test_utils import runtime_eso_args
 from test_image_digest_gitops import _digest_values
@@ -13,20 +15,60 @@ from test_image_digest_gitops import _digest_values
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _ENVS = ("local", "staging", "prod")
-_STACK_VERSION = "87.15.0"
-_STACK_ARCHIVE = _CHART / "charts" / f"kube-prometheus-stack-{_STACK_VERSION}.tgz"
-_OPERATOR = (
-    "quay.io/prometheus-operator/prometheus-operator:v0.92.1@sha256:"
-    "7d9247d2351480fc74587e24681578f815f387bafb2ee7b86a852a94c4cd3774"
-)
-_RELOADER = (
-    "quay.io/prometheus-operator/prometheus-config-reloader:v0.92.1@sha256:"
-    "74550ba3e8bf93f47bc574231090d340ae9c01d25cd11ff74799e65f9fdb9a48"
-)
-_WEBHOOK = (
-    "ghcr.io/jkroepke/kube-webhook-certgen:1.8.4@sha256:"
-    "76a2170cd0c9a7758c4ac8ac5bbe9b6f73e869a15ffb77d9f684664f7d7b96b1"
-)
+_PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
+_RAW_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _dependency(document: dict[str, object], name: str) -> dict[str, object]:
+    dependencies = document["dependencies"]
+    assert isinstance(dependencies, list)
+    return next(item for item in dependencies if isinstance(item, dict) and item.get("name") == name)
+
+
+def _stack_archive() -> Path:
+    dependency = _dependency(load_mapping(_CHART / "Chart.lock"), "kube-prometheus-stack")
+    return _CHART / "charts" / f"{dependency['name']}-{dependency['version']}.tgz"
+
+
+def _archived_mapping(member: str) -> dict[str, object]:
+    with tarfile.open(_stack_archive()) as archive:
+        stream = archive.extractfile(f"kube-prometheus-stack/{member}")
+        assert stream is not None
+        document: object = yaml.safe_load(stream)
+    assert isinstance(document, dict)
+    return document
+
+
+def _image_ref(defaults: object, overrides: object) -> str:
+    assert isinstance(defaults, dict)
+    assert isinstance(overrides, dict)
+    return f"{defaults['registry']}/{defaults['repository']}:{overrides['tag']}@sha256:{overrides['sha']}"
+
+
+def _expected_stack_images() -> tuple[str, str, str]:
+    defaults = _archived_mapping("values.yaml")["prometheusOperator"]
+    values = load_mapping(_CHART / "values.yaml")["kube-prometheus-stack"]
+    assert isinstance(defaults, dict)
+    assert isinstance(values, dict)
+    operator = values["prometheusOperator"]
+    assert isinstance(operator, dict)
+    default_reloader = defaults["prometheusConfigReloader"]
+    reloader = operator["prometheusConfigReloader"]
+    assert isinstance(default_reloader, dict)
+    assert isinstance(reloader, dict)
+    default_webhooks = defaults["admissionWebhooks"]
+    webhooks = operator["admissionWebhooks"]
+    assert isinstance(default_webhooks, dict)
+    assert isinstance(webhooks, dict)
+    default_patch = default_webhooks["patch"]
+    patch = webhooks["patch"]
+    assert isinstance(default_patch, dict)
+    assert isinstance(patch, dict)
+    return (
+        _image_ref(defaults["image"], operator["image"]),
+        _image_ref(default_reloader["image"], reloader["image"]),
+        _image_ref(default_patch["image"], patch["image"]),
+    )
 
 
 def _render(environment: str) -> list[Manifest]:
@@ -92,32 +134,19 @@ def _inventory(documents: list[Manifest], kind: str) -> set[str]:
     return {document["metadata"]["name"] for document in documents if document["kind"] == kind}
 
 
-def test_kube_prometheus_stack_dependency_is_locked_to_87_15() -> None:
+def test_kube_prometheus_stack_dependency_is_locked_and_packaged() -> None:
     chart = load_mapping(_CHART / "Chart.yaml")
     lock = load_mapping(_CHART / "Chart.lock")
-    chart_dependencies = chart["dependencies"]
-    lock_dependencies = lock["dependencies"]
-    assert isinstance(chart_dependencies, list)
-    assert isinstance(lock_dependencies, list)
-    assert all(isinstance(dependency, dict) for dependency in chart_dependencies)
-    assert all(isinstance(dependency, dict) for dependency in lock_dependencies)
-    assert (
-        next(
-            dependency.get("version")
-            for dependency in chart_dependencies
-            if isinstance(dependency, dict) and dependency.get("name") == "kube-prometheus-stack"
-        )
-        == _STACK_VERSION
-    )
-    assert (
-        next(
-            dependency.get("version")
-            for dependency in lock_dependencies
-            if isinstance(dependency, dict) and dependency.get("name") == "kube-prometheus-stack"
-        )
-        == _STACK_VERSION
-    )
-    assert _STACK_ARCHIVE.is_file()
+    chart_dependency = _dependency(chart, "kube-prometheus-stack")
+    lock_dependency = _dependency(lock, "kube-prometheus-stack")
+    assert chart_dependency["version"] == lock_dependency["version"]
+    assert chart_dependency["repository"] == lock_dependency["repository"]
+
+    archive = _stack_archive()
+    assert archive.is_file()
+    metadata = _archived_mapping("Chart.yaml")
+    assert metadata["name"] == lock_dependency["name"]
+    assert metadata["version"] == lock_dependency["version"]
 
 
 def test_operator_values_use_current_keys_and_immutable_images() -> None:
@@ -126,24 +155,27 @@ def test_operator_values_use_current_keys_and_immutable_images() -> None:
     assert isinstance(stack, dict)
     operator = stack.get("prometheusOperator")
     assert isinstance(operator, dict)
-    assert operator.get("image") == {
-        "tag": "v0.92.1",
-        "sha": "7d9247d2351480fc74587e24681578f815f387bafb2ee7b86a852a94c4cd3774",
-    }
+    operator_image = operator.get("image")
+    assert isinstance(operator_image, dict)
     reloader = operator.get("prometheusConfigReloader")
     assert isinstance(reloader, dict)
-    assert reloader.get("image") == {
-        "tag": "v0.92.1",
-        "sha": "74550ba3e8bf93f47bc574231090d340ae9c01d25cd11ff74799e65f9fdb9a48",
-    }
+    reloader_image = reloader.get("image")
+    assert isinstance(reloader_image, dict)
     admission_webhooks = operator.get("admissionWebhooks")
     assert isinstance(admission_webhooks, dict)
     patch = admission_webhooks.get("patch")
     assert isinstance(patch, dict)
-    assert patch.get("image") == {
-        "tag": "1.8.4",
-        "sha": "76a2170cd0c9a7758c4ac8ac5bbe9b6f73e869a15ffb77d9f684664f7d7b96b1",
-    }
+    webhook_image = patch.get("image")
+    assert isinstance(webhook_image, dict)
+    for image in (operator_image, reloader_image, webhook_image):
+        assert set(image) == {"tag", "sha"}
+        assert isinstance(image["tag"], str)
+        assert isinstance(image["sha"], str)
+        assert _RAW_SHA256.fullmatch(image["sha"])
+    metadata = _archived_mapping("Chart.yaml")
+    assert operator_image["tag"] == metadata["appVersion"]
+    assert reloader_image["tag"] == operator_image["tag"]
+    assert all(_PINNED_IMAGE.fullmatch(image) for image in _expected_stack_images())
     assert "configReloaderImage" not in operator
     assert "prometheusConfigReloaderImage" not in operator
 
@@ -152,8 +184,9 @@ def test_operator_values_use_current_keys_and_immutable_images() -> None:
 def test_stack_renders_expected_workloads_and_exact_images(environment: str) -> None:
     documents = _render(environment)
     images = _images(documents)
-    assert {_OPERATOR, _WEBHOOK} <= images
-    assert any(_RELOADER in value for value in _collect_strings(documents))
+    operator_image, reloader_image, webhook_image = _expected_stack_images()
+    assert {operator_image, webhook_image} <= images
+    assert any(reloader_image in value for value in _collect_strings(documents))
     workloads = {
         (kind, name)
         for kind in ("DaemonSet", "Deployment", "Job")
@@ -176,7 +209,7 @@ def test_stack_renders_expected_workloads_and_exact_images(environment: str) -> 
 
 
 def test_current_monitoring_crds_are_packaged() -> None:
-    archive = _STACK_ARCHIVE
+    archive = _stack_archive()
     with tarfile.open(archive) as chart:
         texts: list[str] = []
         for member in chart.getmembers():

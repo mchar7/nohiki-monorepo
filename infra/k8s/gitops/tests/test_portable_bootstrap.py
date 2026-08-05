@@ -178,7 +178,8 @@ def test_flux_cli_is_pinned_in_the_flake_devshell() -> None:
     # Pinned nixpkgs trails the required Flux release, so the flake pins the
     # downloaded CLI version and verifies every supported platform by SHA-256.
     source = FLAKE.read_text(encoding="utf-8")
-    assert re.search(r'fluxVersion\s*=\s*"2\.9\.2";', source), "flake.nix must pin Flux CLI v2.9.2"
+    version = re.search(r'fluxVersion\s*=\s*"(?P<version>\d+\.\d+\.\d+)";', source)
+    assert version, "flake.nix must pin a semantic Flux CLI version"
     checksums = re.findall(r'fluxSha256\s*=\s*"([0-9a-f]{64})";', source)
     assert len(checksums) == 4, "each supported platform must pin the Flux CLI release checksum"
     assert len(set(checksums)) == 4, "Flux CLI platform checksums must not be duplicated"

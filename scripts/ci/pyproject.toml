@@ -14,6 +14,7 @@ dependencies = [
 ]
 
 [dependency-groups]
+# Owner bump procedure: update the version and rev together, refresh uv.lock, then obtain owner approval.
 deadcode = ["skylos==4.30.0"]
 container-tests = [
     "pytest>=9.0.0",

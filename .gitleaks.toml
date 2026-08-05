@@ -27,5 +27,4 @@ keywords = ["sk-ant-api"]
 [allowlist]
 regexes = [
     '''^3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8$''',
-    '''^a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d$''',
 ]

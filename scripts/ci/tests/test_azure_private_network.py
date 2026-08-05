@@ -95,7 +95,33 @@ def test_managed_services_use_exact_private_link_contracts() -> None:
     expected_public_access = r'(?m)^\s*public_network_access_enabled\s*=\s*var\.app_environment != "prod"\s*$'
     for service in (postgres, redis):
         assert re.search(expected_public_access, service)
-    assert 'version = "~> 4.80.0"' in iac
+    provider_config = (_IAC / "provider.tf").read_text(encoding="utf-8")
+    provider_block = re.search(r"(?ms)^\s*azurerm\s*=\s*\{(?P<body>.*?)^\s*\}", provider_config)
+    assert provider_block
+    assert re.search(r'(?m)^\s*source\s*=\s*"hashicorp/azurerm"\s*$', provider_block["body"])
+    declared_constraint = re.search(
+        r'(?m)^\s*version\s*=\s*"(?P<value>[^"]+)"\s*$',
+        provider_block["body"],
+    )
+    assert declared_constraint
+    constraint = declared_constraint["value"]
+    assert re.fullmatch(r"~>\s*(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", constraint)
+
+    lock = (_IAC / ".terraform.lock.hcl").read_text(encoding="utf-8")
+    locked_provider = re.search(
+        r'(?ms)^provider "registry\.opentofu\.org/hashicorp/azurerm"\s*\{(?P<body>.*?)^\}',
+        lock,
+    )
+    assert locked_provider
+    locked_version = re.search(r'(?m)^\s*version\s*=\s*"(?P<value>[^"]+)"\s*$', locked_provider["body"])
+    locked_constraint = re.search(
+        r'(?m)^\s*constraints\s*=\s*"(?P<value>[^"]+)"\s*$',
+        locked_provider["body"],
+    )
+    assert locked_version
+    assert locked_constraint
+    assert locked_constraint["value"] == constraint
+    assert locked_version["value"] == constraint.removeprefix("~> ").strip()
     assert 'data "azurerm_eventhub_namespace"' in iac
     assert 'variable "event_hubs_namespace_name"' in iac
     assert 'variable "event_hubs_resource_group_name"' in iac

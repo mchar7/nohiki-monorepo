@@ -354,9 +354,9 @@ def test_preflight_accepts_pinned_client_outputs(monkeypatch: pytest.MonkeyPatch
     runner = _load_runner()
     calls: list[tuple[str, ...]] = []
     outputs = {
-        ("kind", "version"): "kind v0.32.0 go1.25.7 linux/amd64\n",
-        ("flux", "version", "--client"): "flux: v2.9.2\n",
-        ("flux-operator", "version", "--client"): "client: 0.55.0\n",
+        ("kind", "version"): f"kind {runner.KIND_VERSION} go9.9.9 linux/amd64\n",
+        ("flux", "version", "--client"): f"flux: v{runner.FLUX_VERSION}\n",
+        ("flux-operator", "version", "--client"): f"client: {runner.FLUX_OPERATOR_VERSION}\n",
     }
 
     def fake_run(argv: Sequence[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:

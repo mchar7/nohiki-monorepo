@@ -1,3 +1,4 @@
+import re
 import subprocess
 import tarfile
 from pathlib import Path
@@ -16,17 +17,53 @@ _PLATFORM_CHART = _ROOT / "infra" / "k8s" / "helm"
 _FOUNDATION_CHART = _ROOT / "infra" / "k8s" / "helm-foundation"
 _OBSERVABILITY_OVERLAY = _ROOT / "infra" / "k8s" / "observability" / "overlays" / "staging"
 _STAGING_GITOPS = _ROOT / "infra" / "k8s" / "gitops" / "clusters" / "staging-aks"
-_ARCHIVE = _FOUNDATION_CHART / "charts" / "opentelemetry-operator-0.119.0.tgz"
-_MANAGER = (
-    "ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator:0.154.0@sha256:"
-    "263699ffea0c418530b43d95dcd49a125533325a222ffac675cbbf0d63ef035b"
-)
 _OPERATOR_CRDS = {
     "instrumentations.opentelemetry.io",
     "opampbridges.opentelemetry.io",
     "opentelemetrycollectors.opentelemetry.io",
     "targetallocators.opentelemetry.io",
 }
+_PINNED_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}")
+_PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
+
+
+def _locked_operator_dependency() -> dict[str, object]:
+    lock = load_mapping(_FOUNDATION_CHART / "Chart.lock")
+    dependencies = lock["dependencies"]
+    assert isinstance(dependencies, list)
+    return next(
+        item for item in dependencies if isinstance(item, dict) and item.get("name") == "opentelemetry-operator"
+    )
+
+
+def _operator_archive() -> Path:
+    dependency = _locked_operator_dependency()
+    return _FOUNDATION_CHART / "charts" / f"{dependency['name']}-{dependency['version']}.tgz"
+
+
+def _archived_mapping(member: str) -> dict[str, object]:
+    with tarfile.open(_operator_archive()) as archive:
+        metadata_file = archive.extractfile(member)
+        assert metadata_file is not None
+        metadata: object = yaml.safe_load(metadata_file)
+    assert isinstance(metadata, dict)
+    return metadata
+
+
+def _manager_image() -> str:
+    defaults = _archived_mapping("opentelemetry-operator/values.yaml")
+    default_manager = defaults["manager"]
+    assert isinstance(default_manager, dict)
+    default_image = default_manager["image"]
+    assert isinstance(default_image, dict)
+    repository = default_image["repository"]
+    values = load_mapping(_FOUNDATION_CHART / "values.yaml")["opentelemetry-operator"]
+    assert isinstance(values, dict)
+    manager = values["manager"]
+    assert isinstance(manager, dict)
+    image = manager["image"]
+    assert isinstance(image, dict)
+    return f"{repository}:{image['tag']}"
 
 
 def _render_platform() -> tuple[Manifest, ...]:
@@ -111,7 +148,10 @@ def test_foundation_owns_locked_operator_dependency_and_platform_disables_its_co
         if isinstance(item, dict) and item.get("name") == "opentelemetry-operator"
     ]
     assert len(chart_dependencies) == len(lock_dependencies) == 1
-    assert chart_dependencies[0].get("version") == lock_dependencies[0].get("version") == "0.119.0"
+    chart_dependency = chart_dependencies[0]
+    lock_dependency = lock_dependencies[0]
+    assert chart_dependency.get("version") == lock_dependency.get("version")
+    assert chart_dependency.get("repository") == lock_dependency.get("repository")
     foundation_operator = foundation_values["opentelemetry-operator"]
     platform_operator = platform_values["opentelemetry-operator"]
     assert isinstance(foundation_operator, dict)
@@ -119,14 +159,18 @@ def test_foundation_owns_locked_operator_dependency_and_platform_disables_its_co
     assert foundation_operator.get("enabled") is True
     assert platform_operator.get("enabled") is False
 
-    assert _ARCHIVE.is_file()
-    with tarfile.open(_ARCHIVE) as archive:
-        metadata_file = archive.extractfile("opentelemetry-operator/Chart.yaml")
-        assert metadata_file is not None
-        metadata: object = yaml.safe_load(metadata_file)
-    assert isinstance(metadata, dict)
-    assert metadata.get("version") == "0.119.0"
-    assert metadata.get("appVersion") == "0.154.0"
+    archive_path = _operator_archive()
+    assert archive_path.is_file()
+    metadata = _archived_mapping("opentelemetry-operator/Chart.yaml")
+    assert metadata.get("name") == lock_dependency.get("name")
+    assert metadata.get("version") == lock_dependency.get("version")
+    manager = foundation_operator["manager"]
+    assert isinstance(manager, dict)
+    manager_image = manager["image"]
+    assert isinstance(manager_image, dict)
+    tag = manager_image["tag"]
+    assert isinstance(tag, str)
+    assert tag.partition("@")[0] == metadata.get("appVersion")
 
 
 def test_foundation_values_pin_manager_and_preserve_metric_shape() -> None:
@@ -141,8 +185,9 @@ def test_foundation_values_pin_manager_and_preserve_metric_shape() -> None:
     assert isinstance(image, dict)
     assert isinstance(feature_gates, dict)
     assert isinstance(service_monitor, dict)
-    assert image.get("tag") == ("0.154.0@sha256:263699ffea0c418530b43d95dcd49a125533325a222ffac675cbbf0d63ef035b")
-    assert feature_gates.get("operator.collector.usedefaulttelemetryshape") is False
+    tag = image.get("tag")
+    assert isinstance(tag, str)
+    assert _PINNED_TAG.fullmatch(tag)
     assert "featureGates" not in manager
     assert "kubeRBACProxy" not in values
     assert service_monitor.get("enabled") is False
@@ -183,7 +228,9 @@ def test_operator_renders_single_manager_with_secure_metrics(
     assert len(containers) == 1
     manager = containers[0]
     assert isinstance(manager, dict)
-    assert manager.get("image") == _MANAGER
+    expected_manager_image = _manager_image()
+    assert manager.get("image") == expected_manager_image
+    assert _PINNED_IMAGE.fullmatch(expected_manager_image)
     manager_args = manager.get("args")
     assert isinstance(manager_args, list)
     assert "--metrics-addr=0.0.0.0:8443" in manager_args

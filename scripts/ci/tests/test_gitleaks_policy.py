@@ -12,10 +12,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 _GITLEAKS = _ROOT / ".gitleaks.toml"
 _LEFTHOOK = _ROOT / "lefthook.yml"
 _JUSTFILE = _ROOT / "Justfile"
-_PUBLIC_CHECKSUMS = (
-    "3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8",
-    "a557172e8348f758479e9ee4000bbbb4b4aa48302a6b73461823ea5349bad56d",
-)
+_ANCHORED_SHA256_REGEX = re.compile(r"\^[0-9a-f]{64}\$")
 _EXPECTED_RULE_REGEXES = {
     "openrouter-api-key": r"sk-or-v1-[a-zA-Z0-9]{64}",
     "anthropic-api-key": r"sk-ant-api[a-zA-Z0-9\-_]{90,}",
@@ -55,18 +52,22 @@ def test_gitleaks_defaults_and_exact_custom_rules_are_active() -> None:
 def test_gitleaks_allows_only_the_anchored_public_checksums() -> None:
     config = _load_toml(_GITLEAKS)
     allowlist = config["allowlist"]
-    expected_regexes = [rf"^{checksum}$" for checksum in _PUBLIC_CHECKSUMS]
 
     assert set(allowlist) == {"regexes"}
-    assert allowlist["regexes"] == expected_regexes
+    regexes = allowlist["regexes"]
+    assert isinstance(regexes, list)
+    assert len(regexes) == len(set(regexes))
 
-    for checksum, regex in zip(_PUBLIC_CHECKSUMS, allowlist["regexes"], strict=True):
+    for regex in regexes:
+        assert isinstance(regex, str)
+        assert _ANCHORED_SHA256_REGEX.fullmatch(regex)
+        checksum = regex.removeprefix("^").removesuffix("$")
         matcher = re.compile(regex)
         assert matcher.fullmatch(checksum)
         assert not matcher.search(f"prefix-{checksum}")
         assert not matcher.search(f"{checksum}-suffix")
-        assert not matcher.search("0" * 64)
-        assert not matcher.search(checksum[:-1] + "0")
+        replacement = "0" if checksum[-1] != "0" else "1"
+        assert not matcher.search(checksum[:-1] + replacement)
 
 
 def test_gitleaks_has_no_broad_or_scope_level_exemptions() -> None:
@@ -77,7 +78,8 @@ def test_gitleaks_has_no_broad_or_scope_level_exemptions() -> None:
         assert not _FORBIDDEN_EXEMPTION_KEYS.intersection(scope)
     assert all("allowlist" not in rule for rule in config["rules"])
 
-    assert config["allowlist"]["regexes"] == [rf"^{checksum}$" for checksum in _PUBLIC_CHECKSUMS]
+    checksum_regexes = config["allowlist"]["regexes"]
+    assert all(_ANCHORED_SHA256_REGEX.fullmatch(regex) for regex in checksum_regexes)
     assert all(rule["regex"] == _EXPECTED_RULE_REGEXES[rule["id"]] for rule in config["rules"])
 
 

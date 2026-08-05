@@ -8,6 +8,7 @@ import pytest
 from _documents import (
     Manifest,
     load_manifests,
+    load_mapping,
     load_workflow,
     mapping_at,
     mapping_sequence_at,
@@ -215,6 +216,12 @@ def test_promotion_validates_merge_revision_renders_all_manifests_and_opens_acti
     assert checkout["with"]["ref"] == "${{ github.event.pull_request.merge_commit_sha }}"
 
     verify = next(step for step in activation["steps"] if step.get("name") == "Verify immutable release inputs")
+    foundation = load_mapping(_ROOT / "infra/k8s/helm-foundation/Chart.yaml")
+    cert_manager = [dependency for dependency in foundation["dependencies"] if dependency["name"] == "cert-manager"]
+    assert len(cert_manager) == 1
+    cert_manager_archive = (
+        f"infra/k8s/helm-foundation/charts/{cert_manager[0]['name']}-{cert_manager[0]['version']}.tgz"
+    )
     verify_run = verify["run"]
     required_paths = {
         "infra/k8s/helm/values.prod.yaml",
@@ -230,7 +237,7 @@ def test_promotion_validates_merge_revision_renders_all_manifests_and_opens_acti
         "infra/k8s/gitops/clusters/prod-aks/observability.yaml",
         "infra/k8s/helm-foundation/Chart.yaml",
         "infra/k8s/helm-foundation/Chart.lock",
-        "infra/k8s/helm-foundation/charts/cert-manager-v1.21.0.tgz",
+        cert_manager_archive,
         "infra/k8s/helm-foundation/templates/clusterissuer.yaml",
         "infra/k8s/helm-foundation/values.yaml",
         "infra/k8s/gitops/gateway-api-crds/kustomization.yaml",

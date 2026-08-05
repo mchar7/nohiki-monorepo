@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -13,11 +15,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _OBSERVABILITY = _ROOT / "infra" / "k8s" / "observability"
 _LOCAL_FLUX = _ROOT / "infra" / "k8s" / "gitops" / "clusters" / "local"
-_OPERATOR_VERSION = "5.24.0"
-_OPERATOR_IMAGE = (
-    "ghcr.io/grafana/grafana-operator:v5.24.0@sha256:e72d11ac579a000fe0ddcc0c3341a5103a1c93a28fbc394dc7c7009ed071d1a7"
-)
 _GRAFANA_API = "grafana.integreatly.org/v1beta1"
+_PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
 _EXPECTED = {
     "Grafana": {"nohiki-grafana"},
     "GrafanaFolder": {"nohiki"},
@@ -37,6 +36,25 @@ _EXPECTED = {
 
 def _dependency(document: dict[str, Any], name: str) -> dict[str, Any]:
     return next(item for item in document["dependencies"] if item["name"] == name)
+
+
+def _archived_mapping(dependency: dict[str, Any], member: str) -> dict[str, Any]:
+    archive_path = _CHART / "charts" / f"{dependency['name']}-{dependency['version']}.tgz"
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        stream = archive.extractfile(f"{dependency['name']}/{member}")
+        assert stream is not None
+        document: object = yaml.safe_load(stream)
+    assert isinstance(document, dict)
+    return document
+
+
+def _operator_image() -> str:
+    lock = yaml.safe_load((_CHART / "Chart.lock").read_text(encoding="utf-8"))
+    dependency = _dependency(lock, "grafana-operator")
+    defaults = _archived_mapping(dependency, "values.yaml")["image"]
+    values = yaml.safe_load((_CHART / "values.yaml").read_text(encoding="utf-8"))
+    tag = values["grafana-operator"]["image"]["tag"]
+    return f"{defaults['registry']}/{defaults['repository']}:{tag}"
 
 
 def _render(path: Path) -> list[dict[str, Any]]:
@@ -85,14 +103,17 @@ def test_grafana_operator_chart_lock_and_image_are_pinned_together() -> None:
 
     chart_dependency = _dependency(chart, "grafana-operator")
     lock_dependency = _dependency(lock, "grafana-operator")
-    assert chart_dependency["version"] == "v5.24.x"
-    assert lock_dependency == {
-        "name": "grafana-operator",
-        "repository": "oci://ghcr.io/grafana/helm-charts",
-        "version": _OPERATOR_VERSION,
-    }
+    assert chart_dependency["repository"] == lock_dependency["repository"]
+    major, minor, _patch = lock_dependency["version"].split(".")
+    assert chart_dependency["version"] == f"v{major}.{minor}.x"
+
+    metadata = _archived_mapping(lock_dependency, "Chart.yaml")
+    assert metadata["name"] == lock_dependency["name"]
+    assert metadata["version"] == lock_dependency["version"]
+    tag = values["grafana-operator"]["image"]["tag"]
     assert values["grafana-operator"]["enabled"] is True
-    assert values["grafana-operator"]["image"]["tag"] == _OPERATOR_IMAGE.partition(":")[2]
+    assert tag.partition("@")[0] == metadata["appVersion"]
+    assert _PINNED_IMAGE.fullmatch(_operator_image())
 
 
 @pytest.mark.parametrize("values_file", ["values.local.yaml", "values.staging.yaml"])
@@ -103,7 +124,7 @@ def test_grafana_operator_image_renders_for_local_and_staging(values_file: str) 
         for container in document.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
         if "grafana-operator" in container.get("image", "")
     ]
-    assert images == [_OPERATOR_IMAGE], values_file
+    assert images == [_operator_image()], values_file
 
 
 def test_local_flux_waits_for_grafana_operator_before_custom_resources() -> None:

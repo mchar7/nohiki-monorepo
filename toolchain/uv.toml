@@ -1,1 +1,2 @@
+# Bump procedure: update this version, every uv image pin, and all four flake fetch hashes in one reviewed change.
 required-version = "0.11.28"

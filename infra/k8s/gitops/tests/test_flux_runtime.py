@@ -51,18 +51,13 @@ def test_artifact_verifier_replays_the_digest_pinned_operator_recipe() -> None:
     result = _artifact_command("verify")
     assert result.returncode == 0, result.stderr
     record = json.loads(result.stdout)
-    assert (
-        record["chartLayerSha256"]
-        == hashlib.sha256((_RUNTIME / "vendor/flux-operator-0.55.0.tgz").read_bytes()).hexdigest()
-    )
-    assert (
-        record["operatorInstallSha256"] == hashlib.sha256((_RUNTIME / "operator-install.yaml").read_bytes()).hexdigest()
-    )
-    assert (
-        record["operatorImageDigest"]
-        == "sha256:"
-        + hashlib.sha256((_RUNTIME / "vendor/flux-operator-v0.55.0.oci-index.json").read_bytes()).hexdigest()
-    )
+    lock = _load(_RUNTIME / "artifacts.lock.yaml")
+    chart = _ROOT / str(_at(lock, "chart", "tgzPath"))
+    operator_index = _ROOT / str(_at(lock, "generated", "operatorInstall", "generator", "postRender", "toDigestFrom"))
+    operator_install = _ROOT / str(_at(lock, "generated", "operatorInstall", "path"))
+    assert record["chartLayerSha256"] == hashlib.sha256(chart.read_bytes()).hexdigest()
+    assert record["operatorInstallSha256"] == hashlib.sha256(operator_install.read_bytes()).hexdigest()
+    assert record["operatorImageDigest"] == "sha256:" + hashlib.sha256(operator_index.read_bytes()).hexdigest()
 
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory) / "operator-install.yaml"
@@ -76,7 +71,7 @@ def test_artifact_lock_derives_chart_and_operator_digests_from_upstream_oci_byte
     chart_manifest_path = _ROOT / str(_at(lock, "chart", "ociManifestPath"))
     chart_manifest = json.loads(chart_manifest_path.read_text(encoding="utf-8"))
     layer = chart_manifest["layers"][0]
-    chart = _RUNTIME / "vendor/flux-operator-0.55.0.tgz"
+    chart = _ROOT / str(_at(lock, "chart", "tgzPath"))
     assert (
         _at(lock, "chart", "ociManifestDigest")
         == "sha256:" + hashlib.sha256(chart_manifest_path.read_bytes()).hexdigest()
@@ -84,7 +79,9 @@ def test_artifact_lock_derives_chart_and_operator_digests_from_upstream_oci_byte
     assert layer["digest"] == "sha256:" + hashlib.sha256(chart.read_bytes()).hexdigest()
     assert layer["size"] == chart.stat().st_size
 
-    operator_index_path = _RUNTIME / "vendor/flux-operator-v0.55.0.oci-index.json"
+    operator_index_path = _ROOT / str(
+        _at(lock, "generated", "operatorInstall", "generator", "postRender", "toDigestFrom")
+    )
     operator_index = json.loads(operator_index_path.read_text(encoding="utf-8"))
     index_digest = "sha256:" + hashlib.sha256(operator_index_path.read_bytes()).hexdigest()
     amd64 = [

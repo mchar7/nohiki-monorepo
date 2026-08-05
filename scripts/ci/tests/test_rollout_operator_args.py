@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import tarfile
 from pathlib import Path
@@ -17,20 +18,49 @@ from helm_test_utils import runtime_eso_args
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
-_MIMIR_ARCHIVE = _CHART / "charts" / "mimir-distributed-6.1.0.tgz"
-_ROLLOUT_CHART_METADATA = "mimir-distributed/charts/rollout-operator/Chart.yaml"
-_DIGEST = "sha256:0050002aaf07a867a3a3c2aa029dc29ff2e12eb8608f1f47e4c1d307bbdfea39"
+_ROLLOUT_CHART = "rollout-operator"
+_PINNED_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}")
+_PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
 
 
-def _rollout_chart_app_version() -> str:
-    with tarfile.open(_MIMIR_ARCHIVE, mode="r:gz") as archive:
-        metadata_file = archive.extractfile(_ROLLOUT_CHART_METADATA)
+def _mimir_dependency() -> dict[str, object]:
+    lock = load_mapping(_CHART / "Chart.lock")
+    dependencies = lock["dependencies"]
+    assert isinstance(dependencies, list)
+    return next(item for item in dependencies if isinstance(item, dict) and item.get("name") == "mimir-distributed")
+
+
+def _archived_mapping(member: str) -> dict[str, object]:
+    dependency = _mimir_dependency()
+    archive_path = _CHART / "charts" / f"{dependency['name']}-{dependency['version']}.tgz"
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        metadata_file = archive.extractfile(f"{dependency['name']}/charts/{_ROLLOUT_CHART}/{member}")
         assert metadata_file is not None
         metadata: object = yaml.safe_load(metadata_file)
     assert isinstance(metadata, dict)
+    return metadata
+
+
+def _rollout_chart_app_version() -> str:
+    metadata = _archived_mapping("Chart.yaml")
     app_version = metadata.get("appVersion")
     assert isinstance(app_version, str)
     return app_version
+
+
+def _rollout_image(image_tag: str) -> str:
+    defaults = _archived_mapping("values.yaml")["image"]
+    assert isinstance(defaults, dict)
+    root_values = load_mapping(_CHART / "values.yaml")
+    mimir_values = root_values["mimir-distributed"]
+    assert isinstance(mimir_values, dict)
+    rollout_values = mimir_values["rollout_operator"]
+    assert isinstance(rollout_values, dict)
+    image_values = rollout_values["image"]
+    assert isinstance(image_values, dict)
+    registry = image_values.get("registry", defaults["registry"])
+    repository = image_values.get("repository", defaults["repository"])
+    return f"{registry}/{repository}:{image_tag}"
 
 
 def _render_rollout_container() -> Container:
@@ -76,8 +106,8 @@ def test_rollout_operator_image_and_args_match_nested_chart_contract() -> None:
         "tag",
     )
 
-    assert app_version == "v0.38.0"
-    assert image_tag == f"{app_version}@{_DIGEST}"
+    assert _PINNED_TAG.fullmatch(image_tag)
+    assert image_tag.partition("@")[0] == app_version
     local_values = load_mapping(_CHART / "values.local.yaml")
     local_mimir = local_values.get("mimir-distributed")
     assert isinstance(local_mimir, dict)
@@ -86,7 +116,9 @@ def test_rollout_operator_image_and_args_match_nested_chart_contract() -> None:
     assert local_rollout_operator.get("enabled") is False
 
     container = _render_rollout_container()
-    assert container["image"] == f"docker.io/grafana/rollout-operator:{image_tag}"
+    expected_image = _rollout_image(image_tag)
+    assert _PINNED_IMAGE.fullmatch(expected_image)
+    assert container["image"] == expected_image
     assert set(container["args"]) == {
         "-kubernetes.namespace=nohiki-dev",
         "-zpdb.pod-ready-annotation-patch-timeout=5s",

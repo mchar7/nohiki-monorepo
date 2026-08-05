@@ -213,7 +213,7 @@ def test_base_values_pin_device_plugin_and_default_to_no_gpu() -> None:
     [
         "@sha256:" + "a" * 64,
         "sha256:" + "a" * 64,
-        "v1.12.2@sha256:" + "a" * 64 + "@sha256:" + "a" * 64,
+        "v9.9.9@sha256:" + "a" * 64 + "@sha256:" + "a" * 64,
         "",
     ],
 )
@@ -222,7 +222,7 @@ def test_device_plugin_tag_guard_rejects_malformed_digest_pins(tag: str) -> None
 
 
 def test_device_plugin_tag_guard_accepts_complete_version_and_digest() -> None:
-    assert _is_digest_pinned_tag("v0.17.4@sha256:" + "a" * 64)
+    assert _is_digest_pinned_tag("v9.9.9@sha256:" + "a" * 64)
 
 
 def test_production_advertises_gpu_via_pinned_device_plugin(
