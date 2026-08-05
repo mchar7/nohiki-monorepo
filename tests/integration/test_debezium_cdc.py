@@ -547,10 +547,9 @@ class TestDebeziumConnector:
             await consumer.start()
             message_found = await _poll_for_message(consumer, test_payload, timeout_seconds=30)
 
-            if not message_found:
-                pytest.skip(
-                    "Message not found in Kafka. This may be expected if Debezium is not running.",
-                )
+            assert message_found, (
+                "CDC_DELIVERY_TIMEOUT: Debezium was present but did not deliver the inserted outbox row within 30s"
+            )
         finally:
             with contextlib.suppress(Exception):
                 await consumer.stop()

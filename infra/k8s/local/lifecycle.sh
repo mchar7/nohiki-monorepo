@@ -13,6 +13,7 @@ secret_helper="scripts/infra/validate_local_secret_sources.py"
 secret_source_dir="${NOHIKI_LOCAL_SECRETS_DIR:-}"
 gateway_helper="infra/k8s/local/gateway_proxy.py"
 cluster_reset_helper="infra/k8s/local/cluster_reset.py"
+cdc_adapter="tests/integration/live_cluster_cdc.py"
 registry_endpoint="${K8S_LOCAL_REGISTRY_ENDPOINT:-http://127.0.0.1:30500}"
 mirror_config="${K3S_REGISTRIES_CONFIG:-/etc/rancher/k3s/registries.yaml}"
 
@@ -182,6 +183,7 @@ verify() {
     require_file "$image_helper"
     require_file scripts/infra/verify-k8s-jobs.py
     require_file infra/k8s/scripts/verify-migration-heads.py
+    require_file "$cdc_adapter"
 
     reconcile
     verify_flux_observation
@@ -189,6 +191,8 @@ verify() {
     local evidence_dir inventory
     evidence_dir="${K8S_EVIDENCE_DIR:-.artifacts/k8s-local}"
     mkdir -p "$evidence_dir"
+    uv run --project tests python "$cdc_adapter" \
+        --namespace "$namespace" --evidence "$evidence_dir/live-cdc.json"
     inventory="$(mktemp)"
     trap 'uv run python "$gateway_helper" stop >/dev/null 2>&1 || true; rm -f "$inventory"' EXIT INT TERM
     uv run --package ci-checks ci-checks migration-truth \
