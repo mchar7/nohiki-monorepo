@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -140,7 +142,7 @@ def test_nested_gate_inherits_marker_and_bypasses_machine_lock(tmp_path: Path) -
     )
 
     assert result.stdout == "nested\n"
-    assert result.stderr == ""
+    assert "took slot 1 of 2 with no wait" in result.stderr
     assert not (tmp_path / "nohiki-gates/pre-push.holder").exists()
 
 
@@ -191,125 +193,268 @@ def test_test_run_requests_oom_priority_for_probe_and_test_process(
     assert result.stderr == ""
 
 
-def test_machine_gate_serializes_worktrees_and_reports_holder(tmp_path: Path) -> None:
-    wrapper = _ROOT / "scripts/dev/env-lock.sh"
-    release = tmp_path / "release"
-    env = os.environ | {
-        "XDG_RUNTIME_DIR": str(tmp_path),
-        "NOHIKI_GATE_LOCK": "0",
-        "NOHIKI_GATE_LOCK_TIMEOUT": "30",
-        "NOHIKI_GATE_LOCK_NOTICE_INTERVAL": "1",
-    }
-    holder = subprocess.Popen(
-        [
-            wrapper,
-            "gate",
-            "pre-push",
-            "--",
-            sys.executable,
-            "-c",
-            "import sys, time; from pathlib import Path\n"
-            "release = Path(sys.argv[1])\n"
-            "while not release.exists(): time.sleep(0.01)",
-            str(release),
-        ],
-        env=env,
-    )
-    holder_file = tmp_path / "nohiki-gates" / "pre-push.holder"
-    deadline = time.monotonic() + 30
-    while not holder_file.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert holder_file.exists()
-
-    queue_log = tmp_path / "queue.log"
-    with queue_log.open("w", encoding="utf-8") as stderr:
-        waiter = subprocess.Popen(
-            [wrapper, "gate", "pre-push", "--", sys.executable, "-c", "print('second')"],
-            stdout=subprocess.PIPE,
-            stderr=stderr,
-            text=True,
-            env=env,
-        )
-        deadline = time.monotonic() + 30
-        while "still queued after 1s" not in queue_log.read_text(encoding="utf-8") and time.monotonic() < deadline:
-            time.sleep(0.01)
-        queued_while_alive = queue_log.read_text(encoding="utf-8")
-        assert "pre-push gate still queued after 1s: holder pid=" in queued_while_alive
-        assert waiter.poll() is None
-        release.touch()
-        stdout, _ = waiter.communicate(timeout=30)
-
-    assert holder.wait(timeout=30) == 0
-    assert waiter.returncode == 0
-    assert stdout == "second\n"
-    queued = queue_log.read_text(encoding="utf-8")
-    assert "pre-push gate queued: holder pid=" in queued
-    assert f"worktree={_ROOT}" in queued
+_GATE_BODY = (
+    "import sys, time\n"
+    "from pathlib import Path\n"
+    "trace = Path(sys.argv[1])\n"
+    "with trace.open('a') as fh:\n"
+    "    fh.write(f'{time.monotonic():.5f} ENTER\\n')\n"
+    "time.sleep(float(sys.argv[2]))\n"
+    "with trace.open('a') as fh:\n"
+    "    fh.write(f'{time.monotonic():.5f} EXIT\\n')\n"
+)
 
 
-def test_machine_gate_wait_is_bounded(tmp_path: Path) -> None:
-    wrapper = _ROOT / "scripts/dev/env-lock.sh"
-    release = tmp_path / "release"
-    holder_env = os.environ | {
-        "XDG_RUNTIME_DIR": str(tmp_path),
-        "NOHIKI_GATE_LOCK": "0",
-    }
-    holder = subprocess.Popen(
-        [
-            wrapper,
-            "gate",
-            "pre-push",
-            "--",
-            sys.executable,
-            "-c",
-            "import sys, time; from pathlib import Path\n"
-            "release = Path(sys.argv[1])\n"
-            "while not release.exists(): time.sleep(0.01)",
-            str(release),
-        ],
-        env=holder_env,
-    )
-    holder_file = tmp_path / "nohiki-gates" / "pre-push.holder"
-    deadline = time.monotonic() + 30
-    while not holder_file.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert holder_file.exists()
-
-    waiter = subprocess.run(
-        [wrapper, "gate", "pre-push", "--", "true"],
-        capture_output=True,
-        check=False,
-        text=True,
-        env=holder_env | {"NOHIKI_GATE_LOCK_TIMEOUT": "0"},
-    )
-    assert waiter.returncode == 75
-    assert "timed out after 0s" in waiter.stderr
-    release.touch()
-    assert holder.wait(timeout=30) == 0
-
-
-def test_machine_gate_reclaims_stale_holder_metadata(tmp_path: Path) -> None:
-    wrapper = _ROOT / "scripts/dev/env-lock.sh"
-    lock_dir = tmp_path / "nohiki-gates"
-    lock_dir.mkdir()
-    holder_file = lock_dir / "pre-push.holder"
-    holder_file.write_text("pid=999999999 worktree=/stale/worktree\n", encoding="utf-8")
-
-    result = subprocess.run(
-        [wrapper, "gate", "pre-push", "--", sys.executable, "-c", "print('reclaimed')"],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=os.environ
+def _gate_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    return (
+        os.environ
         | {
             "XDG_RUNTIME_DIR": str(tmp_path),
             "NOHIKI_GATE_LOCK": "0",
-        },
+            "NOHIKI_GATE_LOCK_POLL_INTERVAL": "1",
+            "NOHIKI_GATE_LOCK_NOTICE_INTERVAL": "2",
+            "NOHIKI_GATE_LOCK_TIMEOUT": "120",
+            "NOHIKI_GATE_ESTIMATED_SECONDS": "10",
+            "NOHIKI_GATE_SLOTS": "2",
+        }
+        | extra
     )
 
-    assert result.stdout == "reclaimed\n"
-    assert "pre-push gate: reclaimed stale holder metadata pid=999999999" in result.stderr
-    assert not holder_file.exists()
+
+def _hold_gate(tmp_path: Path, trace: Path, seconds: float, **extra: str) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [
+            _ROOT / "scripts/dev/env-lock.sh",
+            "gate",
+            "pre-push",
+            "--",
+            sys.executable,
+            "-c",
+            _GATE_BODY,
+            str(trace),
+            str(seconds),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_gate_env(tmp_path, **extra),
+    )
+
+
+def _queue_waiter(tmp_path: Path, log: Path, **extra: str) -> subprocess.Popen[str]:
+    with log.open("w", encoding="utf-8") as stderr:
+        return subprocess.Popen(
+            [_ROOT / "scripts/dev/env-lock.sh", "gate", "pre-push", "--", "true"],
+            stdout=subprocess.DEVNULL,
+            stderr=stderr,
+            text=True,
+            env=_gate_env(tmp_path, **extra),
+        )
+
+
+def _await_slots_taken(trace: Path, count: int) -> None:
+    deadline = time.monotonic() + 60
+    while trace.read_text(encoding="utf-8").count("ENTER") < count and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert trace.read_text(encoding="utf-8").count("ENTER") == count
+
+
+def _reap(processes: list[subprocess.Popen[str]]) -> None:
+    for process in processes:
+        process.kill()
+        process.wait(timeout=60)
+        if process.stderr is not None:
+            process.stderr.close()
+
+
+def _peak_overlap(trace: Path) -> int:
+    events = sorted(
+        (float(stamp), 1 if kind == "ENTER" else -1)
+        for stamp, kind in (line.split() for line in trace.read_text(encoding="utf-8").splitlines())
+    )
+    current = peak = 0
+    for _, delta in events:
+        current += delta
+        peak = max(peak, current)
+    return peak
+
+
+def test_machine_gate_admits_exactly_its_slot_count(tmp_path: Path) -> None:
+    trace = tmp_path / "trace"
+    trace.touch()
+    runs = [_hold_gate(tmp_path, trace, 2.0) for _ in range(5)]
+    stderrs = [run.communicate()[1] for run in runs]
+
+    assert [run.returncode for run in runs] == [0] * 5
+    # The bound is the point of the lock: never more than two gate bodies at once, and
+    # never fewer than two either, or the semaphore has degenerated back into a mutex.
+    assert _peak_overlap(trace) == 2
+    taken = sorted(int(match) for text in stderrs for match in re.findall(r"took slot (\d+) of 2", text))
+    # Which process wins which slot is a kernel scheduling race, so the exact distribution
+    # is not a contract. The contract is that every slot is in range and both are used.
+    assert all(1 <= s <= 2 for s in taken)
+    assert 1 in taken
+    assert 2 in taken
+
+
+def test_machine_gate_reports_queue_depth_and_estimated_wait(tmp_path: Path) -> None:
+    trace = tmp_path / "trace"
+    trace.touch()
+    holders = [_hold_gate(tmp_path, trace, 300.0) for _ in range(2)]
+    _await_slots_taken(trace, 2)
+
+    # Waiters join one at a time, each observed announcing itself before the next starts,
+    # so the reported depth is checkable rather than racy.
+    announcements: list[tuple[int, int]] = []
+    waiters: list[subprocess.Popen[str]] = []
+    for index in range(3):
+        log = tmp_path / f"waiter{index}.err"
+        waiters.append(_queue_waiter(tmp_path, log))
+        deadline = time.monotonic() + 60
+        match = None
+        while match is None and time.monotonic() < deadline:
+            match = re.search(
+                r"queue depth (\d+) including you; estimated wait ~(\d+)s",
+                log.read_text(encoding="utf-8"),
+            )
+            time.sleep(0.02)
+        assert match is not None, f"waiter {index} never reported its queue position"
+        announcements.append((int(match.group(1)), int(match.group(2))))
+        assert f"worktree={_ROOT}" in log.read_text(encoding="utf-8")
+
+    _reap(holders)
+    for waiter in waiters:
+        assert waiter.wait(timeout=120) == 0
+
+    # depth counts live waiters; the estimate is ceil(depth / slots) * the per-gate estimate.
+    assert announcements == [(1, 10), (2, 10), (3, 20)]
+
+
+def test_machine_gate_queue_loop_fails_at_a_human_scale_timeout(tmp_path: Path) -> None:
+    trace = tmp_path / "trace"
+    trace.touch()
+    holders = [_hold_gate(tmp_path, trace, 300.0) for _ in range(2)]
+    _await_slots_taken(trace, 2)
+
+    started = time.monotonic()
+    waiter = subprocess.run(
+        [_ROOT / "scripts/dev/env-lock.sh", "gate", "pre-push", "--", "true"],
+        capture_output=True,
+        check=False,
+        text=True,
+        env=_gate_env(tmp_path, NOHIKI_GATE_LOCK_TIMEOUT="3"),
+    )
+    elapsed = time.monotonic() - started
+    _reap(holders)
+
+    assert waiter.returncode == 75
+    assert "timed out after 3s with all 2 slots busy" in waiter.stderr
+    assert "broken, not busy" in waiter.stderr
+    assert elapsed < 30, f"the queue loop overshot its own timeout by {elapsed - 3:.1f}s"
+
+
+def test_machine_gate_queue_loop_refuses_to_run_unserialised(tmp_path: Path) -> None:
+    trace = tmp_path / "trace"
+    trace.touch()
+    holders = [_hold_gate(tmp_path, trace, 300.0) for _ in range(2)]
+    _await_slots_taken(trace, 2)
+
+    log = tmp_path / "waiter.err"
+    waiter = _queue_waiter(tmp_path, log)
+    waiters_dir = tmp_path / "nohiki-gates" / "waiters"
+    deadline = time.monotonic() + 60
+    while not (waiters_dir.is_dir() and any(waiters_dir.iterdir())) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    shutil.rmtree(tmp_path / "nohiki-gates")
+    assert waiter.wait(timeout=60) == 70
+    _reap(holders)
+
+    assert "disappeared while queued; refusing to run unserialised" in log.read_text(encoding="utf-8")
+
+
+def test_machine_gate_slot_releases_when_its_holder_is_killed(tmp_path: Path) -> None:
+    trace = tmp_path / "trace"
+    trace.touch()
+    victims = [_hold_gate(tmp_path, trace, 600.0) for _ in range(2)]
+    _await_slots_taken(trace, 2)
+    lock_dir = tmp_path / "nohiki-gates"
+    assert sorted(path.name for path in lock_dir.glob("*.holder")) == [
+        "pre-push.holder",
+        "pre-push.slot2.holder",
+    ]
+
+    _reap(victims)
+
+    # SIGKILL runs no trap, so the metadata is deliberately stale here. The flock is not:
+    # the body runs with fd 9 closed, so the kernel drops the lock with the holder shell.
+    started = time.monotonic()
+    recovered = subprocess.run(
+        [_ROOT / "scripts/dev/env-lock.sh", "gate", "pre-push", "--", "echo", "recovered"],
+        capture_output=True,
+        check=True,
+        text=True,
+        env=_gate_env(tmp_path),
+    )
+    elapsed = time.monotonic() - started
+
+    assert recovered.stdout == "recovered\n"
+    assert "queued" not in recovered.stderr
+    assert elapsed < 10, f"a killed holder wedged its slot for {elapsed:.1f}s"
+    assert "reclaimed stale holder metadata" in recovered.stderr
+    assert list(lock_dir.glob("*.holder")) == []
+
+
+def test_machine_gate_slot_one_interlocks_with_the_pre_semaphore_lock(tmp_path: Path) -> None:
+    """Worktrees lag across many commits, so a single-mutex holder must still exclude us.
+
+    Modelled on a real collision: a scratch probe held /run/user/1000/nohiki-gates/pre-push.lock
+    through the pre-semaphore wrapper while a publication queued behind it. Had slot 1 been
+    renamed, the two would have contended on nothing and the machine would have carried one
+    gate more than the bound.
+    """
+    lock_dir = tmp_path / "nohiki-gates"
+    lock_dir.mkdir()
+    legacy_lock = lock_dir / "pre-push.lock"
+    trace = tmp_path / "trace"
+    trace.touch()
+
+    # Exactly what the pre-semaphore wrapper did: flock -x on pre-push.lock, then the body.
+    legacy = subprocess.Popen(
+        ["flock", "-x", str(legacy_lock), "sleep", "600"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        probe = subprocess.run(["flock", "-n", "-x", str(legacy_lock), "true"], check=False)
+        if probe.returncode != 0:
+            break
+        time.sleep(0.02)
+    assert probe.returncode != 0, "the legacy holder never acquired pre-push.lock"
+
+    # One slot is now unavailable, so a single gate still runs and takes slot 2.
+    admitted = _hold_gate(tmp_path, trace, 0.2)
+    admitted_stderr = admitted.communicate()[1]
+    assert admitted.returncode == 0
+    assert "took slot 2 of 2" in admitted_stderr
+
+    # And the bound holds across the two implementations: with slot 2 also taken, the
+    # third arrival queues rather than becoming a third machine-wide gate.
+    holder = _hold_gate(tmp_path, trace, 600.0)
+    _await_slots_taken(trace, 2)
+    blocked = subprocess.run(
+        [_ROOT / "scripts/dev/env-lock.sh", "gate", "pre-push", "--", "true"],
+        capture_output=True,
+        check=False,
+        text=True,
+        env=_gate_env(tmp_path, NOHIKI_GATE_LOCK_TIMEOUT="3"),
+    )
+    _reap([holder])
+    legacy.kill()
+    legacy.wait(timeout=60)
+
+    assert blocked.returncode == 75
+    assert "all 2 slots busy" in blocked.stderr
 
 
 def test_gate_scope_falls_back_when_user_systemd_is_unavailable(tmp_path: Path) -> None:
