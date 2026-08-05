@@ -10,6 +10,9 @@ captures the WAL message; this SMT rewrites the Connect record so the topic,
 key, value, and headers match the canonical Nohiki event shape expected by
 downstream consumers.
 
+The `jvm` umbrella matches the repository's lowercase ecosystem umbrellas (`backend` and `typescript`)
+while naming the bytecode platform rather than one JVM source language.
+
 ## Contract
 
 ### Input: WAL message envelope (emitted by services)
@@ -46,28 +49,25 @@ SELECT pg_logical_emit_message(
 
 ## Build
 
-The SMT is built exclusively via the parent Dockerfile's multi-stage build.
-**There is no committed Gradle wrapper.** All builds happen inside
-`gradle:9.6.1-jdk25-alpine@sha256:4d50266538c871adbcd8ece20d61d10e42b6c8c7dec1f10498d9508d45759c35`. See `../Dockerfile`.
+The pinned developer and CI toolchain is JDK 25.0.4+1 with Gradle 9.6.1:
 
-To build the Kafka Connect image (which includes this SMT):
+```bash
+nix develop .#jvm --command just test-jvm
+```
+
+The recipe verifies the committed Gradle 9.6.1 wrapper, then runs `clean build`
+with the flake-provided Gradle. The build executes the test and coverage gates
+and produces `build/libs/nohiki-wal-router-smt-0.1.0-all.jar`.
+
+The Kafka Connect image keeps the production build path in
+`infra/k8s/kafka-connect/Dockerfile`: its pinned builder copies this module,
+runs `test shadowJar`, and the runtime stage copies the shaded JAR into
+`/kafka/connect/nohiki-wal-router/`.
+
+To build the Kafka Connect image:
 
 ```bash
 sh infra/compose/scripts/preflight.sh build nohiki-cp-kafka-connect
-```
-
-### Local iteration (optional)
-
-If you want fast inner-loop iteration without full Docker rebuilds:
-
-```bash
-# One-shot test run in an ephemeral container
-docker run --rm -v "$PWD/smt:/build" -w /build gradle:9.6.1-jdk25-alpine@sha256:4d50266538c871adbcd8ece20d61d10e42b6c8c7dec1f10498d9508d45759c35 \
-  gradle --no-daemon test
-
-# Produce the shaded JAR
-docker run --rm -v "$PWD/smt:/build" -w /build gradle:9.6.1-jdk25-alpine@sha256:4d50266538c871adbcd8ece20d61d10e42b6c8c7dec1f10498d9508d45759c35 \
-  gradle --no-daemon shadowJar
 ```
 
 ## Dependencies

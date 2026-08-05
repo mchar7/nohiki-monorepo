@@ -208,6 +208,28 @@ class NohikiWalRouterSmtTest {
         }
 
         @Test
+        @DisplayName("Opaque content with a malformed frame length prefix is preserved byte-for-byte")
+        void malformedFrameLengthPrefixIsOpaque() {
+            byte[] payload = new byte[] {(byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff, 1, 2, 3};
+
+            SourceRecord out = smt.apply(messageRecord("{\"topic\":\"t\",\"aggregate_id\":\"a\"}", payload));
+
+            assertThat(out).isNotNull();
+            assertThat((byte[]) out.value()).containsExactly(payload);
+        }
+
+        @Test
+        @DisplayName("Opaque content with a truncated framed payload is preserved byte-for-byte")
+        void truncatedFramedPayloadIsOpaque() {
+            byte[] payload = new byte[] {0, 0, 0, 5, '{', '}'};
+
+            SourceRecord out = smt.apply(messageRecord("{\"topic\":\"t\",\"aggregate_id\":\"a\"}", payload));
+
+            assertThat(out).isNotNull();
+            assertThat((byte[]) out.value()).containsExactly(payload);
+        }
+
+        @Test
         @DisplayName("ByteBuffer content is decoded to a byte[] value")
         void byteBufferContent() {
             byte[] payload = new byte[] {1, 2, 3};

@@ -14,7 +14,7 @@
 # -----------------------------------------------------------------------------
 FROM gradle:9.6.1-jdk25-alpine@sha256:4d50266538c871adbcd8ece20d61d10e42b6c8c7dec1f10498d9508d45759c35 AS smt-builder
 WORKDIR /build
-COPY smt/ /build/
+COPY jvm/nohiki-wal-router-smt/ /build/
 RUN gradle --no-daemon --console=plain test shadowJar
 
 # -----------------------------------------------------------------------------
@@ -198,8 +198,8 @@ ENV CONNECT_PLUGIN_PATH=/kafka/connect
 
 # Add connector configs and scripts for auto-registration
 # Use --chmod to set permissions during COPY (BuildKit feature)
-COPY --chmod=755 scripts/ /kafka/scripts/
-COPY --chmod=644 connectors/ /kafka/connectors/
+COPY --chmod=755 infra/k8s/kafka-connect/scripts/ /kafka/scripts/
+COPY --chmod=644 infra/k8s/kafka-connect/connectors/ /kafka/connectors/
 
 USER 1001
 

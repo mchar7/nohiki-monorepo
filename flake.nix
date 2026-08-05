@@ -17,6 +17,12 @@
         python = pkgs.python314;
         nodejs = pkgs.nodejs_26;
         corepackPackage = pkgs.corepack.override { nodejs-slim = nodejs; };
+        jdk = pkgs.jdk25;
+        gradle = pkgs.gradle-packages.mkGradle {
+          version = "9.6.1";
+          hash = "sha256-nA9/ruswbLFOQnmj4ITKa1lolAiaBjjmigfJRaMsnhQ=";
+          defaultJava = jdk;
+        };
         uvConfig = builtins.fromTOML (builtins.readFile ./toolchain/uv.toml);
         uvVersion =
           let
@@ -214,6 +220,11 @@
           playwright-driver.browsers
         ];
 
+        jvmTools = [
+          jdk
+          gradle
+        ];
+
         containerTools = with pkgs; [
           podman-compose
           dive
@@ -383,7 +394,7 @@
 
         devShells.default = pkgs.mkShell {
           name = "nohiki";
-          packages = coreTools ++ pythonTools ++ frontendTools ++ containerTools ++ infraTools;
+          packages = coreTools ++ pythonTools ++ frontendTools ++ jvmTools ++ containerTools ++ infraTools;
           buildInputs = nativeBuildDeps;
           env = baseEnv // {
             PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
@@ -413,6 +424,14 @@
               env CI=true LEFTHOOK=0 corepack pnpm install --frozen-lockfile --silent
             fi
             echo "Frontend shell ready (Playwright browsers at $PLAYWRIGHT_BROWSERS_PATH)"
+          '';
+        };
+
+        devShells.jvm = pkgs.mkShell {
+          name = "nohiki-jvm";
+          packages = coreTools ++ jvmTools;
+          shellHook = ''
+            echo "JVM shell ready (JDK ${jdk.version}, Gradle ${gradle.version})"
           '';
         };
 

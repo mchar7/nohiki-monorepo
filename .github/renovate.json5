@@ -33,6 +33,8 @@
     "github-actions",
     "dockerfile",
     "docker-compose",
+    "gradle",
+    "gradle-wrapper",
     "helmv3",
     "helm-values",
     "flux",
@@ -80,6 +82,23 @@
       ],
       "depNameTemplate": "@playwright/test",
       "datasourceTemplate": "npm"
+    },
+    {
+      // why: the Java toolchain major must stay aligned between the Gradle compile target and the pinned Nix JDK.
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^flake\\.nix$/",
+        "/^jvm\\/nohiki-wal-router-smt\\/build\\.gradle\\.kts$/"
+      ],
+      "matchStrings": [
+        "jdk\\s*=\\s*pkgs\\.jdk(?<currentValue>\\d+);",
+        "JavaLanguageVersion\\.of\\((?<currentValue>\\d+)\\)"
+      ],
+      "depNameTemplate": "java-jdk",
+      "packageNameTemplate": "java-jdk",
+      "datasourceTemplate": "java-version",
+      "versioningTemplate": "loose",
+      "extractVersionTemplate": "^(?<version>\\d+)"
     }
   ],
   "packageRules": [
@@ -87,6 +106,28 @@
       "description": "Require a human dashboard approval for major updates",
       "matchUpdateTypes": ["major"],
       "dependencyDashboardApproval": true
+    },
+    {
+      // why: config:best-practices manager settings are overridden at package-rule precedence.
+      "description": "Enable Gradle dependencies and wrapper updates",
+      "matchManagers": ["gradle", "gradle-wrapper"],
+      "enabled": true
+    },
+    {
+      // why: the SMT must compile against the Kafka line shipped by the Debezium runtime image.
+      "description": "Keep Kafka Connect APIs aligned with the 4.1 runtime",
+      "matchManagers": ["gradle"],
+      "matchPackageNames": [
+        "org.apache.kafka:connect-api",
+        "org.apache.kafka:connect-transforms"
+      ],
+      "allowedVersions": "/^4\\.1\\./"
+    },
+    {
+      // why: one PR must move the Nix JDK and Gradle language toolchain together.
+      "description": "Keep duplicate JDK major declarations aligned",
+      "matchPackageNames": ["java-jdk"],
+      "groupName": "JDK major parity"
     },
     {
       // why: workspace members are never published to PyPI, so a lookup can only fail.
