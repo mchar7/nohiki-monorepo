@@ -239,9 +239,9 @@ def test_github_summary_renders_named_results_as_markdown() -> None:
 
     assert summary.startswith("#### Python tests (focused)\n\n**1/2 packages passed.**")
     assert "Coverage is reported, not enforced" in summary
-    assert "| `package-a` | 1.2s | Pass | 96% | meets strict policy: module >= 90%, file >= 80% |" in summary
+    assert "| `package-a` | 1.2s | 0 | 0 | 0 | 96% | meets strict policy: module >= 90%, file >= 80% |" in summary
     assert (
-        "| `package-b` | 2.3s | Fail | 78% | below strict policy: module >= 90%, file >= 80%, 1 file under 80% |"
+        "| `package-b` | 2.3s | 0 | 0 | 0 | 78% | below strict policy: module >= 90%, file >= 80%, 1 file under 80% |"
     ) in summary
 
 
@@ -280,14 +280,14 @@ def test_github_summary_states_the_policy_behind_every_coverage_number() -> None
 
     assert "Coverage is enforced" in summary
     assert (
-        "| `tooling` | 1.0s | Pass | 21% | no policy: scripts packages carry the "
+        "| `tooling` | 1.0s | 0 | 0 | 0 | 21% | no policy: scripts packages carry the "
         "no-requirements gate (module >= 0%, file >= 0%) |"
     ) in summary
     assert (
-        "| `namespace-only` | 0.5s | Pass | n/a | no policy: the package carries no measurable statements |"
+        "| `namespace-only` | 0.5s | 0 | 0 | 0 | n/a | no policy: the package carries no measurable statements |"
     ) in summary
     assert (
-        "| `blanked` | 0.8s | Pass | none | unmeasured: source carries statements but coverage measured none |"
+        "| `blanked` | 0.8s | 0 | 0 | 0 | none | unmeasured: source carries statements but coverage measured none |"
     ) in summary
     # The two zero-statement rows share a predicate but not a verdict; conflating them is the defect.
     assert not _coverage_meets_policy(results[2])
@@ -542,6 +542,66 @@ async def test_container_selection_collects_only_marker_derived_files(
     assert [result.passed for result in results] == [True]
     assert marked_arg in commands[0]
     assert test_checks._repo_relative(unit) not in commands[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("markers", "passed_case_count", "expected_package_pass"),
+    [
+        pytest.param(test_checks._UNIT_TEST_MARKERS, 0, 0, id="ordinary-skip-only"),
+        pytest.param(test_checks._UNIT_TEST_MARKERS, 1, 1, id="ordinary-mixed"),
+        pytest.param("requires_docker", 1, 0, id="required-container-skip"),
+    ],
+)
+async def test_consolidated_results_distinguish_skipped_cases_from_passes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    markers: str,
+    passed_case_count: int,
+    expected_package_pass: int,
+) -> None:
+    package = _package(tmp_path)
+    test_file = test_checks._repo_relative(package.path / "tests" / "test_container.py")
+    package = Package(
+        package.name,
+        package.path,
+        package.pkg_type,
+        requires_docker_tests=frozenset({"tests/test_container.py"}),
+    )
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> _SuccessfulPytestProcess:
+        del kwargs
+        passed = (
+            f'<testcase classname="tests.test_container" file="{test_file}" name="test_passes" time="0.1"/>'
+            if passed_case_count
+            else ""
+        )
+        _write_junit(
+            command,
+            "<testsuites><testsuite>"
+            f"{passed}"
+            f'<testcase classname="tests.test_container" file="{test_file}" '
+            'name="test_skips" time="0.0"><skipped message="no Docker"/></testcase>'
+            "</testsuite></testsuites>",
+        )
+        return _SuccessfulPytestProcess(b"1 skipped\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    results = await test_checks.run_consolidated_tests(
+        [package],
+        markers,
+        (),
+        pytest_workers=1,
+        with_coverage=False,
+    )
+
+    assert len(results) == 1
+    assert results[0].passed is bool(expected_package_pass)
+    assert results[0].tests_run == 1 + passed_case_count
+    assert results[0].tests_passed == passed_case_count
+    assert results[0].tests_skipped == 1
+    assert results[0].tests_failed == 0
 
 
 @pytest.mark.asyncio

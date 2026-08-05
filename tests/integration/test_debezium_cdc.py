@@ -396,7 +396,7 @@ def _connect_api_is_ready(connect_url: str) -> bool:
 
 async def _wait_for_connect_api(connect_url: str) -> bool:
     """Wait for the self-provisioned Kafka Connect REST API."""
-    for _ in range(120):
+    for _ in range(30):
         if await asyncio.to_thread(_connect_api_is_ready, connect_url):
             return True
         await asyncio.sleep(0.5)
@@ -465,14 +465,14 @@ def _register_test_connector(connect_url: str, postgres_container: str) -> str:
 def _connector_is_running(connect_url: str, name: str) -> bool:
     """Return True when the self-provisioned connector is running."""
     try:
-        with urlopen(f"{connect_url}/connectors/{name}/status", timeout=3.0) as response:  # noqa: S310
+        with urlopen(f"{connect_url}/connectors/{name}/status", timeout=1.0) as response:  # noqa: S310
             payload = json.load(response)
     except HTTPError as exc:
         exc.close()
         return False
     connector = payload.get("connector", {}) if isinstance(payload, dict) else {}
     tasks = payload.get("tasks", []) if isinstance(payload, dict) else []
-    return connector.get("state") == "RUNNING" and all(task.get("state") == "RUNNING" for task in tasks)
+    return connector.get("state") == "RUNNING" and bool(tasks) and all(task.get("state") == "RUNNING" for task in tasks)
 
 
 @pytest.fixture
@@ -515,7 +515,7 @@ async def debezium_cdc_environment(
         connector_name = await asyncio.to_thread(
             _register_test_connector, connect_url, container_environment.postgres_url
         )
-        for _ in range(120):
+        for _ in range(30):
             try:
                 if await asyncio.to_thread(_connector_is_running, connect_url, connector_name):
                     break

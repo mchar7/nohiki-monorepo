@@ -203,6 +203,8 @@ class TestResult:
     duration_ms: int = 0
     output: str = ""
     tests_run: int = 0
+    tests_passed: int = 0
+    tests_skipped: int = 0
     tests_failed: int = 0
     coverage: CoverageResult = field(default_factory=CoverageResult)
     pkg_type: PackageType = PackageType.OTHER
@@ -593,6 +595,8 @@ class _PackagePytestStats:
     """Per-package facts reported by pytest's JUnit output."""
 
     tests_run: int = 0
+    tests_passed: int = 0
+    tests_skipped: int = 0
     tests_failed: int = 0
     duration_ms: int = 0
 
@@ -894,6 +898,10 @@ def _parse_package_stats(junit_path: Path, packages: list[Package]) -> dict[str,
         package_stats.duration_ms += round(float(testcase.get("time", "0")) * 1000)
         if testcase.find("failure") is not None or testcase.find("error") is not None:
             package_stats.tests_failed += 1
+        elif testcase.find("skipped") is not None:
+            package_stats.tests_skipped += 1
+        else:
+            package_stats.tests_passed += 1
     return stats
 
 
@@ -985,25 +993,37 @@ async def run_consolidated_tests(
             if with_coverage
             else {pkg.name: CoverageResult() for pkg in packages}
         )
-        failed_packages = {name for name, package_stats in stats.items() if package_stats.tests_failed}
+        failed_packages: set[str] = set()
         wall_duration_ms = int((time.time() - started) * 1000)
         results: list[TestResult] = []
         for pkg in packages:
             package_stats = stats[pkg.name]
             has_tests = package_stats.tests_run > 0
+            package_passed = (
+                package_stats.tests_passed > 0
+                and package_stats.tests_failed == 0
+                and (markers != _DOCKER_TEST_MARKER or package_stats.tests_skipped == 0)
+            )
             if not has_tests:
                 package_output = f"No selected tests were collected for package {pkg.name}."
-            elif package_stats.tests_failed:
-                package_output = output
+            elif not package_passed:
+                package_output = output or (
+                    f"{package_stats.tests_passed} passed, "
+                    f"{package_stats.tests_failed} failed, "
+                    f"{package_stats.tests_skipped} skipped."
+                )
+                failed_packages.add(pkg.name)
             else:
                 package_output = ""
             results.append(
                 TestResult(
                     name=pkg.name,
-                    passed=has_tests and package_stats.tests_failed == 0,
+                    passed=package_passed,
                     duration_ms=package_stats.duration_ms or (wall_duration_ms if not has_tests else 0),
                     output=package_output,
                     tests_run=package_stats.tests_run,
+                    tests_passed=package_stats.tests_passed,
+                    tests_skipped=package_stats.tests_skipped,
                     tests_failed=package_stats.tests_failed,
                     coverage=coverage[pkg.name],
                     pkg_type=pkg.pkg_type,
@@ -1027,12 +1047,15 @@ async def run_consolidated_tests(
 
 def _display_consolidated_results(results: list[TestResult], console: Console, *, with_coverage: bool) -> None:
     cov_header = " Cov% " if with_coverage else ""
-    console.print(f"\n{'Module':<40} {'Tests':>5} {'Time':>6} {'Status':>9}{cov_header}")
-    console.print("-" * 70)
+    console.print(f"\n{'Module':<40} {'Tests':>5} {'Pass':>5} {'Skip':>5} {'Time':>6} {'Status':>9}{cov_header}")
+    console.print("-" * 82)
     for result in results:
         icon = "✓ PASS" if result.passed else "✗ FAIL"
         cov_info = f"  {result.coverage.total_coverage:>3.0f}%" if with_coverage else ""
-        console.print(f"{result.name:<40} {result.tests_run:>5} {result.duration_ms / 1000:>5.1f}s {icon:>9}{cov_info}")
+        console.print(
+            f"{result.name:<40} {result.tests_run:>5} {result.tests_passed:>5} "
+            f"{result.tests_skipped:>5} {result.duration_ms / 1000:>5.1f}s {icon:>9}{cov_info}"
+        )
 
 
 async def run_tests_parallel(
@@ -1194,6 +1217,11 @@ def display_summary(
     if ci_mode:
         console.print(f"\n{'=' * 70}")
         console.print(f"TESTS: {passed} passed, {failed} failed")
+        console.print(
+            f"TEST CASES: {sum(result.tests_passed for result in results)} passed, "
+            f"{sum(result.tests_failed for result in results)} failed, "
+            f"{sum(result.tests_skipped for result in results)} skipped"
+        )
         if with_coverage:
             cov_status = "[green]OK[/green]" if coverage_ok else "[red]BELOW THRESHOLD[/red]"
             console.print(f"COVERAGE: {cov_status}")
@@ -1265,17 +1293,19 @@ def render_github_summary(results: list[TestResult], title: str, *, strict: bool
         "",
     ]
     lines += markdown_table(
-        ["Package", "Duration", "Tests", "Coverage", "Coverage policy"],
+        ["Package", "Duration", "Tests", "Passed", "Skipped", "Coverage", "Coverage policy"],
         [
             (
                 f"`{result.name}`",
                 f"{result.duration_ms / 1000:.1f}s",
-                "Pass" if result.passed else "Fail",
+                str(result.tests_run),
+                str(result.tests_passed),
+                str(result.tests_skipped),
                 *_coverage_cells(result),
             )
             for result in sorted(results, key=lambda item: item.name)
         ],
-        align=("left", "right", "center", "right", "left"),
+        align=("left", "right", "right", "right", "right", "right", "left"),
     )
     return "\n".join(lines) + "\n"
 

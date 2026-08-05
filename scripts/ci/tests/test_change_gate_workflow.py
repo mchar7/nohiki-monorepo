@@ -1220,6 +1220,7 @@ def test_container_verdict_entrypoint_enforces_and_attests_the_parsed_step(tmp_p
         "SMOKE_OUTCOME": "success",
         "CONTAINER_TESTS_EXPECTED": "true",
         "CONTAINER_TESTS_OUTCOME": "success",
+        "CONTAINER_TESTS_EXECUTED": "true",
     }
 
     succeeded = _run_workflow_step(
@@ -1231,6 +1232,13 @@ def test_container_verdict_entrypoint_enforces_and_attests_the_parsed_step(tmp_p
     assert succeeded.returncode == 0, succeeded.stderr
     assert output.exists()
     assert output.read_text(encoding="utf-8") == "executed=true\n"
+    vacuous = _run_workflow_step(
+        step,
+        workflow_values=successful_values | {"CONTAINER_TESTS_EXECUTED": "false"},
+        runner_values={"GITHUB_OUTPUT": str(tmp_path / "vacuous-container-output")},
+    )
+    assert vacuous.returncode == 1
+    assert vacuous.stderr == "container-tests succeeded without execution evidence\n"
 
     failed = _run_workflow_step(
         step,

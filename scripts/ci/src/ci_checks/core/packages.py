@@ -90,8 +90,8 @@ class Package:
 
     @property
     def has_tests(self) -> bool:
-        """Whether the package has a tests/ directory (used by fixture/test checks)."""
-        return self.tests_dir.is_dir()
+        """Whether the package has conventional or marker-discovered tests."""
+        return self.tests_dir.is_dir() or bool(self.requires_docker_tests)
 
 
 def _pytest_test_roots(path: Path, config: dict[str, object]) -> tuple[Path, ...]:

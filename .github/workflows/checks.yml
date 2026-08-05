@@ -743,6 +743,7 @@ jobs:
           nix develop .#ci --command uv run --no-sync ci-checks tests all --scope all \
             --requires-docker --ci --workers 1 --no-coverage \
             --summary "$GITHUB_STEP_SUMMARY" --summary-title "container contracts"
+          echo "executed=true" >> "$GITHUB_OUTPUT"
 
       - name: Attest container contract execution
         id: container-contracts
@@ -754,6 +755,7 @@ jobs:
           OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
           FRONTEND_SMOKE_EXPECTED: ${{ needs.changes.outputs.frontend_smoke }}
           CONTAINER_TESTS_OUTCOME: ${{ steps.container-tests.outcome }}
+          CONTAINER_TESTS_EXECUTED: ${{ steps.container-tests.outputs.executed }}
           CONTAINER_TESTS_EXPECTED: ${{ needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true' }}
           OTEL_EXPECTED: ${{ needs.changes.outputs.otel_collector }}
         run: >

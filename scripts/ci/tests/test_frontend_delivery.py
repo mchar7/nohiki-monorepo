@@ -519,6 +519,7 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     assert "--requires-docker --ci --workers 1 --no-coverage" in container_tests["run"]
     assert '--summary "$GITHUB_STEP_SUMMARY"' in container_tests["run"]
     assert '--summary-title "container contracts"' in container_tests["run"]
+    assert 'echo "executed=true" >> "$GITHUB_OUTPUT"' in container_tests["run"]
 
     attestation = next(step for step in frontend_steps if step.get("name") == "Attest container contract execution")
     assert attestation["if"] == "always() && env.CONTAINER_CONTRACTS_SELECTED == 'true'"
@@ -534,6 +535,7 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
             "${{ needs.changes.outputs.broad_unbounded == 'true' "
             "|| needs.changes.outputs.container_contracts == 'true' }}"
         ),
+        "CONTAINER_TESTS_EXECUTED": "${{ steps.container-tests.outputs.executed }}",
     }
     assert "workflow.py verdict container" in str(attestation["run"]).replace("\n", " ")
     output = tmp_path / "github-output"
@@ -546,6 +548,7 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "OTEL_EXPECTED": "false",
         "CONTAINER_TESTS_OUTCOME": "success",
         "CONTAINER_TESTS_EXPECTED": "true",
+        "CONTAINER_TESTS_EXECUTED": "true",
     }
     for name, value in outcomes.items():
         monkeypatch.setenv(name, value)
@@ -564,6 +567,10 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         with pytest.raises(ValueError, match=rf"{label} was .* but concluded failure"):
             verdict_cmd("container", output)
         monkeypatch.setenv(variable, outcomes[variable])
+    monkeypatch.setenv("CONTAINER_TESTS_EXECUTED", "false")
+    with pytest.raises(ValueError, match="container-tests succeeded without execution evidence"):
+        verdict_cmd("container", output)
+    monkeypatch.setenv("CONTAINER_TESTS_EXECUTED", "true")
     assert worker["outputs"]["container_contracts_executed"] == (
         "${{ steps.container-contracts.outputs.executed == 'true' && 'true' || '' }}"
     )

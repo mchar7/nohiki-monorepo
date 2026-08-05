@@ -116,7 +116,7 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
     ),
     SurfaceRule(
         ("uv.lock", "pyproject.toml"),
-        flags=(*BROAD_PYTHON_FLAGS, "build_backend", "api_schema_freshness"),
+        flags=(*BROAD_PYTHON_FLAGS, "build_backend", "api_schema_freshness", "container_contracts"),
         packages=("ci-checks",),
     ),
     SurfaceRule(
@@ -311,6 +311,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
             "infra/k8s/local/images.json",
             "infra/compose/**",
             "backend/libs/nohiki-db-utils/src/nohiki_db_utils/testing.py",
+            "backend/libs/nohiki-kafka-client/src/nohiki_kafka_client/testing.py",
             "backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/testing.py",
             "backend/libs/nohiki-test-utils/src/nohiki_test_utils/plugins.py",
             "backend/libs/nohiki-test-utils/src/nohiki_test_utils/utils/docker.py",

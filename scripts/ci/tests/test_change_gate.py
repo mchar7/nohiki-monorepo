@@ -12,6 +12,7 @@ from ci_checks import app as ci_app_module
 from ci_checks.checks import gate as checks_gate
 from ci_checks.checks import tests as checks_tests
 from ci_checks.checks.gate import gate_cmd
+from ci_checks.core import change_gate as change_gate_module
 from ci_checks.core import packages as packages_module
 from ci_checks.core.change_gate import (
     BroadCause,
@@ -36,7 +37,6 @@ from ci_checks.core.packages import (
     build_reverse_dependency_index,
     expand_to_dependents,
     load_packages_with_deps,
-    requires_docker_test_paths,
 )
 from rich.console import Console
 from typer.testing import CliRunner
@@ -2061,37 +2061,67 @@ def test_every_requires_docker_test_file_routes_to_container_contracts() -> None
     assert {path for path in marked if "container_contracts" not in evaluate({path}, packages).flags} == set()
 
 
-def test_future_requires_docker_marker_generates_package_and_gate_selection(tmp_path: Path) -> None:
-    package_root = tmp_path / "future-package"
-    tests = package_root / "tests"
+@pytest.mark.parametrize(
+    "path",
+    [
+        "pyproject.toml",
+        "tests/conftest.py",
+        "backend/libs/nohiki-db-utils/src/nohiki_db_utils/testing.py",
+        "backend/libs/nohiki-kafka-client/src/nohiki_kafka_client/testing.py",
+        "backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/testing.py",
+        "backend/libs/nohiki-test-utils/src/nohiki_test_utils/plugins.py",
+        "backend/libs/nohiki-test-utils/src/nohiki_test_utils/utils/docker.py",
+    ],
+)
+def test_container_test_runtime_inputs_route_to_container_contracts(path: str) -> None:
+    assert "container_contracts" in evaluate({path}, load_packages_with_deps(Scope.ALL)).flags
+
+
+def test_future_workspace_member_routes_custom_root_container_tests_without_generated_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_root = tmp_path / "packages" / "future-container"
+    tests = package_root / "container_tests"
     tests.mkdir(parents=True)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.uv.workspace]\nmembers = ["packages/future-container"]\n',
+        encoding="utf-8",
+    )
+    (package_root / "pyproject.toml").write_text(
+        '[project]\nname = "future-container"\nversion = "0.1.0"\ndependencies = []\n'
+        '[tool.pytest.ini_options]\ntestpaths = ["container_tests"]\n',
+        encoding="utf-8",
+    )
     marked = tests / "test_future_container.py"
     marked.write_text(
         "import pytest\n\n@pytest.mark.requires_docker\ndef test_container():\n    pass\n",
         encoding="utf-8",
     )
     (tests / "test_unit.py").write_text("def test_unit():\n    pass\n", encoding="utf-8")
+    (package_root / "conftest.py").write_text("", encoding="utf-8")
 
-    discovered = requires_docker_test_paths(package_root, {})
-    assert discovered == frozenset({"tests/test_future_container.py"})
+    monkeypatch.setattr(packages_module, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(change_gate_module, "REPO_ROOT", tmp_path)
+    packages = packages_module.load_packages_with_deps(Scope.ALL)
 
-    repository_package = Package(
-        "nohiki-common-exceptions",
-        REPO_ROOT / "backend/libs/nohiki-common-exceptions",
-        PackageType.LIB,
-        requires_docker_tests=discovered,
-    )
-    generated_inputs = {
-        "backend/libs/nohiki-common-exceptions/tests/test_future_container.py",
-        "backend/libs/nohiki-common-exceptions/tests/conftest.py",
-        "backend/libs/nohiki-common-exceptions/pyproject.toml",
-    }
+    assert packages["future-container"].requires_docker_tests == frozenset({"container_tests/test_future_container.py"})
+    for changed in (
+        "packages/future-container/container_tests/test_future_container.py",
+        "packages/future-container/container_tests/conftest.py",
+        "packages/future-container/conftest.py",
+        "packages/future-container/pyproject.toml",
+    ):
+        decision = change_gate_module.evaluate({changed}, packages)
+        selected = change_gate_module.selected_test_packages(decision, packages)
+        outputs = change_gate_module.render_outputs(decision, selected, "pull_request")
 
-    assert {
-        path
-        for path in generated_inputs
-        if "container_contracts" not in evaluate({path}, {repository_package.name: repository_package}).flags
-    } == set()
+        assert "container_contracts" in decision.flags
+        assert outputs["test_packages"] == "future-container"
+
+
+def test_root_workspace_manifest_routes_container_contracts() -> None:
+    assert "container_contracts" in evaluate({"pyproject.toml"}, _synthetic_packages()).flags
 
 
 @pytest.mark.parametrize(

@@ -147,7 +147,10 @@ def _usable_sha(sha: str) -> bool:
 
 
 def _package_rel_paths(packages: dict[str, Package]) -> dict[str, str]:
-    return {name: pkg.path.relative_to(REPO_ROOT).as_posix() for name, pkg in packages.items()}
+    return {
+        name: "" if (relative := pkg.path.relative_to(REPO_ROOT).as_posix()) == "." else relative
+        for name, pkg in packages.items()
+    }
 
 
 def _container_test_inputs(
@@ -160,20 +163,22 @@ def _container_test_inputs(
         if not package.requires_docker_tests:
             continue
         package_rel = rel_paths[name]
-        inputs.add(f"{package_rel}/pyproject.toml")
+        prefix = f"{package_rel}/" if package_rel else ""
+        inputs.add(f"{prefix}pyproject.toml")
+        inputs.add(f"{prefix}conftest.py")
         for test_path in package.requires_docker_tests:
-            inputs.add(f"{package_rel}/{test_path}")
+            inputs.add(f"{prefix}{test_path}")
             parents = test_path.split("/")[:-1]
             for depth in range(1, len(parents) + 1):
-                inputs.add(f"{package_rel}/{'/'.join(parents[:depth])}/conftest.py")
+                inputs.add(f"{prefix}{'/'.join(parents[:depth])}/conftest.py")
     return inputs
 
 
 def _owning_package(path: str, rel_paths: dict[str, str]) -> str | None:
-    for name, rel in rel_paths.items():
-        if path == rel or path.startswith(f"{rel}/"):
-            return name
-    return None
+    owners = [
+        (len(rel), name) for name, rel in rel_paths.items() if not rel or path == rel or path.startswith(f"{rel}/")
+    ]
+    return max(owners, default=(0, None))[1]
 
 
 def _apply_event_context(decision: GateDecision, context: EventContext) -> None:

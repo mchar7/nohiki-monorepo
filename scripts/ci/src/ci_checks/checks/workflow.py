@@ -890,6 +890,9 @@ def verdict_cmd(kind: str, github_output: Path | None = None) -> None:
             expected=_true(values.get("CONTAINER_TESTS_EXPECTED")),
             name="container-tests",
         )
+        if _true(values.get("CONTAINER_TESTS_EXPECTED")) and not _true(values.get("CONTAINER_TESTS_EXECUTED")):
+            msg = "container-tests succeeded without execution evidence"
+            raise ValueError(msg)
         if github_output is None:
             msg = "container verdict requires a GitHub output path"
             raise ValueError(msg)
