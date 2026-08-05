@@ -48,6 +48,7 @@ class SweepResult:
     pull_requests: int
     comments: int
     histories: int
+    unscannable: int
     characters: int
     findings: tuple[tuple[Surface, Finding], ...]
 
@@ -518,7 +519,8 @@ def _history_surfaces(value: object, refs: Sequence[_EditRef]) -> tuple[Surface,
         if ref is None or typename != ref.typename or node_id in seen:
             _fail("GitHub GraphQL returned mismatched edit history")
         seen.add(node_id)
-        if type(node_values.get("includesCreatedEdit")) is not bool:
+        includes_created_edit = node_values.get("includesCreatedEdit")
+        if type(includes_created_edit) is not bool:
             _fail("GitHub GraphQL returned malformed edit history")
         last_edited = node_values.get("lastEditedAt")
         if last_edited is not None and not isinstance(last_edited, str):
@@ -526,6 +528,8 @@ def _history_surfaces(value: object, refs: Sequence[_EditRef]) -> tuple[Surface,
         edits = _edit_page(node_values.get("userContentEdits"))
         if edits["pageInfo"]["hasNextPage"]:
             _fail("GitHub GraphQL truncated edit history")
+        if (last_edited is not None or includes_created_edit) and not edits["nodes"]:
+            _fail("GitHub GraphQL returned incomplete edit history")
         for record in edits["nodes"]:
             if record["diff"] is None and record["deletedAt"] is None:
                 _fail("GitHub GraphQL returned unavailable edit history")
@@ -540,8 +544,6 @@ def _history_surfaces(value: object, refs: Sequence[_EditRef]) -> tuple[Surface,
                     record["deletedAt"],
                 )
             )
-    if seen != expected.keys():
-        _fail("GitHub GraphQL returned incomplete edit history")
     return tuple(surfaces)
 
 
@@ -639,7 +641,11 @@ def sweep(
     )
     comments = sum(surface.name in {"comment", "review-comment"} for surface in surfaces)
     histories = sum(surface.name.endswith("-history") for surface in surfaces)
-    return SweepResult(len(pull_requests), comments, histories, characters, findings)
+    unscannable = sum(
+        surface.name.endswith("-history") and surface.deleted_at is not None and not surface.text
+        for surface in surfaces
+    )
+    return SweepResult(len(pull_requests), comments, histories, unscannable, characters, findings)
 
 
 def _repository_name(gh: str, repository: Path) -> str:
@@ -668,7 +674,9 @@ def _render_sweep(result: SweepResult) -> None:
     sys.stdout.write(
         "github-prose-guard: "
         f"fetched {result.pull_requests} pull requests, {result.comments} comments, "
-        f"{result.histories} retained edit records, {result.characters} characters\n"
+        f"{result.histories} retained edit records "
+        f"({result.histories - result.unscannable} scanned, {result.unscannable} unscannable), "
+        f"{result.characters} characters\n"
         "github-prose-guard: deleted nodes are not enumerable through GitHub APIs; this audit is read-only\n"
     )
     for surface, finding in result.findings:

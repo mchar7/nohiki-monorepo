@@ -64,6 +64,8 @@ _NODE_TYPES = {
     "synthetic-review-comment": "PullRequestReviewComment",
 }
 _EDITED_AT = "2026-01-02T03:04:05Z"
+_AUTO = object()
+_REF = guard._EditRef("synthetic-pull", 17, "title/body", "PullRequest")
 
 
 def _history_node(
@@ -71,14 +73,17 @@ def _history_node(
     records: tuple[dict[str, object], ...] = (),
     *,
     has_next_page: bool = False,
+    total: int | None = None,
+    last_edited: str | None | object = _AUTO,
+    includes_created_edit: bool | object = _AUTO,
 ) -> dict[str, object]:
     return {
         "id": node_id,
         "__typename": _NODE_TYPES[node_id],
-        "includesCreatedEdit": bool(records),
-        "lastEditedAt": _EDITED_AT if records else None,
+        "includesCreatedEdit": (bool(records) if includes_created_edit is _AUTO else includes_created_edit),
+        "lastEditedAt": ((_EDITED_AT if records else None) if last_edited is _AUTO else last_edited),
         "userContentEdits": {
-            "totalCount": len(records),
+            "totalCount": len(records) if total is None else total,
             "pageInfo": {
                 "hasNextPage": has_next_page,
                 "endCursor": "synthetic-cursor" if has_next_page else None,
@@ -167,6 +172,25 @@ def test_policy_integrity_mismatch_fails_closed() -> None:
         )
 
 
+def test_zero_width_vocabulary_pattern_fails_closed() -> None:
+    config = _SyntheticConfig()
+    config.vocabulary = (
+        SimpleNamespace(
+            id="synthetic-zero-width",
+            scope=SimpleNamespace(value="message"),
+            severity=SimpleNamespace(value="error"),
+            patterns=(SimpleNamespace(expression=re.compile(r"(?=synthetic)")),),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="contains an empty pattern"):
+        guard.scan_disclosures(
+            "synthetic prose",
+            config,
+            expected_policy_digest=guard._policy_digest(config),
+        )
+
+
 def test_sweep_fetches_all_pull_request_text_surfaces() -> None:
     responses = _surface_responses()
     surfaces = guard.fetch_surfaces(
@@ -191,6 +215,7 @@ def test_sweep_fetches_all_pull_request_text_surfaces() -> None:
     assert result.pull_requests == 1
     assert result.comments == 2
     assert result.histories == 0
+    assert result.unscannable == 0
     assert result.characters == sum(len(surface.text) for surface in surfaces) > 0
     assert result.findings == ()
 
@@ -221,6 +246,7 @@ def test_sweep_scans_retained_edits_for_every_node_type() -> None:
         (node_id, f"{node_id}-edit", _EDITED_AT) for node_id in _NODE_TYPES
     ]
     assert result.histories == 4
+    assert result.unscannable == 0
     assert len(result.findings) == 4
     assert {surface.name for surface, _finding in result.findings} == {surface.name for surface in history_surfaces}
 
@@ -245,6 +271,23 @@ def test_purged_edit_metadata_is_accepted_without_inventing_content() -> None:
     )
 
 
+def test_sweep_distinguishes_scanned_and_unscannable_edit_records() -> None:
+    current = guard.Surface(17, "title", "Current prose")
+    scanned = guard.sweep(
+        (current, guard.Surface(17, "title/body-history", "Prior prose", deleted_at=None)),
+        _config(),
+        expected_policy_digest=_SYNTHETIC_POLICY_DIGEST,
+    )
+    unscannable = guard.sweep(
+        (current, guard.Surface(17, "title/body-history", "", deleted_at=_EDITED_AT)),
+        _config(),
+        expected_policy_digest=_SYNTHETIC_POLICY_DIGEST,
+    )
+
+    assert (scanned.histories, scanned.unscannable) == (1, 0)
+    assert (unscannable.histories, unscannable.unscannable) == (1, 1)
+
+
 def test_unavailable_unpurged_edit_fails_closed() -> None:
     ref = guard._EditRef("synthetic-pull", 17, "title/body", "PullRequest")
     node = _history_node("synthetic-pull", (_edit_record("synthetic-pull", diff=None),))
@@ -261,9 +304,98 @@ def test_paginated_edit_history_fails_closed() -> None:
         guard._history_surfaces([node], [ref])
 
 
+@pytest.mark.parametrize("total", [0, 150])
+def test_edit_history_total_count_mismatch_fails_closed(total: int) -> None:
+    node = _history_node(
+        "synthetic-pull",
+        (_edit_record("synthetic-pull"),),
+        total=total,
+    )
+
+    with pytest.raises(RuntimeError, match="incomplete edit history"):
+        guard._history_surfaces([node], [_REF])
+
+
+def test_missing_edit_history_nodes_fail_closed() -> None:
+    with pytest.raises(RuntimeError, match="incomplete edit history"):
+        guard._history_surfaces([], [_REF])
+
+    comment_ref = guard._EditRef("synthetic-comment", 17, "comment", "IssueComment")
+    with pytest.raises(RuntimeError, match="incomplete edit history"):
+        guard._history_surfaces([_history_node("synthetic-pull")], [_REF, comment_ref])
+
+
+def test_edit_history_node_identity_mismatches_fail_closed() -> None:
+    wrong_type = {**_history_node("synthetic-pull"), "__typename": "Issue"}
+    with pytest.raises(RuntimeError, match="mismatched edit history"):
+        guard._history_surfaces([wrong_type], [_REF])
+
+    comment_ref = guard._EditRef("synthetic-comment", 17, "comment", "IssueComment")
+    with pytest.raises(RuntimeError, match="mismatched edit history"):
+        guard._history_surfaces(
+            [_history_node("synthetic-pull"), _history_node("synthetic-pull")],
+            [_REF, comment_ref],
+        )
+
+    unknown = {**_history_node("synthetic-pull"), "id": "synthetic-unrequested"}
+    with pytest.raises(RuntimeError, match="mismatched edit history"):
+        guard._history_surfaces([unknown], [_REF])
+
+
+@pytest.mark.parametrize(
+    ("last_edited", "includes_created_edit"),
+    [(None, True), (_EDITED_AT, False)],
+)
+def test_edited_node_without_retained_records_fails_closed(
+    last_edited: str | None,
+    includes_created_edit: object,
+) -> None:
+    node = _history_node(
+        "synthetic-pull",
+        last_edited=last_edited,
+        includes_created_edit=includes_created_edit,
+    )
+
+    with pytest.raises(RuntimeError, match="incomplete edit history"):
+        guard._history_surfaces([node], [_REF])
+
+
+def test_never_edited_node_without_retained_records_is_accepted() -> None:
+    node = _history_node(
+        "synthetic-pull",
+        last_edited=None,
+        includes_created_edit=False,
+    )
+
+    assert guard._history_surfaces([node], [_REF]) == ()
+
+
 def test_sweep_fails_closed_on_empty_api_payload() -> None:
     with pytest.raises(RuntimeError, match="no pull requests"):
         guard.fetch_surfaces(lambda _endpoint: [], lambda _node_ids: [], "example/project", None)
+
+
+def test_sweep_fails_closed_on_zero_surfaces() -> None:
+    with pytest.raises(RuntimeError, match="fetched no prose surfaces"):
+        guard.sweep((), _config(), expected_policy_digest=_SYNTHETIC_POLICY_DIGEST)
+
+
+def test_sweep_fails_closed_on_zero_content() -> None:
+    surfaces = (guard.Surface(17, "body", ""), guard.Surface(17, "comment", ""))
+
+    with pytest.raises(RuntimeError, match="fetched no prose content"):
+        guard.sweep(surfaces, _config(), expected_policy_digest=_SYNTHETIC_POLICY_DIGEST)
+
+
+@pytest.mark.parametrize("title", [None, ""])
+def test_empty_pull_request_title_fails_closed(title: str | None) -> None:
+    responses = _surface_responses()
+    responses["repos/example/project/pulls?state=all&per_page=100"] = [
+        [{"number": 17, "node_id": "synthetic-pull", "title": title, "body": "Synthetic body"}]
+    ]
+
+    with pytest.raises(RuntimeError, match="empty pull request title"):
+        guard.fetch_surfaces(responses.__getitem__, lambda _node_ids: [], "example/project", None)
 
 
 def test_malformed_review_summary_fails_closed() -> None:
@@ -362,6 +494,7 @@ def test_rendering_never_echoes_matched_text(capsys: pytest.CaptureFixture[str])
         comments=1,
         characters=len(sensitive),
         histories=1,
+        unscannable=1,
         findings=((surface, guard.Finding("synthetic-rule", 2, 4)),),
     )
 
@@ -369,6 +502,6 @@ def test_rendering_never_echoes_matched_text(capsys: pytest.CaptureFixture[str])
     captured = capsys.readouterr()
     assert sensitive not in captured.out
     assert sensitive not in captured.err
-    assert "1 retained edit records" in captured.out
+    assert "1 retained edit records (0 scanned, 1 unscannable)" in captured.out
     assert "deleted nodes are not enumerable through GitHub APIs; this audit is read-only" in captured.out
     assert "PR #17 comment:2:4: [synthetic-rule]" in captured.err
