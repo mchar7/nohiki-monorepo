@@ -24,7 +24,7 @@ from ci_checks.checks.tests import (
 from ci_checks.checks.tests import (
     TestResult as RunnerTestResult,
 )
-from ci_checks.core.packages import Package, PackageType
+from ci_checks.core.packages import Package, PackageType, Scope, load_packages
 from rich.console import Console
 
 pytest_plugins = ("pytester",)
@@ -126,6 +126,46 @@ def test_docker_marker_selects_only_packages_that_contain_matching_tests() -> No
     assert "nohiki-integration-tests" in names
     assert "nohiki-common-exceptions" not in names
     assert all(package.requires_docker_tests for package in packages)
+
+
+def test_unconventional_collection_roots_are_selected_and_attributed(tmp_path: Path) -> None:
+    """The repo-root integration package must reach the unit lane under its own testpaths.
+
+    `nohiki-integration-tests` lives at the repository root with `testpaths = ["integration",
+    "api"]` and no `tests/` directory. A hardcoded `tests/` hands pytest a path that does not
+    exist, which aborts the whole consolidated run, and leaves its cases unattributable.
+    """
+    packages = test_checks._load_testable_packages("all")
+    package = next(item for item in packages if item.name == "nohiki-integration-tests")
+
+    assert not package.tests_dir.is_dir()
+    assert package.test_roots == frozenset({"integration", "api"})
+    assert all(path.is_dir() for pkg in packages for path in pkg.test_paths)
+
+    junit = tmp_path / "junit.xml"
+    junit.write_text(
+        '<testsuites><testsuite name="pytest">'
+        '<testcase classname="tests.integration.test_debezium_cdc" '
+        'file="tests/integration/test_debezium_cdc.py" name="test_case" time="0.5"/>'
+        "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    stats = test_checks._parse_package_stats(junit, packages)
+
+    assert stats["nohiki-integration-tests"].tests_run == 1
+    assert stats["nohiki-integration-tests"].tests_passed == 1
+
+
+def test_marker_discovered_package_stays_out_of_conventional_tests_selection() -> None:
+    """Coverage and fixture consumers must keep meaning the conventional directory.
+
+    A package with no `tests/` directory has no `src/` coverage target either, and admitting
+    it would cancel root omit patterns against a target coverage never measures.
+    """
+    names = {package.name for package in load_packages(Scope.ALL, require_tests=True)}
+
+    assert "nohiki-integration-tests" not in names
+    assert "ci-checks" in names
 
 
 @pytest.mark.parametrize(

@@ -856,21 +856,22 @@ def _unit_excluded_test_modules(packages: list[Package], markers: str) -> list[P
     ]
 
 
-def _junit_prefix(pkg: Package) -> str:
-    path = _repo_relative(pkg.path)
-    return Path(path).as_posix().replace("/", ".") + ".tests"
+def _junit_prefixes(pkg: Package) -> tuple[str, ...]:
+    """Dotted classname prefixes pytest emits for a package's collection roots."""
+    return tuple(Path(_repo_relative(path)).as_posix().removeprefix("./").replace("/", ".") for path in pkg.test_paths)
 
 
 def _parse_package_stats(junit_path: Path, packages: list[Package]) -> dict[str, _PackagePytestStats]:
     stats = {pkg.name: _PackagePytestStats() for pkg in packages}
-    classname_prefixes = sorted(((_junit_prefix(pkg), pkg.name) for pkg in packages), reverse=True)
+    classname_prefixes = sorted(
+        ((prefix, pkg.name) for pkg in packages for prefix in _junit_prefixes(pkg)),
+        reverse=True,
+    )
     file_prefixes = sorted(
         (
-            (
-                Path(_repo_relative(pkg.path / "tests")).as_posix().removeprefix("./"),
-                pkg.name,
-            )
+            (Path(_repo_relative(path)).as_posix().removeprefix("./"), pkg.name)
             for pkg in packages
+            for path in pkg.test_paths
         ),
         reverse=True,
     )
@@ -932,7 +933,7 @@ async def run_consolidated_tests(
         selected_paths = (
             [pkg.path / relative for pkg in packages for relative in sorted(pkg.requires_docker_tests)]
             if markers == _DOCKER_TEST_MARKER
-            else [pkg.path / "tests" for pkg in packages]
+            else [path for pkg in packages for path in pkg.test_paths]
         )
         cmd = [
             "uv",
