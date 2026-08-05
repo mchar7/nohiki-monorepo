@@ -87,9 +87,9 @@ spec:
               valueFrom:
                 secretKeyRef: {name: {{ printf "%s-db-credentials" $entry.service }}, key: uri}
 {{- end }}
-            - {name: E2E_BASE_URL, value: "http://bff-service:8000"}
-            - {name: KAFKA_BOOTSTRAP_SERVERS, value: "nohiki-kafka-bootstrap:9092"}
-            - {name: VALKEY_URL, value: "redis://valkey:6379"}
+            - {name: E2E_BASE_URL, value: "http://nohiki-bff-service:8000"}
+            - {name: KAFKA_BOOTSTRAP_SERVERS, value: "nohiki-kafka-kafka-bootstrap:9092"}
+            - {name: VALKEY_URL, value: "redis://nohiki-valkey-primary:6379"}
             - {name: PROMETHEUS_URL, value: "http://prometheus-operated:9090"}
             - {name: GRAFANA_URL, value: "http://grafana-service:3000"}
             - {name: LOKI_URL, value: "http://loki-gateway:80"}

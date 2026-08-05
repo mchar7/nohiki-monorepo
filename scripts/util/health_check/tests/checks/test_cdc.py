@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -11,7 +13,11 @@ from health_check.checks.cdc.debezium_connectors import DebeziumConnectorsCheck
 from health_check.checks.cdc.outbox_processing import OutboxProcessingCheck
 from health_check.checks.cdc.publication import PublicationCheck
 from health_check.checks.cdc.replication_slot import ReplicationSlotCheck
-from health_check.config.kafka import cdc_connectors_for, connector_names_for
+from health_check.config.kafka import (
+    SUPERSEDED_COMPOSE_CONNECTOR_NAMES,
+    cdc_connectors_for,
+    connector_names_for,
+)
 from health_check.core.models import CheckStatus, FixStatus
 from health_check.platform.models import PlatformTarget
 
@@ -21,6 +27,20 @@ _TARGETS = (PlatformTarget.COMPOSE, PlatformTarget.KUBERNETES)
 _COMPOSE_CDC_CONNECTORS = cdc_connectors_for(PlatformTarget.COMPOSE)
 _COMPOSE_SLOT_NAMES = tuple(connector.slot_name for connector in _COMPOSE_CDC_CONNECTORS)
 _COMPOSE_CONNECTOR_NAMES = connector_names_for(PlatformTarget.COMPOSE)
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[5]
+
+
+def test_health_and_recipe_superseded_connector_inventories_match() -> None:
+    registration = (
+        _REPOSITORY_ROOT / "infra" / "k8s" / "kafka-connect" / "scripts" / "register-connectors.sh"
+    ).read_text(encoding="utf-8")
+    array = re.search(
+        r"SUPERSEDED_COMPOSE_OUTBOX_CONNECTORS=\(\n(?P<entries>.*?)\n\)",
+        registration,
+        re.DOTALL,
+    )
+    assert array is not None
+    assert frozenset(re.findall(r'"([^"]+)"', array.group("entries"))) == SUPERSEDED_COMPOSE_CONNECTOR_NAMES
 
 
 def _connector_response(state: str = "RUNNING", task_state: str = "RUNNING") -> str:
@@ -144,6 +164,17 @@ class TestDebeziumConnectorsCheck:
         assert "nohiki-outbox-user_auth: unexpected connector" in result.details
         assert result.remediation_hint is not None
         assert "just connect-reconcile-compose-cdc" in result.remediation_hint
+
+    async def test_requires_manual_remediation_for_unknown_compose_connector(self) -> None:
+        names = [*_COMPOSE_CONNECTOR_NAMES, "third-party-source"]
+        platform = MockPlatform(_curl_result=(0, json.dumps(names), ""))
+
+        result = await DebeziumConnectorsCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert result.remediation_hint is not None
+        assert "manually" in result.remediation_hint
+        assert "just connect-reconcile-compose-cdc" not in result.remediation_hint
 
     async def test_fails_when_connector_failed(self) -> None:
         names_body = json.dumps(["conn-a"])
@@ -354,6 +385,17 @@ class TestReplicationSlotCheck:
         assert result.remediation_hint is not None
         assert "just connect-reconcile-compose-cdc" in result.remediation_hint
 
+    async def test_requires_manual_remediation_for_unknown_compose_slot(self) -> None:
+        rows = f"{_slot_rows()}\nthird_party_slot|f"
+        platform = MockPlatform(_psql_result=(0, rows, ""))
+
+        result = await ReplicationSlotCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert result.remediation_hint is not None
+        assert "manually" in result.remediation_hint
+        assert "just connect-reconcile-compose-cdc" not in result.remediation_hint
+
     async def test_error_when_psql_fails(self) -> None:
         platform = MockPlatform(_psql_result=(1, "", "error"))
         result = await ReplicationSlotCheck().execute(platform)
@@ -385,14 +427,53 @@ class TestPublicationCheck:
 
     async def test_reports_superseded_compose_publication_with_reconciliation_path(self) -> None:
         publications = f"{_publication_names()}\nnohiki_outbox_pub_user_auth"
-        platform = MockPlatform(_psql_result=(0, publications, ""))
+        connectors = cdc_connectors_for(PlatformTarget.COMPOSE)
 
-        result = await PublicationCheck().execute(platform)
+        class _PubPlatform(MockPlatform):
+            def exec_psql(self, query: str, *, field_separator: str = "") -> tuple[int, str, str]:
+                if "FROM pg_publication ORDER BY" in query:
+                    return (0, publications, "")
+                connector = next(item for item in connectors if item.publication_name in query)
+                return (0, connector.table_name, "")
+
+        result = await PublicationCheck().execute(_PubPlatform())
 
         assert result.status == CheckStatus.FAILED
         assert "nohiki_outbox_pub_user_auth: unexpected publication" in result.details
         assert result.remediation_hint is not None
         assert "just connect-reconcile-compose-cdc" in result.remediation_hint
+
+    async def test_withholds_recipe_when_current_publication_has_unexpected_table(self) -> None:
+        publications = f"{_publication_names()}\nnohiki_outbox_pub_user_auth"
+        connectors = cdc_connectors_for(PlatformTarget.COMPOSE)
+        affected = connectors[0]
+
+        class _PubPlatform(MockPlatform):
+            def exec_psql(self, query: str, *, field_separator: str = "") -> tuple[int, str, str]:
+                if "FROM pg_publication ORDER BY" in query:
+                    return (0, publications, "")
+                connector = next(item for item in connectors if item.publication_name in query)
+                table = "third_party_schema.events" if connector is affected else connector.table_name
+                return (0, table, "")
+
+        result = await PublicationCheck().execute(_PubPlatform())
+
+        assert result.status == CheckStatus.FAILED
+        assert any("third_party_schema.events" in detail for detail in result.details)
+        assert result.remediation_hint is not None
+        assert "manually" in result.remediation_hint
+        assert "just connect-reconcile-compose-cdc" not in result.remediation_hint
+
+    async def test_requires_manual_remediation_for_unknown_compose_publication(self) -> None:
+        publications = f"{_publication_names()}\nthird_party_publication"
+        platform = MockPlatform(_psql_result=(0, publications, ""))
+
+        result = await PublicationCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert result.remediation_hint is not None
+        assert "manually" in result.remediation_hint
+        assert "just connect-reconcile-compose-cdc" not in result.remediation_hint
 
     async def test_error_when_psql_fails(self) -> None:
         platform = MockPlatform(_psql_result=(1, "", "error"))

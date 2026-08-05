@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Final
 
 from health_check.checks._utils import ConnectorStatus, fetch_connector_names, fetch_connector_status
-from health_check.config.kafka import connector_names_for
+from health_check.config.kafka import compose_reconciliation_covers, connector_names_for
 from health_check.config.thresholds import KAFKA_CONNECT_DEFAULT_PORT
 from health_check.core.base import HealthCheck
 from health_check.core.models import CheckCategory, CheckMetadata, CheckResult, CheckStatus, FixResult, FixStatus
@@ -121,8 +121,14 @@ class DebeziumConnectorsCheck(HealthCheck):
                 details=details,
                 remediation_hint=(
                     "For recognized superseded Compose CDC resources, run: just connect-reconcile-compose-cdc"
-                    if platform.target == PlatformTarget.COMPOSE and unexpected
-                    else "Reconcile the configured Kafka Connect inventory"
+                    if platform.target == PlatformTarget.COMPOSE
+                    and compose_reconciliation_covers("connector", unexpected)
+                    else (
+                        "Unexpected connector identities are outside the bounded Compose reconciliation inventory; "
+                        "investigate and remediate them manually"
+                        if platform.target == PlatformTarget.COMPOSE and unexpected
+                        else "Reconcile the configured Kafka Connect inventory"
+                    )
                 ),
             )
 

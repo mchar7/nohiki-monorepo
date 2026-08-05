@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Final
 
-from health_check.config.kafka import CdcConnector, cdc_connectors_for
+from health_check.config.kafka import CdcConnector, cdc_connectors_for, compose_reconciliation_covers
 from health_check.core.base import HealthCheck
 from health_check.core.models import CheckCategory, CheckMetadata, CheckResult, CheckStatus
 from health_check.platform.models import PlatformTarget
@@ -51,6 +51,16 @@ async def _publication_table_failures(
     return []
 
 
+async def _collect_publication_table_failures(
+    platform: Platform,
+    connectors: tuple[CdcConnector, ...],
+) -> list[str]:
+    """Return table-membership failures for the supplied existing publications."""
+    async with asyncio.TaskGroup() as tg:
+        tasks = [tg.create_task(_publication_table_failures(platform, connector)) for connector in connectors]
+    return [message for task in tasks for message in task.result()]
+
+
 class PublicationCheck(HealthCheck):
     """Verify the exact current PostgreSQL publication inventory and tables."""
 
@@ -75,9 +85,21 @@ class PublicationCheck(HealthCheck):
         missing = sorted(expected - pub_names)
         unexpected = sorted(pub_names - expected)
         if missing or unexpected:
+            recipe_covered = platform.target == PlatformTarget.COMPOSE and compose_reconciliation_covers(
+                "publication", unexpected
+            )
+            table_failures = (
+                await _collect_publication_table_failures(
+                    platform,
+                    tuple(connector for connector in connectors if connector.publication_name in pub_names),
+                )
+                if recipe_covered
+                else []
+            )
             details = (
                 *(f"{name}: required publication missing" for name in missing),
                 *(f"{name}: unexpected publication" for name in unexpected),
+                *table_failures,
             )
             return self._make_result(
                 CheckStatus.FAILED,
@@ -85,15 +107,17 @@ class PublicationCheck(HealthCheck):
                 details=details,
                 remediation_hint=(
                     "For recognized superseded Compose CDC resources, run: just connect-reconcile-compose-cdc"
-                    if platform.target == PlatformTarget.COMPOSE and unexpected
-                    else "Reconcile the configured Debezium connector publication inventory"
+                    if recipe_covered and not table_failures
+                    else (
+                        "Unexpected publication identities or table memberships are outside the bounded Compose "
+                        "reconciliation inventory; investigate and remediate them manually"
+                        if platform.target == PlatformTarget.COMPOSE and unexpected
+                        else "Reconcile the configured Debezium connector publication inventory"
+                    )
                 ),
             )
 
-        async with asyncio.TaskGroup() as tg:
-            tasks = [tg.create_task(_publication_table_failures(platform, connector)) for connector in connectors]
-
-        failures = [msg for t in tasks for msg in t.result()]
+        failures = await _collect_publication_table_failures(platform, connectors)
 
         if failures:
             return self._make_result(

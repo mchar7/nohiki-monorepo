@@ -9,7 +9,7 @@ existence in Kafka without any manual sync.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from nohiki_kafka_client import Topics
 
@@ -180,6 +180,45 @@ KUBERNETES_CDC_CONNECTORS: Final[tuple[CdcConnector, ...]] = COMPOSE_CDC_CONNECT
 
 KUBERNETES_SINK_CONNECTOR_NAMES: Final[tuple[str, ...]] = ("qdrant-embedding-sink",)
 """Kubernetes sink connectors rendered when the chart's Kafka Connect stack is enabled."""
+
+SUPERSEDED_COMPOSE_CONNECTOR_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "nohiki-outbox-user_auth",
+        "nohiki-outbox-user_pref",
+        "nohiki-outbox-user_upload",
+        "nohiki-outbox-user_entitlement",
+        "nohiki-outbox-job_query",
+        "nohiki-outbox-job_storage",
+        "nohiki-outbox-job_correlation",
+        "nohiki-outbox-job_ingest_enrichment",
+        "nohiki-outbox-doc_render",
+        "nohiki-outbox-doc_schema",
+        "nohiki-outbox-doc_template",
+        "nohiki-outbox-skill_graph",
+        "nohiki-outbox-notification",
+    }
+)
+"""Exact connector identities handled by the bounded Compose reconciliation recipe."""
+
+
+def superseded_compose_resource_names(
+    resource_kind: Literal["connector", "publication", "slot"],
+) -> frozenset[str]:
+    """Return the exact superseded resource identities the Compose recipe can remove."""
+    if resource_kind == "connector":
+        return SUPERSEDED_COMPOSE_CONNECTOR_NAMES
+    suffixes = (name.removeprefix("nohiki-outbox-") for name in SUPERSEDED_COMPOSE_CONNECTOR_NAMES)
+    if resource_kind == "publication":
+        return frozenset(f"nohiki_outbox_pub_{suffix}" for suffix in suffixes)
+    return frozenset(f"nohiki_outbox_slot_{suffix}" for suffix in suffixes)
+
+
+def compose_reconciliation_covers(
+    resource_kind: Literal["connector", "publication", "slot"],
+    unexpected: list[str],
+) -> bool:
+    """Return whether every unexpected identity is inside the recipe's bounded inventory."""
+    return bool(unexpected) and frozenset(unexpected).issubset(superseded_compose_resource_names(resource_kind))
 
 
 def cdc_connectors_for(target: PlatformTarget) -> tuple[CdcConnector, ...]:

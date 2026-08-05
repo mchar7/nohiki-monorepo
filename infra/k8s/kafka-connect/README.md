@@ -75,10 +75,13 @@ superseded `nohiki-outbox-*` connectors or their `nohiki_outbox_slot_*` and
 just connect-reconcile-compose-cdc
 ```
 
-The command deletes only the recognized superseded Compose connector identities, drops their
-inactive replication slots and publications, then registers the current connector inventory. It
-never runs at startup and refuses to drop an active slot. Inspect any unexpected resource whose
-name is outside that bounded set before removing it manually.
+Before the first mutation, the command verifies the complete connector, replication-slot,
+publication, and publication-table inventory and refuses active superseded slots. It then deletes
+only the recognized superseded Compose identities, drops their inactive slots and publications,
+and registers the current inventory. Investigate and remediate identities outside the bounded set
+manually before rerunning it. If an HTTP or PostgreSQL failure interrupts the mutation phase,
+inspect all four surfaces and rerun the command after correcting the cause; no automatic rollback
+occurs.
 
 ### Check Connector Status
 
