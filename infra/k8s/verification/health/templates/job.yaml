@@ -73,6 +73,10 @@ spec:
           command: ["/bin/sh", "-ceu"]
           args:
             - |
+              python -m health_check.acceptance.live_cluster_cdc \
+                --namespace "$K8S_NAMESPACE" \
+                --base-url "$E2E_BASE_URL" \
+                --evidence "$CDC_ACCEPTANCE_EVIDENCE"
               health-check inventory --target k8s --json
               python -m health_check.verify_migrations \
                 --inventory /opt/health/migration-heads.json \
@@ -82,6 +86,7 @@ spec:
             - {name: K8S_NAMESPACE, value: {{ .Release.Namespace | quote }}}
             - {name: K8S_LOCAL_MODE, value: "false"}
             - {name: K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR, value: "/evidence/service-dependencies"}
+            - {name: CDC_ACCEPTANCE_EVIDENCE, value: "/evidence/live-cdc.json"}
 {{- range $entry := $migrationInventory.entries }}
             - name: {{ printf "MIGRATION_DATABASE_URL_%s" ($entry.service | upper | replace "-" "_") }}
               valueFrom:

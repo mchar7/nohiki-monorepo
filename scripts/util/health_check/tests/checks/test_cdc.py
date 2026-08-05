@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-from health_check.checks.cdc.cdc_end_to_end import CdcEndToEndCheck
 from health_check.checks.cdc.debezium_connectors import DebeziumConnectorsCheck
 from health_check.checks.cdc.outbox_processing import OutboxProcessingCheck
 from health_check.checks.cdc.publication import PublicationCheck
@@ -63,59 +61,6 @@ def _slot_rows(
 
 def _publication_names(target: PlatformTarget = PlatformTarget.COMPOSE) -> str:
     return "\n".join(connector.publication_name for connector in cdc_connectors_for(target))
-
-
-_KNOWN_UUID: str = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-
-
-class TestCdcEndToEndCheck:
-    def test_metadata_check_id(self) -> None:
-        assert CdcEndToEndCheck().metadata.check_id == "cdc_end_to_end"
-
-    def test_depends_on_debezium_and_postgres(self) -> None:
-        deps = CdcEndToEndCheck().metadata.depends_on
-        assert "debezium_connectors" in deps
-        assert "postgres_connectivity" in deps
-
-    async def test_passes_when_pipeline_delivers(self) -> None:
-        class _DeliveredPlatform(MockPlatform):
-            def exec_psql(self, query: str, *, field_separator: str = "") -> tuple[int, str, str]:
-                return (0, "", "")
-
-            def exec_kafka_cmd(self, args: list[str], *, timeout: int = 15) -> tuple[int, str, str]:
-                return (0, f"{_KNOWN_UUID}\t{{}}", "")
-
-        with patch(
-            "health_check.checks.cdc.cdc_end_to_end.uuid.uuid4",
-            return_value=_KNOWN_UUID,
-        ):
-            result = await CdcEndToEndCheck().execute(_DeliveredPlatform())
-
-        assert result.status == CheckStatus.PASSED
-        assert "end-to-end" in result.summary
-
-    async def test_error_when_insert_fails(self) -> None:
-        class _InsertFailPlatform(MockPlatform):
-            def exec_psql(self, query: str, *, field_separator: str = "") -> tuple[int, str, str]:
-                return (1, "", "permission denied")
-
-        result = await CdcEndToEndCheck().execute(_InsertFailPlatform())
-        assert result.status == CheckStatus.ERROR
-        assert "user_pref_schema" in result.summary
-
-    async def test_fails_when_kafka_times_out(self) -> None:
-        class _NoDeliveryPlatform(MockPlatform):
-            def exec_psql(self, query: str, *, field_separator: str = "") -> tuple[int, str, str]:
-                return (0, "", "")
-
-        with patch(
-            "health_check.checks.cdc.cdc_end_to_end.CDC_END_TO_END_MAX_WAIT_SECONDS",
-            -1.0,
-        ):
-            result = await CdcEndToEndCheck().execute(_NoDeliveryPlatform())
-
-        assert result.status == CheckStatus.FAILED
-        assert "not delivered" in result.summary
 
 
 class TestDebeziumConnectorsCheck:

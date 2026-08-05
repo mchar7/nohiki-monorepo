@@ -52,7 +52,12 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://postgres:pos
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
 KAFKA_CONNECT_URL = os.environ.get("KAFKA_CONNECT_URL", "http://localhost:8083")
 TEST_TOPIC_PREFIX = "test.cdc"
-OUTBOX_CONNECTOR_PREFIX = "nohiki-outbox-"
+OUTBOX_CONNECTOR_SUFFIX = "-outbox"
+
+
+def _is_canonical_outbox_connector_name(name: str) -> bool:
+    """Return whether a connector follows Helm's <service>-outbox name."""
+    return name.endswith(OUTBOX_CONNECTOR_SUFFIX) and name != OUTBOX_CONNECTOR_SUFFIX
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
@@ -451,21 +456,21 @@ def _run_broker_probe() -> str | None:
 
 
 async def _check_connect_connectors() -> str | None:
-    """Verify Kafka Connect has running outbox connectors. Returns skip reason on failure."""
+    """Verify Kafka Connect has running Helm-named outbox connectors."""
     try:
         connectors = await asyncio.to_thread(_fetch_connectors)
     except Exception as exc:
         return f"Kafka Connect unavailable at {KAFKA_CONNECT_URL}: {exc.__class__.__name__}"
 
-    outbox_connectors = [name for name in connectors if name.startswith(OUTBOX_CONNECTOR_PREFIX)]
+    outbox_connectors = [name for name in connectors if _is_canonical_outbox_connector_name(name)]
     if not outbox_connectors:
         return f"No Debezium outbox connector registered at {KAFKA_CONNECT_URL}"
 
     async with asyncio.TaskGroup() as tg:
-        tasks = [tg.create_task(asyncio.to_thread(_connector_is_running, name)) for name in outbox_connectors]
+        tasks = {name: tg.create_task(asyncio.to_thread(_connector_is_running, name)) for name in outbox_connectors}
 
-    if not any(task.result() for task in tasks):
-        return f"No running Debezium outbox connector registered at {KAFKA_CONNECT_URL}"
+    not_running = [name for name, task in tasks.items() if not task.result()]
+    assert not not_running, f"Debezium outbox connector not RUNNING: {', '.join(not_running)}"
 
     return None
 
@@ -547,10 +552,9 @@ class TestDebeziumConnector:
             await consumer.start()
             message_found = await _poll_for_message(consumer, test_payload, timeout_seconds=30)
 
-            if not message_found:
-                pytest.skip(
-                    "Message not found in Kafka. This may be expected if Debezium is not running.",
-                )
+            assert message_found, (
+                "CDC_DELIVERY_TIMEOUT: Debezium was present but did not deliver the inserted outbox row within 30s"
+            )
         finally:
             with contextlib.suppress(Exception):
                 await consumer.stop()

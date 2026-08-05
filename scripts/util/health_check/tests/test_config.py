@@ -24,7 +24,6 @@ from health_check.config.kafka import (
     get_all_topic_names,
 )
 from health_check.config.thresholds import (
-    CDC_END_TO_END_TIMEOUT_SECONDS,
     CHECK_DEFAULT_TIMEOUT_SECONDS,
     CONSUMER_LAG_THRESHOLD,
     IMPORT_CHECK_TIMEOUT_SECONDS,
@@ -242,9 +241,6 @@ class TestThresholds:
 
     def test_default_timeout_positive(self) -> None:
         assert CHECK_DEFAULT_TIMEOUT_SECONDS > 0
-
-    def test_cdc_timeout_positive(self) -> None:
-        assert CDC_END_TO_END_TIMEOUT_SECONDS > 0
 
     def test_kafka_topics_timeout_positive(self) -> None:
         assert KAFKA_TOPICS_CMD_TIMEOUT_SECONDS > 0

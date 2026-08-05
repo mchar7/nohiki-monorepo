@@ -94,6 +94,8 @@ elif name == "systemd-run":
 
 def _stub_create_acceptance(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "preflight", lambda: None)
+    monkeypatch.setattr(runner, "start_memory_sampler", lambda _attempt: None)
+    monkeypatch.setattr(runner, "mark_memory_sampler_created", lambda _attempt: None)
     monkeypatch.setattr(runner, "kind_modules_override", lambda: None)
     monkeypatch.setattr(runner, "require_llm_proxy_env_file", lambda: Path("/secure/proxy.env"))
     monkeypatch.setattr(
@@ -530,6 +532,16 @@ def test_create_installs_proxy_credentials_and_required_values_configmap(
     assert "synthetic-credential" not in json.dumps(measurement)
 
 
+def test_interim_memory_guard_fails_below_derived_floor() -> None:
+    runner = _load_runner()
+    floor = 23 * 1024**3
+
+    with pytest.raises(runner.KindctlError, match="at least 23 GiB available RAM"):
+        runner.require_available_memory(floor - 1)
+
+    runner.require_available_memory(floor)
+
+
 def test_create_executes_the_scoped_command_under_its_own_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -578,6 +590,10 @@ def test_failed_create_cleans_up_and_the_same_attempt_retries(
     runner = _load_runner()
     state, _log = _install_lifecycle_commands(tmp_path, monkeypatch, fail_create_once=True)
     _stub_create_acceptance(runner, monkeypatch)
+    sampler_events: list[str] = []
+    monkeypatch.setattr(runner, "start_memory_sampler", lambda _attempt: sampler_events.append("start"))
+    monkeypatch.setattr(runner, "mark_memory_sampler_created", lambda _attempt: sampler_events.append("created"))
+    monkeypatch.setattr(runner, "cleanup_memory_sampler", lambda _attempt: sampler_events.append("cleanup"))
     attempt = _attempt(tmp_path)
 
     with pytest.raises(runner.KindctlError, match="command failed \\(17\\)"):
@@ -585,6 +601,7 @@ def test_failed_create_cleans_up_and_the_same_attempt_retries(
     assert not (attempt / "runtime").exists()
     assert not state.exists()
     assert json.loads((attempt / "commands/create.json").read_text())["exitCode"] == 1
+    assert sampler_events == ["start", "cleanup"]
 
     assert runner.main(["--attempt-dir", str(attempt), "create"]) == 0
     retry = json.loads((attempt / "commands/create-2.json").read_text())
@@ -888,6 +905,8 @@ def test_delete_converges_populated_runtime_and_is_idempotent(
     runner = _load_runner()
     state, log = _install_lifecycle_commands(tmp_path, monkeypatch)
     _stub_create_acceptance(runner, monkeypatch)
+    sampler_cleanups: list[Path] = []
+    monkeypatch.setattr(runner, "cleanup_memory_sampler", sampler_cleanups.append)
     attempt = _attempt(tmp_path)
     runner.main(["--attempt-dir", str(attempt), "create"])
     cache = attempt / "runtime/cache"
@@ -898,6 +917,7 @@ def test_delete_converges_populated_runtime_and_is_idempotent(
     assert not state.exists()
     assert not (attempt / "runtime").exists()
     assert json.loads((attempt / "commands/delete.json").read_text())["result"] == "passed"
+    assert sampler_cleanups == [attempt]
 
     assert runner.main(["--attempt-dir", str(attempt), "delete"]) == 0
     events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
@@ -951,11 +971,15 @@ def _stub_publication_inputs(
     image_inventory = tmp_path / "infra/k8s/local/images.json"
     digest_values = tmp_path / "infra/k8s/gitops/platform/local/image-digests.values.yaml"
     artifact_lock = tmp_path / "infra/k8s/flux-runtime/artifacts.lock.yaml"
+    model_archive_seed = tmp_path / "infra/k8s/local/model_archive_seed.py"
+    semantic_manifest = tmp_path / "data/config/semantic_representation_manifest.json"
     for name, value in (
         ("IMAGE_FOUNDATION", image_foundation),
         ("IMAGE_INVENTORY", image_inventory),
         ("DIGEST_VALUES", digest_values),
         ("ARTIFACT_LOCK", artifact_lock),
+        ("MODEL_ARCHIVE_SEED", model_archive_seed),
+        ("SEMANTIC_MANIFEST", semantic_manifest),
     ):
         monkeypatch.setattr(runner, name, value)
     prepared_digest_values = (
@@ -987,6 +1011,8 @@ def _stub_publication_inputs(
         (image_inventory, '{"schemaVersion":1}\n'),
         (digest_values, prepared_digest_values),
         (artifact_lock, "lock\n"),
+        (model_archive_seed, "model archive helper\n"),
+        (semantic_manifest, "{}\n"),
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
@@ -1061,11 +1087,13 @@ def _stub_publication_inputs(
         if call[0] == "uv":
             environment = kwargs.get("env")
             assert isinstance(environment, dict)
-            assert str(reviewed_root) in call[3]
+            assert any(str(reviewed_root) in argument for argument in call)
             assert environment.get("KUBECONFIG") == str(kubeconfig)
         if "publish" in call:
             digest_path = Path(call[call.index("--digests") + 1])
             digest_path.write_text(json.dumps(digest_document), encoding="utf-8")
+        if "prepare" in call:
+            (attempt / "model-archives.json").write_text("{}\n", encoding="utf-8")
         if "render-values" in call:
             return _completed(
                 argv,
@@ -1244,3 +1272,298 @@ def test_publish_requires_explicit_no_git_write_before_any_precondition(
         )
 
     assert calls == []
+
+
+def _write_memory_telemetry(
+    runner: ModuleType,
+    attempt: Path,
+    *,
+    complete: bool = False,
+    sample_count: int = 2,
+    sample_pid: int = 101,
+) -> dict[str, object]:
+    paths = runner.memory_telemetry_paths(attempt)
+    paths["root"].mkdir(mode=0o700)
+    identity: dict[str, object] = {"bootId": "test-boot", "pid": 101, "startTicks": 202}
+    runner.write_exclusive(paths["baseline"], {"hostMemAvailableBaselineBytes": 10_000})
+    runner.write_exclusive(paths["identity"], identity)
+    runner.write_exclusive(paths["created"], {"created": True})
+    runner.write_exclusive(
+        paths["samples"],
+        {
+            "bootId": "test-boot",
+            "complete": complete,
+            "hostMemAvailableBaselineBytes": 10_000,
+            "hostMemAvailableTroughBytes": 7_000,
+            "pid": sample_pid,
+            "sampleCount": sample_count,
+            "startTicks": 202,
+        },
+    )
+    return identity
+
+
+def test_memory_sampler_trough_keeps_the_minimum_sample() -> None:
+    runner = _load_runner()
+
+    trough = None
+    for sample in (9_000, 7_000, 8_000, 6_000, 6_500):
+        trough = runner.next_memory_trough(trough, sample)
+
+    assert trough == 6_000
+
+
+def test_memory_sampler_finalize_fails_closed_on_missing_malformed_and_changed_state(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    missing = _attempt(tmp_path, "attempt-missing")
+    with pytest.raises(runner.KindctlError, match="directory is unavailable"):
+        runner.finish_memory_sampler(missing)
+
+    malformed = _attempt(tmp_path, "attempt-malformed")
+    malformed_paths = runner.memory_telemetry_paths(malformed)
+    malformed_paths["root"].mkdir(mode=0o700)
+    runner.write_exclusive(malformed_paths["identity"], {"not": "an identity"})
+    with pytest.raises(runner.KindctlError, match="identity is malformed"):
+        runner.finish_memory_sampler(malformed)
+
+    changed = _attempt(tmp_path, "attempt-changed")
+    _write_memory_telemetry(runner, changed, sample_pid=303)
+    with pytest.raises(runner.KindctlError, match="identity changed"):
+        runner.finish_memory_sampler(changed)
+
+
+def test_stale_or_reused_sampler_pid_is_never_signaled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    attempt = _attempt(tmp_path)
+    _write_memory_telemetry(runner, attempt)
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(runner, "process_matches", lambda _identity: False)
+    monkeypatch.setattr(runner.os, "kill", lambda pid, signal: signals.append((pid, signal)))
+
+    with pytest.raises(runner.KindctlError, match="identity changed before finalize"):
+        runner.finish_memory_sampler(attempt)
+
+    assert signals == []
+    assert not runner.memory_telemetry_paths(attempt)["stop"].exists()
+
+
+def test_incomplete_memory_sampler_state_cannot_finalize(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    attempt = _attempt(tmp_path)
+    _write_memory_telemetry(runner, attempt, complete=True, sample_count=1)
+    matches = iter((True, False))
+    monkeypatch.setattr(runner, "process_matches", lambda _identity: next(matches, False))
+
+    with pytest.raises(runner.KindctlError, match="without complete telemetry"):
+        runner.finish_memory_sampler(attempt)
+
+
+@pytest.mark.parametrize("value", ["", "-1\n", "max\n", "1.0\n", "1 \n", "1\n2\n"])
+def test_node_cgroup_memory_peak_parser_rejects_invalid_data(value: str) -> None:
+    runner = _load_runner()
+
+    with pytest.raises(runner.KindctlError, match="not a nonnegative integer"):
+        runner.parse_nonnegative_bytes(value, "kind node cgroup memory.peak")
+
+
+def test_node_cgroup_memory_peak_uses_the_bound_kind_container(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    container_id = "a" * 64
+    measurements = {
+        "nodes": [
+            {
+                "containerId": container_id,
+                "name": "nohiki-control-plane",
+                "startTime": "2026-08-04T12:00:00Z",
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        runner,
+        "command_json",
+        lambda *_args, **_kwargs: [{"Id": container_id, "State": {"StartedAt": "2026-08-04T12:00:00Z"}}],
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def run(argv: Sequence[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(tuple(argv))
+        return _completed(argv, "987654\n")
+
+    monkeypatch.setattr(runner, "run_command", run)
+
+    assert runner.kind_node_cgroup_memory_peak(measurements) == 987_654
+    assert calls == [("podman", "exec", "nohiki-control-plane", "cat", "/sys/fs/cgroup/memory.peak")]
+
+
+def test_flux_finalize_command_record_carries_both_memory_byte_terms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    attempt = _attempt(tmp_path)
+    (tmp_path / "xdg").mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "xdg"))
+    monkeypatch.setattr(runner, "validate_runner_path", lambda: None)
+    monkeypatch.setattr(runner, "validate_runtime_control", lambda *_args: None)
+    monkeypatch.setattr(
+        runner,
+        "validate_publication_record",
+        lambda *_args: {"clusterUid": "cluster-uid", "configMapUid": "configmap-uid"},
+    )
+    monkeypatch.setattr(
+        runner,
+        "runtime_binding",
+        lambda *_args: ({"attempt": 1, "nodes": []}, "cluster-uid"),
+    )
+    monkeypatch.setattr(runner, "publication_configmap_binding", lambda *_args: "configmap-uid")
+    monkeypatch.setattr(runner, "render_branch_manifest", lambda *_args: "final-hash")
+    monkeypatch.setattr(
+        runner,
+        "command_json",
+        lambda *_args, **_kwargs: {
+            "metadata": {"uid": "flux-uid"},
+            "spec": {"sync": {"path": "infra/k8s/gitops/clusters/local/bootstrap"}},
+        },
+    )
+    monkeypatch.setattr(runner, "wait_root_kustomization", lambda *_args: "source-revision")
+    monkeypatch.setattr(runner, "run_command", lambda argv, **_kwargs: _completed(argv))
+    monkeypatch.setattr(runner, "wait_flux_instance", lambda *_args: "flux-uid")
+    monkeypatch.setattr(runner, "require_rendered_storage_classes", lambda *_args: ())
+    monkeypatch.setattr(runner, "FULL_CHILDREN", ())
+    monkeypatch.setattr(runner, "kind_node_cgroup_memory_peak", lambda _measurements: 456)
+    monkeypatch.setattr(
+        runner,
+        "finish_memory_sampler",
+        lambda _attempt: {
+            "hostMemAvailableBaselineBytes": 1_000,
+            "hostMemAvailableTroughBytes": 877,
+            "hostMemAvailableDropBytes": 123,
+            "memoryAdmissionFloorBytes": 456,
+            "memoryAdmissionFloorHeadroomBytes": 333,
+            "memorySampleCount": 2,
+        },
+    )
+
+    assert (
+        runner.main(
+            [
+                "--attempt-dir",
+                str(attempt),
+                "flux-finalize",
+                "--publication-record",
+                str(attempt / "publication.json"),
+            ]
+        )
+        == 0
+    )
+
+    record = json.loads((attempt / "commands/flux-finalize.json").read_text(encoding="utf-8"))
+    assert record["hostMemAvailableBaselineBytes"] == 1_000
+    assert record["hostMemAvailableTroughBytes"] == 877
+    assert record["hostMemAvailableDropBytes"] == 123
+    assert record["memoryAdmissionFloorBytes"] == 456
+    assert record["memoryAdmissionFloorHeadroomBytes"] == 333
+    assert record["memorySampleCount"] == 2
+    assert record["kindNodeCgroupMemoryPeakBytes"] == 456
+    assert record["result"] == "passed"
+
+
+def test_memory_derivation_consumes_the_measured_drop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    attempt = _attempt(tmp_path)
+    identity = _write_memory_telemetry(runner, attempt, complete=True)
+    samples = runner.memory_telemetry_paths(attempt)["samples"]
+    runner.write_atomic(
+        samples,
+        identity
+        | {
+            "complete": True,
+            "hostMemAvailableBaselineBytes": 10_000,
+            "hostMemAvailableTroughBytes": 7_000,
+            "sampleCount": 2,
+        },
+    )
+    matches = iter((True, False, False))
+    monkeypatch.setattr(runner, "process_matches", lambda _identity: next(matches, False))
+    monkeypatch.setattr(runner, "MEMORY_ADMISSION_FLOOR_BYTES", 4_000)
+
+    result = runner.finish_memory_sampler(attempt)
+
+    assert result == {
+        "hostMemAvailableBaselineBytes": 10_000,
+        "hostMemAvailableTroughBytes": 7_000,
+        "hostMemAvailableDropBytes": 3_000,
+        "memoryAdmissionFloorBytes": 4_000,
+        "memoryAdmissionFloorHeadroomBytes": 1_000,
+        "memorySampleCount": 2,
+    }
+
+
+def test_memory_derivation_rejects_a_drop_above_the_admission_floor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    attempt = _attempt(tmp_path)
+    identity = _write_memory_telemetry(runner, attempt, complete=True)
+    samples = runner.memory_telemetry_paths(attempt)["samples"]
+    runner.write_atomic(
+        samples,
+        identity
+        | {
+            "complete": True,
+            "hostMemAvailableBaselineBytes": 10_000,
+            "hostMemAvailableTroughBytes": 5_000,
+            "sampleCount": 2,
+        },
+    )
+    matches = iter((True, False, False))
+    monkeypatch.setattr(runner, "process_matches", lambda _identity: next(matches, False))
+    monkeypatch.setattr(runner, "MEMORY_ADMISSION_FLOOR_BYTES", 4_000)
+
+    with pytest.raises(runner.KindctlError, match="exceeds the admission floor"):
+        runner.finish_memory_sampler(attempt)
+
+
+def test_failed_finalize_still_stops_the_memory_sampler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    attempt = _attempt(tmp_path)
+    (tmp_path / "xdg").mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "xdg"))
+    monkeypatch.setattr(runner, "validate_runner_path", lambda: None)
+    monkeypatch.setattr(
+        runner,
+        "finalize_flux_runtime",
+        lambda *_args: (_ for _ in ()).throw(runner.KindctlError("finalize failed")),
+    )
+    stops: list[Path] = []
+    monkeypatch.setattr(runner, "finish_memory_sampler", lambda path: stops.append(path) or {})
+
+    with pytest.raises(runner.KindctlError, match="finalize failed"):
+        runner.main(
+            [
+                "--attempt-dir",
+                str(attempt),
+                "flux-finalize",
+                "--publication-record",
+                str(attempt / "publication.json"),
+            ]
+        )
+
+    assert stops == [attempt]

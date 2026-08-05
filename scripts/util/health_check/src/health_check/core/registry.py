@@ -136,13 +136,13 @@ class CheckRegistry:
         return result
 
     def inventory(self) -> InventoryClosure:
-        """Generate a fail-closed static inventory for all discovered checks."""
+        """Generate a fail-closed inventory for discovered checks and required evidence."""
         return build_inventory(self.all_checks)
 
     def get_k3s_checks(self) -> list[HealthCheck]:
-        """Return only checks explicitly applicable or adapted to in-cluster k3s."""
+        """Return checks classified for k3s; external evidence is reported separately."""
         closure = self.inventory()
-        if not closure.closed:
+        if not closure.structurally_closed:
             msg = "; ".join(
                 (
                     *closure.errors,
@@ -150,7 +150,7 @@ class CheckRegistry:
                     f"silent={sorted(closure.silent_skip_ids)}",
                 )
             )
-            message = f"Health inventory is not closed: {msg}"
+            message = f"Health inventory is not structurally closed: {msg}"
             raise ValueError(message)
         runnable = closure.applicable_ids | closure.adapted_ids
         return [check for check in self.all_checks if check.metadata.check_id in runnable]

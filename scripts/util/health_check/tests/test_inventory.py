@@ -6,10 +6,12 @@ import importlib
 import json
 import math
 import pkgutil
+from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
 import pytest
+from health_check.acceptance.live_cluster_cdc import ACCEPTED_PRIVILEGE_LIMITATION
 from health_check.checks.infrastructure.platform_services import _KUBERNETES_ENDPOINTS
 from health_check.cli.app import app
 from health_check.core.base import HealthCheck
@@ -79,13 +81,125 @@ def _registry() -> CheckRegistry:
     return registry
 
 
-def test_real_registry_has_exactly_closed_k3s_partition() -> None:
+def _valid_cdc_evidence() -> dict[str, object]:
+    return {
+        "schema_version": 3,
+        "check": "live-cluster-cdc",
+        "failure_class": None,
+        "canonical_topic": "user-auth.cdc.account-updated.v1",
+        "connector": "user-auth-service-outbox",
+        "observed": [
+            {
+                "phase": "before-restart",
+                "partition": 0,
+                "offset": 41,
+                "committed_offset": 42,
+                "consumer_group": "cdc-acceptance-proof",
+                "key_sha256": "same-account-hash",
+                "event_id": "event-before",
+            },
+            {
+                "phase": "after-restart",
+                "partition": 0,
+                "offset": 42,
+                "committed_offset": 43,
+                "consumer_group": "cdc-acceptance-proof",
+                "key_sha256": "same-account-hash",
+                "event_id": "event-after",
+            },
+        ],
+        "registered_group_offsets": [
+            {
+                "phase": "before-restart",
+                "consumer_group": "bff-service-projections-priority",
+                "partition": 0,
+                "committed_offset": 42,
+            },
+            {
+                "phase": "after-restart",
+                "consumer_group": "bff-service-projections-priority",
+                "partition": 0,
+                "committed_offset": 43,
+            },
+        ],
+        "projections": [
+            {"phase": "before-restart", "row_count": 1, "user_id_sha256": "same-account-hash"},
+            {"phase": "after-restart", "row_count": 1, "user_id_sha256": "same-account-hash"},
+        ],
+        "status": "passed",
+        "restart": {
+            "deployment": "nohiki-connect-connect",
+            "before": {
+                "name": "nohiki-connect-connect-before",
+                "uid": "connect-uid-before",
+                "start_time": "2026-08-05T01:00:00Z",
+            },
+            "after": {
+                "name": "nohiki-connect-connect-after",
+                "uid": "connect-uid-after",
+                "start_time": "2026-08-05T01:01:00Z",
+            },
+            "completed": True,
+            "connector_running": True,
+            "identity_changed": True,
+        },
+        "continuity": {
+            "registered_consumer_group": "bff-service-projections-priority",
+            "consumer_group": "cdc-acceptance-proof",
+            "partition": 0,
+            "before_offset": 41,
+            "committed_offset": 42,
+            "after_offset": 42,
+            "before_event_id": "event-before",
+            "registered_before_committed_offset": 42,
+            "registered_after_committed_offset": 43,
+            "after_event_id": "event-after",
+            "same_partition": True,
+            "offset_increased": True,
+            "event_id_changed": True,
+            "no_replay": True,
+            "registered_group_caught_up": True,
+            "registered_group_advanced": True,
+        },
+        "database_identity_control": {
+            "kind": "distinct-identity",
+            "supports": ["attribution", "independent-revocation"],
+            "inherited_owner_privilege": True,
+            "accepted_limitation": ACCEPTED_PRIVILEGE_LIMITATION,
+        },
+        "cleanup": {
+            "accounts_deleted": 1,
+            "projections_deleted": 1,
+            "errors": [],
+        },
+    }
+
+
+def _set_valid_cdc_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Path:
+    evidence_path = tmp_path / "live-cdc.json"
+    evidence_path.write_text(json.dumps(_valid_cdc_evidence()), encoding="utf-8")
+    monkeypatch.setenv("CDC_ACCEPTANCE_EVIDENCE", str(evidence_path))
+    return evidence_path
+
+
+def test_real_registry_has_exactly_closed_k3s_partition(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _set_valid_cdc_evidence(monkeypatch, tmp_path)
     closure = _registry().inventory()
 
     assert closure.closed
-    assert len(closure.registry_ids) == 41
+    assert closure.structurally_closed
+    assert len(closure.registry_ids) == 40
     assert len(closure.applicable_ids | closure.adapted_ids) == 40
-    assert closure.inapplicable_ids == frozenset({"cdc_end_to_end"})
+    assert not closure.inapplicable_ids
+    assert closure.evidence_required_ids == frozenset({"cdc_end_to_end"})
+    assert not closure.unexercised_ids
+    assert not closure.evidence_errors
     assert not closure.unknown_ids
     assert not closure.silent_skip_ids
     assert not closure.errors
@@ -93,6 +207,104 @@ def test_real_registry_has_exactly_closed_k3s_partition() -> None:
     assert not (closure.applicable_ids & closure.adapted_ids)
     assert not (closure.applicable_ids & closure.inapplicable_ids)
     assert not (closure.adapted_ids & closure.inapplicable_ids)
+
+
+def test_missing_cdc_evidence_leaves_inventory_visibly_unclosed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CDC_ACCEPTANCE_EVIDENCE", str(tmp_path / "missing-live-cdc.json"))
+
+    closure = _registry().inventory()
+
+    assert closure.structurally_closed
+    assert not closure.closed
+    assert closure.evidence_required_ids == frozenset({"cdc_end_to_end"})
+    assert closure.unexercised_ids == frozenset({"cdc_end_to_end"})
+    assert any("cdc_end_to_end" in error for error in closure.evidence_errors)
+
+
+def test_malformed_cdc_evidence_leaves_inventory_unclosed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    evidence_path = tmp_path / "live-cdc.json"
+    evidence_path.write_text("{not-json", encoding="utf-8")
+    monkeypatch.setenv("CDC_ACCEPTANCE_EVIDENCE", str(evidence_path))
+
+    closure = _registry().inventory()
+
+    assert not closure.closed
+    assert closure.unexercised_ids == frozenset({"cdc_end_to_end"})
+    assert any("cdc_end_to_end" in error for error in closure.evidence_errors)
+
+
+@pytest.mark.parametrize(
+    "invalid_case",
+    ["failed", "unchanged-uid", "unchanged-start-time", "invalid-continuity"],
+)
+def test_invalid_cdc_evidence_leaves_inventory_unclosed(
+    invalid_case: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    document = _valid_cdc_evidence()
+    if invalid_case == "failed":
+        document["status"] = "failed"
+    elif invalid_case in {"unchanged-uid", "unchanged-start-time"}:
+        restart = cast("dict[str, object]", document["restart"])
+        before = cast("dict[str, object]", restart["before"])
+        after = cast("dict[str, object]", restart["after"])
+        field = "uid" if invalid_case == "unchanged-uid" else "start_time"
+        after[field] = before[field]
+    else:
+        continuity = cast("dict[str, object]", document["continuity"])
+        continuity["after_offset"] = continuity["before_offset"]
+
+    evidence_path = tmp_path / "live-cdc.json"
+    evidence_path.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setenv("CDC_ACCEPTANCE_EVIDENCE", str(evidence_path))
+
+    closure = _registry().inventory()
+
+    assert not closure.closed
+    assert closure.unexercised_ids == frozenset({"cdc_end_to_end"})
+    assert closure.evidence_errors
+
+
+@pytest.mark.parametrize("schema_version", [3, 4])
+def test_valid_cdc_evidence_closes_required_capability(
+    schema_version: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    document = _valid_cdc_evidence()
+    document["schema_version"] = schema_version
+    evidence_path = tmp_path / "live-cdc.json"
+    evidence_path.write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setenv("CDC_ACCEPTANCE_EVIDENCE", str(evidence_path))
+
+    closure = _registry().inventory()
+
+    assert closure.closed
+    assert not closure.unexercised_ids
+    assert not closure.evidence_errors
+
+
+def test_inventory_uses_default_cdc_evidence_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    evidence_path = tmp_path / ".artifacts" / "k8s-local" / "live-cdc.json"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(json.dumps(_valid_cdc_evidence()), encoding="utf-8")
+    monkeypatch.delenv("CDC_ACCEPTANCE_EVIDENCE", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    closure = _registry().inventory()
+
+    assert closure.closed
+    assert not closure.unexercised_ids
 
 
 def test_inventory_records_are_deterministic_and_metadata_complete() -> None:
@@ -138,9 +350,7 @@ def test_every_adaptation_and_inapplicability_has_precise_evidence() -> None:
         "runtime_artifacts": "read-only validation through each consuming application pod",
         "stale_services": "pod status and Kafka consumer metadata",
     }
-    expected_reasons = {
-        "cdc_end_to_end": "mutates application data; the verification Job is strictly non-mutating",
-    }
+    expected_reasons: dict[str, str] = {}
     assert {record.check_id: record.k3s_adaptation for record in adapted} == expected_adaptations
     assert {record.check_id: record.k3s_reason for record in inapplicable} == expected_reasons
     for record in adapted:
@@ -158,8 +368,8 @@ def test_k3s_runnable_checks_are_exactly_applicable_and_adapted() -> None:
     assert {check.metadata.check_id for check in registry.get_k3s_checks()} == (
         closure.applicable_ids | closure.adapted_ids
     )
-    assert "cdc_end_to_end" in closure.inapplicable_ids
-    assert "cdc_end_to_end" not in {check.metadata.check_id for check in registry.get_k3s_checks()}
+    assert "cdc_end_to_end" not in closure.registry_ids
+    assert closure.evidence_required_ids == frozenset({"cdc_end_to_end"})
     assert "service_dependencies" in closure.adapted_ids
     assert not ({check.metadata.check_id for check in registry.get_k3s_checks()} & closure.inapplicable_ids)
 
@@ -311,18 +521,43 @@ def test_kubernetes_adaptations_use_cluster_service_discovery(
     assert "localhost" not in platform.kafka_bootstrap_server
 
 
-def test_inventory_cli_emits_closed_machine_readable_evidence() -> None:
+def test_inventory_cli_emits_closed_machine_readable_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _set_valid_cdc_evidence(monkeypatch, tmp_path)
     result = CliRunner().invoke(app, ["inventory", "--target", "k8s", "--json"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["target"] == "kubernetes"
     assert payload["closed"] is True
+    assert payload["structurally_closed"] is True
+    assert payload["evidence_required_ids"] == ["cdc_end_to_end"]
+    assert payload["unexercised_ids"] == []
+    assert payload["evidence_errors"] == []
     assert payload["unknown_ids"] == []
     assert payload["silent_skip_ids"] == []
     assert payload["errors"] == []
     assert [record["id"] for record in payload["records"]] == sorted(payload["registry_ids"])
     assert all(record["evidence"] for record in payload["records"])
+
+
+def test_inventory_cli_names_missing_cdc_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CDC_ACCEPTANCE_EVIDENCE", str(tmp_path / "missing-live-cdc.json"))
+
+    result = CliRunner().invoke(app, ["inventory", "--target", "k8s", "--json"])
+
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["closed"] is False
+    assert payload["structurally_closed"] is True
+    assert payload["evidence_required_ids"] == ["cdc_end_to_end"]
+    assert payload["unexercised_ids"] == ["cdc_end_to_end"]
+    assert any("cdc_end_to_end" in error for error in payload["evidence_errors"])
 
 
 def test_inventory_cli_rejects_unknown_target() -> None:

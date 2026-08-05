@@ -107,7 +107,7 @@ def _init_run(
         and not excluded_ids
     ):
         checks = registry.get_k3s_checks()
-        unexercised_ids = tuple(sorted(registry.inventory().inapplicable_ids))
+        unexercised_ids = tuple(sorted(registry.inventory().unexercised_ids))
     else:
         checks = registry.get_checks(
             platform=platform.target,
@@ -263,7 +263,7 @@ def run_command(
 
     if not checks and not unexercised_ids:
         _emit_warning("No checks matched the given filters.", mode, console)
-        raise typer.Exit(_EXIT_PASS)
+        raise typer.Exit(_EXIT_FAIL if check_ids is not None or excluded_ids else _EXIT_PASS)
 
     try:
         suite = asyncio.run(
