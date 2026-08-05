@@ -13,7 +13,7 @@ from typing import cast
 
 import pytest
 
-from nohiki_test_utils.utils.docker import resolve_docker_endpoint
+from nohiki_test_utils.utils.docker import publish_docker_endpoint_verdict, resolve_docker_endpoint
 
 type _SocketAddress = tuple[object, ...] | str | Buffer | int
 
@@ -67,9 +67,15 @@ class _OutboundNetworkProhibited(BaseException):
 
 
 def _configure_docker_host() -> None:
-    if "DOCKER_HOST" in os.environ:
-        return
-    if endpoint := resolve_docker_endpoint():
+    """Settle Docker availability while probing is still allowed.
+
+    This is the only point in a session where no test has installed the outbound-network
+    guard yet, so it is the only point where a probe can safely resolve a hostname. The
+    verdict is published for every later reader, nested sessions included. An operator's
+    own DOCKER_HOST is still never replaced.
+    """
+    endpoint = publish_docker_endpoint_verdict()
+    if endpoint and "DOCKER_HOST" not in os.environ:
         os.environ["DOCKER_HOST"] = endpoint
 
 

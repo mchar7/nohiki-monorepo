@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from hashlib import sha256
 from pathlib import Path
@@ -9,10 +10,12 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 from nohiki_test_utils.utils.docker import (
+    DOCKER_ENDPOINT_VERDICT_ENV,
     _can_connect_tcp,
     _can_connect_unix_socket,
     _docker_context_host,
     docker_daemon_available,
+    publish_docker_endpoint_verdict,
     resolve_docker_endpoint,
 )
 
@@ -132,6 +135,48 @@ class TestDockerEndpointDiscovery:
         assert result is None
         mock_available.assert_called_once_with("tcp://explicit.example:2375")
         mock_context_host.assert_not_called()
+
+    @patch.dict("os.environ", {"DOCKER_HOST": "tcp://dind:2375"}, clear=True)
+    @patch("nohiki_test_utils.utils.docker._docker_endpoint_available")
+    def test_published_verdict_answers_without_probing(self, mock_available: MagicMock) -> None:
+        """The session verdict is the answer, so no reader after session start touches the network."""
+        os.environ[DOCKER_ENDPOINT_VERDICT_ENV] = "tcp://dind:2375"
+
+        result = resolve_docker_endpoint()
+
+        assert result == "tcp://dind:2375"
+        mock_available.assert_not_called()
+
+    @patch.dict("os.environ", {"DOCKER_HOST": "tcp://dind:2375"}, clear=True)
+    @patch("nohiki_test_utils.utils.docker._docker_endpoint_available")
+    def test_published_absence_answers_without_probing(self, mock_available: MagicMock) -> None:
+        """A published absence is as final as a published endpoint."""
+        os.environ[DOCKER_ENDPOINT_VERDICT_ENV] = ""
+
+        result = resolve_docker_endpoint()
+
+        assert result is None
+        mock_available.assert_not_called()
+
+    @patch.dict("os.environ", {"DOCKER_HOST": "tcp://explicit.example:2375"}, clear=True)
+    @patch("nohiki_test_utils.utils.docker._docker_endpoint_available", return_value=True)
+    def test_publishing_records_the_endpoint_for_nested_sessions(self, mock_available: MagicMock) -> None:
+        """A nested session re-importing this module still inherits the environment."""
+        result = publish_docker_endpoint_verdict()
+
+        assert result == "tcp://explicit.example:2375"
+        assert os.environ[DOCKER_ENDPOINT_VERDICT_ENV] == "tcp://explicit.example:2375"
+        mock_available.assert_called_once_with("tcp://explicit.example:2375")
+
+    @patch.dict("os.environ", {"DOCKER_HOST": "tcp://dind:2375"}, clear=True)
+    @patch("nohiki_test_utils.utils.docker._docker_endpoint_available", return_value=False)
+    def test_publishing_records_an_absent_daemon_as_empty(self, mock_available: MagicMock) -> None:
+        """Absence must be recorded, or a later reader probes and the guard rejects it."""
+        result = publish_docker_endpoint_verdict()
+
+        assert result is None
+        assert os.environ[DOCKER_ENDPOINT_VERDICT_ENV] == ""
+        mock_available.assert_called_once_with("tcp://dind:2375")
 
     @patch.dict("os.environ", {"XDG_RUNTIME_DIR": "/run/user/1000"}, clear=True)
     @patch("nohiki_test_utils.utils.docker._docker_context_host", return_value=None)
