@@ -174,6 +174,8 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         # No glob: the affected-test runner owns the selection policy. Asserted by
         # test_affected_test_selection_is_delegated_to_the_runner.
         "python-tests": frozenset(),
+        # No glob: this opt-in gate always reproduces the hosted package selection.
+        "job-correlation-integration": frozenset(),
         "skylos-cache-tests": frozenset(
             {
                 "scripts/ci/src/ci_checks/checks/skylos_cache.py",
@@ -1206,9 +1208,12 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
     ("worker", "Run job correlation integration tests"): _HostedStep(
         verifies=True,
         scope=_AFFECTED_PACKAGES,
-        waiver=(
-            "runs integration and requires_docker tests against hosted PostgreSQL; local "
-            "pre-push python-tests explicitly deselects both markers"
+        gates=(
+            _LocalGate(
+                "pre-push",
+                "job-correlation-integration",
+                _AFFECTED_PACKAGES,
+            ),
         ),
     ),
     ("worker", "Test JVM module"): _HostedStep(

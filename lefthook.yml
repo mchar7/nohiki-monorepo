@@ -315,6 +315,16 @@ pre-push:
               - ".npmrc"
             run: just edge-test
 
+    # Opt-in counterpart to the hosted PostgreSQL integration step. It is excluded from
+    # routine pre-push because the real-database tests carry `requires_docker`.
+    - name: job-correlation-integration
+      skip:
+        - run: test "${NOHIKI_INTEGRATION_GATE_ACTIVE:-0}" != 1
+      run: scripts/dev/test-run.sh scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks tests all --scope services --packages job-correlation-evaluation-service --integration --ci --workers 1 --no-coverage
+      env:
+        OTEL_SDK_DISABLED: "true"
+        UV_NO_SYNC: "1"
+
     # Phase 3: Code Hygiene (parallel, runs after tests)
     - skip: *unless_gate_active
       group:
