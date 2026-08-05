@@ -107,7 +107,7 @@ _MAX_DATA_KEY_LEN = 64
 _MAX_DATA_VALUE_SERIALIZED = 50000
 _MAX_SCHEMA_ERRORS = 10
 _MAX_SCHEMA_ERROR_MESSAGE_LEN = 500
-_MAX_TOTAL_UPLOADS = 20
+_MAX_TOTAL_UPLOADS = 25
 
 
 def _schema_error_detail(error: object, path: Sequence[object]) -> dict[str, object]:

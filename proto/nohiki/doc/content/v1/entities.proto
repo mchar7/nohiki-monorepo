@@ -15,8 +15,8 @@ import "google/protobuf/struct.proto";
 message ContentGenerationContext {
   option (buf.validate.message).cel = {
     id: "content_generation_context.uploads_total_limit",
-    message: "example_uploads and context_uploads must contain at most 20 uploads in total",
-    expression: "size(this.example_uploads) + size(this.context_uploads) <= 20"
+    message: "example_uploads and context_uploads must contain at most 25 uploads in total",
+    expression: "size(this.example_uploads) + size(this.context_uploads) <= 25"
   };
 
   // REQUIRED - Listing context for content generation
@@ -26,10 +26,10 @@ message ContentGenerationContext {
   nohiki.doc.template.v1.DocumentTemplateVersionSnapshot template_version = 2 [(buf.validate.field).required = true];
 
   // OPTIONAL - Example output uploads (storage_key only - fetch content from S3)
-  repeated nohiki.common.v1.UploadReference example_uploads = 3 [(buf.validate.field).repeated.max_items = 20];
+  repeated nohiki.common.v1.UploadReference example_uploads = 3 [(buf.validate.field).repeated.max_items = 25];
 
   // OPTIONAL - Additional context uploads (storage_key only)
-  repeated nohiki.common.v1.UploadReference context_uploads = 4 [(buf.validate.field).repeated.max_items = 20];
+  repeated nohiki.common.v1.UploadReference context_uploads = 4 [(buf.validate.field).repeated.max_items = 25];
 
   // OPTIONAL - Custom preferences from user pref
   google.protobuf.Struct user_preferences = 6;
