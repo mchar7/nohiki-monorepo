@@ -36,6 +36,7 @@ def _dockerfile_arg(name: str) -> str:
     assert len(values) == 1, name
     return values[0]
 
+
 def test_connect_image_installs_postgresql_client_before_non_root_user() -> None:
     dockerfile = _DOCKERFILE
     registration = _REGISTRATION
