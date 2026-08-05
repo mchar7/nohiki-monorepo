@@ -1,4 +1,11 @@
-"""Prove a production CDC path through the reconciled local Kubernetes cluster."""
+"""Prove a production CDC path through the reconciled local Kubernetes cluster.
+
+This adapter is implemented and has never executed against real infrastructure. Every
+guarantee below is structural: without a reconciled cluster the proof fails closed with
+CDC_DEPLOYMENT_ABSENT and records failed evidence, and the acceptance inventory reports
+cdc_end_to_end as unexercised until valid evidence exists. No passing run against real
+infrastructure has been observed, so nothing here may be read as proof of delivery.
+"""
 
 from __future__ import annotations
 
