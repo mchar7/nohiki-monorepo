@@ -23,6 +23,22 @@ description = "Anthropic API Key"
 regex = '''sk-ant-api[a-zA-Z0-9\-_]{90,}'''
 keywords = ["sk-ant-api"]
 
+# Public Gateway API bundle digests are SHA-256 checksums, not credentials.
+# Scope this to the exact checksum declarations and the default rule that misclassifies them.
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Allow the public Gateway API bundle digest in its checksum-owner tests"
+condition = "AND"
+regexTarget = "line"
+regexes = [
+    '''_GATEWAY_API_(?:BUNDLE_)?EXPECTED_HEX\s*=\s*"[0-9a-f]{64}"''',
+]
+paths = [
+    '''^scripts/ci/tests/test_(?:declarative_foundation|gateway_sse_route|workflow_download_checksums)\.py$''',
+]
+
 # ALLOWLIST: Exact public release digest only
 [allowlist]
 regexes = [

@@ -18,6 +18,13 @@ _EXPECTED_RULE_REGEXES = {
     "openrouter-api-key": r"sk-or-v1-[a-zA-Z0-9]{64}",
     "anthropic-api-key": r"sk-ant-api[a-zA-Z0-9\-_]{90,}",
 }
+_GATEWAY_DIGEST_ALLOWLIST = {
+    "description": "Allow the public Gateway API bundle digest in its checksum-owner tests",
+    "condition": "AND",
+    "regexTarget": "line",
+    "regexes": [r'''_GATEWAY_API_(?:BUNDLE_)?EXPECTED_HEX\s*=\s*"[0-9a-f]{64}"'''],
+    "paths": [r"^scripts/ci/tests/test_(?:declarative_foundation|gateway_sse_route|workflow_download_checksums)\.py$"],
+}
 _FORBIDDEN_EXEMPTION_KEYS = {"paths", "commits", "stopwords", "disabled"}
 
 
@@ -41,13 +48,19 @@ def test_gitleaks_defaults_and_exact_custom_rules_are_active() -> None:
     assert config["extend"]["useDefault"] is True
     rules = config["rules"]
     assert isinstance(rules, list)
-    assert len(rules) == len(_EXPECTED_RULE_REGEXES)
-    assert {rule["id"] for rule in rules} == set(_EXPECTED_RULE_REGEXES)
+    assert len(rules) == len(_EXPECTED_RULE_REGEXES) + 1
+    rules_by_id = {rule["id"]: rule for rule in rules}
+    assert set(rules_by_id) == {*_EXPECTED_RULE_REGEXES, "generic-api-key"}
 
-    for rule in rules:
-        assert rule["regex"] == _EXPECTED_RULE_REGEXES[rule["id"]]
+    for rule_id, expected_regex in _EXPECTED_RULE_REGEXES.items():
+        rule = rules_by_id[rule_id]
+        assert rule["regex"] == expected_regex
         assert "disabled" not in rule
-        assert "allowlist" not in rule
+        assert "allowlists" not in rule
+
+    generic_api_key = rules_by_id["generic-api-key"]
+    assert set(generic_api_key) == {"id", "allowlists"}
+    assert generic_api_key["allowlists"] == [_GATEWAY_DIGEST_ALLOWLIST]
 
 
 def test_gitleaks_allows_only_the_anchored_public_checksums() -> None:
@@ -73,17 +86,21 @@ def test_gitleaks_allows_only_the_anchored_public_checksums() -> None:
     assert not matcher.search(checksum[:-1] + replacement)
 
 
-def test_gitleaks_has_no_broad_or_scope_level_exemptions() -> None:
+def test_gitleaks_has_no_unreviewed_or_scope_level_exemptions() -> None:
     config = _load_toml(_GITLEAKS)
-    scopes = [config, config["allowlist"], *config["rules"]]
+    rules = config["rules"]
+    custom_rules = [rule for rule in rules if rule["id"] in _EXPECTED_RULE_REGEXES]
+    scopes = [config, config["allowlist"], *custom_rules]
 
     for scope in scopes:
         assert not _FORBIDDEN_EXEMPTION_KEYS.intersection(scope)
-    assert all("allowlist" not in rule for rule in config["rules"])
 
     checksum_regexes = config["allowlist"]["regexes"]
     assert all(_ANCHORED_SHA256_REGEX.fullmatch(regex) for regex in checksum_regexes)
-    assert all(rule["regex"] == _EXPECTED_RULE_REGEXES[rule["id"]] for rule in config["rules"])
+    assert all(rule["regex"] == _EXPECTED_RULE_REGEXES[rule["id"]] for rule in custom_rules)
+
+    generic_api_key = next(rule for rule in rules if rule["id"] == "generic-api-key")
+    assert generic_api_key["allowlists"] == [_GATEWAY_DIGEST_ALLOWLIST]
 
 
 def test_lefthook_secrets_check_is_staged_redacted_and_fail_closed() -> None:
