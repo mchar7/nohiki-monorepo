@@ -118,6 +118,16 @@ def test_marker_expressions_keep_slow_tests_out_of_unit_lane(
     integration_result.assert_outcomes(passed=1, deselected=2)
 
 
+def test_docker_marker_selects_only_packages_that_contain_matching_tests() -> None:
+    packages = test_checks._load_testable_packages("all", "requires_docker")
+    names = {package.name for package in packages}
+
+    assert "nohiki-kafka-client" in names
+    assert "nohiki-integration-tests" in names
+    assert "nohiki-common-exceptions" not in names
+    assert all(package.requires_docker_tests for package in packages)
+
+
 @pytest.mark.parametrize(
     ("source", "excluded"),
     [
@@ -483,6 +493,55 @@ async def test_consolidated_pytest_uses_one_bounded_workstealing_process(
     assert "--no-coverage" not in command
     assert not any(arg.startswith("--cov=") for arg in command)
     assert "--cov" not in command
+
+
+@pytest.mark.asyncio
+async def test_container_selection_collects_only_marker_derived_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    package = _package(tmp_path)
+    marked = package.path / "tests" / "test_container.py"
+    unit = package.path / "tests" / "test_unit.py"
+    marked.write_text(
+        "import pytest\n\n@pytest.mark.requires_docker\ndef test_container():\n    pass\n",
+        encoding="utf-8",
+    )
+    unit.write_text("def test_unit():\n    pass\n", encoding="utf-8")
+    package = Package(
+        package.name,
+        package.path,
+        package.pkg_type,
+        requires_docker_tests=frozenset({"tests/test_container.py"}),
+    )
+    commands: list[tuple[str, ...]] = []
+    marked_arg = test_checks._repo_relative(marked)
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> _SuccessfulPytestProcess:
+        del kwargs
+        commands.append(command)
+        _write_junit(
+            command,
+            "<testsuites><testsuite>"
+            f'<testcase classname="tests.test_container" file="{marked_arg}" '
+            'name="test_container" time="0.1"/>'
+            "</testsuite></testsuites>",
+        )
+        return _SuccessfulPytestProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    results = await test_checks.run_consolidated_tests(
+        [package],
+        "requires_docker",
+        (),
+        pytest_workers=1,
+        with_coverage=False,
+    )
+
+    assert [result.passed for result in results] == [True]
+    assert marked_arg in commands[0]
+    assert test_checks._repo_relative(unit) not in commands[0]
 
 
 @pytest.mark.asyncio

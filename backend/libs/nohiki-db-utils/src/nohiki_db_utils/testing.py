@@ -80,6 +80,7 @@ def postgres_container() -> Generator[str]:
             pytest.skip("PostgreSQL container could not be started: Docker daemon unavailable")
 
         container = PostgresContainer(POSTGRES_CONTAINER_IMAGE)
+        container.with_command("postgres -c wal_level=logical -c max_replication_slots=16 -c max_wal_senders=16")
         container.waiting_for(
             LogMessageWaitStrategy("database system is ready to accept connections").with_startup_timeout(
                 timedelta(seconds=60)

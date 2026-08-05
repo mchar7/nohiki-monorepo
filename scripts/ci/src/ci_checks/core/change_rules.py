@@ -309,33 +309,22 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
             "**/Dockerfile",
             "**/Dockerfile.*",
             "infra/k8s/local/images.json",
-            "backend/**/tests/integration/*",
-            "tests/integration/*",
-            "backend/libs/nohiki-db-utils/tests/test_health.py",
-            "backend/libs/nohiki-db-utils/tests/test_testing.py",
-            "backend/libs/nohiki-redis-utils/tests/test_redis_cache.py",
-            "backend/libs/nohiki-redis-utils/tests/test_testing_module.py",
-            "backend/libs/nohiki-test-utils/tests/test_plugins.py",
-            "backend/services/bff-service/tests/api/test_auth_listings_rate_limit.py",
-            "scripts/ci/tests/test_compose_portability.py",
-            "scripts/ci/tests/test_frontend_delivery.py",
-            "scripts/ci/tests/test_otel_collector_manifest.py",
+            "infra/compose/**",
+            "backend/libs/nohiki-db-utils/src/nohiki_db_utils/testing.py",
+            "backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/testing.py",
+            "backend/libs/nohiki-test-utils/src/nohiki_test_utils/plugins.py",
+            "backend/libs/nohiki-test-utils/src/nohiki_test_utils/utils/docker.py",
         ),
         flags=("container_contracts",),
     ),
-    SurfaceRule(
-        ("typescript/apps/frontend/Dockerfile",),
-        flags=("frontend_smoke", "container_contracts"),
-    ),
-    # These tests also own specialized flags for their prerequisite image work;
-    # the common flag routes their requires_docker marker through the same worker.
+    SurfaceRule(("typescript/apps/frontend/Dockerfile",), flags=("frontend_smoke",)),
     SurfaceRule(
         ("scripts/ci/tests/test_frontend_delivery.py",),
-        flags=("frontend_smoke", "container_contracts"),
+        flags=("frontend_smoke",),
     ),
     SurfaceRule(
         ("scripts/ci/tests/test_otel_collector_manifest.py",),
-        flags=("otel_collector", "container_contracts"),
+        flags=("otel_collector",),
     ),
     SurfaceRule(
         # The Playwright runner image's last RUN is `pnpm install

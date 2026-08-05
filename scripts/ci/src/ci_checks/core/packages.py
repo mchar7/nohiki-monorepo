@@ -7,6 +7,7 @@ dependency graph used for affected-package expansion.
 
 from __future__ import annotations
 
+import ast
 import tomllib
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -69,6 +70,8 @@ class Package:
     pkg_type: PackageType
     # Only populated when loading packages with dependency tracking (test runner).
     deps: frozenset[str] = field(default_factory=frozenset)
+    # Package-relative test modules carrying the canonical container marker.
+    requires_docker_tests: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def src_dir(self) -> Path:
@@ -89,6 +92,47 @@ class Package:
     def has_tests(self) -> bool:
         """Whether the package has a tests/ directory (used by fixture/test checks)."""
         return self.tests_dir.is_dir()
+
+
+def _pytest_test_roots(path: Path, config: dict[str, object]) -> tuple[Path, ...]:
+    pytest_options = config.get("tool", {})
+    if isinstance(pytest_options, dict):
+        pytest_options = pytest_options.get("pytest", {})
+    if isinstance(pytest_options, dict):
+        pytest_options = pytest_options.get("ini_options", {})
+    if isinstance(pytest_options, dict):
+        configured = pytest_options.get("testpaths")
+        if isinstance(configured, list) and all(isinstance(value, str) for value in configured):
+            return tuple(path / value for value in configured)
+    return (path / "tests",)
+
+
+def pytest_file_has_marker(path: Path, marker: str) -> bool:
+    """Return whether a Python test module contains ``pytest.mark.<marker>``."""
+    try:
+        module = ast.parse(path.read_bytes(), filename=str(path))
+    except OSError, SyntaxError:
+        return False
+    return any(
+        isinstance(node, ast.Attribute)
+        and node.attr == marker
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "mark"
+        and isinstance(node.value.value, ast.Name)
+        and node.value.value.id == "pytest"
+        for node in ast.walk(module)
+    )
+
+
+def requires_docker_test_paths(path: Path, config: dict[str, object]) -> frozenset[str]:
+    """Derive package-relative container test paths from the canonical marker."""
+    return frozenset(
+        test_file.relative_to(path).as_posix()
+        for root in _pytest_test_roots(path, config)
+        if root.is_dir()
+        for test_file in root.rglob("test_*.py")
+        if pytest_file_has_marker(test_file, "requires_docker")
+    )
 
 
 def _classify_package(path: Path) -> PackageType:
@@ -227,7 +271,12 @@ def load_packages(scope: Scope, *, require_src: bool = False, require_tests: boo
         pkg_config = tomllib.loads(pkg_toml.read_text())
         # The project name is the canonical identity; directory basenames diverge for script packages.
         name = pkg_config.get("project", {}).get("name") or pkg_path.name
-        pkg = Package(name=name, path=pkg_path, pkg_type=pkg_type)
+        pkg = Package(
+            name=name,
+            path=pkg_path,
+            pkg_type=pkg_type,
+            requires_docker_tests=requires_docker_test_paths(pkg_path, pkg_config),
+        )
         if require_src and not pkg.has_src:
             continue
         if require_tests and not pkg.has_tests:
@@ -274,6 +323,12 @@ def load_packages_with_deps(scope: Scope) -> dict[str, Package]:
 
         deps = frozenset(_parse_dependency_name(d) for d in _iter_dependency_specifiers(pkg_config))
 
-        packages[name] = Package(name=name, path=pkg_path, pkg_type=pkg_type, deps=deps)
+        packages[name] = Package(
+            name=name,
+            path=pkg_path,
+            pkg_type=pkg_type,
+            deps=deps,
+            requires_docker_tests=requires_docker_test_paths(pkg_path, pkg_config),
+        )
 
     return packages

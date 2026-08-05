@@ -41,6 +41,7 @@ from ci_checks.core.process_env import sanitized_python_env
 
 PYTEST_SUCCESS = 0
 _PROCESS_INACTIVITY_WATCHDOG_SECONDS: int = 18 * 60
+_DOCKER_TEST_MARKER = "requires_docker"
 _UNIT_TEST_MARKERS = (
     "not integration and not e2e and not requires_docker "
     "and not requires_node_modules and not requires_skylos and not slow"
@@ -869,11 +870,18 @@ def _parse_package_stats(junit_path: Path, packages: list[Package]) -> dict[str,
         ),
         reverse=True,
     )
+    marker_file_owners = {
+        Path(_repo_relative(pkg.path / relative)).as_posix().removeprefix("./"): pkg.name
+        for pkg in packages
+        for relative in pkg.requires_docker_tests
+    }
     # pytest writes this local temporary file; it is not an untrusted input.
     for testcase in ET.parse(junit_path).getroot().iter("testcase"):  # noqa: S314
         classname = testcase.get("classname", "")
         file = Path(testcase.get("file", "")).as_posix().removeprefix("./")
-        package_name = next((name for prefix, name in file_prefixes if file.startswith(prefix)), None)
+        package_name = marker_file_owners.get(file)
+        if package_name is None:
+            package_name = next((name for prefix, name in file_prefixes if file.startswith(prefix)), None)
         if package_name is None:
             package_name = next(
                 (name for prefix, name in classname_prefixes if classname.startswith(prefix)),
@@ -913,13 +921,18 @@ async def run_consolidated_tests(
         junit_path = Path(temp_dir) / "junit.xml"
         coverage_config = Path(temp_dir) / "coverage.ini"
         coverage_json = Path(temp_dir) / "coverage.json"
+        selected_paths = (
+            [pkg.path / relative for pkg in packages for relative in sorted(pkg.requires_docker_tests)]
+            if markers == _DOCKER_TEST_MARKER
+            else [pkg.path / "tests" for pkg in packages]
+        )
         cmd = [
             "uv",
             "run",
             "--no-sync",
             "pytest",
             f"--rootdir={REPO_ROOT}",
-            *(_repo_relative(pkg.path / "tests") for pkg in packages),
+            *(_repo_relative(path) for path in selected_paths),
             *(f"--ignore={_repo_relative(path)}" for path in _unit_excluded_test_modules(packages, markers)),
             "--tb=short",
             f"--junitxml={junit_path}",
@@ -1302,13 +1315,15 @@ tests_app = typer.Typer(
 )
 
 
-def _load_testable_packages(scope_str: str) -> list[Package]:
-    """Load workspace packages filtered by scope and presence of a tests/ dir."""
+def _load_testable_packages(scope_str: str, markers: str = "") -> list[Package]:
+    """Load workspace packages containing tests selected by the marker class."""
     from ci_checks.core.packages import load_packages_with_deps
 
     scope = Scope(scope_str) if scope_str in Scope.__members__.values() else Scope.ALL
-    packages = load_packages_with_deps(scope)
-    return [p for p in packages.values() if p.has_tests]
+    packages = load_packages_with_deps(scope).values()
+    if markers == _DOCKER_TEST_MARKER:
+        return [package for package in packages if package.requires_docker_tests]
+    return [package for package in packages if package.has_tests]
 
 
 def _build_markers(*, integration: bool, requires_docker: bool = False) -> str:
@@ -1317,7 +1332,7 @@ def _build_markers(*, integration: bool, requires_docker: bool = False) -> str:
         msg = "--integration and --requires-docker are mutually exclusive"
         raise ValueError(msg)
     if requires_docker:
-        return "requires_docker"
+        return _DOCKER_TEST_MARKER
     return "integration" if integration else _UNIT_TEST_MARKERS
 
 
@@ -1422,9 +1437,10 @@ def all_packages_cmd(
     summary: Annotated[Path | None, typer.Option("--summary", help="$GITHUB_STEP_SUMMARY file")] = None,
     summary_title: Annotated[str, typer.Option("--summary-title", help="Batch name for the summary")] = "all",
 ) -> None:
-    """Run tests for all workspace packages with coverage reporting."""
+    """Run tests for all workspace packages with optional coverage reporting."""
     console = Console()
-    testable = _load_testable_packages(scope)
+    markers = _build_markers(integration=integration, requires_docker=requires_docker)
+    testable = _load_testable_packages(scope, markers) if requires_docker else _load_testable_packages(scope)
 
     if packages not in ("", "ALL"):
         requested = {name.strip() for name in packages.split(",") if name.strip()}
@@ -1439,8 +1455,8 @@ def all_packages_cmd(
         console.print("[yellow]No testable packages found[/yellow]")
         return
 
-    console.print(f"[bold]Running tests for {len(testable)} packages with coverage...[/bold]")
-    markers = _build_markers(integration=integration, requires_docker=requires_docker)
+    coverage_label = " with coverage" if coverage else ""
+    console.print(f"[bold]Running tests for {len(testable)} packages{coverage_label}...[/bold]")
     results = asyncio.run(
         run_tests_parallel(testable, markers, (), workers, console, ci_mode=ci, with_coverage=coverage)
     )

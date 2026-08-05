@@ -39,16 +39,17 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from aiokafka import AIOKafkaConsumer
+pytest_plugins = ("nohiki_db_utils.testing",)
+
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.requires_docker,
-    pytest.mark.asyncio(loop_scope="module"),
+    pytest.mark.asyncio,
 ]
 
 
 # Test configuration
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/nohiki_db")
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
 KAFKA_CONNECT_URL = os.environ.get("KAFKA_CONNECT_URL", "http://localhost:8083")
 TEST_TOPIC_PREFIX = "test.cdc"
@@ -60,10 +61,10 @@ def _is_canonical_outbox_connector_name(name: str) -> bool:
     return name.endswith(OUTBOX_CONNECTOR_SUFFIX) and name != OUTBOX_CONNECTOR_SUFFIX
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def async_engine() -> AsyncGenerator[AsyncEngine]:
-    """Create async SQLAlchemy engine for tests."""
-    engine = create_async_engine(DATABASE_URL, echo=False)
+@pytest_asyncio.fixture
+async def async_engine(postgres_container: str) -> AsyncGenerator[AsyncEngine]:
+    """Create async SQLAlchemy engine for the isolated logical-replication database."""
+    engine = create_async_engine(postgres_container, echo=False)
     yield engine
     await engine.dispose()
 

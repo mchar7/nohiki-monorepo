@@ -1,4 +1,3 @@
-import ast
 import fnmatch
 import json
 import os
@@ -37,6 +36,7 @@ from ci_checks.core.packages import (
     build_reverse_dependency_index,
     expand_to_dependents,
     load_packages_with_deps,
+    requires_docker_test_paths,
 )
 from rich.console import Console
 from typer.testing import CliRunner
@@ -2050,30 +2050,48 @@ def test_single_file_contract_inputs_seed_ci_checks(path: str) -> None:
 
 
 def test_every_requires_docker_test_file_routes_to_container_contracts() -> None:
-    def has_marker(path: str) -> bool:
-        module = ast.parse((REPO_ROOT / path).read_bytes(), filename=path)
-        return any(
-            isinstance(node, ast.Attribute)
-            and node.attr == "requires_docker"
-            and isinstance(node.value, ast.Attribute)
-            and node.value.attr == "mark"
-            and isinstance(node.value.value, ast.Name)
-            and node.value.value.id == "pytest"
-            for node in ast.walk(module)
-        )
-
     packages = load_packages_with_deps(Scope.ALL)
     marked = {
-        path
-        for path in _tracked_paths()
-        if "/tests/" in f"/{path}"
-        and Path(path).name.startswith("test_")
-        and Path(path).suffix == ".py"
-        and has_marker(path)
+        f"{package.path.relative_to(REPO_ROOT).as_posix()}/{test_path}"
+        for package in packages.values()
+        for test_path in package.requires_docker_tests
     }
 
     assert marked
     assert {path for path in marked if "container_contracts" not in evaluate({path}, packages).flags} == set()
+
+
+def test_future_requires_docker_marker_generates_package_and_gate_selection(tmp_path: Path) -> None:
+    package_root = tmp_path / "future-package"
+    tests = package_root / "tests"
+    tests.mkdir(parents=True)
+    marked = tests / "test_future_container.py"
+    marked.write_text(
+        "import pytest\n\n@pytest.mark.requires_docker\ndef test_container():\n    pass\n",
+        encoding="utf-8",
+    )
+    (tests / "test_unit.py").write_text("def test_unit():\n    pass\n", encoding="utf-8")
+
+    discovered = requires_docker_test_paths(package_root, {})
+    assert discovered == frozenset({"tests/test_future_container.py"})
+
+    repository_package = Package(
+        "nohiki-common-exceptions",
+        REPO_ROOT / "backend/libs/nohiki-common-exceptions",
+        PackageType.LIB,
+        requires_docker_tests=discovered,
+    )
+    generated_inputs = {
+        "backend/libs/nohiki-common-exceptions/tests/test_future_container.py",
+        "backend/libs/nohiki-common-exceptions/tests/conftest.py",
+        "backend/libs/nohiki-common-exceptions/pyproject.toml",
+    }
+
+    assert {
+        path
+        for path in generated_inputs
+        if "container_contracts" not in evaluate({path}, {repository_package.name: repository_package}).flags
+    } == set()
 
 
 @pytest.mark.parametrize(

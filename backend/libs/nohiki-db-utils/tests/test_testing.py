@@ -87,6 +87,9 @@ class TestTestingModuleUnitPaths:
                 next(generator)
 
         container_type.assert_called_once_with(POSTGRES_CONTAINER_IMAGE)
+        container.with_command.assert_called_once_with(
+            "postgres -c wal_level=logical -c max_replication_slots=16 -c max_wal_senders=16"
+        )
         container.waiting_for.assert_called_once_with(wait_strategy)
         container.start.assert_called_once()
         container.get_wrapped_container.return_value.stop.assert_called_once_with(timeout=1)
