@@ -6,11 +6,11 @@ interface MatchExplanation {
 const EMPTY_EXPLANATION: MatchExplanation = { strengths: [], concerns: [] };
 
 /** Lazy capture of section body uses lookahead to stop at the next section boundary or end of string. */
-const STRENGTHS_PATTERN = /Strengths:\s*(.*?)(?=\.\s*(?:Concerns:|$))/su;
-const CONCERNS_PATTERN = /Concerns:\s*(.*?)(?=\.\s*(?:Strengths:|$))/su;
+const STRENGTHS_PATTERN = /Strengths:\s*(?<sectionBody>.*?)(?=\.\s*(?:Concerns:|$))/su;
+const CONCERNS_PATTERN = /Concerns:\s*(?<sectionBody>.*?)(?=\.\s*(?:Strengths:|$))/su;
 
 /** Regex extracting just the factor name from entries like "skill_match (+0.5)". */
-const FACTOR_NAME_PATTERN = /^\s*([a-z_]+)/iu;
+const FACTOR_NAME_PATTERN = /^\s*(?<factorName>[a-z_]+)/iu;
 
 /** Converts a snake_case identifier to Title Case (e.g. "skill_match" → "Skill Match"). */
 function toTitleCase(snakeCase: string): string {
@@ -26,7 +26,8 @@ function parseFactors(raw: string): string[] {
     .split(',')
     .map((entry) => {
       const nameMatch = FACTOR_NAME_PATTERN.exec(entry);
-      return nameMatch?.[1] ? toTitleCase(nameMatch[1]) : '';
+      const factorName = nameMatch?.groups?.factorName;
+      return factorName ? toTitleCase(factorName) : '';
     })
     .filter(Boolean);
 }
@@ -46,8 +47,10 @@ function parseMatchExplanation(explanation: string | undefined | null): MatchExp
   const strengthsMatch = STRENGTHS_PATTERN.exec(explanation);
   const concernsMatch = CONCERNS_PATTERN.exec(explanation);
 
-  const strengths = strengthsMatch?.[1] ? parseFactors(strengthsMatch[1]) : [];
-  const concerns = concernsMatch?.[1] ? parseFactors(concernsMatch[1]) : [];
+  const strengthsBody = strengthsMatch?.groups?.sectionBody;
+  const concernsBody = concernsMatch?.groups?.sectionBody;
+  const strengths = strengthsBody ? parseFactors(strengthsBody) : [];
+  const concerns = concernsBody ? parseFactors(concernsBody) : [];
 
   return { strengths, concerns };
 }

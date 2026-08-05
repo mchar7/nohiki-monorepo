@@ -27,13 +27,14 @@ function ActionItem({ action, open, index, onActionClick }: ActionItemProps): JS
   const handleClick = (): void => {
     onActionClick(action);
   };
+  const isUnavailable = action.disabled === true || action.loading === true;
 
   return (
     <button
       key={action.id}
       type="button"
       onClick={handleClick}
-      disabled={action.disabled || action.loading}
+      disabled={isUnavailable}
       style={{
         animationDelay: open ? `${index * ACTION_STAGGER_DELAY_MS}ms` : '0ms',
       }}
@@ -42,7 +43,7 @@ function ActionItem({ action, open, index, onActionClick }: ActionItemProps): JS
         'opacity-0',
         open && 'animate-fab-action-in',
         'transition-colors duration-100',
-        action.disabled || action.loading
+        isUnavailable
           ? 'cursor-not-allowed text-muted-foreground/50'
           : cn(
               'hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

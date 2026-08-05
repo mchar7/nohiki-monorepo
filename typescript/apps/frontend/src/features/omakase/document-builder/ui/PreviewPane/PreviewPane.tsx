@@ -110,7 +110,7 @@ function PreviewPane({
     onHtmlCleared,
   });
 
-  const actualGeneratePreview = externalGeneratePreview || preview.generatePreview;
+  const actualGeneratePreview = externalGeneratePreview ?? preview.generatePreview;
 
   const headerContainerWidth = containerSize?.width
     ? Math.round(containerSize.width / CONTAINER_WIDTH_ROUND_STEP) * CONTAINER_WIDTH_ROUND_STEP

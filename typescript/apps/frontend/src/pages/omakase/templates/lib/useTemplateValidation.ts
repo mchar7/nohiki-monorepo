@@ -17,8 +17,8 @@ function checkJinjaBlockMismatch(
   content: string,
   t: TranslationFn,
 ): ExtendedValidationIssue | null {
-  const openBlocks = (content.match(/\{%\s*(if|for|block|macro|call|filter)\b/gu) ?? []).length;
-  const closeBlocks = (content.match(/\{%\s*end(if|for|block|macro|call|filter)\s*%\}/gu) ?? [])
+  const openBlocks = (content.match(/\{%\s*(?:if|for|block|macro|call|filter)\b/gu) ?? []).length;
+  const closeBlocks = (content.match(/\{%\s*end(?:if|for|block|macro|call|filter)\s*%\}/gu) ?? [])
     .length;
 
   if (openBlocks === closeBlocks) {

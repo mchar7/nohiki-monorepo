@@ -82,9 +82,9 @@ describe('ProfileViewCard search terms', () => {
         .slice(0, 6)
         .map((chip) => chip.textContent),
     ).toEqual(['backend', 'platform', 'frontend', 'support', 'TypeScript', 'React']);
-    expect(screen.getAllByText(/^(backend|platform)$/u)).toHaveLength(2);
-    expect(screen.getAllByText(/^(frontend|support)$/u)).toHaveLength(2);
-    expect(screen.getAllByText(/^(TypeScript|React)$/u)).toHaveLength(2);
+    expect(screen.getAllByText(/^(?:backend|platform)$/u)).toHaveLength(2);
+    expect(screen.getAllByText(/^(?:frontend|support)$/u)).toHaveLength(2);
+    expect(screen.getAllByText(/^(?:TypeScript|React)$/u)).toHaveLength(2);
     expect(consoleError).not.toHaveBeenCalled();
 
     consoleError.mockRestore();

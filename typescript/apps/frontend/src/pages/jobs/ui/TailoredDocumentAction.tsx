@@ -101,7 +101,7 @@ function TailoredDocumentAction({
             type="button"
             variant="ghost"
             size="icon"
-            className="-mr-2 -mt-2"
+            className="-mt-2 -mr-2"
             onClick={() => setIsOpen(false)}
             aria-label={t('tailoredDocument.close')}
           >

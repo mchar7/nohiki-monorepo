@@ -64,20 +64,25 @@ const ALLOWED_TAGS: Set<string> = new Set([
 const ALLOWED_ATTRIBUTES: Set<string> = new Set(['href', 'title', 'class', 'id']);
 
 /** Pattern to match HTML tags */
-const HTML_TAG_PATTERN = /<\/?([a-z][a-z0-9]*)\b[^>]*>/giu;
+const HTML_TAG_PATTERN = /<\/?(?<tagName>[a-z][a-z0-9]*)\b[^>]*>/giu;
 
 /** Pattern to match HTML attributes */
-const ATTRIBUTE_PATTERN = /\s+([a-z-]+)(?:=(?:"[^"]*"|'[^']*'|[^\s>]*))?/gu;
+const ATTRIBUTE_PATTERN = /\s+(?<attributeName>[a-z-]+)(?:=(?:"[^"]*"|'[^']*'|[^\s>]*))?/gu;
 
 /** Pattern to extract href value */
-const HREF_VALUE_PATTERN = /href=(?:"([^"]*)"|'([^']*)'|([^\s>]*))/iu;
+const HREF_VALUE_PATTERN =
+  /href=(?:"(?<doubleQuoted>[^"]*)"|'(?<singleQuoted>[^']*)'|(?<unquoted>[^\s>]*))/iu;
 
 /**
  * Extracts and validates an href attribute from a tag match.
  */
 function extractHrefAttribute(match: string): string | null {
   const hrefMatch = HREF_VALUE_PATTERN.exec(match);
-  const hrefValue = hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3] ?? '';
+  const hrefValue =
+    hrefMatch?.groups?.doubleQuoted ??
+    hrefMatch?.groups?.singleQuoted ??
+    hrefMatch?.groups?.unquoted ??
+    '';
   if (isValidUrl(hrefValue)) {
     return `href="${escapeHtml(hrefValue)}"`;
   }
@@ -88,7 +93,7 @@ function extractHrefAttribute(match: string): string | null {
  * Processes a single attribute match and returns the sanitized attribute string.
  */
 function processAttribute(attrMatch: RegExpExecArray, match: string): string | null {
-  const [, rawName] = attrMatch;
+  const rawName = attrMatch.groups?.attributeName;
   if (rawName === undefined) {
     return null;
   }

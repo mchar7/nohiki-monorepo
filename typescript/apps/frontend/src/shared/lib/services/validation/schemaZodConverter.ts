@@ -16,6 +16,7 @@ function buildStringSchema(prop: JSONSchemaProperty): z.ZodString {
     schema = schema.max(prop.maxLength);
   }
   if (prop.pattern) {
+    // biome-ignore lint/nursery/useUnicodeRegex: Dynamic JSON Schema patterns must preserve their source flags and legacy semantics.
     schema = schema.regex(new RegExp(prop.pattern));
   }
 

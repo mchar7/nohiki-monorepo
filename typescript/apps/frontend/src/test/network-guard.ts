@@ -11,6 +11,11 @@ const blockedFetch: typeof fetch = (input: RequestInfo | URL): Promise<Response>
 // Vitest runs setup files before importing each test module. Install at module scope so API
 // clients that capture fetch during construction bind the guard instead of the native client.
 globalThis.fetch = blockedFetch;
+beforeEach(() => {
+  unexpectedRequests.length = 0;
+  globalThis.fetch = blockedFetch;
+});
+
 afterEach(() => {
   const requests = unexpectedRequests.splice(0);
   if (requests.length > 0) {
@@ -19,9 +24,4 @@ afterEach(() => {
       'Unexpected network requests in unit test. Nested stacks identify the calling modules.',
     );
   }
-});
-
-beforeEach(() => {
-  unexpectedRequests.length = 0;
-  globalThis.fetch = blockedFetch;
 });

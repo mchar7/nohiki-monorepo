@@ -232,7 +232,7 @@ function SkillInput({
       <Popover open={open} onOpenChange={setOpen}>
         <div
           className="flex min-h-10 w-full flex-wrap gap-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
-          data-disabled={disabled || undefined}
+          data-disabled={disabled === true ? true : undefined}
         >
           {value.map((skill) => (
             <SkillBadge
@@ -249,11 +249,17 @@ function SkillInput({
               type="button"
               className="min-w-24 flex-1 cursor-text self-stretch text-left outline-none disabled:cursor-not-allowed"
               disabled={disabled}
-              aria-label={placeholder || t('skills.placeholder')}
+              aria-label={
+                placeholder !== undefined && placeholder.length > 0
+                  ? placeholder
+                  : t('skills.placeholder')
+              }
             >
               {value.length === 0 ? (
                 <span className="text-muted-foreground">
-                  {placeholder || t('skills.placeholder')}
+                  {placeholder !== undefined && placeholder.length > 0
+                    ? placeholder
+                    : t('skills.placeholder')}
                 </span>
               ) : null}
             </button>
