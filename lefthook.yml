@@ -10,6 +10,16 @@
 
 min_version: 2.1.10
 
+# A bare `lefthook run` reinstalls hooks from Lefthook's own template before
+# running them. This repository's hooks are a hardened wrapper that pins and
+# digest-verifies every binary it invokes, so that regeneration silently
+# replaces integrity checks with an unverified shim. The same setting exists in
+# a developer's gitignored lefthook-local.yml, which is exactly why it has to
+# live here too: linked worktrees have no local override, and their
+# core.hooksPath points at the primary checkout's hooks directory, so a push
+# from any worktree would rewrite the primary's hardened hook.
+no_auto_install: true
+
 output:
   - meta
   - summary
