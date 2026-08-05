@@ -449,13 +449,15 @@
     },
     {
       "name": "kafka-connect",
-      "context": "infra/k8s/kafka-connect",
+      "context": ".",
       "dockerfile": "infra/k8s/kafka-connect/Dockerfile",
       "build_args": "",
-      "lockfile": "infra/k8s/kafka-connect/smt/build.gradle.kts",
+      "lockfile": "jvm/nohiki-wal-router-smt/build.gradle.kts",
       "timeout": 16,
       "ownership": [
-        "infra/k8s/kafka-connect/"
+        ".dockerignore",
+        "infra/k8s/kafka-connect/",
+        "jvm/nohiki-wal-router-smt/"
       ],
       "class": "product"
     }

@@ -856,7 +856,7 @@ services:
 
   nohiki-cp-kafka-connect:
     <<: *common-infrastructure
-    build: {context: ../k8s/kafka-connect, dockerfile: Dockerfile, target: compose}
+    build: {context: ../.., dockerfile: infra/k8s/kafka-connect/Dockerfile, target: compose}
     image: nohiki-kafka-connect:latest
     volumes:
       - *vol-database

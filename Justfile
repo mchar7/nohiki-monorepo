@@ -178,7 +178,7 @@ hygiene-build-backend-strict packages="ALL":
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --packages '{{ packages }}' --ci --strict
 
 # Run every developer-reproducible CI check
-verify: lint format-check lint-md typecheck-all test-all-packages test-skylos-cache test-node-contracts hygiene fe-check fe-fsd fe-i18n edge-check proto-lint proto-breaking workflow-lint docker-lint secrets-scan nix-check api-schema-check image-matrix-check
+verify: lint format-check lint-md typecheck-all test-all-packages test-jvm test-skylos-cache test-node-contracts hygiene fe-check fe-fsd fe-i18n edge-check proto-lint proto-breaking workflow-lint docker-lint secrets-scan nix-check api-schema-check image-matrix-check
 
 # Scaffold CLI
 
@@ -207,6 +207,16 @@ test-scaffold:
 # Run package-aware unit tests across uv workspace members
 test-all-packages:
     {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope all --ci --workers 2
+
+# Build and test the JVM module with the flake-pinned toolchain.
+test-jvm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    module="{{ monorepo_root }}/jvm/nohiki-wal-router-smt"
+    pinned_version="$(gradle --version | sed -n 's/^Gradle //p')"
+    wrapper_version="$("$module/gradlew" --project-dir "$module" --no-daemon --console=plain --version | sed -n 's/^Gradle //p')"
+    test "$wrapper_version" = "$pinned_version"
+    gradle --project-dir "$module" --no-daemon --console=plain clean build
 
 # Run Skylos cache contract tests
 test-skylos-cache:
@@ -399,10 +409,10 @@ workflow-lint:
     while IFS= read -r diagnostic; do
         # actionlint does not understand the runner's four native `parallel:` groups; suppress only their exact source locations.
         case "$diagnostic" in
-            '.github/workflows/checks.yml:285:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:363:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:505:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:516:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
+            '.github/workflows/checks.yml:286:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:364:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:509:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:520:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
                 ;;
             *)
                 printf '%s\n' "$diagnostic" >&2

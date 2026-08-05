@@ -1,6 +1,13 @@
+import com.github.spotbugs.snom.Confidence
+import com.github.spotbugs.snom.Effort
+import net.ltgt.gradle.errorprone.errorprone
+
 plugins {
     `java-library`
     jacoco
+    id("com.diffplug.spotless") version "8.9.0"
+    id("net.ltgt.errorprone") version "5.1.0"
+    id("com.github.spotbugs") version "6.5.9"
     id("com.gradleup.shadow") version "9.4.1"
 }
 
@@ -9,7 +16,7 @@ version = "0.1.0"
 
 java {
     toolchain {
-        // Build on the newest LTS JDK for latest compiler/tooling.
+        // Build with the current LTS JDK while retaining the Java 21 runtime contract.
         languageVersion.set(JavaLanguageVersion.of(25))
     }
 }
@@ -18,6 +25,17 @@ java {
 // Decouples build-time JDK from runtime JDK.
 tasks.withType<JavaCompile>().configureEach {
     options.release.set(21)
+    options.compilerArgs.addAll(listOf("-Xlint:all", "-Werror"))
+    options.errorprone {
+        error("NullAway")
+        error("UnusedMethod")
+        error("UnusedNestedClass")
+        error("UnusedTypeParameter")
+        error("UnusedVariable")
+        option("NullAway:OnlyNullMarked", "true")
+        option("NullAway:JSpecifyMode", "true")
+        option("NullAway:HandleTestAssertionLibraries", "true")
+    }
 }
 
 jacoco {
@@ -28,28 +46,45 @@ repositories {
     mavenCentral()
 }
 
-// Kafka Connect API pinned to match the runtime (Debezium 3.6 ships Kafka 4.1.x).
-// Public Transformation/ConfigDef/Struct/Schema APIs used here are stable since 2.x.
-val kafkaVersion = "4.1.0"
-val jacksonVersion = "2.19.0"
-val slf4jVersion = "2.0.17"
+// Compile against the Kafka Connect version used to build Debezium 3.6.1.Final.
+val kafkaVersion = "4.3.0"
+val jacksonVersion = "2.22.1"
+val slf4jVersion = "2.0.18"
 
 dependencies {
     compileOnly("org.apache.kafka:connect-api:$kafkaVersion")
     compileOnly("org.apache.kafka:connect-transforms:$kafkaVersion")
     compileOnly("org.slf4j:slf4j-api:$slf4jVersion")
+    compileOnly("org.jspecify:jspecify:1.0.1")
 
     // jackson-jr-objects: ~106 KB vs jackson-databind's ~1.6 MB. Purpose-built
     // for Map<String, Object> parsing of small JSON envelopes.
     implementation("com.fasterxml.jackson.jr:jackson-jr-objects:$jacksonVersion")
+    errorprone("com.google.errorprone:error_prone_core:2.50.0")
+    errorprone("com.uber.nullaway:nullaway:0.13.8")
 
     testImplementation("org.apache.kafka:connect-api:$kafkaVersion")
     testImplementation("org.apache.kafka:connect-transforms:$kafkaVersion")
     testImplementation("org.slf4j:slf4j-simple:$slf4jVersion")
-    testImplementation(platform("org.junit:junit-bom:6.0.3"))
+    testCompileOnly("org.jspecify:jspecify:1.0.1")
+    testImplementation(platform("org.junit:junit-bom:6.1.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation("org.junit.platform:junit-platform-launcher")
-    testImplementation("org.assertj:assertj-core:3.27.3")
+    testImplementation("org.assertj:assertj-core:3.27.7")
+}
+
+spotless {
+    java {
+        googleJavaFormat("1.36.1")
+    }
+}
+
+spotbugs {
+    toolVersion = "4.10.3"
+    ignoreFailures = false
+    runOnCheck = true
+    effort = Effort.MAX
+    reportLevel = Confidence.LOW
 }
 
 tasks.test {

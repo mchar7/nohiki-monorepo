@@ -324,6 +324,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Check proto compatibility",
             "Run Node workspace contract tests",
             "Run Skylos cache contract tests",
+            "Test JVM module",
             "Lint Markdown",
             "Lint frontend",
             "Check i18n keys",
@@ -553,6 +554,18 @@ def test_backend_typecheck_keeps_gate_trigger_parity_and_executes_once() -> None
                     execution_count = json.loads(outputs["worker_units"]).count("python")
 
                 assert execution_count == int(triggered_before), outputs
+
+
+def test_jvm_tests_run_once_on_the_frontend_worker_with_the_pinned_shell() -> None:
+    worker = _jobs()["worker"]
+    step = next(step for step in _steps(worker) if step.get("name") == "Test JVM module")
+    condition = str(step["if"])
+
+    assert "matrix.unit == 'frontend'" in condition
+    assert "matrix.unit == 'python'" not in condition
+    assert "needs.changes.outputs.broad_unbounded == 'true'" in condition
+    assert condition.endswith("needs.changes.outputs.jvm_tests == 'true')")
+    assert step["run"] == "nix develop .#jvm --command just test-jvm"
 
 
 def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> None:

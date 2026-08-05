@@ -338,7 +338,7 @@ def test_canonical_lockfiles_follow_the_post_carrier_one_cache_identity(inventor
     lockfiles = {record.name: record.lockfile for record in inventory.images}
     assert lockfiles["frontend"] == "pnpm-lock.yaml"
     assert lockfiles["playwright-verification-runner"] == "pnpm-lock.yaml"
-    assert lockfiles["kafka-connect"] == "infra/k8s/kafka-connect/smt/build.gradle.kts"
+    assert lockfiles["kafka-connect"] == "jvm/nohiki-wal-router-smt/build.gradle.kts"
     assert {name for name, lockfile in lockfiles.items() if lockfile == "uv.lock"} == set(inventory.names) - {
         "frontend",
         "playwright-verification-runner",
@@ -354,10 +354,10 @@ def test_shared_ml_dockerfile_keeps_distinct_cpu_and_gpu_rows(inventory: ImageIn
     assert {record.name for record in inventory.images if record.build_args} == {"ml-compute-service-gpu"}
 
 
-def test_kafka_connect_keeps_its_dedicated_context(inventory: ImageInventory) -> None:
+def test_kafka_connect_uses_the_root_context_for_the_relocated_module(inventory: ImageInventory) -> None:
     rows = {record.name: record for record in inventory.images}
-    assert rows["kafka-connect"].context == "infra/k8s/kafka-connect"
-    assert {record.context for record in inventory.images} == {".", "infra/k8s/kafka-connect"}
+    assert rows["kafka-connect"].context == "."
+    assert {record.context for record in inventory.images} == {"."}
 
 
 def test_vendored_base_inventory_covers_every_digest_pinned_oci_input(inventory: ImageInventory) -> None:
@@ -665,9 +665,9 @@ def test_the_api_ignore_file_admits_exactly_the_inventoried_api_inputs() -> None
     assert "tests/uv.lock" in ignore.splitlines()
 
 
-def test_the_root_ignore_owns_every_root_context_image_except_the_api_and_kafka(inventory: ImageInventory) -> None:
+def test_the_root_ignore_owns_every_root_context_image_except_the_api(inventory: ImageInventory) -> None:
     selected = affected_images({".dockerignore"}, inventory)
-    assert set(selected) == set(inventory.names) - {"api-verification-runner", "kafka-connect"}
+    assert set(selected) == set(inventory.names) - {"api-verification-runner"}
     assert selected == tuple(name for name in inventory.names if name in set(selected))
 
 
@@ -676,7 +676,7 @@ def test_each_dockerfile_specific_ignore_selects_exactly_its_own_image(inventory
 
 
 def test_kafka_and_qdrant_contexts_select_exactly_their_own_image(inventory: ImageInventory) -> None:
-    assert affected_images({"infra/k8s/kafka-connect/smt/build.gradle.kts"}, inventory) == ("kafka-connect",)
+    assert affected_images({"jvm/nohiki-wal-router-smt/build.gradle.kts"}, inventory) == ("kafka-connect",)
     assert affected_images({"infra/shared/qdrant-init/Dockerfile"}, inventory) == ("qdrant-init",)
 
 
@@ -760,10 +760,10 @@ def test_render_matrix_rows_carry_the_documented_values_for_the_special_cases(in
     rows = {row["name"]: row for row in selected}
     assert rows["kafka-connect"] == {
         "name": "kafka-connect",
-        "context": "infra/k8s/kafka-connect",
+        "context": ".",
         "dockerfile": "infra/k8s/kafka-connect/Dockerfile",
         "build_args": "",
-        "lockfile": "infra/k8s/kafka-connect/smt/build.gradle.kts",
+        "lockfile": "jvm/nohiki-wal-router-smt/build.gradle.kts",
         "timeout_minutes": IMAGE_TIMEOUT_MINUTES,
     }
     assert rows["ml-compute-service-gpu"] == {

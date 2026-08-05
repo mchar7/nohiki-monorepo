@@ -108,7 +108,7 @@ def test_image_publication_is_authorized_by_successful_main_checks_or_manual_dis
         expected_lockfile = (
             "pnpm-lock.yaml"
             if record.name in {"frontend", "playwright-verification-runner"}
-            else "infra/k8s/kafka-connect/smt/build.gradle.kts"
+            else "jvm/nohiki-wal-router-smt/build.gradle.kts"
             if record.name == "kafka-connect"
             else "uv.lock"
         )
