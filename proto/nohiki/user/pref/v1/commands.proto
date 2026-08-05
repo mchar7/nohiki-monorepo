@@ -48,7 +48,7 @@ message PrefCreateRequested {
   ];
 
   repeated nohiki.common.v1.WorkArrangement work_arrangements = 9 [
-    (buf.validate.field).repeated.max_items = 5
+    (buf.validate.field).repeated = {min_items: 1, max_items: 5}
   ];
 
   nohiki.common.v1.SearchPrefNotificationConfig notification_config = 10;

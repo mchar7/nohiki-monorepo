@@ -42,7 +42,12 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-_SEMVER_PATTERN = r"^[0-9]+\.[0-9]+\.[0-9]+$"
+_SEMVER_PATTERN = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$"
+)
 _MIN_LAYOUT_CONTENT_BYTES = 10
 _MAX_LAYOUT_CONTENT_BYTES = 100 * 1024
 
@@ -51,7 +56,7 @@ def _validate_external_layout_snapshot(msg: Message) -> tuple[str, str]:
     """Return the immutable layout snapshot required by the render consumer."""
     version = msg.external_layout_version
     content = msg.external_layout_content
-    if not isinstance(version, str) or not version or not re.fullmatch(_SEMVER_PATTERN, version):
+    if not isinstance(version, str) or not _SEMVER_PATTERN.fullmatch(version):
         raise NohikiError(
             error_code=ErrorCode.VALIDATION_ERROR,
             message="external_layout_version must be a semantic version for layout rendering",

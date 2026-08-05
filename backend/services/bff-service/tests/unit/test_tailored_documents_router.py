@@ -13,12 +13,13 @@ from bff_service.api.routers.documents import (
     generate_tailored_document,
 )
 from fastapi import HTTPException
-from nohiki.common.v1 import AccessScope, Location, RenderOutputFormat, UploadReference
+from nohiki.common.v1 import AccessScope, Location, RenderOutputFormat, SubscriptionTier, UploadReference
 from nohiki.job.listing.v1 import ListingSnapshot
 from nohiki.user.pref.v1 import SearchPrefSnapshot
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import Topics
 from pytest_mock import MockerFixture
+from user_entitlement_service.core.tiers import TIER_CONFIGS
 
 
 def _upload(user_id: uuid.UUID, storage_key: str, *, name: str) -> UploadReference:
@@ -31,6 +32,10 @@ def _upload(user_id: uuid.UUID, storage_key: str, *, name: str) -> UploadReferen
         content_hash=f"hash-{name}",
         storage_key=storage_key,
     )
+
+
+def _enterprise_upload_limit() -> int:
+    return TIER_CONFIGS[SubscriptionTier.ENTERPRISE].max_uploads_per_pref
 
 
 def _snapshots(
@@ -330,6 +335,70 @@ async def test_tailored_command_rejects_foreign_or_empty_upload_references() -> 
             )
         assert exc_info.value.status_code == 409
         db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tailored_command_accepts_enterprise_upload_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid.uuid4()
+    correlation, listing, template, pref = _successful_rows(user_id)
+    pref.example_uploads = [
+        _upload(user_id, f"users/example-{index}.pdf", name=f"example-{index}")
+        for index in range(_enterprise_upload_limit() - len(pref.context_uploads))
+    ]
+    correlation.pref_snapshot = pref.to_dict()
+    correlation.pref_uploads = []
+    db = create_mock_session()
+    db.execute.side_effect = [_result(correlation), _result(listing), _result(template)]
+    publish = AsyncMock()
+    monkeypatch.setattr("bff_service.api.routers.documents.kafka_client.publish", publish)
+
+    await generate_tailored_document(
+        GenerateTailoredDocumentRequest(
+            job_correlation_id=correlation.id,
+            template_id=template.id,
+        ),
+        user_id,
+        db,
+    )
+
+    db.add.assert_called_once()
+    db.commit.assert_awaited_once()
+    publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_tailored_command_rejects_more_than_enterprise_upload_limit_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid.uuid4()
+    correlation, listing, template, pref = _successful_rows(user_id)
+    pref.example_uploads = [
+        _upload(user_id, f"users/example-{index}.pdf", name=f"example-{index}")
+        for index in range(_enterprise_upload_limit())
+    ]
+    correlation.pref_snapshot = pref.to_dict()
+    correlation.pref_uploads = []
+    db = create_mock_session()
+    db.execute.side_effect = [_result(correlation), _result(listing), _result(template)]
+    publish = AsyncMock()
+    monkeypatch.setattr("bff_service.api.routers.documents.kafka_client.publish", publish)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await generate_tailored_document(
+            GenerateTailoredDocumentRequest(
+                job_correlation_id=correlation.id,
+                template_id=template.id,
+            ),
+            user_id,
+            db,
+        )
+
+    assert exc_info.value.status_code == 409
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+    publish.assert_not_awaited()
 
 
 @pytest.mark.asyncio

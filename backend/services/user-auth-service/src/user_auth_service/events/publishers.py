@@ -141,6 +141,10 @@ async def publish_access_token_revoked_event(  # noqa: PLR0913 - transactional p
     session_family_id: uuid.UUID | None = None,
 ) -> None:
     """Write an access-token or session-family revocation fact to the transactional outbox."""
+    if not jti and not session_family_id:
+        msg = "jti or session_family_id is required"
+        raise ValueError(msg)
+
     event = AccessTokenRevoked(
         metadata=create_event_metadata(settings.service_name, str(user_id)),
         user_id=str(user_id),

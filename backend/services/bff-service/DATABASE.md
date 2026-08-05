@@ -275,10 +275,10 @@ the content separately).
 - **`namespace`**: Template domain grouping (e.g., `resume`, `cover_letter`).
   Validated by the API to match `^[a-z][a-z0-9_-]{0,62}$`.
 - **`name`**: Template name within namespace. Must be lowercase alphanumeric.
-- **`version`**: Semantic version string (e.g., `1.2.0`). Validated by the API
-  against `^\d+\.\d+\.\d+` before publish.
+- **`version`**: Full SemVer 2.0.0 version string (e.g., `1.2.0-rc.1+build.7`),
+  validated by the API before publication.
 - **`template_content`**: Full Jinja2 HTML source. Stored and forwarded to
-  `doc-template-service` in render commands. Maximum 1 MB enforced at the API layer.
+  `doc-template-service` in render commands. Maximum 100 KiB of UTF-8 content enforced by the API.
 - **`content_schema`**: JSON Schema defining the variables the template accepts.
   Parsed from `VersionSnapshot.content_schema_json` at projection time. `null` if the template
   version was created without a schema.

@@ -107,6 +107,7 @@ _MAX_DATA_KEY_LEN = 64
 _MAX_DATA_VALUE_SERIALIZED = 50000
 _MAX_SCHEMA_ERRORS = 10
 _MAX_SCHEMA_ERROR_MESSAGE_LEN = 500
+_MAX_TOTAL_UPLOADS = 25
 
 
 def _schema_error_detail(error: object, path: Sequence[object]) -> dict[str, object]:
@@ -187,6 +188,15 @@ def _snapshot_conflict(detail: str) -> HTTPException:
 def _validate_uploads(uploads: list[UploadReference], user_id: UUID) -> None:
     if any(not upload.storage_key or upload.user_id != str(user_id) for upload in uploads):
         detail = "Preference upload snapshot is incomplete or stale"
+        raise _snapshot_conflict(detail)
+
+
+def _validate_upload_aggregate(
+    example_uploads: Sequence[UploadReference],
+    context_uploads: Sequence[UploadReference],
+) -> None:
+    if len(example_uploads) + len(context_uploads) > _MAX_TOTAL_UPLOADS:
+        detail = f"Generation context exceeds the {_MAX_TOTAL_UPLOADS}-upload limit"
         raise _snapshot_conflict(detail)
 
 
@@ -351,6 +361,9 @@ async def generate_tailored_document(
         ],
         user_id,
     )
+    example_uploads = pref_snapshot.example_uploads
+    context_uploads = _merge_context_uploads(pref_snapshot.context_uploads, correlation_uploads)
+    _validate_upload_aggregate(example_uploads, context_uploads)
     template_version = DocumentTemplateVersionSnapshot(
         version_id=str(template.version_id),
         version=template.version,
@@ -361,8 +374,8 @@ async def generate_tailored_document(
     generation_context = ContentGenerationContext(
         listing=listing_snapshot,
         template_version=template_version,
-        example_uploads=pref_snapshot.example_uploads,
-        context_uploads=_merge_context_uploads(pref_snapshot.context_uploads, correlation_uploads),
+        example_uploads=example_uploads,
+        context_uploads=context_uploads,
         user_preferences=Struct.from_dict(dict(pref_snapshot.tailoring_preferences)),
     )
 

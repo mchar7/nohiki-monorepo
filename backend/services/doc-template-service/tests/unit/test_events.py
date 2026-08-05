@@ -30,7 +30,7 @@ from doc_template_service.services.template_service import (
     TemplateVersionError,
 )
 from nohiki.common.v1 import AccessScope, EventMetadata, RenderOutputFormat
-from nohiki.doc.template.v1 import TemplateAudience
+from nohiki.doc.template.v1 import DocumentRenderRequested, TemplateAudience
 from nohiki_common_exceptions import ValidationError
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import MessageContext
@@ -205,8 +205,26 @@ class TestValidateRenderRequest:
         with pytest.raises(ValidationError, match="template_version"):
             _validate_render_request(mock_message)
 
-    def test_returns_tuple_on_success(self) -> None:
-        """Test successful validation returns tuple."""
+    def test_raises_error_when_template_version_is_not_semver(self) -> None:
+        """ValidationError is raised for a nonempty invalid template version."""
+        message = DocumentRenderRequested(
+            metadata=EventMetadata(
+                event_id="test-id",
+                correlation_id="corr-id",
+                source_service="test",
+            ),
+            template_id="template-123",
+            template_content="<html></html>",
+            template_version="not-a-version",
+        )
+
+        with pytest.raises(ValidationError, match="template_version") as exc_info:
+            _validate_render_request(message)
+
+        assert exc_info.value.field_name == "template_version"
+
+    def test_accepts_valid_semver(self) -> None:
+        """Valid semantic versions return the extracted request fields."""
         mock_message = MagicMock()
         mock_message.metadata = EventMetadata(
             event_id="test-id",
@@ -215,11 +233,11 @@ class TestValidateRenderRequest:
         )
         mock_message.template_id = "template-123"
         mock_message.template_content = "<html></html>"
-        mock_message.template_version = "1.0.0"
+        mock_message.template_version = "1.2.3-rc.1+build.7"
 
         result = _validate_render_request(mock_message)
 
-        assert result == ("corr-id", "template-123", "1.0.0")
+        assert result == ("corr-id", "template-123", "1.2.3-rc.1+build.7")
 
 
 class TestRenderAndStore:

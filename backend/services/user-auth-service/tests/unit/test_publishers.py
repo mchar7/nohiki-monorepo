@@ -194,3 +194,22 @@ class TestPublishAccessTokenRevokedEvent:
 
         event = serialize.call_args.args[1]
         assert event.session_family_id is None
+
+    @pytest.mark.asyncio
+    async def test_rejects_event_without_revocation_target(self) -> None:
+        mock_outbox = AsyncMock()
+        with (
+            patch("user_auth_service.events.publishers.kafka_client.serialize") as serialize,
+            pytest.raises(ValueError, match="jti or session_family_id is required"),
+        ):
+            await publish_access_token_revoked_event(
+                create_mock_session(),
+                mock_outbox,
+                user_id=uuid.uuid4(),
+                jti=None,
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
+                session_family_id=None,
+            )
+
+        serialize.assert_not_called()
+        mock_outbox.write_event_raw.assert_not_awaited()
