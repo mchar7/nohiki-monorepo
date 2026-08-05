@@ -39,7 +39,7 @@ _backfill_services = _BackfillServiceHolder()
 
 
 def _force_rescore_from_callback(message: BackfillCallback) -> bool:
-    """Decode force-rescore intent, defaulting safely for legacy callbacks."""
+    """Decode optional callback metadata, defaulting safely when absent or malformed."""
     callback = message.callback
     if callback is None or not callback.caller_context:
         return False

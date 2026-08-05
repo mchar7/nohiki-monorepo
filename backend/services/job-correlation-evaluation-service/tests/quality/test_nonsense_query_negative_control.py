@@ -33,7 +33,7 @@ def test_gibberish_profile_does_not_produce_actionable_scores() -> None:
         id="negative-control",
         user_id="negative-control-user",
         pref_name="Sanitized nonsense query",
-        search_keywords=["hyfr"],
+        search_keywords=["hyfr qzpt"],
         work_arrangements=[WorkArrangement.REMOTE],
         experience_preference=ExperiencePreference(
             experience_years=0,

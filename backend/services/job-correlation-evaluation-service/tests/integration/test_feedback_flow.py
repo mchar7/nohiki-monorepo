@@ -15,6 +15,7 @@ import pytest
 from job_correlation_evaluation_service.repositories.correlation_repository import (
     CorrelationNotFoundError,
     CorrelationRepository,
+    CorrelationUpdate,
 )
 from job_correlation_evaluation_service.services.feedback_service import (
     CorrelationFeedbackService,
@@ -88,7 +89,11 @@ class TestFeedbackRecordingFlow:
         )
 
         # Verify viewed was set
-        mock_repository.update.assert_called_with(sample_correlation.id, is_viewed=True)
+        mock_repository.update.assert_called_with(
+            sample_correlation.id,
+            CorrelationUpdate(is_viewed=True),
+            user_id=None,
+        )
 
         # Step 2: User applies to the job
         await feedback_service.record_feedback(
@@ -99,8 +104,8 @@ class TestFeedbackRecordingFlow:
         # Verify applied and viewed were set
         mock_repository.update.assert_called_with(
             sample_correlation.id,
-            is_applied=True,
-            is_viewed=True,
+            CorrelationUpdate(is_applied=True, is_viewed=True),
+            user_id=None,
         )
 
     @pytest.mark.asyncio
@@ -125,7 +130,11 @@ class TestFeedbackRecordingFlow:
             feedback_type=FeedbackType.DISMISSED,
         )
 
-        mock_repository.update.assert_called_with(sample_correlation.id, is_dismissed=True)
+        mock_repository.update.assert_called_with(
+            sample_correlation.id,
+            CorrelationUpdate(is_dismissed=True),
+            user_id=None,
+        )
 
     @pytest.mark.asyncio
     async def test_save_and_like_flow(
@@ -144,8 +153,8 @@ class TestFeedbackRecordingFlow:
 
         mock_repository.update.assert_called_with(
             sample_correlation.id,
-            user_feedback=UserFeedback.POSITIVE,
-            is_viewed=True,
+            CorrelationUpdate(user_feedback=UserFeedback.POSITIVE, is_viewed=True),
+            user_id=None,
         )
 
     @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from job_correlation_evaluation_service.services.scoring.constants import Featur
 from job_correlation_evaluation_service.services.scoring.features.base import FeatureGroup
 
 if TYPE_CHECKING:
+    from nohiki.skill.v1 import JobSkillRequirement, UserSkillEntry
     from numpy.typing import NDArray
 
     from job_correlation_evaluation_service.services.scoring.features.base import (
@@ -61,9 +62,8 @@ class TaxonomyFeatureGroup(FeatureGroup):
         job = context.job
         profile = context.profile
 
-        # Extract canonical skill IDs from job and profile snapshots
-        job_skill_ids = _extract_skill_ids(job.required_skills) if job.required_skills else frozenset()
-        user_skill_ids = _extract_skill_ids(profile.user_skills) if profile.user_skills else frozenset()
+        job_skill_ids = _extract_skill_ids(job.skill_requirements)
+        user_skill_ids = _extract_skill_ids(profile.user_skills)
 
         if not job_skill_ids or not user_skill_ids or self._cache is None or self._cache.relationship_count == 0:
             features[FeatureIndex.SKILL_GRAPH_MIN_DISTANCE] = math.nan
@@ -86,22 +86,11 @@ class TaxonomyFeatureGroup(FeatureGroup):
         features[FeatureIndex.SKILL_GRAPH_MEAN_DISTANCE] = float(sum(distances) / len(distances))
 
 
-def _extract_skill_ids(skills: Iterable[object]) -> frozenset[str]:
-    """Extract canonical skill IDs from a repeated skill field.
-
-    Handles both list-like and protobuf repeated fields. Each skill
-    object is expected to have a `canonical_skill_id` or `skill_id` attribute.
-    """
-    ids: set[str] = set()
-    if not skills:
-        return frozenset()
-
-    for skill in skills:
-        skill_id = getattr(skill, "canonical_skill_id", None) or getattr(skill, "skill_id", None)
-        if skill_id:
-            ids.add(str(skill_id))
-
-    return frozenset(ids)
+def _extract_skill_ids(
+    skills: Iterable[JobSkillRequirement | UserSkillEntry],
+) -> frozenset[str]:
+    """Extract populated canonical skill IDs from current snapshot entries."""
+    return frozenset(skill.skill_id for skill in skills if skill.skill_id)
 
 
 def _min_distance_to_set(

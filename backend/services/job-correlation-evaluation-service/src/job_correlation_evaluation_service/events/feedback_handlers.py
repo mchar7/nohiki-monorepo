@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from datetime import datetime
 from uuid import UUID
 
@@ -31,6 +30,7 @@ from job_correlation_evaluation_service.repositories.feedback_repository import 
 )
 from job_correlation_evaluation_service.services.feedback_service import (
     CorrelationFeedbackService,
+    TrainingExportSample,
 )
 
 logger = get_logger(__name__)
@@ -52,37 +52,13 @@ def _parse_date(date_str: str | None, field_name: str) -> datetime | None:
         return None
 
 
-def _extract_label(label_value: object) -> float:
-    """Extract a finite float label from sample data."""
-    value: float | None = None
-    match label_value:
-        case int() | float():
-            value = float(label_value)
-        case str():
-            value = float(label_value)
-        case [first, *_]:
-            match first:
-                case int() | float() | str():
-                    value = float(first)
-    return value if value is not None and math.isfinite(value) else 0.0
-
-
-def _extract_features(features_value: object) -> list[float]:
-    """Extract features list from sample data."""
-    if isinstance(features_value, list):
-        return [float(str(f)) for f in features_value]
-    return []
-
-
-def _build_training_sample(
-    sample_data: dict[str, object] | dict[str, str | int | float | list[int | float]],
-) -> TrainingSample:
-    """Build a TrainingSample from raw sample data."""
+def _build_training_sample(sample_data: TrainingExportSample) -> TrainingSample:
+    """Build the callback message from a canonical training row."""
     return TrainingSample(
-        correlation_id=str(sample_data["correlation_id"]),
-        label=_extract_label(sample_data["label"]),
-        features=_extract_features(sample_data["features"]),
-        query_id=str(sample_data["query_id"]),
+        correlation_id=sample_data["correlation_id"],
+        label=sample_data["label"],
+        features=sample_data["features"],
+        query_id=sample_data["query_id"],
     )
 
 

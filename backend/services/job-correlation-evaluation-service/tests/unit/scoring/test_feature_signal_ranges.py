@@ -943,6 +943,7 @@ class TestAllFeaturesPresent:
 def _create_minimal_job() -> MagicMock:
     """Create a minimal mock job listing."""
     job = MagicMock()
+    job.title = ""
     job.location = None
     job.work_arrangement = 0
     job.experience_years_min = None
@@ -960,6 +961,7 @@ def _create_minimal_job() -> MagicMock:
 def _create_minimal_profile() -> MagicMock:
     """Create a minimal mock search preference profile."""
     profile = MagicMock()
+    profile.search_keywords = []
     profile.physical_locations = []
     profile.remote_locations = []
     profile.work_arrangements = []

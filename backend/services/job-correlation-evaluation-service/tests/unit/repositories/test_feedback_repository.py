@@ -252,11 +252,13 @@ class TestCreateManualAdjustment:
         reasoning = "Missing key skills that are required for this role"
 
         await repository.create_manual_adjustment(
-            correlation_id=correlation_id,
-            user_id=user_id,
-            original_score=original_score,
-            adjusted_score=adjusted_score,
-            reasoning=reasoning,
+            correlation_id,
+            user_id,
+            ManualAdjustmentCreate(
+                original_score=original_score,
+                adjusted_score=adjusted_score,
+                reasoning=reasoning,
+            ),
         )
 
         mock_session.add.assert_called_once()
@@ -278,11 +280,13 @@ class TestCreateManualAdjustment:
     ) -> None:
         """Test creating adjustment with minimum score values."""
         await repository.create_manual_adjustment(
-            correlation_id=uuid4(),
-            user_id=uuid4(),
-            original_score=0.0,
-            adjusted_score=0.0,
-            reasoning="Completely irrelevant listing",
+            uuid4(),
+            uuid4(),
+            ManualAdjustmentCreate(
+                original_score=0.0,
+                adjusted_score=0.0,
+                reasoning="Completely irrelevant listing",
+            ),
         )
 
         added_model = mock_session.add.call_args[0][0]
@@ -297,11 +301,13 @@ class TestCreateManualAdjustment:
     ) -> None:
         """Test creating adjustment with maximum score values."""
         await repository.create_manual_adjustment(
-            correlation_id=uuid4(),
-            user_id=uuid4(),
-            original_score=1.0,
-            adjusted_score=1.0,
-            reasoning="Perfect match for this position",
+            uuid4(),
+            uuid4(),
+            ManualAdjustmentCreate(
+                original_score=1.0,
+                adjusted_score=1.0,
+                reasoning="Perfect match for this position",
+            ),
         )
 
         added_model = mock_session.add.call_args[0][0]
@@ -323,20 +329,24 @@ class TestCreateManualAdjustment:
         user_id = uuid4()
 
         first = await repository.create_manual_adjustment(
-            correlation_id=correlation_id,
-            user_id=user_id,
-            original_score=0.75,
-            adjusted_score=0.25,
-            reasoning="first",
-            request_id="request-456",
+            correlation_id,
+            user_id,
+            ManualAdjustmentCreate(
+                original_score=0.75,
+                adjusted_score=0.25,
+                reasoning="first",
+                request_id="request-456",
+            ),
         )
         second = await repository.create_manual_adjustment(
-            correlation_id=correlation_id,
-            user_id=user_id,
-            original_score=0.10,
-            adjusted_score=0.90,
-            reasoning="retry with changed payload",
-            request_id="request-456",
+            correlation_id,
+            user_id,
+            ManualAdjustmentCreate(
+                original_score=0.10,
+                adjusted_score=0.90,
+                reasoning="retry with changed payload",
+                request_id="request-456",
+            ),
         )
 
         assert first is existing

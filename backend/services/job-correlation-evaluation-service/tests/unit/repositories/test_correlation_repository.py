@@ -11,6 +11,7 @@ import pytest
 from job_correlation_evaluation_service.repositories.correlation_repository import (
     CorrelationNotFoundError,
     CorrelationRepository,
+    CorrelationUpdate,
 )
 from nohiki.common.v1 import UserFeedback
 
@@ -124,7 +125,7 @@ class TestUpdate:
         mock_result.scalar_one_or_none.return_value = mock_correlation
         mock_session.execute.return_value = mock_result
 
-        result = await repository.update(mock_correlation.id, is_viewed=True)
+        result = await repository.update(mock_correlation.id, CorrelationUpdate(is_viewed=True))
 
         assert result.is_viewed is True
         mock_session.flush.assert_called_once()
@@ -143,7 +144,7 @@ class TestUpdate:
         mock_result.scalar_one_or_none.return_value = mock_correlation
         mock_session.execute.return_value = mock_result
 
-        result = await repository.update(mock_correlation.id, is_applied=True)
+        result = await repository.update(mock_correlation.id, CorrelationUpdate(is_applied=True))
 
         assert result.is_applied is True
 
@@ -161,7 +162,7 @@ class TestUpdate:
 
         result = await repository.update(
             mock_correlation.id,
-            user_feedback=UserFeedback.POSITIVE,
+            CorrelationUpdate(user_feedback=UserFeedback.POSITIVE),
         )
 
         assert result.user_feedback == UserFeedback.POSITIVE
@@ -178,7 +179,7 @@ class TestUpdate:
         mock_session.execute.return_value = mock_result
 
         with pytest.raises(CorrelationNotFoundError):
-            await repository.update(uuid4(), is_viewed=True)
+            await repository.update(uuid4(), CorrelationUpdate(is_viewed=True))
 
     @pytest.mark.asyncio
     async def test_update_multiple_fields(
@@ -194,8 +195,7 @@ class TestUpdate:
 
         result = await repository.update(
             mock_correlation.id,
-            is_viewed=True,
-            is_applied=True,
+            CorrelationUpdate(is_viewed=True, is_applied=True),
         )
 
         assert result.is_viewed is True

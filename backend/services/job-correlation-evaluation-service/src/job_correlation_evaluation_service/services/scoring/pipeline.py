@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from nohiki.ml.v1 import DenseData, EmbeddingType, EmbeddingVector, EncodingMode, EntityType, MultiVectorData
+from nohiki.ml.v1 import DenseData, EmbeddingType, EmbeddingVector, EntityType, MultiVectorData
 from nohiki_observability import get_logger
 
 from job_correlation_evaluation_service.core.config import get_manifest
@@ -50,14 +50,8 @@ def _all_finite(values: list[float]) -> bool:
 
 
 def _has_current_embedding_version(embedding: EmbeddingVector, expected_version: str) -> bool:
-    """Reject missing or stale artifact versions on real protobuf values."""
-    version = embedding.collection_version
-    return not isinstance(version, str) or version == expected_version
-
-
-def _matches_artifact_value(value: object, expected: str) -> bool:
-    """Validate real protobuf strings while allowing protocol-style test doubles."""
-    return not isinstance(value, str) or value == expected
+    """Return whether an embedding matches the active artifact version."""
+    return embedding.collection_version == expected_version
 
 
 def _required_query_embeddings(
@@ -96,33 +90,13 @@ def _required_query_embeddings(
         logger.warning("Skipping profile query with empty retrieval embedding artifact", reason="empty_artifact")
         return None
 
-    # EmbeddingVector predates encoding_mode; validate it when supplied by newer
-    # protocol objects while remaining compatible with older snapshots/test doubles.
-    modes = [getattr(embedding, "encoding_mode", None) for embedding in retrieval]
-    concrete_modes = [mode for mode in modes if isinstance(mode, EncodingMode)]
-    if concrete_modes and any(mode is not EncodingMode.QUERY for mode in concrete_modes):
-        logger.warning("Skipping profile query with document-mode retrieval artifact", reason="encoding_mode")
+    metadata = [(embedding.collection_version, embedding.content_hash) for embedding in retrieval]
+    if any(not version or not content_hash for version, content_hash in metadata):
+        logger.warning("Skipping profile query with incomplete artifact metadata", reason="metadata_missing")
         return None
-
-    metadata = [
-        (getattr(embedding, "collection_version", None), getattr(embedding, "content_hash", None))
-        for embedding in retrieval
-    ]
-    concrete_metadata = [
-        (version, content_hash)
-        for version, content_hash in metadata
-        if isinstance(version, str) or isinstance(content_hash, str)
-    ]
-    if concrete_metadata:
-        if any(
-            not isinstance(version, str) or not version or not isinstance(content_hash, str) or not content_hash
-            for version, content_hash in metadata
-        ):
-            logger.warning("Skipping profile query with incomplete artifact metadata", reason="metadata_missing")
-            return None
-        if len(set(concrete_metadata)) != 1:
-            logger.warning("Skipping profile query with mismatched artifact metadata", reason="metadata_mismatch")
-            return None
+    if len(set(metadata)) != 1:
+        logger.warning("Skipping profile query with mismatched artifact metadata", reason="metadata_mismatch")
+        return None
 
     return muvera_vec, sparse_vec, colbert_vec, dense, multi_vector
 
@@ -143,7 +117,6 @@ def _sparse_query_components(
     )
     stale = bool(
         sparse_vec
-        and isinstance(sparse_vec, EmbeddingVector)
         and (
             not _has_current_embedding_version(sparse_vec, expected_version) or sparse_vec.model_id != expected_model_id
         )
@@ -539,13 +512,13 @@ class ScoringPipeline:
 
         manifest = get_manifest()
         expected_version = manifest.get_collection_config(EntityType.JOB).version
-        if isinstance(listing.collection_version, str) and listing.collection_version != expected_version:
+        if listing.collection_version != expected_version:
             msg = "Listing snapshot collection version is stale"
             raise ValueError(msg)
         mv = colbert_vec.multi_vector
         if (
             not _has_current_embedding_version(colbert_vec, expected_version)
-            or not _matches_artifact_value(colbert_vec.model_id, manifest.late_interaction.model_id)
+            or colbert_vec.model_id != manifest.late_interaction.model_id
             or mv.token_dim != manifest.late_interaction.token_dim
             or mv.num_tokens <= 0
             or len(mv.values) != mv.num_tokens * mv.token_dim
@@ -601,17 +574,16 @@ class ScoringPipeline:
         manifest = get_manifest()
         collection_config = manifest.get_collection_config(EntityType.PROFILE)
         expected_version = collection_config.version
-        if isinstance(muvera_vec, EmbeddingVector):
-            dense_name = collection_config.qdrant.primary_dense_name
-            if len(dense.values) != collection_config.qdrant.vectors[dense_name].size:
-                logger.warning("Skipping profile query with malformed MUVERA artifact", reason="dimension_mismatch")
-                return None
+        dense_name = collection_config.qdrant.primary_dense_name
+        if len(dense.values) != collection_config.qdrant.vectors[dense_name].size:
+            logger.warning("Skipping profile query with malformed MUVERA artifact", reason="dimension_mismatch")
+            return None
         invalid_geometry = (
             not _has_current_embedding_version(muvera_vec, expected_version)
             or not _has_current_embedding_version(colbert_vec, expected_version)
             or not _has_current_embedding_version(sparse_vec, expected_version)
-            or not _matches_artifact_value(colbert_vec.model_id, manifest.late_interaction.model_id)
-            or not _matches_artifact_value(sparse_vec.model_id, manifest.sparse.model_id)
+            or colbert_vec.model_id != manifest.late_interaction.model_id
+            or sparse_vec.model_id != manifest.sparse.model_id
             or mv.token_dim != manifest.late_interaction.token_dim
             or mv.num_tokens <= 0
             or len(mv.values) != mv.num_tokens * mv.token_dim
@@ -627,8 +599,7 @@ class ScoringPipeline:
             return None
 
         sparse_indices, sparse_values = sparse_components
-        search_keywords = profile.search_keywords
-        query_text = " ".join(search_keywords) if isinstance(search_keywords, list) else ""
+        query_text = " ".join(profile.search_keywords)
         return QueryEncoding(
             muvera_fde=dense.values,
             sparse_indices=sparse_indices,

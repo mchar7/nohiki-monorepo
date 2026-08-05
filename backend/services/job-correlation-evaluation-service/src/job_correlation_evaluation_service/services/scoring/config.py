@@ -12,8 +12,6 @@ Environment Variable Patterns:
 
 from __future__ import annotations
 
-from functools import lru_cache
-
 from pydantic import Field, PositiveFloat, PositiveInt
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -309,9 +307,3 @@ def get_scoring_service_settings() -> ScoringServiceSettings:
 def reset_scoring_service_settings() -> None:
     """Reset the scoring service settings singleton (for testing)."""
     _ScoringServiceSettingsHolder.instance = None
-
-
-@lru_cache
-def get_scoring_config() -> ScoringServiceSettings:
-    """Alias for get_scoring_service_settings for compatibility."""
-    return get_scoring_service_settings()

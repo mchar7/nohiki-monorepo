@@ -201,19 +201,19 @@ class TestHandleBackfillListings:
             assert mock_matcher.match_listings_to_profile.call_args.kwargs["force_rescore"] is True
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("caller_context", [b"", b"legacy-context", b"{not-json"])
-    async def test_invalid_or_legacy_context_safely_uses_missing_only_path(
+    @pytest.mark.parametrize("caller_context", [b"", b"{not-json", b'{"force_rescore":"true"}'])
+    async def test_missing_or_malformed_context_safely_uses_missing_only_path(
         self,
         mock_backfill_message_with_listings: MagicMock,
         caller_context: bytes,
     ) -> None:
-        """Old callbacks cannot request a destructive rescore implicitly."""
+        """Untrusted callback metadata cannot request a destructive rescore."""
         from job_correlation_evaluation_service.events.backfill_handler import (
             handle_backfill_listings,
         )
 
         mock_backfill_message_with_listings.callback = MagicMock()
-        mock_backfill_message_with_listings.callback.operation_id = "op-legacy"
+        mock_backfill_message_with_listings.callback.operation_id = "op-invalid-context"
         mock_backfill_message_with_listings.callback.caller_context = caller_context
         mock_db = create_mock_session()
         context = _make_context(db_session=mock_db)

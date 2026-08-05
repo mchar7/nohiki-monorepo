@@ -23,36 +23,20 @@ from job_correlation_evaluation_service.services.scoring.features.groups.taxonom
 from job_correlation_evaluation_service.services.scoring.skill_relationship_cache import (
     SkillRelationshipCache,
 )
+from nohiki.job.listing.v1 import ListingSnapshot
+from nohiki.skill.v1 import JobSkillRequirement, UserSkillEntry
+from nohiki.user.pref.v1 import SearchPrefSnapshot
 
 
 def _make_context(
     job_skills: list[str] | None = None,
     user_skills: list[str] | None = None,
 ) -> FeatureExtractionContext:
-    """Create a FeatureExtractionContext with mock job/profile skills."""
-    job = MagicMock()
-    profile = MagicMock()
-
-    if job_skills is not None:
-        skills = []
-        for sid in job_skills:
-            s = MagicMock()
-            s.canonical_skill_id = sid
-            skills.append(s)
-        job.required_skills = skills
-    else:
-        job.required_skills = None
-
-    if user_skills is not None:
-        skills = []
-        for sid in user_skills:
-            s = MagicMock()
-            s.canonical_skill_id = sid
-            skills.append(s)
-        profile.user_skills = skills
-    else:
-        profile.user_skills = None
-
+    """Create a FeatureExtractionContext with current snapshot skill entries."""
+    job = ListingSnapshot(
+        skill_requirements=[JobSkillRequirement(skill_id=skill_id) for skill_id in (job_skills or [])]
+    )
+    profile = SearchPrefSnapshot(user_skills=[UserSkillEntry(skill_id=skill_id) for skill_id in (user_skills or [])])
     return FeatureExtractionContext(
         job=job,
         profile=profile,
@@ -84,31 +68,23 @@ def _make_cache_with_graph(
 
 
 class TestExtractSkillIds:
-    """Tests for _extract_skill_ids helper."""
+    """Tests for current canonical skill entries."""
 
-    def test_extracts_canonical_skill_ids(self) -> None:
-        """Should extract canonical_skill_id from skill objects."""
-        skills = [MagicMock(canonical_skill_id="s1"), MagicMock(canonical_skill_id="s2")]
-        result = _extract_skill_ids(skills)
-        assert result == frozenset({"s1", "s2"})
+    def test_extracts_job_skill_ids(self) -> None:
+        skills = [JobSkillRequirement(skill_id="s1"), JobSkillRequirement(skill_id="s2")]
 
-    def test_falls_back_to_skill_id(self) -> None:
-        """Should use skill_id when canonical_skill_id is missing."""
-        skill = MagicMock(spec=[])
-        skill.skill_id = "fallback-id"
-        # canonical_skill_id won't exist on spec=[]
-        result = _extract_skill_ids([skill])
-        assert result == frozenset({"fallback-id"})
+        assert _extract_skill_ids(skills) == frozenset({"s1", "s2"})
 
-    def test_returns_empty_for_none_skills(self) -> None:
-        """Should return empty frozenset for empty/None input."""
+    def test_extracts_user_skill_ids(self) -> None:
+        skills = [UserSkillEntry(skill_id="s1"), UserSkillEntry(skill_id="s2")]
+
+        assert _extract_skill_ids(skills) == frozenset({"s1", "s2"})
+
+    def test_skips_empty_skill_ids(self) -> None:
+        assert _extract_skill_ids([JobSkillRequirement()]) == frozenset()
+
+    def test_returns_empty_for_empty_input(self) -> None:
         assert _extract_skill_ids([]) == frozenset()
-
-    def test_skips_skills_without_ids(self) -> None:
-        """Should skip skills with no recognizable ID attribute."""
-        skill = MagicMock(spec=[])
-        result = _extract_skill_ids([skill])
-        assert result == frozenset()
 
 
 class TestMinDistanceToSet:

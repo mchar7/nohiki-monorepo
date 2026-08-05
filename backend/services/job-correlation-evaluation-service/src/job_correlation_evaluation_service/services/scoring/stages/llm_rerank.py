@@ -134,36 +134,8 @@ class LLMRerankStage:
 
     """
 
-    def __init__(
-        self,
-        endpoint_url: str | LLMRerankConfig = "",
-        **legacy_settings: float,
-    ) -> None:
-        """Initialize the reranker from typed or legacy settings.
-
-        Args:
-            endpoint_url: Typed configuration or external reranker URL.
-            **legacy_settings: Backward-compatible numeric constructor settings.
-        """
-        config = (
-            endpoint_url
-            if isinstance(endpoint_url, LLMRerankConfig)
-            else LLMRerankConfig(
-                endpoint_url=endpoint_url,
-                timeout_seconds=float(legacy_settings.get("timeout_seconds", 30.0)),
-                batch_size=int(legacy_settings.get("batch_size", DEFAULT_RERANKER_BATCH_SIZE)),
-                default_limit=int(legacy_settings.get("default_limit", DEFAULT_STAGE3_LIMIT)),
-                max_concurrent_batches=int(
-                    legacy_settings.get("max_concurrent_batches", DEFAULT_MAX_CONCURRENT_BATCHES)
-                ),
-                circuit_breaker_failure_threshold=int(
-                    legacy_settings.get("circuit_breaker_failure_threshold", FAILURE_THRESHOLD)
-                ),
-                circuit_breaker_recovery_seconds=int(
-                    legacy_settings.get("circuit_breaker_recovery_seconds", RECOVERY_TIMEOUT_SECONDS)
-                ),
-            )
-        )
+    def __init__(self, config: LLMRerankConfig) -> None:
+        """Initialize the reranker."""
         self._endpoint_url = config.endpoint_url
         self._timeout = config.timeout_seconds
         self._batch_size = config.batch_size
