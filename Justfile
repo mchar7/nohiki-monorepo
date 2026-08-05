@@ -388,7 +388,27 @@ proto-breaking base_ref="main":
     #!/usr/bin/env bash
     set -euo pipefail
     if git cat-file -e '{{ base_ref }}^{commit}' && git ls-tree --name-only '{{ base_ref }}' proto/ | grep -q .; then
-        nix develop .#ci {{ nix_flags }} --command bash -euc "cd proto && buf breaking --against '../.git#commit={{ base_ref }},subdir=proto'"
+        diagnostics="$(mktemp)"
+        trap 'rm -f "$diagnostics"' EXIT
+        status=0
+        nix develop .#ci {{ nix_flags }} --command bash -euc "cd proto && buf breaking --error-format=json --against '../.git#commit={{ base_ref }},subdir=proto'" >"$diagnostics" || status=$?
+        if ((status == 0)); then
+            exit 0
+        fi
+        # Owner-authorized one-time deletion of nohiki.job.listing.v1.DuplicateDetected.
+        # Buf exceptions are file-scoped, so filter the exact diagnostic instead of
+        # weakening MESSAGE_NO_DELETE for the four live messages in events.proto.
+        if ((status == 100)) && nix develop .#ci {{ nix_flags }} --command jq -e -s '
+            length == 1
+            and .[0].path == "nohiki/job/listing/v1/events.proto"
+            and .[0].type == "MESSAGE_NO_DELETE"
+            and .[0].message == "Previously present message \"DuplicateDetected\" was deleted from file."
+        ' "$diagnostics" >/dev/null; then
+            echo "Accepted owner-authorized removal of nohiki.job.listing.v1.DuplicateDetected"
+            exit 0
+        fi
+        cat "$diagnostics" >&2
+        exit "$status"
     else
         echo "Skipping: proto/ is absent from {{ base_ref }}"
     fi

@@ -9,7 +9,3 @@ lint:
 breaking:
   use:
     - FILE
-  ignore_only:
-    # Owner-authorized removal exception from 2026-08-03.
-    MESSAGE_NO_DELETE:
-      - nohiki/job/listing/v1/events.proto
