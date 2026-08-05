@@ -59,6 +59,14 @@ async def handle_discovery_triggered(
             )
             return
 
+    if not query.search_keywords:
+        logger.warning(
+            "Skipped discovery request without search keywords",
+            query_id=query.query_id,
+            discovery_id=run_id,
+        )
+        return
+
     logger.info(
         "Discovery triggered",
         query_id=query.query_id,

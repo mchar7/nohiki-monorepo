@@ -100,9 +100,13 @@ def _extract_skills_embedding(profile: SearchPref) -> EmbeddingVector | None:
 
 def _extract_query_embedding(profile: SearchPref) -> EmbeddingVector:
     """Build EmbeddingVector for query dense embedding."""
+    content_hash = profile.semantic_content_hash or profile_embedding_content_hash(
+        build_profile_embedding_text_from_profile(profile)
+    )
     return EmbeddingVector(
         embedding_type=EmbeddingType.DENSE,
         dense=DenseData(values=list(profile.query_embedding or [])),
+        content_hash=content_hash,
         collection_version=profile.collection_version or "",
     )
 

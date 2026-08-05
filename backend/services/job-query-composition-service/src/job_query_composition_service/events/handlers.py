@@ -137,7 +137,7 @@ async def handle_profile_created(
             locations=locations,
             sources=[v for v in snapshot.scrape_sources if v != JobBoardSource.UNSPECIFIED],
             frequency_tier=DEFAULT_FREQUENCY_TIER,
-            is_active=snapshot.is_active,
+            is_active=snapshot.is_active and bool(snapshot.search_keywords),
         ),
     )
 
@@ -193,7 +193,7 @@ async def handle_profile_updated(
             locations=locations,
             sources=[v for v in snapshot.scrape_sources if v != JobBoardSource.UNSPECIFIED],
             frequency_tier=DEFAULT_FREQUENCY_TIER,
-            is_active=snapshot.is_active,
+            is_active=snapshot.is_active and bool(snapshot.search_keywords),
         ),
     )
     previous_query_id = getattr(contributor, "previous_query_id", None)

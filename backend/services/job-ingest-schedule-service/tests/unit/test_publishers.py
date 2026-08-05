@@ -79,6 +79,27 @@ async def test_publishes_complete_schedule_run_with_deterministic_identity_and_k
 
 
 @pytest.mark.asyncio
+async def test_empty_sources_are_emitted_for_discovery_defaulting(
+    sample_schedule: IngestionSchedule,
+) -> None:
+    """The query contract preserves an empty source list as the default-provider signal."""
+    from job_ingest_schedule_service.events import publishers
+
+    sample_schedule.sources = []
+    kafka = AsyncMock()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(publishers, "kafka_client", kafka)
+        await publishers.publish_scrape_triggered(
+            sample_schedule,
+            datetime(2026, 7, 10, 12, tzinfo=UTC),
+        )
+
+    event = kafka.publish.await_args.kwargs["message"]
+    assert event.query.sources == []
+
+
+@pytest.mark.asyncio
 async def test_run_identity_is_stable_only_for_the_same_due_run(
     sample_schedule: IngestionSchedule,
 ) -> None:

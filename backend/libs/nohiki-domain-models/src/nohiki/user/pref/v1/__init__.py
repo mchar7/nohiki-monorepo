@@ -614,7 +614,7 @@ class SearchPrefSnapshot(betterproto2.Message):
         10, betterproto2.TYPE_STRING, repeated=True
     )
     """
-    REQUIRED - Search preferences (user-configurable)
+    Search preferences (user-configurable; empty values are canonical)
     """
 
     disallowed_keywords: "list[str]" = betterproto2.field(

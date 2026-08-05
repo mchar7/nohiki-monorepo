@@ -33,6 +33,11 @@ def _validated_frequency(seconds: int) -> timedelta:
     return timedelta(seconds=seconds)
 
 
+def _is_runnable_query(message: IngestionQueryChanged) -> bool:
+    """Return whether a query has both user intent and executable keywords."""
+    return message.is_active and bool(message.search_keywords)
+
+
 @kafka_client.message_handler(
     Topics.SYS_SCHEDULE_TICK,
     ScheduleTick,
@@ -88,6 +93,7 @@ async def handle_query_created(
     now = datetime.now(UTC)
     frequency = _validated_frequency(message.frequency_seconds)
 
+    is_active = _is_runnable_query(message)
     schedule = IngestionSchedule(
         query_id=query_id,
         search_keywords=list(message.search_keywords),
@@ -103,19 +109,19 @@ async def handle_query_created(
         work_arrangements=[wa for wa in message.work_arrangements if wa != WorkArrangement.UNSPECIFIED],
         sources=[src for src in message.sources if src != JobBoardSource.UNSPECIFIED],
         frequency=frequency,
-        is_active=message.is_active,
-        next_run_at=now + frequency if message.is_active else None,
+        is_active=is_active,
+        next_run_at=now + frequency if is_active else None,
     )
     db.add(schedule)
 
     logger.info(
         "Created schedule",
         query_id=str(query_id),
-        is_active=message.is_active,
+        is_active=is_active,
         next_run_at=schedule.next_run_at.isoformat() if schedule.next_run_at else None,
     )
 
-    if message.is_active:
+    if is_active:
         await publish_scrape_triggered(schedule, now)
         logger.info("Triggered immediate scrape for new query", query_id=str(query_id))
 
@@ -150,6 +156,7 @@ async def handle_query_updated(
         logger.info("Schedule not found for update, creating", query_id=str(query_id))
         now = datetime.now(UTC)
         frequency = _validated_frequency(message.frequency_seconds)
+        is_active = _is_runnable_query(message)
 
         schedule = IngestionSchedule(
             query_id=query_id,
@@ -166,18 +173,19 @@ async def handle_query_updated(
             work_arrangements=[wa for wa in message.work_arrangements if wa != WorkArrangement.UNSPECIFIED],
             sources=[src for src in message.sources if src != JobBoardSource.UNSPECIFIED],
             frequency=frequency,
-            is_active=message.is_active,
-            next_run_at=now + frequency if message.is_active else None,
+            is_active=is_active,
+            next_run_at=now + frequency if is_active else None,
         )
         db.add(schedule)
 
-        if message.is_active:
+        if is_active:
             await publish_scrape_triggered(schedule, now)
             logger.info("Triggered immediate scrape for new query (from update)", query_id=str(query_id))
         return
 
     now = datetime.now(UTC)
     was_active = schedule.is_active
+    is_active = _is_runnable_query(message)
 
     schedule.search_keywords = list(message.search_keywords)
     schedule.locations = [
@@ -192,10 +200,12 @@ async def handle_query_updated(
     schedule.work_arrangements = [wa for wa in message.work_arrangements if wa != WorkArrangement.UNSPECIFIED]
     schedule.sources = [src for src in message.sources if src != JobBoardSource.UNSPECIFIED]
     schedule.frequency = _validated_frequency(message.frequency_seconds)
-    schedule.is_active = message.is_active
+    schedule.is_active = is_active
     schedule.updated_at = now
 
-    if message.is_active and not was_active:
+    if not is_active:
+        schedule.next_run_at = None
+    elif not was_active:
         schedule.next_run_at = now + schedule.frequency
         await publish_scrape_triggered(schedule, now)
         logger.info("Queued immediate scrape for activated query", query_id=str(query_id))
@@ -203,7 +213,7 @@ async def handle_query_updated(
     logger.info(
         "Updated schedule",
         query_id=str(query_id),
-        is_active=message.is_active,
+        is_active=is_active,
     )
 
 
