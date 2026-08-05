@@ -62,7 +62,9 @@ logger = get_logger(__name__)
 SEEDING_LOCK_TIMEOUT_DEFAULT = 120
 SEEDING_POLL_INTERVAL = 1
 
-# Two-key advisory locks occupy a namespace separate from one-key seed locks.
+# Two-key advisory locks occupy a namespace separate from one-key seed locks. This is the same
+# constant the migration guard uses; see migrations/lock.py for the three properties it rests on
+# that no test here verifies, the crc32 collision case between the two prefixes included.
 _LOCK_METADATA_GUARD_NAMESPACE = 0x4E4F4849
 
 # SQLAlchemy table definitions for seeding coordination
