@@ -20,11 +20,6 @@ def get_compose_dir() -> Path:
     return get_project_root() / "infra" / "compose"
 
 
-def get_connector_config_dir() -> Path:
-    """Return the Kafka Connect connector configuration directory."""
-    return get_project_root() / "infra" / "kafka-connect" / "connectors"
-
-
 def get_manifest_path() -> Path:
     """Return the semantic representation manifest path."""
     return get_project_root() / "data" / "config" / "semantic_representation_manifest.json"
