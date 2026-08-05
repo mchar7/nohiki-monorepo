@@ -667,7 +667,7 @@ ast-query kind:
 
 # Scan a file or standard input before publishing GitHub-retained prose
 github-prose-scan path="-":
-    {{ env_lock }} shared venv -- uv run --no-sync python scripts/dev/github_prose_guard.py scan '{{ path }}'
+    PYTHONDONTWRITEBYTECODE=1 {{ env_lock }} shared venv -- uv run --no-sync python -B scripts/dev/github_prose_guard.py scan '{{ path }}'
 
 # Audit every pull request, or one pull request when a number is supplied
 github-prose-sweep pr="":
@@ -677,7 +677,7 @@ github-prose-sweep pr="":
     if [[ -n '{{ pr }}' ]]; then
         args+=(--pr '{{ pr }}')
     fi
-    {{ env_lock }} shared venv -- uv run --no-sync python scripts/dev/github_prose_guard.py "${args[@]}"
+    PYTHONDONTWRITEBYTECODE=1 {{ env_lock }} shared venv -- uv run --no-sync python -B scripts/dev/github_prose_guard.py "${args[@]}"
 
 # Git hooks
 

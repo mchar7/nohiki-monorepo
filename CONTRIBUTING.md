@@ -344,9 +344,19 @@ just github-prose-sweep
 
 The scanner loads the private disclosure vocabulary through the same pinned tool
 installation as the pre-push wrapper, then verifies an opaque vocabulary digest.
-Findings name only the surface, location, and rule; they do not render the matched
-text. Missing or changed policy, API failures, empty payloads, malformed responses,
-and unexpected scanner errors make the command refuse with a nonzero exit.
+A sweep scans the current five surface types and each retained revision exposed by
+GitHub's `userContentEdits` connection. Findings identify the surface, node, edit,
+timestamp, location, and rule without rendering matched text. The sweep refuses
+responses that omit required fields, return an unexpected node type, or exceed the
+100-revision query bound.
+
+This audit is read-only. GitHub has no public API mutation for removing individual
+revisions, and its APIs cannot enumerate deleted comment or review nodes. An author
+or user with write access can remove a revision through GitHub's edit-history UI;
+the API then retains deletion metadata while returning no diff content, so the
+sweep counts that record without inventing text to scan. Missing or changed policy,
+API failures, empty payloads, malformed responses, unavailable unpurged diffs, and
+unexpected scanner errors make the command refuse with a nonzero exit.
 
 Hooks remain client-side. `git push --no-verify` bypasses the pre-push hook completely, before the wrapper can run;
 no client-side wrapper can prevent that. Use it only as a deliberate exception, knowing that it skips all local

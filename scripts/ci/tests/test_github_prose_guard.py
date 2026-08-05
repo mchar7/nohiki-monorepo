@@ -57,6 +57,87 @@ def _scan(text: str) -> tuple[object, ...]:
     )
 
 
+_NODE_TYPES = {
+    "synthetic-pull": "PullRequest",
+    "synthetic-comment": "IssueComment",
+    "synthetic-review": "PullRequestReview",
+    "synthetic-review-comment": "PullRequestReviewComment",
+}
+_EDITED_AT = "2026-01-02T03:04:05Z"
+
+
+def _history_node(
+    node_id: str,
+    records: tuple[dict[str, object], ...] = (),
+    *,
+    has_next_page: bool = False,
+) -> dict[str, object]:
+    return {
+        "id": node_id,
+        "__typename": _NODE_TYPES[node_id],
+        "includesCreatedEdit": bool(records),
+        "lastEditedAt": _EDITED_AT if records else None,
+        "userContentEdits": {
+            "totalCount": len(records),
+            "pageInfo": {
+                "hasNextPage": has_next_page,
+                "endCursor": "synthetic-cursor" if has_next_page else None,
+            },
+            "nodes": list(records),
+        },
+    }
+
+
+def _edit_record(
+    node_id: str,
+    *,
+    diff: str | None = "Synthetic prior prose",
+    deleted_at: str | None = None,
+) -> dict[str, object]:
+    return {
+        "id": f"{node_id}-edit",
+        "diff": diff,
+        "editedAt": _EDITED_AT,
+        "deletedAt": deleted_at,
+    }
+
+
+def _surface_responses() -> dict[str, object]:
+    return {
+        "repos/example/project/pulls?state=all&per_page=100": [
+            [
+                {
+                    "number": 17,
+                    "node_id": "synthetic-pull",
+                    "title": "Synthetic title",
+                    "body": "Synthetic body",
+                }
+            ]
+        ],
+        "repos/example/project/issues/comments?per_page=100": [
+            [
+                {
+                    "node_id": "synthetic-comment",
+                    "issue_url": "https://api.github.invalid/repos/example/project/issues/17",
+                    "body": "Synthetic conversation comment",
+                }
+            ]
+        ],
+        "repos/example/project/pulls/17/reviews?per_page=100": [
+            [{"node_id": "synthetic-review", "body": "Synthetic review summary"}]
+        ],
+        "repos/example/project/pulls/comments?per_page=100": [
+            [
+                {
+                    "node_id": "synthetic-review-comment",
+                    "pull_request_url": "https://api.github.invalid/repos/example/project/pulls/17",
+                    "body": "Synthetic inline review comment",
+                }
+            ]
+        ],
+    }
+
+
 def test_configured_vocabulary_uses_precomputed_digest() -> None:
     assert guard._policy_digest(_config()) == _SYNTHETIC_POLICY_DIGEST
 
@@ -86,30 +167,14 @@ def test_policy_integrity_mismatch_fails_closed() -> None:
         )
 
 
-def test_sweep_fetches_all_pull_request_prose_surfaces() -> None:
-    responses: dict[str, object] = {
-        "repos/example/project/pulls?state=all&per_page=100": [
-            [{"number": 17, "title": "Synthetic title", "body": "Synthetic body"}]
-        ],
-        "repos/example/project/issues/comments?per_page=100": [
-            [
-                {
-                    "issue_url": "https://api.github.invalid/repos/example/project/issues/17",
-                    "body": "Synthetic conversation comment",
-                }
-            ]
-        ],
-        "repos/example/project/pulls/17/reviews?per_page=100": [[{"body": "Synthetic review summary"}]],
-        "repos/example/project/pulls/comments?per_page=100": [
-            [
-                {
-                    "pull_request_url": "https://api.github.invalid/repos/example/project/pulls/17",
-                    "body": "Synthetic inline review comment",
-                }
-            ]
-        ],
-    }
-    surfaces = guard.fetch_surfaces(responses.__getitem__, "example/project", None)
+def test_sweep_fetches_all_pull_request_text_surfaces() -> None:
+    responses = _surface_responses()
+    surfaces = guard.fetch_surfaces(
+        responses.__getitem__,
+        lambda node_ids: [_history_node(node_id) for node_id in node_ids],
+        "example/project",
+        None,
+    )
     result = guard.sweep(
         surfaces,
         _config(),
@@ -125,19 +190,87 @@ def test_sweep_fetches_all_pull_request_prose_surfaces() -> None:
     ]
     assert result.pull_requests == 1
     assert result.comments == 2
+    assert result.histories == 0
     assert result.characters == sum(len(surface.text) for surface in surfaces) > 0
     assert result.findings == ()
 
 
+def test_sweep_scans_retained_edits_for_every_node_type() -> None:
+    responses = _surface_responses()
+    records = {node_id: (_edit_record(node_id, diff="Prior .synthetic-control/record"),) for node_id in _NODE_TYPES}
+    surfaces = guard.fetch_surfaces(
+        responses.__getitem__,
+        lambda node_ids: [_history_node(node_id, records[node_id]) for node_id in node_ids],
+        "example/project",
+        None,
+    )
+    result = guard.sweep(
+        surfaces,
+        _config(),
+        expected_policy_digest=_SYNTHETIC_POLICY_DIGEST,
+    )
+
+    history_surfaces = [surface for surface in surfaces if surface.name.endswith("-history")]
+    assert [surface.name for surface in history_surfaces] == [
+        "title/body-history",
+        "comment-history",
+        "review-summary-history",
+        "review-comment-history",
+    ]
+    assert [(surface.node_id, surface.edit_id, surface.edited_at) for surface in history_surfaces] == [
+        (node_id, f"{node_id}-edit", _EDITED_AT) for node_id in _NODE_TYPES
+    ]
+    assert result.histories == 4
+    assert len(result.findings) == 4
+    assert {surface.name for surface, _finding in result.findings} == {surface.name for surface in history_surfaces}
+
+
+def test_purged_edit_metadata_is_accepted_without_inventing_content() -> None:
+    ref = guard._EditRef("synthetic-pull", 17, "title/body", "PullRequest")
+    node = _history_node(
+        "synthetic-pull",
+        (_edit_record("synthetic-pull", diff=None, deleted_at=_EDITED_AT),),
+    )
+
+    assert guard._history_surfaces([node], [ref]) == (
+        guard.Surface(
+            17,
+            "title/body-history",
+            "",
+            "synthetic-pull",
+            "synthetic-pull-edit",
+            _EDITED_AT,
+            _EDITED_AT,
+        ),
+    )
+
+
+def test_unavailable_unpurged_edit_fails_closed() -> None:
+    ref = guard._EditRef("synthetic-pull", 17, "title/body", "PullRequest")
+    node = _history_node("synthetic-pull", (_edit_record("synthetic-pull", diff=None),))
+
+    with pytest.raises(RuntimeError, match="unavailable edit history"):
+        guard._history_surfaces([node], [ref])
+
+
+def test_paginated_edit_history_fails_closed() -> None:
+    ref = guard._EditRef("synthetic-pull", 17, "title/body", "PullRequest")
+    node = _history_node("synthetic-pull", has_next_page=True)
+
+    with pytest.raises(RuntimeError, match="truncated edit history"):
+        guard._history_surfaces([node], [ref])
+
+
 def test_sweep_fails_closed_on_empty_api_payload() -> None:
     with pytest.raises(RuntimeError, match="no pull requests"):
-        guard.fetch_surfaces(lambda _endpoint: [], "example/project", None)
+        guard.fetch_surfaces(lambda _endpoint: [], lambda _node_ids: [], "example/project", None)
 
 
 def test_malformed_review_summary_fails_closed() -> None:
     responses: dict[str, object] = {
         "repos/example/project/pulls/17": {
             "number": 17,
+            "node_id": "synthetic-pull",
             "title": "Synthetic title",
             "body": "Synthetic body",
         },
@@ -147,7 +280,7 @@ def test_malformed_review_summary_fails_closed() -> None:
     }
 
     with pytest.raises(RuntimeError, match="malformed review summary"):
-        guard.fetch_surfaces(responses.__getitem__, "example/project", 17)
+        guard.fetch_surfaces(responses.__getitem__, lambda _node_ids: [], "example/project", 17)
 
 
 @pytest.mark.parametrize(
@@ -163,6 +296,7 @@ def test_missing_body_key_fails_closed(endpoint: str, surface: str) -> None:
     responses: dict[str, object] = {
         "repos/example/project/pulls/17": {
             "number": 17,
+            "node_id": "synthetic-pull",
             "title": "Synthetic title",
             "body": "Synthetic body",
         },
@@ -175,7 +309,28 @@ def test_missing_body_key_fails_closed(endpoint: str, surface: str) -> None:
     )
 
     with pytest.raises(RuntimeError, match=rf"malformed {surface}"):
-        guard.fetch_surfaces(responses.__getitem__, "example/project", 17)
+        guard.fetch_surfaces(responses.__getitem__, lambda _node_ids: [], "example/project", 17)
+
+
+def test_loading_policy_disables_bytecode_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    pins = {
+        "POLICY_TREE": "/tmp/synthetic-policy",
+        "POLICY_TREE_SHA256": "synthetic-digest",
+        "GIT": "/nix/store/synthetic/bin/git",
+        "GH": "/nix/store/synthetic/bin/gh",
+    }
+    module = SimpleNamespace(load_config=lambda _repository: _config())
+    monkeypatch.setattr(guard, "_hook_assignments", lambda _repository: pins)
+    monkeypatch.setattr(guard, "_policy_tree_digest", lambda _tree: "synthetic-digest")
+    monkeypatch.setattr(guard, "_policy_package", lambda _tree: "synthetic_policy")
+    monkeypatch.setattr(guard.importlib, "import_module", lambda _name: module)
+    monkeypatch.setattr(guard.sys, "dont_write_bytecode", False)
+
+    config, gh = guard._load_guard(_ROOT)
+
+    assert isinstance(config, _SyntheticConfig)
+    assert gh == pins["GH"]
+    assert guard.sys.dont_write_bytecode is True
 
 
 def test_unexpected_scanner_error_refuses_without_echoing(
@@ -206,6 +361,7 @@ def test_rendering_never_echoes_matched_text(capsys: pytest.CaptureFixture[str])
         pull_requests=1,
         comments=1,
         characters=len(sensitive),
+        histories=1,
         findings=((surface, guard.Finding("synthetic-rule", 2, 4)),),
     )
 
@@ -213,4 +369,6 @@ def test_rendering_never_echoes_matched_text(capsys: pytest.CaptureFixture[str])
     captured = capsys.readouterr()
     assert sensitive not in captured.out
     assert sensitive not in captured.err
+    assert "1 retained edit records" in captured.out
+    assert "deleted nodes are not enumerable through GitHub APIs; this audit is read-only" in captured.out
     assert "PR #17 comment:2:4: [synthetic-rule]" in captured.err

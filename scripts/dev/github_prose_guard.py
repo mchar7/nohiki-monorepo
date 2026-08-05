@@ -35,6 +35,10 @@ class Surface:
     pull_request: int
     name: str
     text: str
+    node_id: str | None = None
+    edit_id: str | None = None
+    edited_at: str | None = None
+    deleted_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,8 +47,17 @@ class SweepResult:
 
     pull_requests: int
     comments: int
+    histories: int
     characters: int
     findings: tuple[tuple[Surface, Finding], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _EditRef:
+    node_id: str
+    pull_request: int
+    name: str
+    typename: str
 
 
 class _Pattern(Protocol):
@@ -69,9 +82,57 @@ class _GuardError(RuntimeError):
 
 
 type ApiGet = Callable[[str], object]
+type EditGet = Callable[[Sequence[str]], object]
 
 
 _EXPECTED_POLICY_DIGEST = "d7685e4ee0c63673e71d7dbd778e9a5b260a6f0cd749f0a2f1d0023cf2370547"
+_EDIT_HISTORY_QUERY = """
+query($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    __typename
+    ... on PullRequest {
+      id
+      includesCreatedEdit
+      lastEditedAt
+      userContentEdits(first: 100) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { id diff editedAt deletedAt }
+      }
+    }
+    ... on IssueComment {
+      id
+      includesCreatedEdit
+      lastEditedAt
+      userContentEdits(first: 100) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { id diff editedAt deletedAt }
+      }
+    }
+    ... on PullRequestReview {
+      id
+      includesCreatedEdit
+      lastEditedAt
+      userContentEdits(first: 100) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { id diff editedAt deletedAt }
+      }
+    }
+    ... on PullRequestReviewComment {
+      id
+      includesCreatedEdit
+      lastEditedAt
+      userContentEdits(first: 100) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { id diff editedAt deletedAt }
+      }
+    }
+  }
+}
+"""
 
 
 def _fail(message: str) -> Never:
@@ -263,6 +324,7 @@ def _load_guard(repository: Path) -> tuple[_Config, str]:
     git_dir = str(Path(pins["GIT"]).parent)
     os.environ["PATH"] = f"{git_dir}{os.pathsep}{os.environ.get('PATH', '')}"
     sys.path.insert(0, str(tree / "src"))
+    sys.dont_write_bytecode = True
     module = importlib.import_module(f"{_policy_package(tree)}.config")
     load_config = getattr(module, "load_config", None)
     if not callable(load_config):
@@ -291,6 +353,42 @@ def _gh_json(gh: str, repository: Path, endpoint: str, *, paginate: bool) -> obj
         _fail("GitHub API returned malformed JSON")
 
 
+def _gh_edit_history(gh: str, repository: Path, node_ids: Sequence[str]) -> object:
+    nodes: list[object] = []
+    for offset in range(0, len(node_ids), 100):
+        payload = json.dumps(
+            {
+                "query": _EDIT_HISTORY_QUERY,
+                "variables": {"ids": list(node_ids[offset : offset + 100])},
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode()
+        completed = subprocess.run(
+            [gh, "api", "graphql", "--input", "-"],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            input=payload,
+            timeout=60,
+        )
+        if completed.returncode != 0:
+            _fail(f"GitHub GraphQL request failed with exit status {completed.returncode}")
+        try:
+            response = json.loads(completed.stdout)
+        except UnicodeDecodeError, json.JSONDecodeError:
+            _fail("GitHub GraphQL returned malformed JSON")
+        if (
+            not isinstance(response, dict)
+            or "errors" in response
+            or not isinstance(data := response.get("data"), dict)
+            or not isinstance(page := data.get("nodes"), list)
+        ):
+            _fail("GitHub GraphQL returned malformed edit history")
+        nodes.extend(page)
+    return nodes
+
+
 def _pages(value: object, surface: str) -> list[object]:
     if not isinstance(value, list) or any(not isinstance(page, list) for page in value):
         _fail(f"GitHub API returned malformed {surface} pages")
@@ -300,6 +398,12 @@ def _pages(value: object, surface: str) -> list[object]:
 
 def _required_int(item: object, key: str, surface: str) -> int:
     if not isinstance(item, dict) or type(value := item.get(key)) is not int:
+        _fail(f"GitHub API returned malformed {surface}")
+    return value
+
+
+def _required_string(item: object, key: str, surface: str) -> str:
+    if not isinstance(item, dict) or not isinstance(value := item.get(key), str) or not value:
         _fail(f"GitHub API returned malformed {surface}")
     return value
 
@@ -322,8 +426,77 @@ def _url_number(item: object, key: str, surface: str) -> int:
     return int(rendered)
 
 
-def fetch_surfaces(api_get: ApiGet, repository_name: str, pull_request: int | None) -> tuple[Surface, ...]:
-    """Fetch every retained pull-request prose surface, failing on malformed data."""
+def _history_surfaces(value: object, refs: Sequence[_EditRef]) -> tuple[Surface, ...]:
+    if not isinstance(value, list):
+        _fail("GitHub GraphQL returned malformed edit history")
+    expected = {ref.node_id: ref for ref in refs}
+    if len(expected) != len(refs) or len(value) != len(expected):
+        _fail("GitHub GraphQL returned incomplete edit history")
+
+    seen: set[str] = set()
+    surfaces: list[Surface] = []
+    for node in value:
+        node_id = _required_string(node, "id", "edit history node")
+        typename = _required_string(node, "__typename", "edit history node")
+        ref = expected.get(node_id)
+        if ref is None or typename != ref.typename or node_id in seen:
+            _fail("GitHub GraphQL returned mismatched edit history")
+        seen.add(node_id)
+        if not isinstance(node, dict) or type(node.get("includesCreatedEdit")) is not bool:
+            _fail("GitHub GraphQL returned malformed edit history")
+        last_edited = node.get("lastEditedAt")
+        if last_edited is not None and not isinstance(last_edited, str):
+            _fail("GitHub GraphQL returned malformed edit history")
+        edits = node.get("userContentEdits")
+        if not isinstance(edits, dict) or type(total := edits.get("totalCount")) is not int or total < 0:
+            _fail("GitHub GraphQL returned malformed edit history")
+        page_info = edits.get("pageInfo")
+        if not isinstance(page_info, dict) or type(page_info.get("hasNextPage")) is not bool:
+            _fail("GitHub GraphQL returned malformed edit history")
+        end_cursor = page_info.get("endCursor")
+        if end_cursor is not None and not isinstance(end_cursor, str):
+            _fail("GitHub GraphQL returned malformed edit history")
+        if page_info["hasNextPage"]:
+            _fail("GitHub GraphQL truncated edit history")
+        records = edits.get("nodes")
+        if not isinstance(records, list) or len(records) != total:
+            _fail("GitHub GraphQL returned incomplete edit history")
+        for record in records:
+            edit_id = _required_string(record, "id", "edit history record")
+            edited_at = _required_string(record, "editedAt", "edit history record")
+            if not isinstance(record, dict) or "diff" not in record or "deletedAt" not in record:
+                _fail("GitHub GraphQL returned malformed edit history record")
+            diff = record["diff"]
+            deleted_at = record["deletedAt"]
+            if (diff is not None and not isinstance(diff, str)) or (
+                deleted_at is not None and not isinstance(deleted_at, str)
+            ):
+                _fail("GitHub GraphQL returned malformed edit history record")
+            if diff is None and deleted_at is None:
+                _fail("GitHub GraphQL returned unavailable edit history")
+            surfaces.append(
+                Surface(
+                    ref.pull_request,
+                    f"{ref.name}-history",
+                    "" if diff is None else diff,
+                    node_id,
+                    edit_id,
+                    edited_at,
+                    deleted_at,
+                )
+            )
+    if seen != expected.keys():
+        _fail("GitHub GraphQL returned incomplete edit history")
+    return tuple(surfaces)
+
+
+def fetch_surfaces(
+    api_get: ApiGet,
+    edit_get: EditGet,
+    repository_name: str,
+    pull_request: int | None,
+) -> tuple[Surface, ...]:
+    """Fetch every retained pull-request text surface, failing on malformed data."""
     base = f"repos/{repository_name}"
     if pull_request is None:
         pulls = _pages(api_get(f"{base}/pulls?state=all&per_page=100"), "pull request")
@@ -349,27 +522,41 @@ def fetch_surfaces(api_get: ApiGet, repository_name: str, pull_request: int | No
         review_summaries.extend((number, item) for item in reviews)
 
     surfaces: list[Surface] = []
+    refs: list[_EditRef] = []
     for item in pulls:
         number = _required_int(item, "number", "pull request")
         title = _body(item, "title", "pull request title")
         if not title:
             _fail("GitHub API returned an empty pull request title")
+        body = _body(item, "body", "pull request body")
+        node_id = _required_string(item, "node_id", "pull request")
         surfaces.extend(
             (
-                Surface(number, "title", title),
-                Surface(number, "body", _body(item, "body", "pull request body")),
+                Surface(number, "title", title, node_id),
+                Surface(number, "body", body, node_id),
             )
         )
+        refs.append(_EditRef(node_id, number, "title/body", "PullRequest"))
     for item in issue_comments:
         number = pull_request if pull_request is not None else _url_number(item, "issue_url", "comment")
         if number in numbers:
-            surfaces.append(Surface(number, "comment", _body(item, "body", "comment")))
+            body = _body(item, "body", "comment")
+            node_id = _required_string(item, "node_id", "comment")
+            surfaces.append(Surface(number, "comment", body, node_id))
+            refs.append(_EditRef(node_id, number, "comment", "IssueComment"))
     for number, item in review_summaries:
-        surfaces.append(Surface(number, "review-summary", _body(item, "body", "review summary")))
+        body = _body(item, "body", "review summary")
+        node_id = _required_string(item, "node_id", "review summary")
+        surfaces.append(Surface(number, "review-summary", body, node_id))
+        refs.append(_EditRef(node_id, number, "review-summary", "PullRequestReview"))
     for item in review_comments:
         number = pull_request if pull_request is not None else _url_number(item, "pull_request_url", "review comment")
         if number in numbers:
-            surfaces.append(Surface(number, "review-comment", _body(item, "body", "review comment")))
+            body = _body(item, "body", "review comment")
+            node_id = _required_string(item, "node_id", "review comment")
+            surfaces.append(Surface(number, "review-comment", body, node_id))
+            refs.append(_EditRef(node_id, number, "review-comment", "PullRequestReviewComment"))
+    surfaces.extend(_history_surfaces(edit_get([ref.node_id for ref in refs]), refs))
     return tuple(surfaces)
 
 
@@ -395,8 +582,9 @@ def sweep(
             expected_policy_digest=expected_policy_digest,
         )
     )
-    comments = sum(surface.name.endswith("comment") for surface in surfaces)
-    return SweepResult(len(pull_requests), comments, characters, findings)
+    comments = sum(surface.name in {"comment", "review-comment"} for surface in surfaces)
+    histories = sum(surface.name.endswith("-history") for surface in surfaces)
+    return SweepResult(len(pull_requests), comments, histories, characters, findings)
 
 
 def _repository_name(gh: str, repository: Path) -> str:
@@ -425,13 +613,23 @@ def _render_sweep(result: SweepResult) -> None:
     sys.stdout.write(
         "github-prose-guard: "
         f"fetched {result.pull_requests} pull requests, {result.comments} comments, "
-        f"{result.characters} characters\n"
+        f"{result.histories} retained edit records, {result.characters} characters\n"
+        "github-prose-guard: deleted nodes are not enumerable through GitHub APIs; this audit is read-only\n"
     )
     for surface, finding in result.findings:
+        metadata = ""
+        if surface.node_id is not None:
+            metadata += f" node={surface.node_id}"
+        if surface.edit_id is not None:
+            metadata += f" edit={surface.edit_id}"
+        if surface.edited_at is not None:
+            metadata += f" editedAt={surface.edited_at}"
+        if surface.deleted_at is not None:
+            metadata += f" deletedAt={surface.deleted_at}"
         sys.stderr.write(
             "github-prose-guard: "
-            f"PR #{surface.pull_request} {surface.name}:{finding.line}:{finding.column}: "
-            f"[{finding.rule}] disclosure\n"
+            f"PR #{surface.pull_request} {surface.name}{metadata}:"
+            f"{finding.line}:{finding.column}: [{finding.rule}] disclosure\n"
         )
 
 
@@ -462,7 +660,10 @@ def _execute(arguments: argparse.Namespace) -> int:
     def api_get(endpoint: str) -> object:
         return _gh_json(gh, repository, endpoint, paginate="?" in endpoint)
 
-    result = sweep(fetch_surfaces(api_get, name, pull_request), config)
+    def edit_get(node_ids: Sequence[str]) -> object:
+        return _gh_edit_history(gh, repository, node_ids)
+
+    result = sweep(fetch_surfaces(api_get, edit_get, name, pull_request), config)
     _render_sweep(result)
     return 1 if result.findings else 0
 
