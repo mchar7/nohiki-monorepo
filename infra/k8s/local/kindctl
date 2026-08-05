@@ -16,8 +16,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any, Iterator, Literal, Sequence
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 CLUSTER = "nohiki"
@@ -57,6 +58,8 @@ DIGEST_VALUES = REPO_ROOT / "infra/k8s/gitops/platform/local/image-digests.value
 HELM_CHART = REPO_ROOT / "infra/k8s/helm"
 HELM_VALUES = HELM_CHART / "values.yaml"
 HELM_LOCAL_VALUES = HELM_CHART / "values.local.yaml"
+MODEL_ARCHIVE_SEED = REPO_ROOT / "infra/k8s/local/model_archive_seed.py"
+SEMANTIC_MANIFEST = REPO_ROOT / "data/config/semantic_representation_manifest.json"
 PUBLICATION_TIMEOUT = 420 * 60
 LLM_PROXY_ENV = "NOHIKI_LLM_PROXY_ENV_FILE"
 LLM_PROXY_SECRET = "nohiki-llm-proxy-source"
@@ -219,6 +222,349 @@ def process_matches(record: dict[str, Any]) -> bool:
         return False
 
 
+MEMORY_SAMPLE_INTERVAL_SECONDS = 1.0
+MEMORY_TELEMETRY_NAME = "memory-telemetry"
+MEMORY_ADMISSION_FLOOR_BYTES = 23 * 1024**3
+
+
+def owned_canonical_record(path: Path, label: str) -> dict[str, Any]:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as error:
+        raise KindctlError(f"{label} is unavailable") from error
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise KindctlError(f"{label} must be a user-owned mode-0600 regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            data = stream.read(65_537)
+        if len(data) > 65_536:
+            raise KindctlError(f"{label} is too large")
+    finally:
+        os.close(descriptor)
+    try:
+        record = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise KindctlError(f"{label} is malformed") from error
+    if not isinstance(record, dict) or canonical_bytes(record) != data:
+        raise KindctlError(f"{label} must be canonical JSON")
+    return record
+
+
+def validate_memory_telemetry_dir(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise KindctlError("memory telemetry directory is unavailable") from error
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or path.is_symlink()
+        or path.resolve() != path
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise KindctlError("memory telemetry directory must be a canonical user-owned mode-0700 directory")
+
+
+def memory_telemetry_paths(attempt: Path) -> dict[str, Path]:
+    root = attempt / MEMORY_TELEMETRY_NAME
+    return {
+        "root": root,
+        "creator": root / "creator.json",
+        "baseline": root / "baseline.json",
+        "identity": root / "sampler.json",
+        "samples": root / "samples.json",
+        "created": root / "create-complete.json",
+        "stop": root / "stop-request.json",
+    }
+
+
+def process_identity(pid: int) -> dict[str, int | str]:
+    return {"bootId": boot_id(), "pid": pid, "startTicks": process_start_ticks(pid)}
+
+
+def validate_process_identity(record: dict[str, Any], label: str) -> None:
+    if set(record) != {"bootId", "pid", "startTicks"}:
+        raise KindctlError(f"{label} identity is malformed")
+    if not isinstance(record["bootId"], str) or not record["bootId"]:
+        raise KindctlError(f"{label} boot identity is malformed")
+    for field in ("pid", "startTicks"):
+        if isinstance(record[field], bool) or not isinstance(record[field], int) or record[field] < 1:
+            raise KindctlError(f"{label} process identity is malformed")
+
+
+def parse_mem_available_bytes(meminfo: str) -> int:
+    matches = re.findall(r"^MemAvailable:[ \t]+([0-9]+)[ \t]+kB$", meminfo, re.MULTILINE)
+    if len(matches) != 1:
+        raise KindctlError("/proc/meminfo has no unique MemAvailable byte source")
+    return int(matches[0]) * 1024
+
+
+def next_memory_trough(current: int | None, available: int) -> int:
+    if isinstance(available, bool) or not isinstance(available, int) or available < 0:
+        raise KindctlError("MemAvailable sample must be a nonnegative integer")
+    return available if current is None else min(current, available)
+
+
+def validated_memory_samples(
+    record: dict[str, Any],
+    identity: dict[str, Any],
+    *,
+    require_complete: bool,
+) -> tuple[int, int]:
+    expected = {
+        "bootId",
+        "complete",
+        "hostMemAvailableBaselineBytes",
+        "hostMemAvailableTroughBytes",
+        "pid",
+        "sampleCount",
+        "startTicks",
+    }
+    if set(record) != expected:
+        raise KindctlError("memory sampler state is malformed")
+    if any(record.get(field) != identity[field] for field in ("bootId", "pid", "startTicks")):
+        raise KindctlError("memory sampler identity changed")
+    count = record["sampleCount"]
+    baseline = record["hostMemAvailableBaselineBytes"]
+    trough = record["hostMemAvailableTroughBytes"]
+    if (
+        isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 1
+        or isinstance(baseline, bool)
+        or not isinstance(baseline, int)
+        or baseline < 0
+        or isinstance(trough, bool)
+        or not isinstance(trough, int)
+        or trough < 0
+        or not isinstance(record["complete"], bool)
+    ):
+        raise KindctlError("memory sampler state is malformed")
+    if require_complete and (record["complete"] is not True or count < 2):
+        raise KindctlError("memory sampler did not complete a create-to-finalize trough")
+    return trough, count
+
+
+def run_memory_sampler(attempt: Path) -> None:
+    paths = memory_telemetry_paths(attempt)
+    validate_memory_telemetry_dir(paths["root"])
+    creator = owned_canonical_record(paths["creator"], "memory sampler creator record")
+    validate_process_identity(creator, "memory sampler creator")
+    baseline_record = owned_canonical_record(paths["baseline"], "memory sampler baseline record")
+    if set(baseline_record) != {"hostMemAvailableBaselineBytes"}:
+        raise KindctlError("memory sampler baseline is malformed")
+    baseline = baseline_record["hostMemAvailableBaselineBytes"]
+    if isinstance(baseline, bool) or not isinstance(baseline, int) or baseline < 0:
+        raise KindctlError("memory sampler baseline is malformed")
+    identity = process_identity(os.getpid())
+    write_exclusive(paths["identity"], identity)
+    trough: int | None = None
+    sample_count = 0
+    deadline = time.monotonic()
+    while True:
+        available = parse_mem_available_bytes(Path("/proc/meminfo").read_text(encoding="ascii"))
+        trough = next_memory_trough(trough, available)
+        sample_count += 1
+        write_atomic(
+            paths["samples"],
+            identity
+            | {
+                "complete": False,
+                "hostMemAvailableBaselineBytes": baseline,
+                "hostMemAvailableTroughBytes": trough,
+                "sampleCount": sample_count,
+            },
+        )
+        if paths["stop"].exists():
+            stop = owned_canonical_record(paths["stop"], "memory sampler stop request")
+            if stop != {"stop": True}:
+                raise KindctlError("memory sampler stop request is malformed")
+            break
+        if paths["created"].exists():
+            created = owned_canonical_record(paths["created"], "memory sampler create-complete record")
+            if created != {"created": True}:
+                raise KindctlError("memory sampler create-complete record is malformed")
+        elif not process_matches(creator):
+            break
+        deadline += MEMORY_SAMPLE_INTERVAL_SECONDS
+        time.sleep(max(0.0, deadline - time.monotonic()))
+    write_atomic(
+        paths["samples"],
+        identity
+        | {
+            "complete": True,
+            "hostMemAvailableBaselineBytes": baseline,
+            "hostMemAvailableTroughBytes": trough,
+            "sampleCount": sample_count,
+        },
+    )
+
+
+def start_memory_sampler(attempt: Path) -> None:
+    paths = memory_telemetry_paths(attempt)
+    if paths["root"].exists() or paths["root"].is_symlink():
+        raise KindctlError("memory telemetry already exists for this attempt")
+    paths["root"].mkdir(mode=0o700)
+    validate_memory_telemetry_dir(paths["root"])
+    baseline = parse_mem_available_bytes(Path("/proc/meminfo").read_text(encoding="ascii"))
+    write_exclusive(paths["baseline"], {"hostMemAvailableBaselineBytes": baseline})
+    write_exclusive(paths["creator"], process_identity(os.getpid()))
+    sampler = subprocess.Popen(
+        (sys.executable, str(Path(__file__).absolute()), "--attempt-dir", str(attempt), "_memory-sampler"),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 5
+    try:
+        while time.monotonic() < deadline:
+            if sampler.poll() is not None:
+                raise KindctlError("memory sampler exited before its first sample")
+            try:
+                identity = owned_canonical_record(paths["identity"], "memory sampler identity")
+                validate_process_identity(identity, "memory sampler")
+                samples = owned_canonical_record(paths["samples"], "memory sampler state")
+                validated_memory_samples(samples, identity, require_complete=False)
+            except KindctlError:
+                time.sleep(0.05)
+                continue
+            if identity["pid"] != sampler.pid or not process_matches(identity):
+                raise KindctlError("memory sampler process identity changed during startup")
+            return
+        raise KindctlError("memory sampler did not produce its first sample")
+    except BaseException:
+        write_atomic(paths["stop"], {"stop": True})
+        try:
+            sampler.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+
+
+def mark_memory_sampler_created(attempt: Path) -> None:
+    paths = memory_telemetry_paths(attempt)
+    validate_memory_telemetry_dir(paths["root"])
+    identity = owned_canonical_record(paths["identity"], "memory sampler identity")
+    validate_process_identity(identity, "memory sampler")
+    samples = owned_canonical_record(paths["samples"], "memory sampler state")
+    validated_memory_samples(samples, identity, require_complete=False)
+    if not process_matches(identity):
+        raise KindctlError("memory sampler exited before create completed")
+    write_exclusive(paths["created"], {"created": True})
+
+
+def cleanup_memory_sampler(attempt: Path) -> None:
+    paths = memory_telemetry_paths(attempt)
+    if not paths["root"].exists() and not paths["root"].is_symlink():
+        return
+    validate_memory_telemetry_dir(paths["root"])
+    identity: dict[str, Any] | None = None
+    try:
+        identity = owned_canonical_record(paths["identity"], "memory sampler identity")
+        validate_process_identity(identity, "memory sampler")
+    except KindctlError:
+        pass
+    write_atomic(paths["stop"], {"stop": True})
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if identity is None or not process_matches(identity):
+            break
+        time.sleep(0.05)
+    if identity is not None and process_matches(identity):
+        raise KindctlError("memory sampler did not stop during cleanup")
+    shutil.rmtree(paths["root"])
+
+
+def finish_memory_sampler(attempt: Path) -> dict[str, int]:
+    paths = memory_telemetry_paths(attempt)
+    validate_memory_telemetry_dir(paths["root"])
+    if paths["stop"].exists() or paths["stop"].is_symlink():
+        raise KindctlError("memory sampler was already asked to stop")
+    identity = owned_canonical_record(paths["identity"], "memory sampler identity")
+    validate_process_identity(identity, "memory sampler")
+    created = owned_canonical_record(paths["created"], "memory sampler create-complete record")
+    if created != {"created": True}:
+        raise KindctlError("memory sampler create-complete record is malformed")
+    initial = owned_canonical_record(paths["samples"], "memory sampler state")
+    validated_memory_samples(initial, identity, require_complete=False)
+    if not process_matches(identity):
+        raise KindctlError("memory sampler process identity changed before finalize")
+    write_exclusive(paths["stop"], {"stop": True})
+    deadline = time.monotonic() + 3
+    final: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        try:
+            candidate = owned_canonical_record(paths["samples"], "memory sampler state")
+            validated_memory_samples(candidate, identity, require_complete=True)
+        except KindctlError:
+            if not process_matches(identity):
+                break
+            time.sleep(0.05)
+            continue
+        if not process_matches(identity):
+            final = candidate
+            break
+        time.sleep(0.05)
+    if final is None:
+        raise KindctlError("memory sampler stopped without complete telemetry")
+    trough, sample_count = validated_memory_samples(final, identity, require_complete=True)
+    baseline = final["hostMemAvailableBaselineBytes"]
+    drop = max(0, baseline - trough)
+    if drop > MEMORY_ADMISSION_FLOOR_BYTES:
+        raise KindctlError("measured peak host memory increase exceeds the admission floor")
+    return {
+        "hostMemAvailableBaselineBytes": baseline,
+        "hostMemAvailableTroughBytes": trough,
+        "hostMemAvailableDropBytes": drop,
+        "memoryAdmissionFloorBytes": MEMORY_ADMISSION_FLOOR_BYTES,
+        "memoryAdmissionFloorHeadroomBytes": MEMORY_ADMISSION_FLOOR_BYTES - drop,
+        "memorySampleCount": sample_count,
+    }
+
+
+def parse_nonnegative_bytes(value: str, label: str) -> int:
+    if re.fullmatch(r"[0-9]+\n?", value) is None:
+        raise KindctlError(f"{label} is not a nonnegative integer")
+    return int(value)
+
+
+def kind_node_cgroup_memory_peak(measurements: dict[str, Any]) -> int:
+    nodes = measurements.get("nodes")
+    if not isinstance(nodes, list) or len(nodes) != 1 or not isinstance(nodes[0], dict):
+        raise KindctlError("runner measurements do not identify exactly one kind node")
+    node = nodes[0]
+    name = node.get("name")
+    container_id = node.get("containerId")
+    started_at = node.get("startTime")
+    if (
+        name != f"{CLUSTER}-control-plane"
+        or not isinstance(container_id, str)
+        or re.fullmatch(r"[0-9a-f]{64}", container_id) is None
+        or not isinstance(started_at, str)
+        or not started_at
+    ):
+        raise KindctlError("runner measurements contain an invalid kind node identity")
+    inspected = command_json(("podman", "inspect", "--type", "container", name), timeout=10)
+    container = inspected[0] if isinstance(inspected, list) and len(inspected) == 1 else inspected
+    if (
+        not isinstance(container, dict)
+        or container.get("Id") != container_id
+        or container.get("State", {}).get("StartedAt") != started_at
+    ):
+        raise KindctlError("kind node container identity changed")
+    peak = run_command(
+        ("podman", "exec", name, "cat", "/sys/fs/cgroup/memory.peak"),
+        timeout=10,
+    ).stdout
+    return parse_nonnegative_bytes(peak, "kind node cgroup memory.peak")
+
+
 def runtime_root() -> Path:
     base = os.environ.get("XDG_RUNTIME_DIR")
     if not base:
@@ -308,6 +654,28 @@ def exact_tool_version(argv: Sequence[str], expected_pattern: str, label: str) -
         raise KindctlError(f"{label} version mismatch: {output}")
 
 
+# Owner-directed interim admission floor until create-to-finalize peak telemetry replaces it:
+#   14.875 GiB known post-repair workload lower bound from the 16 GiB program ledger;
+#   + 1.000 GiB kind control plane for the API server, scheduler, controller manager, and etcd;
+#   + 1.000 GiB Kafka for the omitted generated broker/JVM pod;
+#   + 1.000 GiB CNPG for the omitted generated PostgreSQL pod and helpers;
+#   + 0.500 GiB Gateway for the two omitted controller-generated data-plane pods;
+#   + 0.250 GiB KEDA for the operator, metrics API server, and admission webhook;
+#   + 0.500 GiB Kubernetes system for CoreDNS, kindnet, kube-proxy, and storage helpers;
+#   + 0.500 GiB container runtime for containerd, conmon, shims, and runtime metadata;
+#   + 1.250 GiB host services for growth between admission and final convergence;
+#   + 2.125 GiB explicit safety margin, greater than 10% of the 20.875 GiB subtotal;
+#   = 23 GiB available physical-memory floor.
+# MemAvailable excludes swap, including compressed zram, so it understates effective headroom on
+# zram-backed hosts. Keeping it as the signal makes this interim guard conservative and fail-closed.
+MIN_AVAILABLE_MEMORY_BYTES = 23 * 1024**3
+
+
+def require_available_memory(memory_available: int) -> None:
+    if memory_available < MIN_AVAILABLE_MEMORY_BYTES:
+        raise KindctlError("at least 23 GiB available RAM is required")
+
+
 def preflight() -> None:
     for executable in ("kind", "kubectl", "helm", "kustomize", "flux", "flux-operator", "podman", "systemd-run"):
         if shutil.which(executable) is None:
@@ -346,9 +714,17 @@ def preflight() -> None:
             raise KindctlError(f"kernel module is not loaded: {module}")
     if (os.cpu_count() or 0) < 16:
         raise KindctlError("at least 16 logical CPUs are required")
-    memory_available = int(next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:"))) * 1024
-    if memory_available < 48 * 1024**3:
-        raise KindctlError("at least 48 GiB available RAM is required")
+    memory_available = (
+        int(
+            next(
+                line.split()[1]
+                for line in Path("/proc/meminfo").read_text().splitlines()
+                if line.startswith("MemAvailable:")
+            )
+        )
+        * 1024
+    )
+    require_available_memory(memory_available)
     graph_root = Path(str(info.get("store", {}).get("graphRoot", "")))
     if not graph_root.is_absolute() or shutil.disk_usage(graph_root).free < 60 * 1024**3:
         raise KindctlError("at least 60 GiB free Podman storage is required")
@@ -1403,6 +1779,8 @@ def publish_images(
         "inventory": IMAGE_INVENTORY.relative_to(REPO_ROOT),
         "artifact": DIGEST_VALUES.relative_to(REPO_ROOT),
         "lock": ARTIFACT_LOCK.relative_to(REPO_ROOT),
+        "modelArchiveSeed": MODEL_ARCHIVE_SEED.relative_to(REPO_ROOT),
+        "semanticManifest": SEMANTIC_MANIFEST.relative_to(REPO_ROOT),
     }
 
     started_at = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
@@ -1412,11 +1790,15 @@ def publish_images(
         image_inventory = source_root / source_paths["inventory"]
         digest_values = source_root / source_paths["artifact"]
         artifact_lock = source_root / source_paths["lock"]
+        model_archive_seed = source_root / source_paths["modelArchiveSeed"]
+        semantic_manifest = source_root / source_paths["semanticManifest"]
         for path, label in (
             (image_foundation, "image publication helper"),
             (image_inventory, "image inventory"),
             (digest_values, "reviewed image digest artifact"),
             (artifact_lock, "runtime artifact lock"),
+            (model_archive_seed, "model archive seed helper"),
+            (semantic_manifest, "semantic representation manifest"),
         ):
             require_publication_input(path, label)
         lock_sha = sha256_file(artifact_lock)
@@ -1487,6 +1869,25 @@ def publish_images(
                     "--no-git-write publication does not match the reviewed image digest artifact"
                 )
             images = publication_images(digest_path)
+        run_command(
+            (
+                "uv",
+                "run",
+                "--package",
+                "ml-compute-service",
+                "python",
+                str(model_archive_seed),
+                "prepare",
+                "--attempt-dir",
+                str(attempt),
+                "--manifest",
+                str(semantic_manifest),
+            ),
+            timeout=PUBLICATION_TIMEOUT,
+            env=environment,
+        )
+        model_metadata = attempt / "model-archives.json"
+        require_publication_input(model_metadata, "prepared model archive metadata")
 
         record: dict[str, Any] = {
             "apiVersion": "nohiki.io/v1alpha1",
@@ -1511,6 +1912,11 @@ def publish_images(
             "inventorySha256": sha256_file(image_inventory),
             "kind": "KindImagePublication",
             "lockSha256": lock_sha,
+            "modelArchives": {
+                "helperSha256": sha256_file(model_archive_seed),
+                "manifestSha256": sha256_file(semantic_manifest),
+                "metadataSha256": sha256_file(model_metadata),
+            },
             "publicationSha": reviewed_sha,
             "remoteSha": reviewed_sha,
             "schemaVersion": 1,
@@ -1578,14 +1984,23 @@ def validate_publication_record(
         or sidecar.get("sha256") != hashlib.sha256(data).hexdigest()
     ):
         raise KindctlError("publication sidecar does not bind its record")
+    model_archives = record.get("modelArchives")
+    model_metadata = attempt / "model-archives.json"
+    require_publication_input(model_metadata, "prepared model archive metadata")
+    require_publication_input(MODEL_ARCHIVE_SEED, "model archive seed helper")
+    require_publication_input(SEMANTIC_MANIFEST, "semantic representation manifest")
     if (
         record.get("sourceSha") != reviewed_sha
         or record.get("publicationSha") != reviewed_sha
         or record.get("remoteSha") != reviewed_sha
         or record.get("lockSha256") != sha256_file(ARTIFACT_LOCK)
+        or not isinstance(model_archives, dict)
+        or model_archives.get("metadataSha256") != sha256_file(model_metadata)
+        or model_archives.get("helperSha256") != sha256_file(MODEL_ARCHIVE_SEED)
+        or model_archives.get("manifestSha256") != sha256_file(SEMANTIC_MANIFEST)
     ):
         raise KindctlError(
-            "publication record does not bind the reviewed source and runtime lock"
+            "publication record does not bind the reviewed source, runtime lock, and model archives"
         )
     return record
 
@@ -1635,7 +2050,7 @@ def finalize_flux_runtime(
     kubeconfig: Path,
     attempt: Path,
     publication_record: Path,
-) -> dict[str, str]:
+) -> dict[str, str | int]:
     branch = os.environ.get("NOHIKI_RUNTIME_CONTROL_BRANCH", "")
     reviewed_sha = os.environ.get("NOHIKI_REVIEWED_TOPIC_SHA", "")
     validate_runtime_control(branch, reviewed_sha)
@@ -1689,6 +2104,7 @@ def finalize_flux_runtime(
     if not before_uid or after_uid != before_uid:
         raise KindctlError("final handoff replaced the FluxInstance")
     source_revision = wait_root_kustomization(kubeconfig, reviewed_sha)
+    model_upload_pending = True
     verification_deadline: float | None = None
     for child in FULL_CHILDREN:
         if child == "health-verification":
@@ -1699,6 +2115,27 @@ def finalize_flux_runtime(
         else:
             timeout_seconds = max(1, int(verification_deadline - time.monotonic()))
             timeout_argument = f"{timeout_seconds}s"
+        if child == "platform" and model_upload_pending:
+            run_command(
+                (
+                    "uv",
+                    "run",
+                    "--package",
+                    "ml-compute-service",
+                    "python",
+                    str(MODEL_ARCHIVE_SEED),
+                    "upload",
+                    "--attempt-dir",
+                    str(attempt),
+                    "--kubeconfig",
+                    str(kubeconfig),
+                    "--namespace",
+                    "nohiki",
+                ),
+                timeout=PUBLICATION_TIMEOUT,
+                env=provider_environment(kubeconfig),
+            )
+            model_upload_pending = False
         state = wait_kustomization(
             kubeconfig,
             child,
@@ -1707,10 +2144,12 @@ def finalize_flux_runtime(
         )
         if state.get("status", {}).get("lastAppliedRevision") != source_revision:
             raise KindctlError(f"Flux child revision is stale: {child}")
+    kind_node_peak = kind_node_cgroup_memory_peak(measurements)
     return {
         "finalSha256": final_hash,
         "fluxInstanceUid": after_uid,
         "sourceRevision": source_revision,
+        "kindNodeCgroupMemoryPeakBytes": kind_node_peak,
     }
 
 
@@ -2150,6 +2589,7 @@ def create(attempt: Path) -> dict[str, Any]:
         provider_bin = install_kind_provider_wrapper(runtime, modules)
         descriptor = os.open(kubeconfig, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         os.close(descriptor)
+        start_memory_sampler(attempt)
         run_command(create_argv(kubeconfig, provider_bin), timeout=CREATE_TIMEOUT)
         validate_owned_kubeconfig(kubeconfig)
         cluster_uid, cluster_nodes, pod_capacity = validate_cluster(kubeconfig)
@@ -2162,6 +2602,7 @@ def create(attempt: Path) -> dict[str, Any]:
         network = network_probe(kubeconfig)
         storage = storage_probe(kubeconfig)
         write_measurements(attempt, kubeconfig, cluster_uid, nodes, network, storage)
+        mark_memory_sampler_created(attempt)
         return {"nodePidsLimits": pids_limits, "nodePodCapacity": pod_capacity}
     except BaseException as create_error:
         try:
@@ -2258,6 +2699,7 @@ def require_cluster_absent(kubeconfig: Path, attempt: Path) -> None:
 def cleanup_cluster(attempt: Path) -> None:
     runtime = attempt / "runtime"
     kubeconfig = runtime / "kubeconfig"
+    cleanup_memory_sampler(attempt)
     if runtime.exists():
         validate_runtime_dir(runtime)
     if kubeconfig.exists():
@@ -2302,6 +2744,7 @@ def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--attempt-dir")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("preflight")
+    subparsers.add_parser("_memory-sampler", help=argparse.SUPPRESS)
     subparsers.add_parser("create")
     subparsers.add_parser("diagnostics")
     observe_parser = subparsers.add_parser("observe")
@@ -2331,6 +2774,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise KindctlError("observe requires an argument separator: kindctl observe -- <observer argv>")
         os.execv(OBSERVER, [str(OBSERVER), *forwarded[1:]])
     attempt = validate_attempt_dir(arguments.attempt_dir) if arguments.attempt_dir else None
+    if arguments.command == "_memory-sampler":
+        if attempt is None:
+            raise KindctlError("_memory-sampler requires --attempt-dir")
+        run_memory_sampler(attempt)
+        return 0
     if arguments.command == "preflight":
         preflight()
     elif arguments.command == "diagnostics":
@@ -2376,13 +2824,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 )
             elif arguments.command == "flux-finalize":
-                record.update(
-                    finalize_flux_runtime(
+                try:
+                    finalized = finalize_flux_runtime(
                         kubeconfig,
                         attempt,
                         arguments.publication_record,
                     )
-                )
+                finally:
+                    memory = finish_memory_sampler(attempt)
+                record.update(finalized | memory)
             else:
                 record.update(qualify_offline_policy(kubeconfig, attempt))
             record["result"] = "passed"

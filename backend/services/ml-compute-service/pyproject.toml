@@ -5,6 +5,8 @@ license = "AGPL-3.0-only"
 description = "Kubernetes ML compute service using nohiki-ml-core"
 requires-python = ">=3.14"
 dependencies = [
+    "boto3>=1.43.0",
+    "botocore>=1.43.0",
     "huggingface-hub>=1.23.0",
     "nohiki-core-settings==0.1.0",
     "nohiki-fastapi-utils[server]==0.1.0",

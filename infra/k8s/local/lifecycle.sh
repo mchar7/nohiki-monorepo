@@ -137,9 +137,8 @@ publish() {
     after="$(git rev-parse HEAD)"
     [[ "$(git diff-tree --no-commit-id --name-only -r "$after")" == "$artifact" ]] || \
         fail "publish commit changed a path outside the digest artifact"
-    git push --force-with-lease="refs/heads/$branch:$reviewed" origin \
-        "HEAD:refs/heads/$branch"
-    printf 'Published digest artifact: before=%s after=%s path=%s\n' "$reviewed" "$after" "$artifact"
+    printf 'Prepared digest artifact commit for PUSH-DELEGATE: before=%s after=%s path=%s\n' \
+        "$reviewed" "$after" "$artifact"
 }
 
 wait_ready() {

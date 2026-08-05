@@ -648,10 +648,7 @@ def test_publish_is_the_only_build_and_publish_authority(
     artifact = "infra/k8s/gitops/platform/local/image-digests.values.yaml"
     assert f"git add -- {artifact}" in publish_calls
     assert f"git commit -m chore(kind): publish local image digests -- {artifact}" in publish_calls
-    assert any(
-        call.startswith("git push --force-with-lease=refs/heads/runtime-control/local/focused-test:")
-        for call in publish_calls
-    )
+    assert not any(call.startswith("git push ") for call in publish_calls)
     for mode, calls in calls_by_mode.items():
         if mode == "publish":
             continue

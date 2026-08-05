@@ -2808,6 +2808,8 @@ name = "ml-compute-service"
 version = "0.1.0"
 source = { editable = "backend/services/ml-compute-service" }
 dependencies = [
+    { name = "boto3" },
+    { name = "botocore" },
     { name = "huggingface-hub" },
     { name = "nohiki-core-settings" },
     { name = "nohiki-domain-models" },
@@ -2833,6 +2835,8 @@ cuda = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.43.0" },
+    { name = "botocore", specifier = ">=1.43.0" },
     { name = "huggingface-hub", specifier = ">=1.23.0" },
     { name = "nohiki-core-settings", editable = "backend/libs/nohiki-core-settings" },
     { name = "nohiki-domain-models", editable = "backend/libs/nohiki-domain-models" },

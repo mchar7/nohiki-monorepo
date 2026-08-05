@@ -611,8 +611,8 @@ def test_publish_git_write_is_guarded_to_reviewed_digest_artifact() -> None:
     assert 'git commit -m "chore(kind): publish local image digests" -- "$artifact"' in publish
     assert "git diff --cached --name-only" in publish
     assert 'git diff-tree --no-commit-id --name-only -r "$after"' in publish
-    assert '--force-with-lease="refs/heads/$branch:$reviewed"' in publish
-    assert '"HEAD:refs/heads/$branch"' in publish
+    assert re.search(r"\bgit\s+push\b", publish) is None
+    assert "Prepared digest artifact commit for PUSH-DELEGATE" in publish
     assert "image references are redacted" in publish
     assert "before=%s after=%s path=%s" in publish
     assert 'cat "$artifact"' not in publish
