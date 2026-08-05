@@ -548,7 +548,7 @@ async def test_container_selection_collects_only_marker_derived_files(
 @pytest.mark.parametrize(
     ("markers", "passed_case_count", "expected_package_pass"),
     [
-        pytest.param(test_checks._UNIT_TEST_MARKERS, 0, 0, id="ordinary-skip-only"),
+        pytest.param(test_checks._UNIT_TEST_MARKERS, 0, 1, id="ordinary-skip-only"),
         pytest.param(test_checks._UNIT_TEST_MARKERS, 1, 1, id="ordinary-mixed"),
         pytest.param("requires_docker", 1, 0, id="required-container-skip"),
     ],

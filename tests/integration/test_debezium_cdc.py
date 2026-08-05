@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -54,6 +55,10 @@ OUTBOX_CONNECTOR_SUFFIX = "-outbox"
 DEBEZIUM_CONNECT_IMAGE = (
     "quay.io/debezium/connect:3.6.0.Final@sha256:698f0559e667a242f962221079e75917b2b7a3ad4de62661e977628da0e33b45"
 )
+CONNECT_API_READY_TIMEOUT_SECONDS = 15.0
+CONNECTOR_READY_TIMEOUT_SECONDS = 15.0
+PROBE_TIMEOUT_SECONDS = 1.0
+POLL_INTERVAL_SECONDS = 0.5
 
 
 def _is_canonical_outbox_connector_name(name: str) -> bool:
@@ -382,10 +387,10 @@ async def _poll_for_message(
     return False
 
 
-def _connect_api_is_ready(connect_url: str) -> bool:
+def _connect_api_is_ready(connect_url: str, *, timeout_seconds: float = PROBE_TIMEOUT_SECONDS) -> bool:
     """Probe Kafka Connect without leaking HTTP response resources."""
     try:
-        with urlopen(connect_url, timeout=1.0):  # noqa: S310
+        with urlopen(connect_url, timeout=timeout_seconds):  # noqa: S310
             return True
     except HTTPError as exc:
         exc.close()
@@ -394,12 +399,31 @@ def _connect_api_is_ready(connect_url: str) -> bool:
         return False
 
 
-async def _wait_for_connect_api(connect_url: str) -> bool:
-    """Wait for the self-provisioned Kafka Connect REST API."""
-    for _ in range(30):
-        if await asyncio.to_thread(_connect_api_is_ready, connect_url):
+async def _wait_for_connect_api(
+    connect_url: str,
+    *,
+    timeout_seconds: float = CONNECT_API_READY_TIMEOUT_SECONDS,
+) -> bool:
+    """Wait up to one wall-clock budget for the Kafka Connect REST API."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    while (remaining := deadline - loop.time()) > 0:
+        try:
+            ready = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _connect_api_is_ready,
+                    connect_url,
+                    timeout_seconds=min(PROBE_TIMEOUT_SECONDS, remaining),
+                ),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            return False
+        if ready:
             return True
-        await asyncio.sleep(0.5)
+        remaining = deadline - loop.time()
+        if remaining > 0:
+            await asyncio.sleep(min(POLL_INTERVAL_SECONDS, remaining))
     return False
 
 
@@ -462,10 +486,17 @@ def _register_test_connector(connect_url: str, postgres_container: str) -> str:
     return connector_name
 
 
-def _connector_is_running(connect_url: str, name: str) -> bool:
-    """Return True when the self-provisioned connector is running."""
+def _connector_is_running(
+    connect_url: str,
+    name: str,
+    *,
+    timeout_seconds: float = PROBE_TIMEOUT_SECONDS,
+) -> bool:
+    """Return True when the self-provisioned connector and its tasks are running."""
     try:
-        with urlopen(f"{connect_url}/connectors/{name}/status", timeout=1.0) as response:  # noqa: S310
+        with urlopen(  # noqa: S310
+            f"{connect_url}/connectors/{name}/status", timeout=timeout_seconds
+        ) as response:
             payload = json.load(response)
     except HTTPError as exc:
         exc.close()
@@ -473,6 +504,59 @@ def _connector_is_running(connect_url: str, name: str) -> bool:
     connector = payload.get("connector", {}) if isinstance(payload, dict) else {}
     tasks = payload.get("tasks", []) if isinstance(payload, dict) else []
     return connector.get("state") == "RUNNING" and bool(tasks) and all(task.get("state") == "RUNNING" for task in tasks)
+
+
+async def _wait_for_connector_running(
+    connect_url: str,
+    name: str,
+    *,
+    timeout_seconds: float = CONNECTOR_READY_TIMEOUT_SECONDS,
+) -> bool:
+    """Wait up to one wall-clock budget for the connector and its tasks."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    while (remaining := deadline - loop.time()) > 0:
+        try:
+            running = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _connector_is_running,
+                    connect_url,
+                    name,
+                    timeout_seconds=min(PROBE_TIMEOUT_SECONDS, remaining),
+                ),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            return False
+        except OSError, URLError:
+            running = False
+        if running:
+            return True
+        remaining = deadline - loop.time()
+        if remaining > 0:
+            await asyncio.sleep(min(POLL_INTERVAL_SECONDS, remaining))
+    return False
+
+
+async def test_connect_readiness_waiters_enforce_wall_clock_budgets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slow individual probe must not extend either waiter's total deadline."""
+
+    def slow_probe(*_args: object, **_kwargs: object) -> bool:
+        time.sleep(1)
+        return False
+
+    loop = asyncio.get_running_loop()
+    monkeypatch.setitem(globals(), "_connect_api_is_ready", slow_probe)
+    started = loop.time()
+    assert not await _wait_for_connect_api("http://connect.invalid", timeout_seconds=0.05)
+    assert loop.time() - started < 0.5
+
+    monkeypatch.setitem(globals(), "_connector_is_running", slow_probe)
+    started = loop.time()
+    assert not await _wait_for_connector_running("http://connect.invalid", "connector", timeout_seconds=0.05)
+    assert loop.time() - started < 0.5
 
 
 @pytest.fixture
@@ -515,14 +599,7 @@ async def debezium_cdc_environment(
         connector_name = await asyncio.to_thread(
             _register_test_connector, connect_url, container_environment.postgres_url
         )
-        for _ in range(30):
-            try:
-                if await asyncio.to_thread(_connector_is_running, connect_url, connector_name):
-                    break
-            except OSError, URLError:
-                pass
-            await asyncio.sleep(0.5)
-        else:
+        if not await _wait_for_connector_running(connect_url, connector_name):
             pytest.fail(f"Debezium connector {connector_name} did not reach RUNNING")
         yield CdcEnvironment(kafka_bootstrap_servers, connect_url)
     finally:

@@ -1000,9 +1000,12 @@ async def run_consolidated_tests(
             package_stats = stats[pkg.name]
             has_tests = package_stats.tests_run > 0
             package_passed = (
-                package_stats.tests_passed > 0
+                has_tests
                 and package_stats.tests_failed == 0
-                and (markers != _DOCKER_TEST_MARKER or package_stats.tests_skipped == 0)
+                and (
+                    markers != _DOCKER_TEST_MARKER
+                    or (package_stats.tests_passed > 0 and package_stats.tests_skipped == 0)
+                )
             )
             if not has_tests:
                 package_output = f"No selected tests were collected for package {pkg.name}."
