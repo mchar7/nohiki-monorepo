@@ -41,6 +41,11 @@ def _mock_blacklist() -> MagicMock:
     return blacklist
 
 
+def _mock_refresh_service() -> MagicMock:
+    """Create a mock refresh-token service reporting no revoked session family."""
+    return MagicMock(is_session_family_revoked=AsyncMock(return_value=False))
+
+
 class TestGetCurrentUserIdFromCookie:
     """Tests for get_current_user_id_from_cookie dependency."""
 
@@ -66,8 +71,12 @@ class TestGetCurrentUserIdFromCookie:
                 "user_auth_service.core.auth_deps.get_token_blacklist",
                 return_value=_mock_blacklist(),
             ),
+            patch(
+                "user_auth_service.core.auth_deps.get_refresh_token_service",
+                return_value=_mock_refresh_service(),
+            ),
         ):
-            result = await get_current_user_id_from_cookie(mock_request)
+            result = await get_current_user_id_from_cookie(mock_request, MagicMock())
         assert str(result) == user_id
 
     @pytest.mark.asyncio
@@ -139,7 +148,7 @@ class TestGetCurrentUserIdFromCookie:
         assert exc_info.value.detail == "Authentication state unavailable"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("missing_claim", ["sub", "iat", "exp", "jti"])
+    @pytest.mark.parametrize("missing_claim", ["sub", "iat", "exp", "jti", "session_family_id"])
     async def test_raises_401_when_required_claim_is_missing(
         self,
         jwt_handler: RS256JWTHandler,
@@ -153,6 +162,7 @@ class TestGetCurrentUserIdFromCookie:
             "iat": now,
             "exp": now + timedelta(minutes=5),
             "jti": str(uuid.uuid4()),
+            "session_family_id": str(uuid.uuid4()),
             "aud": jwt_handler.config.audience,
             "iss": jwt_handler.config.issuer,
         }
@@ -169,9 +179,13 @@ class TestGetCurrentUserIdFromCookie:
             ),
             patch("user_auth_service.core.auth_deps.get_jwt_handler", return_value=jwt_handler),
             patch("user_auth_service.core.auth_deps.get_token_blacklist", return_value=blacklist),
+            patch(
+                "user_auth_service.core.auth_deps.get_refresh_token_service",
+                return_value=_mock_refresh_service(),
+            ),
             pytest.raises(HTTPException) as exc_info,
         ):
-            await get_current_user_id_from_cookie(mock_request)
+            await get_current_user_id_from_cookie(mock_request, MagicMock())
 
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "Invalid or expired token"
@@ -190,7 +204,7 @@ class TestGetCurrentUserIdFromCookie:
             ),
             pytest.raises(HTTPException) as exc_info,
         ):
-            await get_current_user_id_from_cookie(mock_request)
+            await get_current_user_id_from_cookie(mock_request, MagicMock())
 
         assert exc_info.value.status_code == 401
         assert "Authentication required" in exc_info.value.detail
@@ -220,7 +234,7 @@ class TestGetCurrentUserIdFromCookie:
             ),
             pytest.raises(HTTPException) as exc_info,
         ):
-            await get_current_user_id_from_cookie(mock_request)
+            await get_current_user_id_from_cookie(mock_request, MagicMock())
 
         assert exc_info.value.status_code == 401
         assert "Invalid or expired token" in exc_info.value.detail
@@ -255,7 +269,7 @@ class TestGetCurrentUserIdFromCookie:
             ),
             pytest.raises(HTTPException) as exc_info,
         ):
-            await get_current_user_id_from_cookie(mock_request)
+            await get_current_user_id_from_cookie(mock_request, MagicMock())
 
         assert exc_info.value.status_code == 401
         assert "Invalid user ID" in exc_info.value.detail

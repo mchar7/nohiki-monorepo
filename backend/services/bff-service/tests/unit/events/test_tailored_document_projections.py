@@ -17,7 +17,7 @@ from bff_service.events.projections.doc_template import (
 from bff_service.events.projections.job_correlation import handle_correlation_evaluated
 from bff_service.events.projections.job_listing import handle_listing_created
 from bff_service.sse.events import DocumentStatusPayload
-from nohiki.common.v1 import Location, ProcessingStatus, UploadReference
+from nohiki.common.v1 import AccessScope, Location, ProcessingStatus, UploadReference
 from nohiki.doc.template.v1 import TemplateAudience
 from nohiki.job.listing.v1 import ListingSnapshot
 from nohiki.user.pref.v1 import SearchPrefSnapshot
@@ -158,7 +158,7 @@ async def test_template_projection_persists_actual_version_uuid() -> None:
         description="Resume",
         display_name="Resume",
         audience=TemplateAudience.DOCUMENT,
-        access_scope=None,
+        access_scope=AccessScope.UNSPECIFIED,
         owner_id="",
         version_snapshot=version,
     )
