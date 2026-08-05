@@ -456,6 +456,10 @@ infra-down:
 compose-up:
     CONTAINER_RUNTIME={{docker}} sh infra/compose/scripts/preflight.sh up -d
 
+# Explicitly reconcile persisted Compose CDC resources with the current bounded inventory.
+connect-reconcile-compose-cdc:
+    CONTAINER_RUNTIME={{docker}} sh infra/compose/scripts/preflight.sh run --rm nohiki-cp-kafka-connect /kafka/scripts/register-connectors.sh reconcile-compose-cdc
+
 # Trigger snapshot refresh for all listings (rebuilds ECST projections)
 snapshot-refresh reason="manual trigger":
     CONTAINER_RUNTIME={{docker}} sh infra/compose/scripts/preflight.sh build nohiki-job-snapshot-refresh

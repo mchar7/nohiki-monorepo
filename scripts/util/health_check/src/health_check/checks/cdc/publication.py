@@ -83,7 +83,11 @@ class PublicationCheck(HealthCheck):
                 CheckStatus.FAILED,
                 f"publication inventory mismatch: {len(missing)} missing, {len(unexpected)} unexpected",
                 details=details,
-                remediation_hint="Reconcile the configured Debezium connector publication inventory",
+                remediation_hint=(
+                    "For recognized superseded Compose CDC resources, run: just connect-reconcile-compose-cdc"
+                    if platform.target == PlatformTarget.COMPOSE and unexpected
+                    else "Reconcile the configured Debezium connector publication inventory"
+                ),
             )
 
         async with asyncio.TaskGroup() as tg:

@@ -3599,6 +3599,7 @@ def test_all_supported_just_compose_commands_use_the_validation_gate() -> None:
         f"{gate} up -d",
         f"{gate} build nohiki-job-snapshot-refresh",
         f'{gate} run --rm -e REFRESH_REASON="{{{{reason}}}}" nohiki-job-snapshot-refresh',
+        f"{gate} run --rm nohiki-cp-kafka-connect /kafka/scripts/register-connectors.sh reconcile-compose-cdc",
         f"{gate} down",
         f"{gate} logs -f {{{{service}}}}",
     )

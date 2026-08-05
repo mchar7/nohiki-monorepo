@@ -65,6 +65,21 @@ just compose-up
 Do not post `outbox-connector-template.json` directly: it contains placeholders that
 `scripts/register-connectors.sh` expands for each service schema.
 
+### Reconcile persisted Compose CDC state (destructive, explicit only)
+
+The current registration path is intentionally non-destructive. If health checks report
+superseded `nohiki-outbox-*` connectors or their `nohiki_outbox_slot_*` and
+`nohiki_outbox_pub_*` resources, run the bounded reconciliation command:
+
+```bash
+just connect-reconcile-compose-cdc
+```
+
+The command deletes only the recognized superseded Compose connector identities, drops their
+inactive replication slots and publications, then registers the current connector inventory. It
+never runs at startup and refuses to drop an active slot. Inspect any unexpected resource whose
+name is outside that bounded set before removing it manually.
+
 ### Check Connector Status
 
 ```bash

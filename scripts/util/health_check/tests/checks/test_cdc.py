@@ -134,6 +134,17 @@ class TestDebeziumConnectorsCheck:
         assert result.status == CheckStatus.FAILED
         assert "No connectors" in result.summary
 
+    async def test_reports_superseded_compose_connector_with_reconciliation_path(self) -> None:
+        names = [*_COMPOSE_CONNECTOR_NAMES, "nohiki-outbox-user_auth"]
+        platform = MockPlatform(_curl_result=(0, json.dumps(names), ""))
+
+        result = await DebeziumConnectorsCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert "nohiki-outbox-user_auth: unexpected connector" in result.details
+        assert result.remediation_hint is not None
+        assert "just connect-reconcile-compose-cdc" in result.remediation_hint
+
     async def test_fails_when_connector_failed(self) -> None:
         names_body = json.dumps(["conn-a"])
         status_body = _connector_response(state="FAILED")
@@ -332,6 +343,17 @@ class TestReplicationSlotCheck:
         result = await ReplicationSlotCheck().execute(platform)
         assert result.status == CheckStatus.FAILED
 
+    async def test_reports_superseded_compose_slot_with_reconciliation_path(self) -> None:
+        rows = f"{_slot_rows()}\nnohiki_outbox_slot_user_auth|f"
+        platform = MockPlatform(_psql_result=(0, rows, ""))
+
+        result = await ReplicationSlotCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert "nohiki_outbox_slot_user_auth: unexpected slot" in result.details
+        assert result.remediation_hint is not None
+        assert "just connect-reconcile-compose-cdc" in result.remediation_hint
+
     async def test_error_when_psql_fails(self) -> None:
         platform = MockPlatform(_psql_result=(1, "", "error"))
         result = await ReplicationSlotCheck().execute(platform)
@@ -360,6 +382,17 @@ class TestPublicationCheck:
         platform = MockPlatform(_psql_result=(0, "", ""))
         result = await PublicationCheck().execute(platform)
         assert result.status == CheckStatus.FAILED
+
+    async def test_reports_superseded_compose_publication_with_reconciliation_path(self) -> None:
+        publications = f"{_publication_names()}\nnohiki_outbox_pub_user_auth"
+        platform = MockPlatform(_psql_result=(0, publications, ""))
+
+        result = await PublicationCheck().execute(platform)
+
+        assert result.status == CheckStatus.FAILED
+        assert "nohiki_outbox_pub_user_auth: unexpected publication" in result.details
+        assert result.remediation_hint is not None
+        assert "just connect-reconcile-compose-cdc" in result.remediation_hint
 
     async def test_error_when_psql_fails(self) -> None:
         platform = MockPlatform(_psql_result=(1, "", "error"))

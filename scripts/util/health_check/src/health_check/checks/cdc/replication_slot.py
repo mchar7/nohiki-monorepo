@@ -79,7 +79,11 @@ class ReplicationSlotCheck(HealthCheck):
                     f"{len(missing)} missing, {len(unexpected)} unexpected, {len(inactive)} inactive"
                 ),
                 details=details,
-                remediation_hint="Reconcile the configured Debezium connector replication slot inventory",
+                remediation_hint=(
+                    "For recognized superseded Compose CDC resources, run: just connect-reconcile-compose-cdc"
+                    if platform.target == PlatformTarget.COMPOSE and unexpected
+                    else "Reconcile the configured Debezium connector replication slot inventory"
+                ),
             )
 
         return self._make_result(

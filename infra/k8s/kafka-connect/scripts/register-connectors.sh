@@ -29,6 +29,24 @@ WAL_CONNECTORS=(
     "job-correlation-evaluation-service:job_correlation_schema:job_correlation"
 )
 
+# Persisted Compose CDC resources superseded by the service-owned connector inventory.
+# Keep this list bounded: the explicit reconciliation command must not delete unrelated resources.
+SUPERSEDED_COMPOSE_OUTBOX_CONNECTORS=(
+    "nohiki-outbox-user_auth"
+    "nohiki-outbox-user_pref"
+    "nohiki-outbox-user_upload"
+    "nohiki-outbox-user_entitlement"
+    "nohiki-outbox-job_query"
+    "nohiki-outbox-job_storage"
+    "nohiki-outbox-job_correlation"
+    "nohiki-outbox-job_ingest_enrichment"
+    "nohiki-outbox-doc_render"
+    "nohiki-outbox-doc_schema"
+    "nohiki-outbox-doc_template"
+    "nohiki-outbox-skill_graph"
+    "nohiki-outbox-notification"
+)
+
 
 parse_dsn() {
     local dsn="$1"
@@ -174,6 +192,66 @@ register_connector() {
         "${CONNECT_URL}/connectors" --data-binary @- > /dev/null
 }
 
+delete_superseded_connector() {
+    local connector_name="$1"
+    local status
+
+    if ! status=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+        "${CONNECT_URL}/connectors/${connector_name}"); then
+        echo "ERROR: failed to delete superseded connector ${connector_name}" >&2
+        return 1
+    fi
+
+    case "$status" in
+        2??) echo "Deleted superseded connector ${connector_name}" ;;
+        404) ;;
+        *)
+            echo "ERROR: failed to delete superseded connector ${connector_name} (HTTP ${status})" >&2
+            return 1
+            ;;
+    esac
+}
+
+cleanup_superseded_replication_resources() {
+    local connector_name="$1"
+    local suffix="${connector_name#nohiki-outbox-}"
+    local slot_name="nohiki_outbox_slot_${suffix}"
+    local publication_name="nohiki_outbox_pub_${suffix}"
+    local slot_state
+
+    # Only callers iterating SUPERSEDED_COMPOSE_OUTBOX_CONNECTORS may supply resource suffixes.
+    [[ "$connector_name" == nohiki-outbox-* && "$suffix" =~ ^[a-z0-9_]+$ ]] || {
+        echo "ERROR: invalid superseded connector name ${connector_name}" >&2
+        return 1
+    }
+
+    slot_state=$(PGPASSWORD="${DB_PASS}" psql -X -v ON_ERROR_STOP=1 \
+        -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+        -t -A \
+        -c "SELECT CASE WHEN active THEN 'active' ELSE 'inactive' END FROM pg_replication_slots WHERE slot_name = '${slot_name}';")
+
+    case "$slot_state" in
+        active)
+            echo "ERROR: superseded replication slot ${slot_name} is still active" >&2
+            return 1
+            ;;
+        inactive)
+            PGPASSWORD="${DB_PASS}" psql -X -v ON_ERROR_STOP=1 \
+                -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+                -c "SELECT pg_drop_replication_slot('${slot_name}');" > /dev/null
+            ;;
+        '') ;;
+        *)
+            echo "ERROR: unexpected state for superseded replication slot ${slot_name}: ${slot_state}" >&2
+            return 1
+            ;;
+    esac
+
+    PGPASSWORD="${DB_PASS}" psql -X -v ON_ERROR_STOP=1 \
+        -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+        -c "DROP PUBLICATION IF EXISTS \"${publication_name}\";" > /dev/null
+}
+
 
 register_qdrant_sink_connector() {
     local connector_file="${CONFIG_DIR}/qdrant-embedding-sink.json"
@@ -192,10 +270,13 @@ register_qdrant_sink_connector() {
 
 usage() {
     cat >&2 <<'EOF'
-Usage: register-connectors.sh [register]
+Usage: register-connectors.sh [register|reconcile-compose-cdc]
 
-  register  Register/update the outbox, WAL-message, and sink connectors
-            (default). Idempotent and non-destructive; safe on every startup.
+  register               Register/update the outbox, WAL-message, and sink connectors
+                         (default). Idempotent and non-destructive; safe on every startup.
+  reconcile-compose-cdc  DESTRUCTIVE. Remove the bounded set of superseded Compose
+                         connectors and their inactive slots/publications, then register.
+                         Run explicitly to reconcile persisted state, NEVER at startup.
 EOF
 }
 
@@ -216,6 +297,16 @@ register_all() {
     register_qdrant_sink_connector
 }
 
+reconcile_compose_cdc() {
+    echo "Reconciling persisted Compose CDC state (destructive)..."
+    for connector_name in "${SUPERSEDED_COMPOSE_OUTBOX_CONNECTORS[@]}"; do
+        delete_superseded_connector "$connector_name"
+    done
+    for connector_name in "${SUPERSEDED_COMPOSE_OUTBOX_CONNECTORS[@]}"; do
+        cleanup_superseded_replication_resources "$connector_name"
+    done
+}
+
 
 main() {
     local command="${1:-register}"
@@ -227,6 +318,11 @@ main() {
     case "$command" in
         register)
             echo "Registering connectors for ${DB_HOST}:${DB_PORT}/${DB_NAME}"
+            register_all
+            ;;
+        reconcile-compose-cdc)
+            echo "Registering connectors for ${DB_HOST}:${DB_PORT}/${DB_NAME}"
+            reconcile_compose_cdc
             register_all
             ;;
         -h|--help|help)

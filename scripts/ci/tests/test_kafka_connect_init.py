@@ -6,11 +6,19 @@ import re
 import subprocess
 import textwrap
 from pathlib import Path
+from typing import TypedDict, cast
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CONNECT_ROOT = _REPOSITORY_ROOT / "infra" / "k8s" / "kafka-connect"
 _DOCKERFILE = (_CONNECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
 _REGISTRATION = (_CONNECT_ROOT / "scripts" / "register-connectors.sh").read_text(encoding="utf-8")
+
+
+class _CdcState(TypedDict):
+    connectors: list[str]
+    slots: dict[str, bool]
+    publications: list[str]
+    configs: dict[str, dict[str, object]]
 
 
 def test_connect_image_installs_postgresql_client_before_non_root_user() -> None:
@@ -185,6 +193,179 @@ def test_qdrant_connector_restores_shaded_dns_name_resolver_provider() -> None:
 
     assert checksum < extract < validate_class < validate_descriptor < retain_uds
     assert retain_uds < write_descriptor < patch_jar < verify_patch < cleanup
+
+
+def _expected_compose_cdc_inventory() -> tuple[set[str], set[str], set[str]]:
+    outbox_array = re.search(r"OUTBOX_CONNECTORS=\(\n(?P<entries>.*?)\n\)", _REGISTRATION, re.DOTALL)
+    wal_array = re.search(r"WAL_CONNECTORS=\(\n(?P<entries>.*?)\n\)", _REGISTRATION, re.DOTALL)
+    assert outbox_array is not None
+    assert wal_array is not None
+
+    outbox = re.findall(r'"([^:"]+):([^:"]+)"', outbox_array.group("entries"))
+    wal = re.findall(r'"([^:"]+):([^:"]+):([^:"]+)"', wal_array.group("entries"))
+    connectors = {f"{service}-outbox" for service, _ in outbox}
+    connectors.update(f"{service}-wal" for service, _, _ in wal)
+    if (_CONNECT_ROOT / "connectors" / "qdrant-embedding-sink.json").is_file():
+        connectors.add("qdrant-embedding-sink")
+    slots = {f"{service.removesuffix('-service').replace('-', '_')}_outbox_slot" for service, _ in outbox}
+    slots.update(f"{prefix}_wal_slot" for _, _, prefix in wal)
+    publications = {f"{service.removesuffix('-service').replace('-', '_')}_outbox_pub" for service, _ in outbox}
+    publications.update(f"{prefix}_wal_pub" for _, _, prefix in wal)
+    return connectors, slots, publications
+
+
+def _run_compose_cdc_reconciliation(
+    tmp_path: Path,
+    *,
+    superseded_slot_active: bool,
+) -> tuple[subprocess.CompletedProcess[str], _CdcState]:
+    secrets_dir = tmp_path / "secrets" / "database"
+    secrets_dir.mkdir(parents=True)
+    (secrets_dir / "dsn").write_text("postgresql://user:pass@postgres:5432/nohiki\n", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "connectors": ["nohiki-outbox-user_auth"],
+                "slots": {"nohiki_outbox_slot_user_auth": superseded_slot_active},
+                "publications": ["nohiki_outbox_pub_user_auth"],
+                "configs": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "curl").write_text(
+        textwrap.dedent(
+            """
+            #!/usr/bin/env python3
+            import json
+            import os
+            import sys
+            from pathlib import Path
+
+            state_path = Path(os.environ["CDC_STATE"])
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            args = sys.argv[1:]
+            method = args[args.index("-X") + 1] if "-X" in args else "GET"
+            url = next(arg for arg in args if arg.startswith(("http://", "https://")))
+
+            def save():
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+
+            if "/connectors/" in url:
+                name = url.split("/connectors/", 1)[1].split("/", 1)[0]
+                if method == "DELETE":
+                    present = name in state["connectors"]
+                    if present:
+                        state["connectors"].remove(name)
+                        state["configs"].pop(name, None)
+                        save()
+                    if "-w" in args:
+                        print("204" if present else "404", end="")
+                    raise SystemExit(0)
+                if name not in state["connectors"]:
+                    raise SystemExit(22)
+                if url.endswith("/status"):
+                    print(json.dumps({"connector": {"state": "RUNNING"}, "tasks": [{"state": "RUNNING"}]}))
+                elif url.endswith("/config"):
+                    print(json.dumps(state["configs"][name]))
+                else:
+                    print("{}")
+                raise SystemExit(0)
+
+            if method == "POST" and url.endswith("/connectors"):
+                payload = json.load(sys.stdin)
+                name = payload["name"]
+                config = payload["config"]
+                if name not in state["connectors"]:
+                    state["connectors"].append(name)
+                state["configs"][name] = config
+                if slot := config.get("slot.name"):
+                    state["slots"][slot] = True
+                if publication := config.get("publication.name"):
+                    if publication not in state["publications"]:
+                        state["publications"].append(publication)
+                save()
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    (bin_dir / "psql").write_text(
+        textwrap.dedent(
+            """
+            #!/usr/bin/env python3
+            import json
+            import os
+            import re
+            import sys
+            from pathlib import Path
+
+            state_path = Path(os.environ["CDC_STATE"])
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            args = sys.argv[1:]
+            query = args[args.index("-c") + 1]
+
+            if "SELECT CASE WHEN active" in query:
+                name = re.search(r"slot_name = '([^']+)'", query).group(1)
+                if name in state["slots"]:
+                    print("active" if state["slots"][name] else "inactive")
+            elif "pg_drop_replication_slot" in query:
+                name = re.search(r"pg_drop_replication_slot\\('([^']+)'\\)", query).group(1)
+                state["slots"].pop(name, None)
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+            elif "DROP PUBLICATION" in query:
+                name = re.search(r'DROP PUBLICATION IF EXISTS "([^"]+)"', query).group(1)
+                if name in state["publications"]:
+                    state["publications"].remove(name)
+                state_path.write_text(json.dumps(state), encoding="utf-8")
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    for executable in (bin_dir / "curl", bin_dir / "psql"):
+        executable.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(_CONNECT_ROOT / "scripts" / "register-connectors.sh"),
+            "reconcile-compose-cdc",
+        ],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "SECRETS_DIR": str(tmp_path / "secrets"),
+            "CDC_STATE": str(state_path),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    state = cast("_CdcState", json.loads(state_path.read_text(encoding="utf-8")))
+    return result, state
+
+
+def test_reconcile_compose_cdc_recovers_exact_inventory_from_superseded_resources(tmp_path: Path) -> None:
+    expected_connectors, expected_slots, expected_publications = _expected_compose_cdc_inventory()
+
+    result, state = _run_compose_cdc_reconciliation(tmp_path, superseded_slot_active=False)
+
+    assert result.returncode == 0, result.stderr
+    assert set(state["connectors"]) == expected_connectors
+    assert set(state["slots"]) == expected_slots
+    assert set(state["publications"]) == expected_publications
+    assert all(state["slots"].values())
+
+
+def test_reconcile_compose_cdc_refuses_active_superseded_slot(tmp_path: Path) -> None:
+    result, state = _run_compose_cdc_reconciliation(tmp_path, superseded_slot_active=True)
+
+    assert result.returncode != 0
+    assert "superseded replication slot nohiki_outbox_slot_user_auth is still active" in result.stderr
+    assert state["slots"]["nohiki_outbox_slot_user_auth"] is True
+    assert "nohiki_outbox_pub_user_auth" in state["publications"]
 
 
 def test_outbox_connectors_use_service_owned_schemas() -> None:

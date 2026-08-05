@@ -73,6 +73,10 @@ class ReplicationCapacityCheck(HealthCheck):
                 CheckStatus.FAILED,
                 "; ".join(failures),
                 details=evidence,
-                remediation_hint="Drop verified unexpected slots or increase PostgreSQL replication capacity",
+                remediation_hint=(
+                    "Drop recognized superseded Compose CDC slots with: just connect-reconcile-compose-cdc"
+                    if platform.target == PlatformTarget.COMPOSE and unexpected_slots
+                    else "Drop verified unexpected slots or increase PostgreSQL replication capacity"
+                ),
             )
         return self._make_result(CheckStatus.PASSED, "Replication capacity has headroom", details=evidence)
