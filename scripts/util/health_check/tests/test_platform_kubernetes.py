@@ -561,6 +561,20 @@ class TestKubernetesPlatformExecInService:
         assert "exec" in called_args
         assert "bff-pod-abc" in called_args
 
+    def test_local_dependency_probe_uses_pod_exec_without_job_evidence(self) -> None:
+        platform = KubernetesPlatform(local_mode=True)
+        command = _dependency_command("nohiki_kafka_client", "nohiki_db_utils")
+        with (
+            patch.object(platform, "_get_pod_name", return_value="user-pref-pod"),
+            patch.object(platform, "_kubectl", return_value=(0, "dependencies present", "")) as kubectl,
+            patch("health_check.platform.kubernetes._service_dependency_evidence") as evidence,
+        ):
+            result = platform.exec_in_service("user-pref-service", command)
+
+        assert result == (0, "dependencies present", "")
+        evidence.assert_not_called()
+        kubectl.assert_called_once_with(["exec", "user-pref-pod", "--", *command], timeout=30)
+
     def test_service_dependency_evidence_passes_for_exact_digest_pinned_probe(self, tmp_path: Path) -> None:
         evidence = {
             "nohiki_kafka_client": True,
@@ -568,7 +582,7 @@ class TestKubernetesPlatformExecInService:
         }
         tmp_path.joinpath("user-pref-service.json").write_text(json.dumps(evidence), encoding="utf-8")
         with patch.dict("os.environ", {"K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": str(tmp_path)}):
-            code, output, error = KubernetesPlatform().exec_in_service(
+            code, output, error = KubernetesPlatform(local_mode=False).exec_in_service(
                 "user-pref-service",
                 _dependency_command("nohiki_kafka_client", "nohiki_db_utils"),
             )
@@ -583,7 +597,7 @@ class TestKubernetesPlatformExecInService:
         if contents is not None:
             tmp_path.joinpath("user-pref-service.json").write_text(contents, encoding="utf-8")
         with patch.dict("os.environ", {"K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": str(tmp_path)}):
-            code, _, error = KubernetesPlatform().exec_in_service(
+            code, _, error = KubernetesPlatform(local_mode=False).exec_in_service(
                 "user-pref-service",
                 _dependency_command("nohiki_kafka_client", "nohiki_db_utils"),
             )
@@ -597,7 +611,7 @@ class TestKubernetesPlatformExecInService:
         }
         tmp_path.joinpath("user-pref-service.json").write_text(json.dumps(evidence), encoding="utf-8")
         with patch.dict("os.environ", {"K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": str(tmp_path)}):
-            code, _, error = KubernetesPlatform().exec_in_service(
+            code, _, error = KubernetesPlatform(local_mode=False).exec_in_service(
                 "user-pref-service",
                 _dependency_command("nohiki_kafka_client", "nohiki_db_utils"),
             )

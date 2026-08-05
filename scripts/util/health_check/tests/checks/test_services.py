@@ -161,7 +161,7 @@ class TestServiceDependenciesCheck:
                 encoding="utf-8",
             )
         with patch.dict("os.environ", {"K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": str(tmp_path)}):
-            result = await ServiceDependenciesCheck().execute(KubernetesPlatform())
+            result = await ServiceDependenciesCheck().execute(KubernetesPlatform(local_mode=False))
         assert result.status == CheckStatus.PASSED
 
     def test_metadata_check_id(self) -> None:

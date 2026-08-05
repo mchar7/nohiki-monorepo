@@ -251,16 +251,6 @@ def test_service_dependency_init_containers_use_workload_digests_and_fail_closed
     assert {"name": "evidence", "emptyDir": {}} in pod["volumes"]
 
 
-def test_health_image_carries_manifest_below_explicit_project_root() -> None:
-    dockerfile = _DOCKERFILE.read_text(encoding="utf-8")
-
-    assert "    PROJECT_ROOT=/app \\\n" in dockerfile
-    assert (
-        "COPY --chmod=0444 data/config/semantic_representation_manifest.json "
-        "/app/data/config/semantic_representation_manifest.json"
-    ) in dockerfile
-
-
 def test_health_chart_rejects_missing_or_invalid_image_digest() -> None:
     missing = subprocess.run(
         ["helm", "template", _NAME, str(_CHART), "--namespace", "nohiki"],

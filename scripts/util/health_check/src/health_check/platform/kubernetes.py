@@ -481,7 +481,7 @@ class KubernetesPlatform:
         timeout: int = 30,
     ) -> tuple[int, str, str]:
         """Use read-only direct clients in the verification Job; retain admin access elsewhere."""
-        if (evidence := _service_dependency_evidence(canonical_name, command)) is not None:
+        if not self._local_mode and (evidence := _service_dependency_evidence(canonical_name, command)) is not None:
             return evidence
         if self._uses_cluster_database():
             if canonical_name == "postgres" and command and command[0] == "pg_isready":
