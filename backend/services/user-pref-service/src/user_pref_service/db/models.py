@@ -65,11 +65,7 @@ class SearchPref(BaseEntity, Base):
     __repr_fields__ = ("id", "pref_name", "user_id")
 
     __tablename__ = "search_prefs"
-    __table_args__ = (
-        sa.CheckConstraint("cardinality(search_keywords) > 0", name="chk_search_keywords_nonempty"),
-        sa.CheckConstraint("cardinality(work_arrangements) > 0", name="chk_work_arrangements_nonempty"),
-        {"schema": SCHEMA_NAME},
-    )
+    __table_args__ = ({"schema": SCHEMA_NAME},)
 
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(), nullable=False, index=True)
 

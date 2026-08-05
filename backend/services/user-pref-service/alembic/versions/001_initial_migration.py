@@ -116,9 +116,7 @@ def upgrade() -> None:
             collection_version VARCHAR(10),
             is_enrichment_complete BOOLEAN NOT NULL DEFAULT false,
             created_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
-            CONSTRAINT chk_search_keywords_nonempty CHECK (cardinality(search_keywords) > 0),
-            CONSTRAINT chk_work_arrangements_nonempty CHECK (cardinality(work_arrangements) > 0)
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()}
         )
     """)
 
