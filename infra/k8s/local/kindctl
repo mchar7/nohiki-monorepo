@@ -6,6 +6,7 @@ import contextlib
 import datetime as dt
 import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Iterator, Literal, Sequence
+from urllib.parse import urlsplit
 
 CLUSTER = "nohiki"
 CONTEXT = "kind-nohiki"
@@ -26,6 +28,9 @@ FLUX_VERSION = "2.9.2"
 FLUX_OPERATOR_VERSION = "0.55.0"
 CREATE_TIMEOUT = 120
 MIN_NODE_POD_CAPACITY = 200
+# Acceptance reached 5,575 node processes before final convergence. The next
+# power of two above twice that failed-run census preserves real burst headroom.
+NODE_PID_LIMIT = 16_384
 REGISTRY_HOSTS = b'''server = "http://127.0.0.1:30500"
 
 [host."http://127.0.0.1:30500"]
@@ -49,7 +54,13 @@ OFFLINE_EGRESS = FLUX_RUNTIME / "offline-egress.nft"
 IMAGE_FOUNDATION = REPO_ROOT / "infra/k8s/local/image_foundation.py"
 IMAGE_INVENTORY = REPO_ROOT / "infra/k8s/local/images.json"
 DIGEST_VALUES = REPO_ROOT / "infra/k8s/gitops/platform/local/image-digests.values.yaml"
+HELM_CHART = REPO_ROOT / "infra/k8s/helm"
+HELM_VALUES = HELM_CHART / "values.yaml"
+HELM_LOCAL_VALUES = HELM_CHART / "values.local.yaml"
 PUBLICATION_TIMEOUT = 420 * 60
+LLM_PROXY_ENV = "NOHIKI_LLM_PROXY_ENV_FILE"
+LLM_PROXY_SECRET = "nohiki-llm-proxy-source"
+LLM_PROXY_VALUES = "nohiki-owner-model-egress-values"
 IMAGE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 IMAGE_TAG = re.compile(r"sha256-[0-9a-f]{64}\Z")
 FULL_CHILDREN = (
@@ -473,7 +484,7 @@ def kind_modules_override(
     raise KindctlError(f"kernel modules tree is unavailable; probed paths: {probed}")
 
 
-def install_kind_provider_wrapper(runtime: Path, modules: Path) -> Path:
+def install_kind_provider_wrapper(runtime: Path, modules: Path | None) -> Path:
     executable = shutil.which("podman")
     if executable is None:
         raise KindctlError("required executable is missing: podman")
@@ -483,14 +494,33 @@ def install_kind_provider_wrapper(runtime: Path, modules: Path) -> Path:
     directory = runtime / "provider-bin"
     directory.mkdir(mode=0o700)
     wrapper = directory / "podman"
+    module_replacement = None if modules is None else f"{modules}:/lib/modules:ro"
     program = f"""#!/usr/bin/env python3
 import os
 import sys
 
 podman = {json.dumps(str(podman))}
-source = "/lib/modules:/lib/modules:ro"
-replacement = {json.dumps(f"{modules}:/lib/modules:ro")}
-argv = [replacement if value == source else value for value in sys.argv[1:]]
+module_source = "/lib/modules:/lib/modules:ro"
+module_replacement = {module_replacement!r}
+argv = [
+    module_replacement if module_replacement is not None and value == module_source else value
+    for value in sys.argv[1:]
+]
+if argv and argv[0] in {{"create", "run"}}:
+    rewritten = []
+    skip = False
+    for value in argv[1:]:
+        if skip:
+            skip = False
+            continue
+        if value == "--pids-limit":
+            skip = True
+            continue
+        if value.startswith("--pids-limit="):
+            continue
+        rewritten.append(value)
+    argv = [argv[0], *rewritten]
+    argv.insert(1, "--pids-limit={NODE_PID_LIMIT}")
 os.execv(podman, [podman, *argv])
 """
     descriptor = os.open(wrapper, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700)
@@ -636,8 +666,8 @@ def require_node_pid_limits(nodes: Sequence[str]) -> dict[str, int]:
         document = command_json(("podman", "inspect", "--type", "container", node), timeout=10)
         container = document[0] if isinstance(document, list) else document
         limit = container.get("HostConfig", {}).get("PidsLimit")
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
-            raise KindctlError(f"node PidsLimit must be a positive integer: {node}")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < NODE_PID_LIMIT:
+            raise KindctlError(f"node PidsLimit must be at least {NODE_PID_LIMIT}: {node}")
         limits[node] = limit
     return limits
 def install_registry_hosts(kubeconfig: Path, nodes: Sequence[str]) -> str:
@@ -1560,6 +1590,47 @@ def validate_publication_record(
     return record
 
 
+def require_rendered_storage_classes(kubeconfig: Path) -> tuple[str, ...]:
+    """Fail before final reconciliation when the local render requests an absent StorageClass."""
+    rendered = run_command(
+        (
+            "helm",
+            "template",
+            "nohiki",
+            str(HELM_CHART),
+            "--namespace",
+            "nohiki",
+            "--values",
+            str(HELM_VALUES),
+            "--values",
+            str(HELM_LOCAL_VALUES),
+            "--values",
+            str(DIGEST_VALUES),
+        ),
+        timeout=120,
+    ).stdout
+    requested = {
+        match.group(1)
+        for match in re.finditer(
+            r"""^[ \t]*storageClassName:[ \t]*["']?([^"'#\s]+)""",
+            rendered,
+            re.MULTILINE,
+        )
+    }
+    document = command_json(
+        kube_args(kubeconfig, "get", "storageclass", "-o", "json"),
+        timeout=15,
+    )
+    items = document.get("items")
+    if not isinstance(items, list):
+        raise KindctlError("StorageClass inventory is malformed")
+    available = {str(item.get("metadata", {}).get("name", "")) for item in items if isinstance(item, dict)}
+    missing = sorted(requested - available)
+    if missing:
+        raise KindctlError(f"local Helm render requires unavailable StorageClasses: {', '.join(missing)}")
+    return tuple(sorted(requested))
+
+
 def finalize_flux_runtime(
     kubeconfig: Path,
     attempt: Path,
@@ -1607,6 +1678,7 @@ def finalize_flux_runtime(
         != "infra/k8s/gitops/clusters/local/bootstrap"
     ):
         raise KindctlError("final handoff did not begin from the bootstrap root")
+    require_rendered_storage_classes(kubeconfig)
     wait_root_kustomization(kubeconfig, reviewed_sha)
     run_command(kube_args(kubeconfig, "apply", "-f", str(final)), timeout=120)
     after_uid = wait_flux_instance(
@@ -1896,6 +1968,170 @@ def validate_kubeconfig_binding(attempt: Path, kubeconfig: Path) -> None:
         raise KindctlError("runner-owned kubeconfig identity changed")
 
 
+def require_llm_proxy_env_file() -> Path:
+    value = os.environ.get(LLM_PROXY_ENV, "")
+    source = Path(value)
+    if not value or not source.is_absolute():
+        raise KindctlError(f"{LLM_PROXY_ENV} must name an absolute mode-0600 file")
+    try:
+        metadata = source.lstat()
+    except OSError as error:
+        raise KindctlError(f"{LLM_PROXY_ENV} is unavailable: {source}") from error
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise KindctlError(f"{LLM_PROXY_ENV} must be an owner-only mode-0600 regular file")
+    return source
+
+
+def llm_proxy_binding(source: Path) -> tuple[str, int, str]:
+    base_url: bytes | None = None
+    with source.open("rb") as stream:
+        for raw_line in stream:
+            name, separator, value = raw_line.rstrip(b"\r\n").partition(b"=")
+            if name != b"LLM_PROXY_SERVER_BASE_URL":
+                continue
+            if base_url is not None or not separator or not value:
+                raise KindctlError("proxy environment must define one non-empty LLM_PROXY_SERVER_BASE_URL")
+            base_url = value
+    if base_url is None:
+        raise KindctlError("proxy environment is missing LLM_PROXY_SERVER_BASE_URL")
+    try:
+        parsed = urlsplit(base_url.decode("utf-8"))
+        port = parsed.port
+    except (UnicodeDecodeError, ValueError) as error:
+        raise KindctlError("LLM_PROXY_SERVER_BASE_URL is invalid") from error
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname is None
+        or port is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise KindctlError("LLM_PROXY_SERVER_BASE_URL must be an uncredentialed HTTP host and explicit port")
+    try:
+        address = ipaddress.ip_address(parsed.hostname)
+    except ValueError as error:
+        raise KindctlError("LLM_PROXY_SERVER_BASE_URL must use a private IPv4 address") from error
+    if address.version != 4 or not address.is_private:
+        raise KindctlError("LLM_PROXY_SERVER_BASE_URL must use a private IPv4 address")
+    base_path = parsed.path.rstrip("/")
+    if base_path not in {"", "/v1"}:
+        raise KindctlError("LLM_PROXY_SERVER_BASE_URL path must be empty or /v1")
+    return str(address), port, "/v1/responses"
+
+
+def write_llm_proxy_values(runtime: Path, source: Path) -> Path:
+    host, port, path = llm_proxy_binding(source)
+    values = runtime / "owner-model-egress.values.json"
+    write_exclusive(
+        values,
+        {
+            "global": {
+                "modelEgress": {
+                    "destinations": [{"cidr": f"{host}/32", "port": port}],
+                    "providerEndpoints": {
+                        "openai-responses": {
+                            "host": host,
+                            "path": path,
+                            "port": port,
+                            "tls": None,
+                        }
+                    },
+                }
+            }
+        },
+    )
+    return values
+
+
+def install_llm_proxy_source(kubeconfig: Path, source: Path, values: Path) -> dict[str, Any]:
+    for namespace in ("flux-system", "nohiki"):
+        run_command(kube_args(kubeconfig, "create", "namespace", namespace), timeout=15)
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "nohiki",
+            "create",
+            "secret",
+            "generic",
+            LLM_PROXY_SECRET,
+            f"--from-env-file={source}",
+        ),
+        timeout=15,
+    )
+    source_sha256 = sha256_file(source)
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "nohiki",
+            "annotate",
+            "secret",
+            LLM_PROXY_SECRET,
+            f"nohiki.io/source-file-sha256={source_sha256}",
+        ),
+        timeout=15,
+    )
+    metadata = run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "nohiki",
+            "get",
+            "secret",
+            LLM_PROXY_SECRET,
+            "-o",
+            "jsonpath={.metadata.uid}{'\\t'}{.metadata.resourceVersion}{'\\t'}{.type}{'\\t'}{.metadata.annotations.nohiki\\.io/source-file-sha256}",
+        ),
+        timeout=15,
+    )
+    keys = run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "nohiki",
+            "get",
+            "secret",
+            LLM_PROXY_SECRET,
+            "-o",
+            'go-template={{range $k, $_ := .data}}{{$k}}{{"\\n"}}{{end}}',
+        ),
+        timeout=15,
+    )
+    fields = metadata.stdout.rstrip("\n").split("\t")
+    if len(fields) != 4 or fields[3] != source_sha256:
+        raise KindctlError("owner proxy Secret metadata is not closed")
+    secret = {
+        "keyNames": sorted(line for line in keys.stdout.splitlines() if line),
+        "name": LLM_PROXY_SECRET,
+        "namespace": "nohiki",
+        "resourceVersion": fields[1],
+        "sourceFileSha256": fields[3],
+        "type": fields[2],
+        "uid": fields[0],
+    }
+    run_command(
+        kube_args(
+            kubeconfig,
+            "-n",
+            "flux-system",
+            "create",
+            "configmap",
+            LLM_PROXY_VALUES,
+            f"--from-file=values.yaml={values}",
+        ),
+        timeout=15,
+    )
+    return secret
+
+
 def create(attempt: Path) -> dict[str, Any]:
     runtime = attempt / "runtime"
     kubeconfig = runtime / "kubeconfig"
@@ -1907,9 +2143,11 @@ def create(attempt: Path) -> dict[str, Any]:
     require_no_residue(kubeconfig, attempt)
     preflight()
     modules = kind_modules_override()
+    proxy_source = require_llm_proxy_env_file()
     runtime.mkdir(mode=0o700)
     try:
-        provider_bin = install_kind_provider_wrapper(runtime, modules) if modules is not None else None
+        proxy_values = write_llm_proxy_values(runtime, proxy_source)
+        provider_bin = install_kind_provider_wrapper(runtime, modules)
         descriptor = os.open(kubeconfig, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         os.close(descriptor)
         run_command(create_argv(kubeconfig, provider_bin), timeout=CREATE_TIMEOUT)
@@ -1917,6 +2155,7 @@ def create(attempt: Path) -> dict[str, Any]:
         cluster_uid, cluster_nodes, pod_capacity = validate_cluster(kubeconfig)
         nodes = repair_nodes(kubeconfig)
         require_cluster_dns_ready(kubeconfig)
+        install_llm_proxy_source(kubeconfig, proxy_source, proxy_values)
         recreate_storage_provisioner(kubeconfig)
         pids_limits = require_node_pid_limits(cluster_nodes)
         require_storage_class(kubeconfig)

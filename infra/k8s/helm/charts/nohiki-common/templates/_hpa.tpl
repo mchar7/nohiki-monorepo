@@ -28,6 +28,7 @@ Usage: {{ include "nohiki-common.kedaScaledObject.kafka" . }}
 {{- $glob := .Values.global | default dict }}
 {{- $globScaling := $glob.scaling | default dict }}
 {{- $globKafka := $glob.kafka | default dict }}
+{{- $bootstrapGate := $globKafka.bootstrapGate | default dict }}
 {{- $security := $globKafka.security | default dict }}
 {{- $sasl := $security.sasl | default dict }}
 {{- $authenticationRef := "" }}
@@ -52,6 +53,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "nohiki-common.labels" . | nindent 4 }}
+  {{- if $bootstrapGate.enabled }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-failed
+  {{- end }}
 spec:
   scaleTargetRef:
     name: {{ include "nohiki-common.fullname" . }}
@@ -97,6 +104,7 @@ Usage: {{ include "nohiki-common.kedaScaledObject.multi" . }}
 {{- $glob := .Values.global | default dict }}
 {{- $globScaling := $glob.scaling | default dict }}
 {{- $globKafka := $glob.kafka | default dict }}
+{{- $bootstrapGate := $globKafka.bootstrapGate | default dict }}
 {{- $globPrometheus := $glob.prometheus | default dict }}
 {{- $security := $globKafka.security | default dict }}
 {{- $sasl := $security.sasl | default dict }}
@@ -122,6 +130,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "nohiki-common.labels" . | nindent 4 }}
+  {{- if $bootstrapGate.enabled }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-failed
+  {{- end }}
 spec:
   scaleTargetRef:
     name: {{ include "nohiki-common.fullname" . }}

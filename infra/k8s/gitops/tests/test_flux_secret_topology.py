@@ -235,17 +235,22 @@ def test_provider_consumers_exactly_drive_routes_secrets_and_health(cluster: str
             "name": secret_name,
             "creationPolicy": "Owner",
         }
+        if environment == "local" and credential == "openai":
+            remote_ref = {
+                "key": "nohiki-llm-proxy-source",
+                "property": "LLM_PROXY_SERVER_API_KEY",
+            }
+        elif environment == "local":
+            remote_ref = {
+                "key": "nohiki-llm-runtime",
+                "property": f"{credential}_api_key",
+            }
+        else:
+            remote_ref = {"key": f"model-egress-{credential}-authorization"}
         assert external_secret["spec"]["data"] == [
             {
                 "secretKey": "Authorization",
-                "remoteRef": (
-                    {
-                        "key": "nohiki-llm-runtime",
-                        "property": f"{credential}_api_key",
-                    }
-                    if environment == "local"
-                    else {"key": f"model-egress-{credential}-authorization"}
-                ),
+                "remoteRef": remote_ref,
             }
         ]
     if environment == "local":
@@ -526,6 +531,18 @@ def test_local_runtime_secrets_have_one_flux_owner_and_ordered_dependencies() ->
     }
     assert runtime["spec"]["dependsOn"] == [{"name": "infrastructure"}]
     assert runtime["spec"]["healthChecks"] == [
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "name": "nohiki-llm-proxy-source",
+            "namespace": "nohiki",
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "name": "nohiki-owner-model-egress-values",
+            "namespace": "flux-system",
+        },
         {
             "apiVersion": "v1",
             "kind": "Secret",

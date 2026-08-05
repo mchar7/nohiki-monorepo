@@ -593,20 +593,24 @@ def test_local_helmrelease_requires_generated_digest_values_overlay() -> None:
         }
     ]
     patch = yaml.safe_load(kustomization["patches"][0]["patch"])
-    assert patch == [
-        {
-            "op": "add",
-            "path": "/spec/valuesFrom",
-            "value": [
-                {
-                    "kind": "ConfigMap",
-                    "name": "nohiki-image-digests",
-                    "valuesKey": "values.yaml",
-                    "optional": False,
-                }
-            ],
-        }
-    ]
+    assert patch[0] == {
+        "op": "add",
+        "path": "/spec/valuesFrom",
+        "value": [
+            {
+                "kind": "ConfigMap",
+                "name": "nohiki-image-digests",
+                "valuesKey": "values.yaml",
+                "optional": False,
+            },
+            {
+                "kind": "ConfigMap",
+                "name": "nohiki-owner-model-egress-values",
+                "valuesKey": "values.yaml",
+                "optional": False,
+            },
+        ],
+    }
 
 
 @pytest.mark.parametrize(

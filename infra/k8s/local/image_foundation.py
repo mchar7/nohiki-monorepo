@@ -426,7 +426,9 @@ def cmd_render_values(args: argparse.Namespace) -> None:
                 "repositoryName": "",
                 "pullPolicy": "IfNotPresent",
             },
-            "imageDigests": {name: entry["digest"] for name, entry in sorted(digests["images"].items())},
+            "imageDigests": {
+                f"{LOGICAL_REGISTRY}/{name}": entry["digest"] for name, entry in sorted(digests["images"].items())
+            },
         },
         "imageFoundation": digests,
     }

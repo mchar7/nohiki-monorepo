@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+import yaml
 from _documents import Manifest, load_manifests, load_mapping, mapping_at
 from helm_test_utils import runtime_eso_args
 from test_image_digest_gitops import _digest_values
@@ -279,6 +280,18 @@ def test_local_mimir_and_loki_disable_replica_amplification() -> None:
         for component in ("chunksCache", "lokiCanary", "resultsCache")
     )
     assert all(mapping_at(loki, component).get("replicas") == 1 for component in ("backend", "read", "write"))
+
+
+def test_local_mimir_classic_ingestion_keeps_the_push_api_enabled(tmp_path: Path) -> None:
+    documents = _render("values.local.yaml", tmp_path)
+    configmap = next(
+        document
+        for document in documents
+        if document["kind"] == "ConfigMap" and document["metadata"]["name"] == "nohiki-mimir-config"
+    )
+    config = yaml.safe_load(configmap["data"]["mimir.yaml"])
+    assert config["ingest_storage"]["enabled"] is False
+    assert config["ingester"]["push_grpc_method_enabled"] is True
 
 
 def test_loki_and_cache_images_are_aligned_without_config_changes() -> None:

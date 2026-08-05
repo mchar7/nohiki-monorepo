@@ -7,6 +7,7 @@ import tarfile
 from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
+from typing import cast
 
 import jsonschema
 import pytest
@@ -852,6 +853,32 @@ def test_route_auth_selectors_authorize_only_the_declared_client_matrix(
             auth: object = policies.get("auth")
             assert isinstance(auth, dict)
             assert auth.get("location") == {"header": {"name": "x-api-key"}}
+
+
+def test_local_proxy_endpoint_uses_its_owner_credential(
+    rendered: tuple[Manifest, ...],
+    managed_rendered: tuple[Manifest, ...],
+) -> None:
+    local = _named(rendered, "ExternalSecret", "nohiki-model-egress-openai")
+    local_spec = cast(dict[str, object], local["spec"])
+    assert local_spec["data"] == [
+        {
+            "secretKey": "Authorization",
+            "remoteRef": {
+                "key": "nohiki-llm-proxy-source",
+                "property": "LLM_PROXY_SERVER_API_KEY",
+            },
+        }
+    ]
+
+    managed = _named(managed_rendered, "ExternalSecret", "nohiki-model-egress-openai")
+    managed_spec = cast(dict[str, object], managed["spec"])
+    assert managed_spec["data"] == [
+        {
+            "secretKey": "Authorization",
+            "remoteRef": {"key": "model-egress-openai-authorization"},
+        }
+    ]
 
 
 def test_api_key_auth_prefixes_include_the_header_separator(
