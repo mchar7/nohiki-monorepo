@@ -38,7 +38,10 @@ _SCAFFOLD_DOCKERFILE = (
 )
 _KAFKA_DOCKERFILE = _ROOT / "infra" / "k8s" / "kafka-connect" / "Dockerfile"
 _ML_COMPUTE_DOCKERFILE = _ROOT / "backend" / "services" / "ml-compute-service" / "Dockerfile"
-_KAFKA_README = _KAFKA_DOCKERFILE.parent / "smt" / "README.md"
+_KAFKA_SMT = _ROOT / "jvm" / "nohiki-wal-router-smt"
+_KAFKA_README = _KAFKA_SMT / "README.md"
+_KAFKA_BUILD = _KAFKA_SMT / "build.gradle.kts"
+_KAFKA_WRAPPER = _KAFKA_SMT / "gradle" / "wrapper" / "gradle-wrapper.properties"
 _HELM_VALUES = _ROOT / "infra" / "k8s" / "helm" / "values.yaml"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 # A digest-pinned helm tag keeps its version component: "<version>@sha256:<64 hex>".
@@ -923,7 +926,12 @@ def test_kafka_connect_image_owns_remote_connector_pins() -> None:
     assert len(gradle) == 1
     assert len(debezium) == 1
     gradle_ref = gradle[0]["ref"]
-    assert readme.count(gradle_ref) == 3
+    gradle_version, jdk_version = gradle[0]["version"].split("-jdk", maxsplit=1)
+    jdk_major = jdk_version.split("-", maxsplit=1)[0]
+    assert f"Gradle {gradle_version}" in readme
+    assert f"gradle-{gradle_version}-bin.zip" in _read_text(_KAFKA_WRAPPER)
+    assert f"JavaLanguageVersion.of({jdk_major})" in _read_text(_KAFKA_BUILD)
+    assert gradle_ref in dockerfile
 
     qdrant_version = re.search(r"^ARG QDRANT_CONNECTOR_VERSION=(\S+)$", dockerfile, re.MULTILINE)
     qdrant_digest = re.search(r"^ARG QDRANT_CONNECTOR_SHA256=(\S+)$", dockerfile, re.MULTILINE)
@@ -979,6 +987,8 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         "github-actions",
         "dockerfile",
         "docker-compose",
+        "gradle",
+        "gradle-wrapper",
         "helmv3",
         "helm-values",
         "flux",
@@ -1023,10 +1033,11 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     custom_by_dependency = {
         manager.get("depNameTemplate"): manager for manager in custom_managers if isinstance(manager, dict)
     }
-    assert set(custom_by_dependency) == {"pnpm", "@playwright/test"}
-    for manager in custom_by_dependency.values():
+    assert set(custom_by_dependency) == {"pnpm", "@playwright/test", "java-jdk"}
+    expected_datasources = {"pnpm": "npm", "@playwright/test": "npm", "java-jdk": "java-version"}
+    for dependency, manager in custom_by_dependency.items():
         assert manager.get("customType") == "regex"
-        assert manager.get("datasourceTemplate") == "npm"
+        assert manager.get("datasourceTemplate") == expected_datasources[dependency]
         assert isinstance(manager.get("managerFilePatterns"), list)
         match_strings = manager.get("matchStrings")
         assert isinstance(match_strings, list)
@@ -1045,6 +1056,7 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     parity_groups = {
         "pnpm": "pnpm version parity",
         "@playwright/test": "Playwright version parity",
+        "java-jdk": "JDK major parity",
     }
     for dependency, group_name in parity_groups.items():
         parity_rule = next(
