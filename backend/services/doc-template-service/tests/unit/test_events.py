@@ -30,7 +30,7 @@ from doc_template_service.services.template_service import (
     TemplateVersionError,
 )
 from nohiki.common.v1 import AccessScope, EventMetadata, RenderOutputFormat
-from nohiki.doc.template.v1 import TemplateAudience
+from nohiki.doc.template.v1 import DocumentRenderRequested, TemplateAudience
 from nohiki_common_exceptions import ValidationError
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import MessageContext
@@ -303,7 +303,6 @@ class TestRenderCompletedParams:
 
 class TestHandleTemplateRenderRequested:
     """Tests for handle_template_render_requested event handler."""
-
 
     @pytest.mark.asyncio
     async def test_invalid_metadata_publishes_one_correlated_terminal_failure(

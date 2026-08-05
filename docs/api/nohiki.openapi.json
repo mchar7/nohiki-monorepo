@@ -4968,12 +4968,24 @@
             "default": false
           },
           "salary_preference": {
-            "$ref": "#/components/schemas/SalaryPreferenceRequest",
-            "description": "Salary preference required for ML scoring"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SalaryPreferenceRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "experience_preference": {
-            "$ref": "#/components/schemas/ExperiencePreferenceRequest",
-            "description": "Experience preference required for ML scoring"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExperiencePreferenceRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -4981,9 +4993,7 @@
         "required": [
           "pref_name",
           "search_keywords",
-          "work_arrangements",
-          "salary_preference",
-          "experience_preference"
+          "work_arrangements"
         ],
         "title": "ProfileCreate",
         "description": "Request to create a job target profile."
@@ -5689,7 +5699,6 @@
           },
           "template_content": {
             "type": "string",
-            "maxLength": 1048576,
             "minLength": 10,
             "title": "Template Content"
           },
@@ -5904,7 +5913,6 @@
         "properties": {
           "template": {
             "type": "string",
-            "maxLength": 1048576,
             "title": "Template",
             "description": "Template HTML/Jinja2 content to validate"
           }
@@ -5943,12 +5951,11 @@
         "properties": {
           "version": {
             "type": "string",
-            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+([0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*))?$",
             "title": "Version"
           },
           "template_content": {
             "type": "string",
-            "maxLength": 1048576,
             "minLength": 10,
             "title": "Template Content"
           },

@@ -43,7 +43,7 @@ class TestEnqueueRenderRequest:
         mock_message = MagicMock(spec=Message)
         mock_message.id = uuid4()
         mock_message.external_layout_id = uuid4()
-        mock_message.external_layout_version = "2.3.4"
+        mock_message.external_layout_version = "2.3.4-rc.1+build.7"
         mock_message.external_layout_content = "<html>{{ subject }}</html>"
         mock_message.correlation_id = None
         writer = MagicMock()
@@ -60,11 +60,28 @@ class TestEnqueueRenderRequest:
         assert write_call is not None
         event = write_call.kwargs["event"]
         assert event.template_id == str(mock_message.external_layout_id)
-        assert event.template_version == "2.3.4"
+        assert event.template_version == "2.3.4-rc.1+build.7"
         assert event.template_content == "<html>{{ subject }}</html>"
         assert event.data == Struct.from_dict({"key": "value"})
         assert mock_message.status == MessageStatus.WAITING_FOR_RENDER
         assert mock_message.correlation_id == mock_message.id
+
+    @pytest.mark.parametrize(
+        "version",
+        ["1.2.3-01", "1.2.3-alpha..1", "\u0661.\u0662.\u0663"],
+    )
+    def test_invalid_layout_semver_raises(self, version: str) -> None:
+        """Invalid SemVer is rejected before writing a render request."""
+        from notification_service.services.messaging.repository import _validate_external_layout_snapshot
+
+        mock_message = MagicMock(spec=Message)
+        mock_message.external_layout_version = version
+        mock_message.external_layout_content = "<html>valid content</html>"
+
+        with pytest.raises(NohikiError) as exc_info:
+            _validate_external_layout_snapshot(mock_message)
+
+        assert exc_info.value.error_code == ErrorCode.VALIDATION_ERROR
 
     @pytest.mark.asyncio
     async def test_enqueue_preserves_bool_in_struct(self) -> None:
