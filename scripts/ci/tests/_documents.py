@@ -109,6 +109,7 @@ WorkflowJob = TypedDict(
         "if": NotRequired[ReadOnly[str]],
         "runs-on": NotRequired[ReadOnly[str | list[str]]],
         "timeout-minutes": NotRequired[ReadOnly[int]],
+        "continue-on-error": NotRequired[ReadOnly[bool]],
         "permissions": NotRequired[ReadOnly[WorkflowPermissions]],
         "env": NotRequired[ReadOnly[WorkflowEnvironment]],
         "outputs": NotRequired[ReadOnly[dict[str, str]]],
