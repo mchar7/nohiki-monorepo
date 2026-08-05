@@ -712,8 +712,8 @@ class TestValidityFlagsFeatureGroup:
         features = composer.extract(job, profile, scores).raw_features
         assert features[FeatureIndex.HAS_SKILL_DATA] == pytest.approx(0.0)
 
-    def test_has_listing_quality_flag(self) -> None:
-        """HAS_LISTING_QUALITY should be 0.0 when no quality signal exists."""
+    def test_reserved_listing_quality_features_are_unavailable(self) -> None:
+        """Reserved listing-quality slots should report no production signal."""
         composer = FeatureComposer.create_default()
         job = _create_minimal_job()
         profile = _create_minimal_profile()
@@ -721,6 +721,8 @@ class TestValidityFlagsFeatureGroup:
 
         features = composer.extract(job, profile, scores).raw_features
 
+        assert features[FeatureIndex.LISTING_FEEDBACK_COUNT] == pytest.approx(0.0)
+        assert math.isnan(features[FeatureIndex.LISTING_QUALITY_SCORE])
         assert features[FeatureIndex.HAS_LISTING_QUALITY] == pytest.approx(0.0)
 
 

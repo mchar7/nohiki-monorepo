@@ -757,7 +757,6 @@ def test_deadcode_whitelist_is_path_scoped_and_collision_safe() -> None:
         "initiate_upload",
         "list_profiles",
         "matches",
-        "predict",
         "record_error",
         "record_orphan_completion",
         "record_request",

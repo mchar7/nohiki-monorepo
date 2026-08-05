@@ -205,14 +205,14 @@ The model uses 32 features in the following order:
 | 19 | skill_relationship_count | Count of skill graph relationships |
 | 20 | skills_cosine_sim | Cosine similarity of skill embeddings |
 | 21 | job_age_hours | Hours since job was posted |
-| 22 | listing_feedback_count | Number of feedback signals on listing |
-| 23 | listing_quality_score | LLM-derived listing quality score |
+| 22 | listing_feedback_count | Reserved; listing feedback signal unavailable (always 0) |
+| 23 | listing_quality_score | Reserved; listing quality signal unavailable (always NaN) |
 | 24 | work_arrangement_match | Remote/hybrid/onsite preference match |
 | 25 | has_location_data | Whether location data is available |
 | 26 | has_experience_data | Whether experience data is available |
 | 27 | has_salary_data | Whether salary data is available |
 | 28 | has_skill_data | Whether skill data is available |
-| 29 | has_listing_quality | Whether listing quality score is available |
+| 29 | has_listing_quality | Reserved validity flag (always 0) |
 | 30 | skill_graph_min_distance | Minimum distance in skill graph |
 | 31 | skill_graph_mean_distance | Mean distance in skill graph |
 
