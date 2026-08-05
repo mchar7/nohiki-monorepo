@@ -541,6 +541,7 @@ def test_interim_memory_guard_fails_below_derived_floor() -> None:
 
     runner.require_available_memory(floor)
 
+
 def test_create_executes_the_scoped_command_under_its_own_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1437,6 +1438,7 @@ def test_flux_finalize_command_record_carries_both_memory_byte_terms(
     monkeypatch.setattr(runner, "wait_root_kustomization", lambda *_args: "source-revision")
     monkeypatch.setattr(runner, "run_command", lambda argv, **_kwargs: _completed(argv))
     monkeypatch.setattr(runner, "wait_flux_instance", lambda *_args: "flux-uid")
+    monkeypatch.setattr(runner, "require_rendered_storage_classes", lambda *_args: ())
     monkeypatch.setattr(runner, "FULL_CHILDREN", ())
     monkeypatch.setattr(runner, "kind_node_cgroup_memory_peak", lambda _measurements: 456)
     monkeypatch.setattr(
