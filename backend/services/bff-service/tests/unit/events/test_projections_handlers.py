@@ -43,6 +43,7 @@ from bff_service.events.projections.user_upload import (
 )
 from bff_service.sse.events import CommandStatusPayload, DocumentStatusPayload
 from nohiki.common.v1 import (
+    AccessScope,
     CommutePreferences,
     CurrencyCode,
     Location,
@@ -394,6 +395,25 @@ async def test_handle_account_deleted_records_cutoff_before_atomic_delete() -> N
     assert operations[-2:] == ["cutoff", "delete"]
     statement = mock_session.execute.await_args.args[0]
     assert user_id in statement.compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_handle_account_deleted_rejects_missing_metadata() -> None:
+    """Absent event metadata gives no revocation cutoff, so the deletion must not be projected."""
+    mock_session = create_mock_session()
+    event = AccountDeleted(user_id=str(uuid.uuid4()), metadata=None)
+
+    with (
+        patch(
+            "bff_service.events.projections.user_auth.record_user_revocation_cutoff",
+            new_callable=AsyncMock,
+        ) as helper,
+        pytest.raises(ValueError, match="AccountDeleted metadata is required for revocation cutoff"),
+    ):
+        await handle_account_deleted(event, _make_context(db_session=mock_session))
+
+    helper.assert_not_awaited()
+    mock_session.execute.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -1187,7 +1207,7 @@ async def test_handle_template_updated() -> None:
     snapshot.name = "resume-modern"
     snapshot.display_name = "Modern Résumé"
     snapshot.description = "Modern resume"
-    snapshot.access_scope = None
+    snapshot.access_scope = AccessScope.UNSPECIFIED
     snapshot.owner_id = ""
     snapshot.version_snapshot = version_snapshot
 
@@ -1223,7 +1243,7 @@ async def test_handle_template_updated_preserves_protobuf_defaults() -> None:
         display_name="",
         audience=TemplateAudience.UNSPECIFIED,
         description="",
-        access_scope=None,
+        access_scope=AccessScope.UNSPECIFIED,
         owner_id="",
         version_snapshot=version_snapshot,
     )
@@ -1240,6 +1260,39 @@ async def test_handle_template_updated_preserves_protobuf_defaults() -> None:
     projection_params = projection_stmt.compile().params
     assert projection_params["display_name"] == ""
     assert projection_params["audience"] == TemplateAudience.UNSPECIFIED
+
+
+@pytest.mark.asyncio
+async def test_handle_template_updated_does_not_widen_unspecified_access_scope() -> None:
+    """An unspecified access scope is projected as-is, never widened to the public scope."""
+    request_id = uuid.uuid4()
+    version_snapshot = MagicMock(
+        version_id="",
+        version="2.0.0",
+        template_content="<html>{{ title }}</html>",
+        content_schema_json="",
+    )
+    snapshot = MagicMock(
+        namespace="default",
+        name="resume-modern",
+        display_name="Modern Résumé",
+        audience=TemplateAudience.DOCUMENT,
+        description="",
+        access_scope=AccessScope.UNSPECIFIED,
+        owner_id="",
+        version_snapshot=version_snapshot,
+    )
+    event = TemplateUpdated()
+    event.template_id = str(uuid.uuid4())
+    event.template_snapshot = snapshot
+    event.metadata = MagicMock(correlation_id=str(request_id))
+    mock_session = create_mock_session()
+
+    await handle_template_updated(event, _make_context(db_session=mock_session))
+
+    projection_params = mock_session.execute.await_args_list[0].args[0].compile().params
+    assert projection_params["access_scope"] == AccessScope.UNSPECIFIED
+    assert projection_params["access_scope"] != AccessScope.PUBLIC
 
 
 @pytest.mark.asyncio

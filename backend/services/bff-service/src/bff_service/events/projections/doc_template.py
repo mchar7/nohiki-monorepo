@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from nohiki.common.v1 import AccessScope, ProcessingStatus
+from nohiki.common.v1 import ProcessingStatus
 from nohiki.doc.template.v1 import (
     DocumentRenderCompleted,
     TemplateCreated,
@@ -58,7 +58,7 @@ async def _upsert_template_from_snapshot(session: AsyncSession, msg: TemplateCre
             return False
         content_schema = parsed
 
-    access_scope = snapshot.access_scope or AccessScope.PUBLIC
+    access_scope = snapshot.access_scope
     owner_id = UUID(snapshot.owner_id) if snapshot.owner_id else None
     display_name = snapshot.display_name
     audience = snapshot.audience

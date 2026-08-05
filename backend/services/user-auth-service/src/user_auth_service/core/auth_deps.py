@@ -24,7 +24,7 @@ from user_auth_service.services.token_blacklist import get_token_blacklist
 
 async def get_current_user_id_from_cookie(
     request: Request,
-    db: Annotated[AsyncSession | None, Depends(get_async_db)] = None,
+    db: Annotated[AsyncSession, Depends(get_async_db)],
 ) -> UUID:
     """Extract and validate the user ID from the JWT access-token cookie."""
     settings = get_settings()
@@ -76,22 +76,21 @@ async def get_current_user_id_from_cookie(
             detail="Token has been revoked",
         )
 
-    if db is not None:
-        try:
-            family_revoked = await get_refresh_token_service().is_session_family_revoked(
-                db,
-                account_id=user_id,
-                session_family_id=session_family_id,
-            )
-        except (SQLAlchemyError, OverflowError, OSError, ValueError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Authentication state unavailable",
-            ) from exc
-        if family_revoked:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has been revoked",
-            )
+    try:
+        family_revoked = await get_refresh_token_service().is_session_family_revoked(
+            db,
+            account_id=user_id,
+            session_family_id=session_family_id,
+        )
+    except (SQLAlchemyError, OverflowError, OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication state unavailable",
+        ) from exc
+    if family_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+        )
 
     return user_id
