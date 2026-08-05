@@ -18,7 +18,7 @@ Command: `qdrant-init init --manifest ... --qdrant-url ... --wait`
 */}}
 {{- if .Values.qdrant.enabled }}
 {{- $glob := .Values.global | default dict }}
-{{- $globImg := $glob.image | default dict }}
+{{- $globImg := $glob.nohikiImage | default dict }}
 {{- $imgTag := $glob.imageTag | default "latest" }}
 {{- $qdrantInit := .Values.qdrantInit | default dict }}
 {{- $qdrantInitImage := $qdrantInit.image | default dict }}
@@ -27,12 +27,22 @@ Command: `qdrant-init init --manifest ... --qdrant-url ... --wait`
 {{- $imgRepoName := dig "repositoryName" ($globImg.repositoryName | default "") $qdrantInitImage }}
 {{- $imgName := dig "name" "qdrant-init" $qdrantInitImage }}
 {{- $pullPolicy := dig "pullPolicy" ($globImg.pullPolicy | default "IfNotPresent") $qdrantInitImage }}
-{{- $imageRef := printf "%s:%s" $imgName $imgTag }}
+{{- $repository := $imgName }}
 {{- if $imgRegistry }}
-  {{- $imageRef = printf "%s/%s:%s" $imgRegistry $imgName $imgTag }}
+  {{- $repository = printf "%s/%s" $imgRegistry $imgName }}
 {{- end }}
 {{- if and $imgRegistry $imgOwner $imgRepoName }}
-  {{- $imageRef = printf "%s/%s/%s/%s:%s" $imgRegistry $imgOwner $imgRepoName $imgName $imgTag }}
+  {{- $repository = printf "%s/%s/%s/%s" $imgRegistry $imgOwner $imgRepoName $imgName }}
+{{- end }}
+{{- $digest := index ($glob.imageDigests | default dict) $repository | default "" }}
+{{- $imageRef := printf "%s:%s" $repository $imgTag }}
+{{- if $digest }}
+  {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) }}
+    {{- fail (printf "invalid digest for image %s: %s" $imgName $digest) }}
+  {{- end }}
+  {{- $imageRef = printf "%s@%s" $repository $digest }}
+{{- else if eq ($glob.environment | default "") "prod" }}
+  {{- fail (printf "production image digest is required for canonical repository %s" $repository) }}
 {{- end }}
 {{- $qdrantValues := .Values.qdrant | default dict }}
 {{- $qdrantHost := $qdrantValues.fullnameOverride | default (printf "%s-qdrant" .Release.Name) }}

@@ -155,6 +155,13 @@ def test_first_party_service_and_job_helpers_still_resolve_digests(tmp_path: Pat
     assert _pod_spec(cronjob)["containers"][0]["image"] == f"{repositories[1]}@{_DIGEST}"
 
 
+def test_qdrant_init_resolves_its_canonical_production_digest(tmp_path: Path) -> None:
+    documents = _render("values.prod.yaml", tmp_path, "--set", "qdrant.enabled=true")
+    qdrant_init = _workload(documents, "Job", "nohiki-qdrant-init")
+
+    assert _pod_spec(qdrant_init)["containers"][0]["image"] == _expected_prod_image("qdrant-init")
+
+
 def test_reserved_global_image_is_absent_and_dependencies_keep_their_registries(tmp_path: Path) -> None:
     base_and_local = {"values.yaml", "values.local.yaml"}
     for values_file in ("values.yaml", "values.local.yaml", "values.staging.yaml", "values.prod.yaml"):

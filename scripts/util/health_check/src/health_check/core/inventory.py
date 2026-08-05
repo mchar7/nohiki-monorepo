@@ -215,10 +215,10 @@ INVENTORY_SPECS: Final[Mapping[str, InventorySpec]] = MappingProxyType(
         "replication_slot": InventorySpec(EndpointClass.DATABASE, _A, _C, ("logical replication slot state",)),
         "cdc_end_to_end": InventorySpec(
             EndpointClass.KAFKA,
-            _D,
+            _I,
             _C,
             ("synthetic outbox event",),
-            adaptation="in-cluster CNPG outbox write and Strimzi Kafka delivery",
+            reason="mutates application data; the verification Job is strictly non-mutating",
         ),
         "core_services": InventorySpec(
             EndpointClass.HTTP,
