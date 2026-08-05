@@ -51,7 +51,6 @@ job_board_source_pg_enum = ENUM(
 
 SQL_EMPTY_WORK_ARR_ARRAY = sa.text(f"ARRAY[]::{SCHEMA_NAME}.work_arrangement_enum[]")
 SQL_EMPTY_SOURCE_ARRAY = sa.text(f"ARRAY[]::{SCHEMA_NAME}.job_board_source_enum[]")
-SQL_EMPTY_VARCHAR_ARRAY = sa.text("ARRAY[]::varchar[]")
 
 
 class Base(DeclarativeBase):
@@ -69,6 +68,8 @@ class IngestionSchedule(RepresentableMixin, CreatedAtMixin, UpdatedAtMixin, Base
     __tablename__ = "ingestion_schedules"
     __table_args__ = (
         sa.CheckConstraint("frequency > INTERVAL '0 seconds'", name="ck_schedule_frequency_positive"),
+        sa.CheckConstraint("hours_old BETWEEN 1 AND 168", name="ck_schedule_hours_old_range"),
+        sa.CheckConstraint("results_wanted BETWEEN 1 AND 100", name="ck_schedule_results_wanted_range"),
         {"schema": SCHEMA_NAME},
     )
 
@@ -81,9 +82,6 @@ class IngestionSchedule(RepresentableMixin, CreatedAtMixin, UpdatedAtMixin, Base
     # NOTE: DB stores enum strings, Python uses proto enums via property accessors
     _work_arrangements: Mapped[list[str]] = mapped_column(
         "work_arrangements", ARRAY(work_arrangement_pg_enum), nullable=False, server_default=SQL_EMPTY_WORK_ARR_ARRAY
-    )
-    remote_preferences: Mapped[list[str]] = mapped_column(
-        ARRAY(String), nullable=False, server_default=SQL_EMPTY_VARCHAR_ARRAY
     )
     _sources: Mapped[list[str]] = mapped_column(
         "sources", ARRAY(job_board_source_pg_enum), nullable=False, server_default=SQL_EMPTY_SOURCE_ARRAY

@@ -70,9 +70,7 @@ class SearchPref(BaseEntity, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(), nullable=False, index=True)
 
     pref_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    search_keywords: Mapped[list[str]] = mapped_column(
-        ARRAY(String(100)), nullable=False, server_default=SQL_EMPTY_VARCHAR_ARRAY
-    )
+    search_keywords: Mapped[list[str]] = mapped_column(ARRAY(String(100)), nullable=False)
     disallowed_keywords: Mapped[list[str]] = mapped_column(
         ARRAY(String(100)), nullable=False, server_default=SQL_EMPTY_VARCHAR_ARRAY
     )
@@ -90,7 +88,6 @@ class SearchPref(BaseEntity, Base):
     work_arrangements: Mapped[list[WorkArrangement]] = mapped_column(
         ARRAY(WorkArrangementEnum),
         nullable=False,
-        server_default=sa.text(f"ARRAY[]::{SCHEMA_NAME}.work_arrangement_enum[]"),
     )
 
     experience_years: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -48,7 +48,7 @@ class OutboxContext:
     db: AsyncSession
     outbox: OutboxWriter
     listing_id: str
-    correlation_id: str
+    correlation_id: str | None
 
 
 @dataclass(slots=True)

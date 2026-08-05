@@ -269,7 +269,7 @@ class TestJobStoreService:
             content_hash="abc123",
         )
         listing_reference = ListingReference(listing_url="https://example.com/job/123")
-        context = RawJobContext(correlation_id="test-correlation", discovered_at=datetime.now(UTC))
+        context = RawJobContext(correlation_id=str(uuid.uuid4()), discovered_at=datetime.now(UTC))
 
         created_saga = MagicMock()
         created_saga.id = uuid.uuid4()
@@ -283,7 +283,13 @@ class TestJobStoreService:
         ):
             mock_repo.create = AsyncMock(return_value=created_saga)
 
-            result = await service.handle_discovered_listing(mock_db, discovered, listing_reference, context)
+            result = await service.handle_discovered_listing(
+                mock_db,
+                discovered,
+                listing_reference,
+                context,
+                query_id=uuid.uuid4(),
+            )
 
         assert result.is_new is True
         assert result.saga_id == created_saga.id

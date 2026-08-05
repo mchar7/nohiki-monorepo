@@ -48,9 +48,11 @@ tick handler uses to determine which queries are due for execution.
   scrape: `INDEED`, `LINKEDIN`, `ZIPRECRUITER`, `GOOGLE`, `GLASSDOOR`, `BAYT`, `NAUKRI`,
   `COMPANY_WEBSITE`. `UNSPECIFIED` is filtered out on write.
 - **`hours_old`** (`INTEGER`): How many hours back the scraper should search for listings.
-  Defaults to `72`. Set by service configuration, not from the event payload.
-- **`results_wanted`** (`INTEGER`): Target number of results per scrape run. Defaults to `50`.
-  Set by service configuration, not from the event payload.
+  Defaults to `72`, with persisted values limited to `1` through `168`. Set by service
+  configuration, not from the event payload.
+- **`results_wanted`** (`INTEGER`): Target number of results per scrape run. Defaults to `50`,
+  with persisted values limited to `1` through `100`. Set by service configuration, not from
+  the event payload.
 - **`frequency`** (`INTERVAL`): How often this query runs, stored as a PostgreSQL interval.
   Sourced from `frequency_seconds` in the event payload (converted to `timedelta`). Defaults
   to `1 day`.
@@ -88,6 +90,10 @@ tick handler uses to determine which queries are due for execution.
 
 - **CHECK `ck_schedule_frequency_positive`** (`frequency > INTERVAL '0 seconds'`): Rejects
   invalid non-positive schedule intervals even if an application boundary is bypassed.
+- **CHECK `ck_schedule_hours_old_range`** (`hours_old BETWEEN 1 AND 168`): Keeps the
+  persisted scraper lookback within the command contract.
+- **CHECK `ck_schedule_results_wanted_range`** (`results_wanted BETWEEN 1 AND 100`): Keeps
+  the persisted result target within the command contract.
 
 #### Data Lifecycle
 

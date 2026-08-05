@@ -98,7 +98,6 @@ class Correlation(BaseEntity, StateMachineMixin, Base):
 
     # Correlation metadata
     correlation_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    correlation_reasoning: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     correlation_status: Mapped[CorrelationStatus] = mapped_column(
         CorrelationStatusEnum, nullable=False, server_default="pending"
     )

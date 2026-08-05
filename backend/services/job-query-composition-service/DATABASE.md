@@ -69,6 +69,8 @@ contribute to a single row here rather than generating separate scrape runs.
 
 #### Constraints & Invariants
 
+- **CHECK `chk_locations_json_array`** (`locations IS JSON ARRAY`): Rejects bare objects,
+  scalars, and JSON null so persisted proto locations always remain a repeated-value array.
 - There is no UNIQUE constraint on `(search_keywords, locations)` at the database level; the
   service enforces deduplication via `find_or_create_query` which performs a SELECT before INSERT.
   This keeps the migration simple while relying on the service-layer upsert logic and the

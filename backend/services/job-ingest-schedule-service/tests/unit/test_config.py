@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import cast
+
+import sqlalchemy as sa
+
 
 class TestSchedulerSettings:
     """Tests for SchedulerSettings."""
@@ -82,9 +86,11 @@ class TestGetSettings:
         assert settings1 is settings2
 
 
-def test_initial_migration_keeps_schema_and_frequency_constraint_without_outbox() -> None:
-    """The schedule schema remains explicit while its retired outbox stays absent."""
+def test_initial_migration_keeps_schema_constraints_without_outbox() -> None:
+    """The schedule schema keeps command bounds while its retired outbox stays absent."""
     from pathlib import Path
+
+    from job_ingest_schedule_service.db.models import IngestionSchedule
 
     migration = (Path(__file__).resolve().parents[2] / "alembic" / "versions" / "001_initial_migration.py").read_text(
         encoding="utf-8"
@@ -93,4 +99,17 @@ def test_initial_migration_keeps_schema_and_frequency_constraint_without_outbox(
     assert 'SCHEMA_NAME = "job_schedule_schema"' in migration
     assert "frequency > INTERVAL '0 seconds'" in migration
     assert 'name="ck_schedule_frequency_positive"' in migration
+    assert "hours_old BETWEEN 1 AND 168" in migration
+    assert 'name="ck_schedule_hours_old_range"' in migration
+    assert "results_wanted BETWEEN 1 AND 100" in migration
+    assert 'name="ck_schedule_results_wanted_range"' in migration
+    table = cast(sa.Table, IngestionSchedule.__table__)
+
+    model_checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in table.constraints
+        if constraint.name is not None and hasattr(constraint, "sqltext")
+    }
+    assert model_checks["ck_schedule_hours_old_range"] == "hours_old BETWEEN 1 AND 168"
+    assert model_checks["ck_schedule_results_wanted_range"] == "results_wanted BETWEEN 1 AND 100"
     assert "outbox" not in migration.lower()

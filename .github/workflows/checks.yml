@@ -428,6 +428,18 @@ jobs:
             --packages "$TEST_PACKAGES" --ci --workers 2 --summary "$GITHUB_STEP_SUMMARY" \
             --summary-title "$SUMMARY_TITLE"
 
+      - name: Run job correlation integration tests
+        if: matrix.unit == 'python' && needs.changes.outputs.protected_main_smoke != 'true' && contains(needs.changes.outputs.test_packages, 'job-correlation-evaluation-service')
+        env:
+          CI_CHECKS_SKIP_WORKSPACE_SYNC: "1"
+          OTEL_SDK_DISABLED: "true"
+          UV_NO_SYNC: "1"
+        run: |
+          nix develop .#ci --command uv run --no-sync ci-checks tests all --scope services \
+            --packages job-correlation-evaluation-service --integration --ci --workers 1 \
+            --no-coverage --summary "$GITHUB_STEP_SUMMARY" \
+            --summary-title "job-correlation integration"
+
       # These assert the Playwright config by executing it, so they need the installed pnpm
       # workspace and not just a `node` binary. The `python` payload restores no node_modules,
       # so selection follows the payload: they run in the unit that carries one. The gate names

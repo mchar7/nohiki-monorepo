@@ -38,9 +38,10 @@ it through its lifecycle states until the message is `sent`, `failed`, or `cance
 - **`stored_listing_id`** (`UUID`): References `job_storage_schema.listings.id` when the
   notification relates to a specific job listing. Nullable; used as part of the `UNIQUE`
   constraint that prevents duplicate notifications for the same user-listing pair.
-- **`channel`** (`notification_channel_enum`): Delivery channel -- `EMAIL` or `PUSH_API`. Only
-  `EMAIL` has an active provider. The enum is defined in the schema and maps directly to the
-  `NotificationChannel` protobuf enum.
+- **`channel`** (`notification_channel_enum`): Canonical delivery channel stored as `UNSPECIFIED`,
+  `EMAIL`, `SMS`, or `PUSH_WEB`, corresponding explicitly to the `NotificationChannel` protobuf
+  enum. Storage vocabulary is independent of provider availability; the service currently
+  implements provider routing only for `EMAIL`.
 - **`provider_name`** (`VARCHAR(255)`): The provider that should handle this message
   (`"resend"` or `"twilio_sendgrid"`). Nullable; if absent, the worker uses the configured default.
 - **`status`** (`msg_status_enum`): Current delivery state. Valid values and their meanings:

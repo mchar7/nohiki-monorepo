@@ -97,7 +97,6 @@ class TestMatchRecordRepositoryRecordMatch:
             listing_id=str(uuid.uuid4()),
             listing_url="https://example.com/job",
             score=85,
-            breakdown={"skill_match": 0.8},
             feature_schema_version="v5.0.0",
             feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
             role_relevance_raw=0.0,
@@ -161,7 +160,6 @@ class TestMatchRecordRepositoryRecordMatchesBatch:
                 listing_id=str(uuid.uuid4()),
                 listing_url="https://example.com/job1",
                 score=85,
-                breakdown={},
                 feature_schema_version="v5.0.0",
                 feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
                 role_relevance_raw=0.0,
@@ -173,7 +171,6 @@ class TestMatchRecordRepositoryRecordMatchesBatch:
                 listing_id=str(uuid.uuid4()),
                 listing_url="https://example.com/job2",
                 score=90,
-                breakdown={},
                 feature_schema_version="v5.0.0",
                 feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
                 role_relevance_raw=0.0,
@@ -218,7 +215,6 @@ class TestMatchRecordRepositoryRecordProfileMatchesBatch:
                     listing_id=str(uuid.uuid4()),
                     listing_url="https://example.com/job1",
                     score=80,
-                    breakdown={},
                     feature_schema_version="v5.0.0",
                     feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
                     role_relevance_raw=0.0,
@@ -233,7 +229,6 @@ class TestMatchRecordRepositoryRecordProfileMatchesBatch:
                     listing_id=str(uuid.uuid4()),
                     listing_url="https://example.com/job2",
                     score=90,
-                    breakdown={},
                     feature_schema_version="v5.0.0",
                     feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
                     role_relevance_raw=0.0,
@@ -317,7 +312,6 @@ class TestMatchRecordRepositoryUpsertMatchesBatch:
                 listing_id=str(uuid.uuid4()),
                 listing_url="https://example.com/job1",
                 score=85,
-                breakdown={},
                 feature_schema_version="v5.0.0",
                 feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
                 role_relevance_raw=0.0,
@@ -329,7 +323,6 @@ class TestMatchRecordRepositoryUpsertMatchesBatch:
                 listing_id=str(uuid.uuid4()),
                 listing_url="https://example.com/job2",
                 score=90,
-                breakdown={},
                 feature_schema_version="v5.0.0",
                 feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
                 role_relevance_raw=0.0,
@@ -343,64 +336,6 @@ class TestMatchRecordRepositoryUpsertMatchesBatch:
 
         assert result == 2
         mock_db.commit.assert_awaited_once()
-
-    """Tests for _sanitize_breakdown function."""
-
-    def test_handles_nested_dicts_with_nan(self) -> None:
-        """Test _sanitize_breakdown handles nested dicts with NaN values."""
-        from typing import cast
-
-        from job_correlation_evaluation_service.repositories.match_record_repository import (
-            _sanitize_breakdown,
-        )
-
-        breakdown = {
-            "outer": {
-                "inner_nan": float("nan"),
-                "inner_inf": float("inf"),
-                "inner_neg_inf": float("-inf"),
-                "normal": 42.0,
-            },
-            "top_level_nan": float("nan"),
-        }
-
-        result = _sanitize_breakdown(breakdown)
-        outer = cast(dict[str, object], result["outer"])
-
-        assert result["top_level_nan"] is None
-        assert outer["inner_nan"] is None
-        assert outer["inner_inf"] is None
-        assert outer["inner_neg_inf"] is None
-        assert outer["normal"] == pytest.approx(42.0)
-
-    def test_handles_empty_dict(self) -> None:
-        """Test _sanitize_breakdown handles empty dict."""
-        from job_correlation_evaluation_service.repositories.match_record_repository import (
-            _sanitize_breakdown,
-        )
-
-        result = _sanitize_breakdown({})
-        assert result == {}
-
-    def test_handles_non_float_values(self) -> None:
-        """Test _sanitize_breakdown preserves non-float values."""
-        from job_correlation_evaluation_service.repositories.match_record_repository import (
-            _sanitize_breakdown,
-        )
-
-        breakdown = {
-            "string": "test",
-            "int": 42,
-            "bool": True,
-            "list": [1, 2, 3],
-        }
-
-        result = _sanitize_breakdown(breakdown)
-
-        assert result["string"] == "test"
-        assert result["int"] == 42
-        assert result["bool"] is True
-        assert result["list"] == [1, 2, 3]
 
 
 class TestBuildCorrelationRecord:
@@ -417,7 +352,6 @@ class TestBuildCorrelationRecord:
             listing_id=str(uuid.uuid4()),
             listing_url="https://example.com/job",
             score=85,
-            breakdown={},
             feature_schema_version="v5.0.0",
             feature_vector=(0.1, 0.2, 0.3, 0.4, 0.5),
             role_relevance_raw=0.0,
@@ -443,7 +377,6 @@ class TestBuildCorrelationRecord:
             listing_id=str(uuid.uuid4()),
             listing_url="https://example.com/job",
             score=85,
-            breakdown={},
             feature_schema_version="v5.0.0",
             role_relevance_raw=0.0,
             ranking_index=0.0,
@@ -480,7 +413,6 @@ class TestMatchRecordRepositoryForceBackfillUpsert:
                 listing_id=str(listing_id),
                 listing_url=f"https://example.test/{index}",
                 score=90 - index,
-                breakdown={"semantic": 0.9 - index / 10},
                 feature_schema_version="v-next",
                 role_relevance_raw=0.8,
                 ranking_index=0.7,
@@ -512,7 +444,6 @@ class TestMatchRecordRepositoryForceBackfillUpsert:
             listing_id=str(uuid.uuid4()),
             listing_url="https://example.test/job",
             score=87,
-            breakdown={"semantic": 0.87},
             feature_schema_version="v-next",
             role_relevance_raw=0.8,
             ranking_index=0.9,
@@ -529,7 +460,6 @@ class TestMatchRecordRepositoryForceBackfillUpsert:
                     "user_id": uuid.uuid4(),
                     "listing_url": result.listing_url,
                     "correlation_score": result.score,
-                    "correlation_reasoning": result.breakdown,
                     "feature_vector": list(result.feature_vector or ()),
                     "feature_schema_version": result.feature_schema_version,
                     "evaluated_at": result.evaluated_at,
@@ -542,7 +472,6 @@ class TestMatchRecordRepositoryForceBackfillUpsert:
         statement = mock_db.execute.await_args.args[0]
         update_sql = str(statement.compile(dialect=dialect())).split("DO UPDATE SET ", 1)[1]
         assert "correlation_score = excluded.correlation_score" in update_sql
-        assert "correlation_reasoning = excluded.correlation_reasoning" in update_sql
         assert "evaluated_at = excluded.evaluated_at" in update_sql
         assert "feature_vector = excluded.feature_vector" in update_sql
         assert "feature_schema_version = excluded.feature_schema_version" in update_sql

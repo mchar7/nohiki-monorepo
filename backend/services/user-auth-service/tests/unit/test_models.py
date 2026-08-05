@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import String
 from user_auth_service.db.models import Account, OAuthIdentity, RefreshToken
 
 
@@ -27,6 +28,15 @@ class TestAccountModel:
         assert account.first_name == "Test"
         assert account.last_name == "User"
         # Note: is_active and is_verified defaults are set by DB, not in Python
+
+    def test_account_name_column_lengths_match_proto(self) -> None:
+        """Account names accept every proto-valid value."""
+        first_name_type = Account.__table__.c.first_name.type
+        last_name_type = Account.__table__.c.last_name.type
+        assert isinstance(first_name_type, String)
+        assert isinstance(last_name_type, String)
+        assert first_name_type.length == 100
+        assert last_name_type.length == 100
 
     def test_account_repr(self) -> None:
         """Test Account __repr__ method."""

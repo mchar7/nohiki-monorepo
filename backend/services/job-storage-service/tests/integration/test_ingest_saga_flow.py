@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from job_storage_service.db.models import SCHEMA_NAME, Listing, ListingIngestSaga
@@ -45,7 +46,10 @@ pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 
 _LISTING_URL = "https://example.com/jobs/python-engineer-12345"
 _CONTENT_HASH = "a" * 64
-_CORRELATION_ID = "test-corr-001"
+_CORRELATION_ID = "018f47a0-2f24-7c31-a5d2-9b0e6f4c8123"
+_QUERY_ID = UUID("018f47a0-3010-7d42-b6e3-ac1f705d9234")
+_REDISCOVERY_QUERY_ID = UUID("018f47a0-40a8-7e53-c7f4-bd20816ea345")
+_REDISCOVERY_CORRELATION_ID = "018f47a0-4f90-7f64-d805-ce31927fb456"
 _COLLECTION_VERSION = "v1"
 _DISCOVERED_AT = datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC)
 _POSTED_AT = datetime(2026, 3, 30, 9, 0, 0, tzinfo=UTC)
@@ -195,7 +199,7 @@ class TestHandleDiscoveredListing:
             _make_discovered(),
             _listing_reference(),
             context,
-            query_id="q-001",
+            query_id=_QUERY_ID,
         )
 
         assert result.is_new is True
@@ -209,6 +213,10 @@ class TestHandleDiscoveredListing:
         assert saga.expected_callbacks == 1
         assert saga.version == 1
         assert saga.content_hash == _CONTENT_HASH
+        assert saga.query_id == _QUERY_ID
+        assert isinstance(saga.query_id, UUID)
+        assert saga.correlation_id == UUID(_CORRELATION_ID)
+        assert isinstance(saga.correlation_id, UUID)
 
         # Saga ID is what propagates downstream as the listing_id anchor.
         assert result.saga_id == saga.id
@@ -219,6 +227,25 @@ class TestHandleDiscoveredListing:
 
         outbox = await _outbox_rows(async_session, str(saga.id))
         assert outbox == [(Topics.JOB_LISTING_ACCEPTED, str(saga.id))]
+
+    async def test_missing_correlation_persists_null_and_publishes(
+        self,
+        async_session: AsyncSession,
+        service: JobStoreService,
+    ) -> None:
+        result = await service.handle_discovered_listing(
+            async_session,
+            _make_discovered(),
+            _listing_reference(),
+            RawJobContext(correlation_id=None, discovered_at=_DISCOVERED_AT),
+            query_id=_QUERY_ID,
+        )
+
+        saga = await async_session.get(ListingIngestSaga, result.saga_id)
+        assert saga is not None
+        assert saga.query_id == _QUERY_ID
+        assert saga.correlation_id is None
+        assert await _outbox_rows(async_session, str(saga.id)) == [(Topics.JOB_LISTING_ACCEPTED, str(saga.id))]
 
     async def test_redelivery_same_content_hash_is_idempotent(
         self,
@@ -231,6 +258,7 @@ class TestHandleDiscoveredListing:
             _make_discovered(),
             _listing_reference(),
             context,
+            query_id=_QUERY_ID,
         )
         # Re-deliver the identical event.
         second = await service.handle_discovered_listing(
@@ -238,6 +266,7 @@ class TestHandleDiscoveredListing:
             _make_discovered(),
             _listing_reference(),
             context,
+            query_id=_QUERY_ID,
         )
 
         assert first.saga_id == second.saga_id
@@ -262,6 +291,7 @@ class TestBankStoredListing:
             _make_discovered(),
             _listing_reference(),
             context,
+            query_id=_QUERY_ID,
         )
 
         outcome = await service.bank_stored_listing(
@@ -336,6 +366,7 @@ class TestBankStoredListing:
             _make_discovered(),
             _listing_reference(),
             context,
+            query_id=_QUERY_ID,
         )
         first = await service.bank_stored_listing(
             async_session,
@@ -372,6 +403,7 @@ class TestBankStoredListing:
             _make_discovered(),
             _listing_reference(),
             context,
+            query_id=_QUERY_ID,
         )
         await service.bank_stored_listing(
             async_session,
@@ -388,7 +420,11 @@ class TestBankStoredListing:
             async_session,
             _make_discovered(),
             _listing_reference(),
-            RawJobContext(correlation_id="corr-redo", discovered_at=_DISCOVERED_AT),
+            RawJobContext(
+                correlation_id=_REDISCOVERY_CORRELATION_ID,
+                discovered_at=_DISCOVERED_AT,
+            ),
+            query_id=_REDISCOVERY_QUERY_ID,
         )
         assert rediscovered.is_new is True
 

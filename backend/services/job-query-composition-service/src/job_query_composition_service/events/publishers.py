@@ -42,10 +42,7 @@ def _build_query_changed_request(
         metadata=create_event_metadata(settings.service_name, str(query.id)),
         query_id=str(query.id),
         search_keywords=list(query.search_keywords),
-        locations=[
-            Location.from_dict(loc)
-            for loc in (query.locations if isinstance(query.locations, list) else [query.locations])
-        ],
+        locations=[Location.from_dict(loc) for loc in query.locations],
         work_arrangements=query.work_arrangements,
         sources=query.sources,
         frequency_seconds=int(query.frequency.total_seconds()),

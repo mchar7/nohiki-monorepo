@@ -13,6 +13,7 @@ from job_storage_service.events.publishers import (
     _truncate_description,
     build_listing_snapshot,
     publish_duplicate_detected_event,
+    publish_listing_accepted_event,
     publish_listing_created_event,
     publish_listing_deleted_event,
     publish_listing_updated_event,
@@ -27,6 +28,7 @@ from nohiki.common.v1 import (
     SeniorityLevel,
     WorkArrangement,
 )
+from nohiki.job.ingest.v1 import DiscoveredListing
 from nohiki.ml.v1 import DenseData, EmbeddingType, EmbeddingVector, MultiVectorData, SparseData
 from nohiki_db_utils.testing import create_mock_session
 
@@ -473,6 +475,33 @@ class TestPublishContext:
 
         assert ctx.listing_id == "listing-123"
         assert ctx.correlation_id == "corr-456"
+
+    @pytest.mark.asyncio
+    async def test_listing_accepted_accepts_missing_correlation(self) -> None:
+        mock_db = create_mock_session()
+        mock_outbox = MagicMock()
+        mock_outbox.write_event = AsyncMock()
+        listing_ref = ListingReference(
+            listing_url="https://example.com/job/123",
+            listing_id="listing-123",
+        )
+        ctx = PublishContext(
+            db=mock_db,
+            outbox=mock_outbox,
+            listing_id="listing-123",
+            listing_reference=listing_ref,
+            correlation_id=None,
+        )
+
+        await publish_listing_accepted_event(
+            ctx,
+            DiscoveredListing(listing_url=listing_ref.listing_url, content_hash="abc123"),
+            datetime.now(UTC),
+        )
+
+        call = mock_outbox.write_event.await_args
+        assert call is not None
+        assert call.kwargs["params"].correlation_id is None
 
 
 class TestPublishDuplicateDetectedEvent:

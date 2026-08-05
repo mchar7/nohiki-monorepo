@@ -1200,6 +1200,14 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
         scope=_AFFECTED_PACKAGES,
         gates=(_LocalGate("pre-push", "python-tests", _AFFECTED_PACKAGES),),
     ),
+    ("worker", "Run job correlation integration tests"): _HostedStep(
+        verifies=True,
+        scope=_AFFECTED_PACKAGES,
+        waiver=(
+            "runs integration and requires_docker tests against hosted PostgreSQL; local "
+            "pre-push python-tests explicitly deselects both markers"
+        ),
+    ),
     ("worker", "Run Node workspace contract tests"): _HostedStep(
         verifies=True,
         scope=_WHOLE_PROJECT,

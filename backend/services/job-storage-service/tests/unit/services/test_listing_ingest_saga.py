@@ -11,6 +11,9 @@ from job_storage_service.services.bank_service import JobStoreService, RawJobCon
 from nohiki.common.v1 import ListingReference
 from nohiki.job.ingest.v1 import DiscoveredListing
 
+_CORRELATION_ID = "018f47a0-2f24-7c31-a5d2-9b0e6f4c8123"
+_QUERY_ID = uuid.UUID("018f47a0-3010-7d42-b6e3-ac1f705d9234")
+
 
 def _mock_db() -> AsyncMock:
     """Build an AsyncMock session that does not auto-coroutine sync helpers."""
@@ -19,7 +22,7 @@ def _mock_db() -> AsyncMock:
     return mock
 
 
-def _ctx(correlation_id: str = "corr") -> RawJobContext:
+def _ctx(correlation_id: str | None = _CORRELATION_ID) -> RawJobContext:
     return RawJobContext(correlation_id=correlation_id, discovered_at=datetime.now(UTC))
 
 
@@ -44,11 +47,16 @@ async def test_new_url_creates_saga() -> None:
         patch("job_storage_service.services.bank_service.publish_listing_accepted_event", new_callable=AsyncMock),
     ):
         repo.create = AsyncMock(return_value=saga)
-        result = await service.handle_discovered_listing(db, discovered, listing_ref, _ctx())
+        result = await service.handle_discovered_listing(db, discovered, listing_ref, _ctx(), query_id=_QUERY_ID)
 
     assert result.is_new is True
     assert result.saga_id == saga.id
     repo.create.assert_awaited_once()
+    create_call = repo.create.await_args
+    assert create_call is not None
+    created_saga = create_call.args[1]
+    assert created_saga.query_id == _QUERY_ID
+    assert created_saga.correlation_id == uuid.UUID(_CORRELATION_ID)
 
 
 @pytest.mark.asyncio
@@ -80,7 +88,7 @@ async def test_redelivery_same_content_hash_is_idempotent() -> None:
         ) as mock_publish,
     ):
         repo.create = AsyncMock()
-        result = await service.handle_discovered_listing(db, discovered, listing_ref, _ctx())
+        result = await service.handle_discovered_listing(db, discovered, listing_ref, _ctx(), query_id=_QUERY_ID)
 
     assert result.is_new is False
     assert result.saga_id == existing_saga.id
@@ -112,7 +120,7 @@ async def test_url_revisit_with_new_hash_updates_in_place() -> None:
         patch("job_storage_service.services.bank_service.publish_listing_accepted_event", new_callable=AsyncMock),
     ):
         repo.create = AsyncMock()
-        result = await service.handle_discovered_listing(db, discovered, listing_ref, _ctx())
+        result = await service.handle_discovered_listing(db, discovered, listing_ref, _ctx(), query_id=_QUERY_ID)
 
     assert result.is_new is False
     assert existing_saga.content_hash == "h_new"
@@ -144,7 +152,7 @@ async def test_completed_saga_does_not_block_new_pending() -> None:
         patch("job_storage_service.services.bank_service.publish_listing_accepted_event", new_callable=AsyncMock),
     ):
         repo.create = AsyncMock(return_value=new_saga)
-        result = await service.handle_discovered_listing(db, discovered, listing_ref, _ctx())
+        result = await service.handle_discovered_listing(db, discovered, listing_ref, _ctx(), query_id=_QUERY_ID)
 
     assert result.is_new is True
     repo.create.assert_awaited_once()

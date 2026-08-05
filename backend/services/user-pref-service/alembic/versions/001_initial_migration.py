@@ -2,7 +2,7 @@
 Initial migration for user-pref-service.
 
 Schema: user_pref_schema
-Tables: search_prefs, search_pref_uploads, user_pref_settings, user_skill, outbox
+Tables: search_prefs, search_pref_uploads, user_pref_settings, outbox
 
 Revision ID: 001
 Revises:
@@ -85,14 +85,13 @@ def upgrade() -> None:
             id UUID PRIMARY KEY DEFAULT uuidv7(),
             user_id UUID NOT NULL,
             pref_name VARCHAR(100) NOT NULL,
-            search_keywords VARCHAR(100)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(100)[],
+            search_keywords VARCHAR(100)[] NOT NULL,
             disallowed_keywords VARCHAR(100)[] NOT NULL DEFAULT ARRAY[]::VARCHAR(100)[],
             physical_locations JSONB NOT NULL DEFAULT '[]'::jsonb,
             remote_locations JSONB NOT NULL DEFAULT '[]'::jsonb,
             open_to_relocation BOOLEAN NOT NULL DEFAULT false,
             commute_preferences JSONB,
-            work_arrangements {s}.work_arrangement_enum[] NOT NULL
-                DEFAULT ARRAY[]::{s}.work_arrangement_enum[],
+            work_arrangements {s}.work_arrangement_enum[] NOT NULL,
             experience_years INTEGER,
             seniority_levels {s}.seniority_level_enum[] NOT NULL
                 DEFAULT ARRAY[]::{s}.seniority_level_enum[],
@@ -132,15 +131,9 @@ def upgrade() -> None:
     """)
 
     # Create indexes for search_prefs
-    op.execute(
-        f"CREATE INDEX ix_search_prefs_user_id ON {SCHEMA_NAME}.search_prefs (user_id)"
-    )
-    op.execute(
-        f"CREATE INDEX ix_search_prefs_request_id ON {SCHEMA_NAME}.search_prefs (request_id)"
-    )
-    op.execute(
-        f"CREATE INDEX ix_search_prefs_active ON {SCHEMA_NAME}.search_prefs (is_active) WHERE is_active = true"
-    )
+    op.execute(f"CREATE INDEX ix_search_prefs_user_id ON {SCHEMA_NAME}.search_prefs (user_id)")
+    op.execute(f"CREATE INDEX ix_search_prefs_request_id ON {SCHEMA_NAME}.search_prefs (request_id)")
+    op.execute(f"CREATE INDEX ix_search_prefs_active ON {SCHEMA_NAME}.search_prefs (is_active) WHERE is_active = true")
 
     # Create user_pref_settings table for user-level preference defaults
     op.execute(f"""
@@ -156,33 +149,7 @@ def upgrade() -> None:
     """)
 
     # Create index for user_pref_settings
-    op.execute(
-        f"CREATE INDEX ix_user_pref_settings_user_id ON {SCHEMA_NAME}.user_pref_settings (user_id)"
-    )
-
-    # User skills table with proficiency and provenance for advanced matching
-    op.execute(f"""
-        CREATE TABLE {SCHEMA_NAME}.user_skill (
-            id UUID PRIMARY KEY DEFAULT uuidv7(),
-            user_id UUID NOT NULL,
-            canonical_skill_id UUID NOT NULL,
-            skill_name VARCHAR(200) NOT NULL,
-            proficiency_level SMALLINT NOT NULL DEFAULT 2,
-            provenance SMALLINT NOT NULL DEFAULT 1,
-            provenance_confidence FLOAT NOT NULL DEFAULT 1.0,
-            declared_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
-            last_verified_at TIMESTAMPTZ,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
-            UNIQUE(user_id, canonical_skill_id)
-        )
-    """)
-    op.execute(
-        f"CREATE INDEX ix_user_skill_user_id ON {SCHEMA_NAME}.user_skill (user_id)"
-    )
-    op.execute(
-        f"CREATE INDEX ix_user_skill_canonical ON {SCHEMA_NAME}.user_skill (canonical_skill_id)"
-    )
+    op.execute(f"CREATE INDEX ix_user_pref_settings_user_id ON {SCHEMA_NAME}.user_pref_settings (user_id)")
 
     op.execute(get_create_outbox_table_sql(SCHEMA_NAME))
     op.execute(get_create_outbox_indexes_sql(SCHEMA_NAME))

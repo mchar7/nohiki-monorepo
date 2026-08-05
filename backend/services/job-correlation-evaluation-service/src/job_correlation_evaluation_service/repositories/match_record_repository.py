@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import math
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from nohiki.common.v1 import CorrelationStatus
 from sqlalchemy import select, update
@@ -28,25 +27,6 @@ def _chunked[T](items: Sequence[T], size: int) -> Iterator[list[T]]:
         yield list(items[i : i + size])
 
 
-def _sanitize_breakdown(breakdown: Mapping[str, object]) -> dict[str, object]:
-    """Sanitize score breakdown for JSON storage.
-
-    Replaces NaN/Inf floats with None since they're not valid JSON.
-    """
-    return {key: _sanitize_value(val) for key, val in breakdown.items()}
-
-
-def _sanitize_value(val: object) -> object:
-    """Sanitize a single value, recursing into nested dicts."""
-    match val:
-        case float() as f if math.isnan(f) or math.isinf(f):
-            return None
-        case dict() as nested:
-            return _sanitize_breakdown(cast("dict[str, object]", nested))
-        case _:
-            return val
-
-
 def _build_correlation_record(
     result: JobMatchResult,
     user_uuid: uuid.UUID,
@@ -59,7 +39,6 @@ def _build_correlation_record(
         "user_id": user_uuid,
         "listing_url": result.listing_url,
         "correlation_score": result.score,
-        "correlation_reasoning": _sanitize_breakdown(cast("dict[str, object]", result.breakdown)),
         "correlation_status": result.status,
         "evaluated_at": result.evaluated_at,
         "feature_vector": list(result.feature_vector) if result.feature_vector is not None else None,
@@ -236,7 +215,6 @@ class MatchRecordRepository:
             index_elements=["pref_id", "listing_id"],
             set_={
                 "correlation_score": stmt.excluded.correlation_score,
-                "correlation_reasoning": stmt.excluded.correlation_reasoning,
                 "evaluated_at": stmt.excluded.evaluated_at,
                 "feature_vector": stmt.excluded.feature_vector,
                 "feature_schema_version": stmt.excluded.feature_schema_version,
@@ -316,7 +294,6 @@ class MatchRecordRepository:
                 index_elements=["pref_id", "listing_id"],
                 set_={
                     "correlation_score": stmt.excluded.correlation_score,
-                    "correlation_reasoning": stmt.excluded.correlation_reasoning,
                     "evaluated_at": stmt.excluded.evaluated_at,
                     "feature_vector": stmt.excluded.feature_vector,
                     "feature_schema_version": stmt.excluded.feature_schema_version,
@@ -399,7 +376,6 @@ class MatchRecordRepository:
             index_elements=["pref_id", "listing_id"],
             set_={
                 "correlation_score": stmt.excluded.correlation_score,
-                "correlation_reasoning": stmt.excluded.correlation_reasoning,
                 "evaluated_at": stmt.excluded.evaluated_at,
                 "feature_vector": stmt.excluded.feature_vector,
                 "feature_schema_version": stmt.excluded.feature_schema_version,

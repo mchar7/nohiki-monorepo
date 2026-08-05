@@ -33,7 +33,6 @@ def _create_schedule(
             ).to_dict()
         ],
         work_arrangements=[WorkArrangement.REMOTE],
-        remote_preferences=[],
         sources=[JobBoardSource.INDEED],
         hours_old=72,
         results_wanted=50,

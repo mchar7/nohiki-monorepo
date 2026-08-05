@@ -401,8 +401,8 @@ workflow-lint:
         case "$diagnostic" in
             '.github/workflows/checks.yml:285:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
             '.github/workflows/checks.yml:363:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:493:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:504:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
+            '.github/workflows/checks.yml:505:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
+            '.github/workflows/checks.yml:516:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
                 ;;
             *)
                 printf '%s\n' "$diagnostic" >&2

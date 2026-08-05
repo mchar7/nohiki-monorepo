@@ -285,19 +285,6 @@ class JobMatcherService:
 
         return self._build_match_result_from_ml(profile, job_id_str, job.listing_url, ml_result)
 
-    @staticmethod
-    def _build_scoring_breakdown(
-        ml_result: MLScoringResult,
-        _scoring_method: str,
-    ) -> dict[str, float | str]:
-        """Return the legacy metadata map without technical scoring internals.
-
-        The model output remains available through ``feature_vector`` for internal
-        ranking evaluation; human-facing attribution will use a typed contract.
-        """
-        del ml_result
-        return {}
-
     def _build_match_result_from_ml(
         self,
         profile: SearchPrefSnapshot,
@@ -322,7 +309,6 @@ class JobMatcherService:
             listing_id=listing_id,
             listing_url=listing_url,
             score=ml_result.score,
-            breakdown=self._build_scoring_breakdown(ml_result, "ml_qdrant_embeddings"),
             feature_vector=ml_result.feature_vector,
             feature_schema_version=FEATURE_SCHEMA_VERSION,
             role_relevance_raw=ml_result.role_relevance_raw,
@@ -477,7 +463,6 @@ class JobMatcherService:
             listing_id=listing_id,
             listing_url=listing_url,
             score=0,
-            breakdown={},
             feature_schema_version=FEATURE_SCHEMA_VERSION,
             role_relevance_raw=0.0,
             ranking_index=0.0,
@@ -554,7 +539,6 @@ class JobMatcherService:
             listing_id=listing_id,
             listing_url=listings_by_id[listing_id].listing_url,
             score=ml_result.score,
-            breakdown=self._build_scoring_breakdown(ml_result, "ml_batch_embeddings"),
             feature_vector=ml_result.feature_vector,
             feature_schema_version=FEATURE_SCHEMA_VERSION,
             role_relevance_raw=ml_result.role_relevance_raw,

@@ -36,8 +36,8 @@ class Account(BaseEntity, Base):
     email: Mapped[str] = mapped_column(CITEXT, unique=True, index=True, nullable=False)
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    first_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    last_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=sa.text("true"), nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, server_default=sa.text("false"), nullable=False)
     # BaseEntity provides: id (UUIDv7), created_at, updated_at

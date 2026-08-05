@@ -33,17 +33,41 @@ SQL_NOW = sa.text("now()")
 class NotificationChannelDB(enum.StrEnum):
     """Database-compatible enum for notification channels (maps to proto enum)."""
 
+    UNSPECIFIED = "UNSPECIFIED"
     EMAIL = "EMAIL"
-    PUSH_API = "PUSH_API"
+    SMS = "SMS"
+    PUSH_WEB = "PUSH_WEB"
 
     @classmethod
     def from_proto(cls, proto_channel: NotificationChannel) -> NotificationChannelDB:
         """Convert proto enum to database enum."""
-        return cls[proto_channel.name]
+        match proto_channel:
+            case NotificationChannel.UNSPECIFIED:
+                return cls.UNSPECIFIED
+            case NotificationChannel.EMAIL:
+                return cls.EMAIL
+            case NotificationChannel.SMS:
+                return cls.SMS
+            case NotificationChannel.PUSH_WEB:
+                return cls.PUSH_WEB
+            case _:
+                msg = f"Unsupported notification channel: {proto_channel!r}"
+                raise ValueError(msg)
 
     def to_proto(self) -> NotificationChannel:
         """Convert database enum to proto enum."""
-        return NotificationChannel[self.name]
+        match self:
+            case NotificationChannelDB.UNSPECIFIED:
+                return NotificationChannel.UNSPECIFIED
+            case NotificationChannelDB.EMAIL:
+                return NotificationChannel.EMAIL
+            case NotificationChannelDB.SMS:
+                return NotificationChannel.SMS
+            case NotificationChannelDB.PUSH_WEB:
+                return NotificationChannel.PUSH_WEB
+            case _:
+                msg = f"Unsupported database notification channel: {self!r}"
+                raise ValueError(msg)
 
 
 class MessageStatus(enum.Enum):
