@@ -191,26 +191,26 @@ verify() {
     local evidence_dir inventory
     evidence_dir="${K8S_EVIDENCE_DIR:-.artifacts/k8s-local}"
     mkdir -p "$evidence_dir"
-    uv run --project tests python "$cdc_adapter" \
-        --namespace "$namespace" --evidence "$evidence_dir/live-cdc.json"
     inventory="$(mktemp)"
-    trap 'uv run python "$gateway_helper" stop >/dev/null 2>&1 || true; rm -f "$inventory"' EXIT INT TERM
-    uv run --package ci-checks ci-checks migration-truth \
+    trap 'uv run --no-sync python "$gateway_helper" stop >/dev/null 2>&1 || true; rm -f "$inventory"' EXIT INT TERM
+    uv run --no-sync python "$gateway_helper" start
+    uv run --no-sync --project tests python "$cdc_adapter" \
+        --namespace "$namespace" --evidence "$evidence_dir/live-cdc.json"
+    uv run --no-sync --package ci-checks ci-checks migration-truth \
         --repo-root . --namespace "$namespace" >"$inventory"
-    uv run python infra/k8s/scripts/verify-migration-heads.py \
+    uv run --no-sync python infra/k8s/scripts/verify-migration-heads.py \
         --inventory "$inventory" --namespace "$namespace" \
         --evidence "$evidence_dir/migration-heads.json"
 
-    uv run python "$gateway_helper" start
-    uv run python scripts/infra/verify-k8s-jobs.py \
+    uv run --no-sync python scripts/infra/verify-k8s-jobs.py \
         --namespace nohiki-verification \
         --api-job nohiki-api-verification-v1 \
         --playwright-job nohiki-playwright-verification-v1 \
         --timeout-seconds 3600
-    uv run python "$image_helper" status --digests "$digest_values" --registry "$registry_endpoint"
-    uv run python "$image_helper" verify-pulls --digests "$digest_values"
+    uv run --no-sync python "$image_helper" status --digests "$digest_values" --registry "$registry_endpoint"
+    uv run --no-sync python "$image_helper" verify-pulls --digests "$digest_values"
     verify_flux_observation
-    uv run python "$gateway_helper" stop
+    uv run --no-sync python "$gateway_helper" stop
     trap - EXIT INT TERM
     rm -f "$inventory"
 }

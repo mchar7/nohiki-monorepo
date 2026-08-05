@@ -83,9 +83,9 @@ def test_real_registry_has_exactly_closed_k3s_partition() -> None:
     closure = _registry().inventory()
 
     assert closure.closed
-    assert len(closure.registry_ids) == 41
+    assert len(closure.registry_ids) == 40
     assert len(closure.applicable_ids | closure.adapted_ids) == 40
-    assert closure.inapplicable_ids == frozenset({"cdc_end_to_end"})
+    assert not closure.inapplicable_ids
     assert not closure.unknown_ids
     assert not closure.silent_skip_ids
     assert not closure.errors
@@ -138,9 +138,7 @@ def test_every_adaptation_and_inapplicability_has_precise_evidence() -> None:
         "runtime_artifacts": "read-only validation through each consuming application pod",
         "stale_services": "pod status and Kafka consumer metadata",
     }
-    expected_reasons = {
-        "cdc_end_to_end": "mutates application data; the verification Job is strictly non-mutating",
-    }
+    expected_reasons: dict[str, str] = {}
     assert {record.check_id: record.k3s_adaptation for record in adapted} == expected_adaptations
     assert {record.check_id: record.k3s_reason for record in inapplicable} == expected_reasons
     for record in adapted:
@@ -158,8 +156,7 @@ def test_k3s_runnable_checks_are_exactly_applicable_and_adapted() -> None:
     assert {check.metadata.check_id for check in registry.get_k3s_checks()} == (
         closure.applicable_ids | closure.adapted_ids
     )
-    assert "cdc_end_to_end" in closure.inapplicable_ids
-    assert "cdc_end_to_end" not in {check.metadata.check_id for check in registry.get_k3s_checks()}
+    assert "cdc_end_to_end" not in closure.registry_ids
     assert "service_dependencies" in closure.adapted_ids
     assert not ({check.metadata.check_id for check in registry.get_k3s_checks()} & closure.inapplicable_ids)
 

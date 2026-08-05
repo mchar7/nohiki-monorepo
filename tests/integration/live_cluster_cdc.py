@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove CDC delivery through the already-reconciled local Kubernetes cluster."""
+"""Prove a production CDC path through the reconciled local Kubernetes cluster."""
 
 from __future__ import annotations
 
@@ -8,30 +8,42 @@ import base64
 import hashlib
 import json
 import os
-import re
 import secrets
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Never
+from uuid import UUID
 
-CONNECT_NAME = "nohiki-connect"
+_TESTS_ROOT = Path(__file__).resolve().parents[1]
+if str(_TESTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TESTS_ROOT))
+
+from api.client import NohikiClient  # noqa: E402
+
+BFF_DATABASE = "bff_db"
+BFF_POD_SELECTOR = "app.kubernetes.io/name=bff-service"
+BFF_SCHEMA = "bff_schema"
+CANONICAL_TOPIC = "user-auth.cdc.account-updated.v1"
 CONNECT_DEPLOYMENT = "nohiki-connect-connect"
-DEBEZIUM_CONNECTOR = "user-pref-service-outbox"
-DEBEZIUM_CREDENTIALS_RESOURCE = "user-pref-service-debezium-credentials"
-DEBEZIUM_MOUNT = "/mnt/secrets/user-pref-service-debezium"
+CONNECT_NAME = "nohiki-connect"
+CONNECTOR_NAME = "user-auth-service-outbox"
+DEBEZIUM_CREDENTIALS_RESOURCE = "user-auth-service-debezium-credentials"
+DEBEZIUM_MOUNT = "/mnt/secrets/user-auth-service-debezium"
+EVIDENCE_SCHEMA_VERSION = 2
 KAFKA_BOOTSTRAP_SERVICE = "nohiki-kafka-kafka-bootstrap"
 POSTGRES_CLUSTER = "nohiki-pg"
-POSTGRES_SERVICE = "nohiki-pg-rw"
-TABLE_NAME = "events"
-EVIDENCE_SCHEMA_VERSION = 1
+PROJECTION_TABLE = "account_projections"
+SERVICE_CREDENTIALS_RESOURCE = "user-auth-service-db-credentials"
+
 ABSENT_DEPLOYMENT_MESSAGE = (
     "CDC_DEPLOYMENT_ABSENT: required deployed CDC resources are absent; reconcile the local platform first"
 )
-DELIVERY_TIMEOUT_MESSAGE = (
-    "CDC_DELIVERY_TIMEOUT: deployed CDC resources were present but no correlated Kafka message arrived"
+DELIVERY_TIMEOUT_MESSAGE = "CDC_DELIVERY_TIMEOUT: the canonical connector did not deliver the correlated service event"
+PROJECTION_TIMEOUT_MESSAGE = (
+    "CDC_PROJECTION_TIMEOUT: the registered BFF consumer did not durably project the correlated service event"
 )
 
 
@@ -44,106 +56,96 @@ class CdcDeploymentAbsentError(CdcProofError):
 
 
 class CdcDeliveryTimeoutError(CdcProofError):
-    """The deployed CDC surface did not deliver the probe record."""
+    """The stable connector did not deliver a correlated canonical record."""
 
 
-@dataclass(frozen=True)
-class Probe:
+class CdcConsumerExecutionError(CdcProofError):
+    """The in-cluster canonical consumer could not execute."""
+
+
+class CdcProjectionTimeoutError(CdcProofError):
+    """The registered downstream consumer did not persist its projection."""
+
+
+def _error[E: Exception](error_type: type[E], message: str) -> E:
+    return error_type(message)
+
+
+@dataclass(frozen=True, slots=True)
+class AccountProbe:
+    phase: str
     token: str
-    correlation: str
+    email: str
     password: str
+    display_name: str
 
     @classmethod
-    def create(cls) -> Probe:
+    def create(cls, phase: str) -> AccountProbe:
+        token = secrets.token_hex(8)
         return cls(
-            token=secrets.token_hex(6),
-            correlation=secrets.token_hex(16),
+            phase=phase,
+            token=token,
+            email=f"cdc-{phase}-{token}@example.invalid",
             password=secrets.token_urlsafe(24),
+            display_name=f"CDC {phase} {token}",
         )
 
-    @property
-    def writer_role(self) -> str:
-        return f"cdc_acceptance_{self.token}_writer"
 
-    @property
-    def database(self) -> str:
-        return f"cdc_acceptance_{self.token}"
-
-    @property
-    def schema(self) -> str:
-        return f"cdc_probe_{self.token}"
-
-    @property
-    def connector(self) -> str:
-        return f"cdc-acceptance-{self.token}"
-
-    @property
-    def slot(self) -> str:
-        return f"cdc_acceptance_{self.token}_slot"
-
-    @property
-    def publication(self) -> str:
-        return f"cdc_acceptance_{self.token}_pub"
-
-    @property
-    def topic_prefix(self) -> str:
-        return f"cdc_acceptance_{self.token}"
-
-    @property
-    def topic(self) -> str:
-        return f"{self.topic_prefix}.{self.schema}.{TABLE_NAME}"
-
-    @property
-    def row_id(self) -> str:
-        return f"00000000-0000-4000-8000-{self.token}"
+@dataclass(frozen=True, slots=True)
+class CanonicalObservation:
+    phase: str
+    topic: str
+    partition: int
+    offset: int
+    value_bytes: int
+    key_sha256: str
+    event_id: str
+    source_service: str
 
 
-@dataclass
-class Mutations:
-    role_created: bool = False
-    database_created: bool = False
-    table_created: bool = False
-    connector_created: bool = False
+@dataclass(frozen=True, slots=True)
+class ProjectionObservation:
+    phase: str
+    row_count: int
+    user_id_sha256: str
 
 
-@dataclass
+@dataclass(slots=True)
+class RestartEvidence:
+    deployment: str = CONNECT_DEPLOYMENT
+    completed: bool = False
+    connector_running: bool = False
+
+
+@dataclass(slots=True)
 class CleanupEvidence:
-    row_deleted: bool = False
-    connector_deleted: bool = False
-    table_dropped: bool = False
-    database_dropped: bool = False
-    role_dropped: bool = False
+    accounts_deleted: int = 0
+    projections_deleted: int = 0
     errors: list[str] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
-class Observation:
-    value_bytes: int
-
-
 def _run(
-    command: list[str],
+    args: list[str],
     *,
     input_text: str | None = None,
-    timeout: float | None = None,
+    timeout: float = 120,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
-            command,
+            args,
+            check=False,
+            capture_output=True,
             input=input_text,
             text=True,
-            capture_output=True,
             timeout=timeout,
-            check=False,
         )
-    except subprocess.TimeoutExpired as exc:
-        message = f"CDC_PROOF_FAILED: {command[0]} command timed out"
-        raise CdcProofError(message) from exc
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        message = f"CDC_PROOF_FAILED: command execution failed: {args[0]}"
+        raise _error(CdcProofError, message) from exc
     if check and result.returncode != 0:
-        detail = next((line.strip() for line in result.stderr.splitlines() if line.strip()), "no error detail")
-        message = f"CDC_PROOF_FAILED: {command[0]} command failed: {detail}"
-        raise CdcProofError(message)
+        message = f"CDC_PROOF_FAILED: command returned {result.returncode}: {args[0]}"
+        raise _error(CdcProofError, message)
     return result
 
 
@@ -151,83 +153,102 @@ def _kubectl(
     namespace: str,
     *args: str,
     input_text: str | None = None,
+    timeout: float = 120,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    return _run(["kubectl", "--namespace", namespace, *args], input_text=input_text, check=check)
+    return _run(
+        ["kubectl", "--namespace", namespace, *args],
+        input_text=input_text,
+        timeout=timeout,
+        check=check,
+    )
 
 
 def _require_deployed_resource(namespace: str, resource: str) -> None:
     result = _kubectl(namespace, "get", resource, "--output=name", check=False)
-    if result.returncode == 0:
+    if result.returncode == 0 and result.stdout.strip():
         return
-    detail = result.stderr.lower()
-    if "notfound" in detail or "not found" in detail or "doesn't have a resource type" in detail:
-        message = f"{ABSENT_DEPLOYMENT_MESSAGE}: {resource}"
-        raise CdcDeploymentAbsentError(message)
-    message = f"CDC_PROOF_FAILED: unable to discover deployed resource {resource}"
-    raise CdcProofError(message)
+    raise _error(CdcDeploymentAbsentError, ABSENT_DEPLOYMENT_MESSAGE)
+
+
+def _decode_secret_username(namespace: str, resource: str) -> str:
+    result = _kubectl(namespace, "get", f"secret/{resource}", "--output=json")
+    document = json.loads(result.stdout)
+    encoded = document.get("data", {}).get("username")
+    if not isinstance(encoded, str):
+        message = f"CDC_PROOF_FAILED: {resource} has no mounted principal username"
+        raise _error(CdcProofError, message)
+    try:
+        return base64.b64decode(encoded, validate=True).decode()
+    except (ValueError, UnicodeDecodeError) as exc:
+        message = f"CDC_PROOF_FAILED: {resource} has an invalid principal username"
+        raise _error(CdcProofError, message) from exc
+
+
+def _validate_connector_document(document: dict[str, object]) -> None:
+    spec = document.get("spec")
+    if not isinstance(spec, dict):
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: canonical connector has no spec")
+    config = spec.get("config")
+    if not isinstance(config, dict):
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: canonical connector has no config")
+    expected_user = f"${{file:{DEBEZIUM_MOUNT}/username}}"
+    expected_password = f"${{file:{DEBEZIUM_MOUNT}/password}}"
+    if config.get("database.user") != expected_user or config.get("database.password") != expected_password:
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: canonical connector bypasses mounted replication credentials")
+    if config.get("table.include.list") != "user_auth_schema.outbox":
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: canonical connector is not scoped to the service outbox")
+    if config.get("transforms.outbox.route.by.field") != "type":
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: canonical connector does not route canonical event topics")
 
 
 def require_cdc_deployment(namespace: str) -> None:
-    """Fail before database mutation when a stable deployed CDC resource is absent."""
+    """Require the production connector, services, and separate database principals."""
     for resource in (
         f"kafkaconnect.kafka.strimzi.io/{CONNECT_NAME}",
-        f"kafkaconnector.kafka.strimzi.io/{DEBEZIUM_CONNECTOR}",
         f"deployment.apps/{CONNECT_DEPLOYMENT}",
-        f"secret/{DEBEZIUM_CREDENTIALS_RESOURCE}",
+        f"kafkaconnector.kafka.strimzi.io/{CONNECTOR_NAME}",
         f"service/{KAFKA_BOOTSTRAP_SERVICE}",
+        "deployment.apps/nohiki-user-auth-service",
+        "deployment.apps/nohiki-bff-service",
         f"cluster.postgresql.cnpg.io/{POSTGRES_CLUSTER}",
+        f"secret/{SERVICE_CREDENTIALS_RESOURCE}",
+        f"secret/{DEBEZIUM_CREDENTIALS_RESOURCE}",
     ):
         _require_deployed_resource(namespace, resource)
-    result = _kubectl(namespace, "get", "kafkaconnectors.kafka.strimzi.io", "--output=name", check=False)
-    if result.returncode != 0 and (
-        "not found" in result.stderr.lower() or "doesn't have a resource type" in result.stderr.lower()
-    ):
-        message = f"{ABSENT_DEPLOYMENT_MESSAGE}: KafkaConnector CRD"
-        raise CdcDeploymentAbsentError(message)
-    if result.returncode != 0:
-        message = "CDC_PROOF_FAILED: unable to discover KafkaConnector resources"
-        raise CdcProofError(message)
 
-
-def _debezium_principal(namespace: str) -> str:
-    result = _kubectl(
+    connector = _kubectl(
         namespace,
         "get",
-        f"secret/{DEBEZIUM_CREDENTIALS_RESOURCE}",
-        "--output=jsonpath={.data.username}",
+        f"kafkaconnector.kafka.strimzi.io/{CONNECTOR_NAME}",
+        "--output=json",
     )
-    try:
-        principal = base64.b64decode(result.stdout, validate=True).decode()
-    except (ValueError, UnicodeDecodeError) as exc:
-        message = "CDC_PROOF_FAILED: deployed Debezium username is invalid"
-        raise CdcProofError(message) from exc
-    if re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", principal) is None:
-        message = "CDC_PROOF_FAILED: deployed Debezium username is not a safe PostgreSQL identifier"
-        raise CdcProofError(message)
-    return principal
+    _validate_connector_document(json.loads(connector.stdout))
+    writer_principal = _decode_secret_username(namespace, SERVICE_CREDENTIALS_RESOURCE)
+    replication_principal = _decode_secret_username(namespace, DEBEZIUM_CREDENTIALS_RESOURCE)
+    if writer_principal == replication_principal:
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: service DML and replication principals are not separated")
 
 
 def _first_pod(namespace: str, selector: str) -> str | None:
     result = _kubectl(namespace, "get", "pods", "--selector", selector, "--output=json")
     document = json.loads(result.stdout)
-    names = sorted(
+    names = [
         item["metadata"]["name"]
         for item in document.get("items", [])
-        if isinstance(item, dict) and isinstance(item.get("metadata"), dict) and item["metadata"].get("name")
-    )
+        if item.get("status", {}).get("phase") == "Running"
+    ]
     return names[0] if names else None
 
 
 def _primary_pod(namespace: str) -> str:
     pod = _first_pod(namespace, f"cnpg.io/cluster={POSTGRES_CLUSTER},role=primary")
     if pod is None:
-        message = "CDC_PROOF_FAILED: CloudNativePG primary pod is unavailable"
-        raise CdcProofError(message)
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: PostgreSQL primary pod is unavailable")
     return pod
 
 
-def _admin_sql(namespace: str, pod: str, database: str, sql: str, *, check: bool = True) -> bool:
+def _admin_query(namespace: str, pod: str, database: str, sql: str) -> str:
     result = _kubectl(
         namespace,
         "exec",
@@ -239,281 +260,281 @@ def _admin_sql(namespace: str, pod: str, database: str, sql: str, *, check: bool
         database,
         "--set=ON_ERROR_STOP=1",
         "--no-psqlrc",
+        "--tuples-only",
+        "--no-align",
         input_text=sql,
-        check=check,
     )
-    return result.returncode == 0
+    return result.stdout.strip()
 
 
-def _role_sql(namespace: str, pod: str, probe: Probe, sql: str, *, check: bool = True) -> bool:
-    session = (
-        f"\\setenv PGPASSWORD {probe.password}\n"
-        f"\\connect postgresql://{probe.writer_role}@{POSTGRES_SERVICE}:5432/{probe.database}?sslmode=disable\n"
-        f"{sql}"
+def _projection_count(namespace: str, pod: str, user_id: UUID, probe: AccountProbe) -> int:
+    sql = (
+        f"SELECT count(*) FROM {BFF_SCHEMA}.{PROJECTION_TABLE} "  # noqa: S608
+        f"WHERE id = '{user_id}'::uuid AND email = '{probe.email}' "
+        f"AND display_name = '{probe.display_name}';\n"
     )
+    output = _admin_query(namespace, pod, BFF_DATABASE, sql)
+    try:
+        return int(output)
+    except ValueError as exc:
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: projection cardinality query returned invalid output") from exc
+
+
+def _wait_projection_count(
+    namespace: str,
+    pod: str,
+    user_id: UUID,
+    probe: AccountProbe,
+    expected: int,
+    timeout_seconds: float,
+) -> int:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        count = _projection_count(namespace, pod, user_id, probe)
+        if count == expected:
+            return count
+        if time.monotonic() >= deadline:
+            raise _error(CdcProjectionTimeoutError, PROJECTION_TIMEOUT_MESSAGE)
+        time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+
+
+def _consumer_script(user_id: UUID, probe: AccountProbe, group_id: str, timeout_seconds: float) -> str:
+    expected = json.dumps(
+        {
+            "display_name": probe.display_name,
+            "email": probe.email,
+            "group_id": group_id,
+            "timeout": timeout_seconds,
+            "user_id": str(user_id),
+        },
+        separators=(",", ":"),
+    )
+    return f"""import asyncio
+import hashlib
+import json
+from aiokafka import AIOKafkaConsumer
+from nohiki.user.auth.v1 import AccountUpdated
+
+EXPECTED = json.loads({expected!r})
+TOPIC = {CANONICAL_TOPIC!r}
+BOOTSTRAP = {f"{KAFKA_BOOTSTRAP_SERVICE}:9092"!r}
+
+async def main():
+    consumer = AIOKafkaConsumer(
+        TOPIC,
+        bootstrap_servers=BOOTSTRAP,
+        group_id=EXPECTED["group_id"],
+        auto_offset_reset="earliest",
+        enable_auto_commit=False,
+    )
+    await consumer.start()
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + EXPECTED["timeout"]
+        while loop.time() < deadline:
+            remaining_ms = max(1, min(1000, int((deadline - loop.time()) * 1000)))
+            batches = await consumer.getmany(timeout_ms=remaining_ms, max_records=100)
+            for records in batches.values():
+                for record in records:
+                    event = AccountUpdated().parse(record.value)
+                    snapshot = event.account_snapshot
+                    if event.user_id != EXPECTED["user_id"]:
+                        continue
+                    if snapshot is None:
+                        raise RuntimeError("canonical account event omitted its snapshot")
+                    if snapshot.id != EXPECTED["user_id"] or snapshot.email != EXPECTED["email"]:
+                        raise RuntimeError("canonical account snapshot identity mismatch")
+                    if snapshot.display_name != EXPECTED["display_name"]:
+                        raise RuntimeError("canonical account snapshot state mismatch")
+                    key = (record.key or b"").decode()
+                    print(json.dumps({{
+                        "status": "delivered",
+                        "topic": record.topic,
+                        "partition": record.partition,
+                        "offset": record.offset,
+                        "value_bytes": len(record.value),
+                        "key": key,
+                        "event_id": event.metadata.event_id if event.metadata else "",
+                        "source_service": event.metadata.source_service if event.metadata else "",
+                    }}, separators=(",", ":")))
+                    return
+        print('{{"status":"timeout"}}')
+    finally:
+        await consumer.stop()
+
+asyncio.run(main())
+"""
+
+
+def _validate_canonical_observation(
+    document: dict[str, object],
+    *,
+    user_id: UUID,
+    phase: str,
+) -> CanonicalObservation:
+    if document.get("status") == "timeout":
+        raise _error(CdcDeliveryTimeoutError, DELIVERY_TIMEOUT_MESSAGE)
+    if document.get("status") != "delivered":
+        raise _error(CdcConsumerExecutionError, "CDC_CONSUMER_FAILED: consumer returned an invalid result")
+    if document.get("topic") != CANONICAL_TOPIC:
+        raise _error(CdcConsumerExecutionError, "CDC_CONSUMER_FAILED: consumer observed a non-canonical topic")
+    if document.get("key") != str(user_id):
+        raise _error(
+            CdcConsumerExecutionError,
+            "CDC_CONSUMER_FAILED: canonical record key did not match the service entity",
+        )
+    if document.get("source_service") != "user-auth-service" or not document.get("event_id"):
+        raise _error(CdcConsumerExecutionError, "CDC_CONSUMER_FAILED: canonical record metadata was incomplete")
+    partition = document.get("partition")
+    offset = document.get("offset")
+    value_bytes = document.get("value_bytes")
+    if not isinstance(partition, int) or not isinstance(offset, int) or not isinstance(value_bytes, int):
+        raise _error(
+            CdcConsumerExecutionError,
+            "CDC_CONSUMER_FAILED: canonical record coordinates were invalid",
+        )
+    return CanonicalObservation(
+        phase=phase,
+        topic=CANONICAL_TOPIC,
+        partition=partition,
+        offset=offset,
+        value_bytes=value_bytes,
+        key_sha256=hashlib.sha256(str(user_id).encode()).hexdigest(),
+        event_id=str(document["event_id"]),
+        source_service="user-auth-service",
+    )
+
+
+def consume_canonical_account_event(
+    namespace: str,
+    user_id: UUID,
+    probe: AccountProbe,
+    timeout_seconds: float,
+) -> CanonicalObservation:
+    """Consume and parse the canonical protobuf event from an independent in-cluster group."""
+    bff_pod = _first_pod(namespace, BFF_POD_SELECTOR)
+    if bff_pod is None:
+        raise _error(CdcConsumerExecutionError, "CDC_CONSUMER_FAILED: no BFF pod is available")
+    group_id = f"cdc-acceptance-{probe.token}-{probe.phase}"
     result = _kubectl(
         namespace,
         "exec",
         "--stdin",
-        pod,
+        bff_pod,
         "--",
-        "psql",
-        "--dbname",
-        "postgres",
-        "--set=ON_ERROR_STOP=1",
-        "--no-psqlrc",
-        input_text=session,
-        check=check,
-    )
-    return result.returncode == 0
-
-
-def create_fixture(
-    namespace: str,
-    pod: str,
-    probe: Probe,
-    debezium_principal: str,
-    mutations: Mutations,
-) -> None:
-    """Create one isolated database, writer role, schema, table, and publication."""
-    _admin_sql(
-        namespace,
-        pod,
-        "postgres",
-        f"CREATE ROLE {probe.writer_role} LOGIN PASSWORD '{probe.password}' NOREPLICATION "
-        "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;\n",
-    )
-    mutations.role_created = True
-    _admin_sql(
-        namespace,
-        pod,
-        "postgres",
-        f"CREATE DATABASE {probe.database} OWNER postgres TEMPLATE template0;\n"
-        f"REVOKE ALL ON DATABASE {probe.database} FROM PUBLIC;\n"
-        f"GRANT CONNECT ON DATABASE {probe.database} TO {probe.writer_role};\n"
-        f"GRANT CONNECT ON DATABASE {probe.database} TO {debezium_principal};\n",
-    )
-    mutations.database_created = True
-    _admin_sql(
-        namespace,
-        pod,
-        probe.database,
-        f"REVOKE ALL ON SCHEMA public FROM PUBLIC;\n"
-        f"CREATE SCHEMA {probe.schema} AUTHORIZATION postgres;\n"
-        f"REVOKE ALL ON SCHEMA {probe.schema} FROM PUBLIC;\n"
-        f"CREATE TABLE {probe.schema}.{TABLE_NAME} ("
-        "id uuid PRIMARY KEY, correlation_id text NOT NULL, payload text NOT NULL);\n"
-        f"REVOKE ALL ON TABLE {probe.schema}.{TABLE_NAME} FROM PUBLIC;\n"
-        f"GRANT USAGE ON SCHEMA {probe.schema} TO {probe.writer_role};\n"
-        f"GRANT INSERT, DELETE ON TABLE {probe.schema}.{TABLE_NAME} TO {probe.writer_role};\n"
-        f"GRANT USAGE ON SCHEMA {probe.schema} TO {debezium_principal};\n"
-        f"GRANT SELECT ON TABLE {probe.schema}.{TABLE_NAME} TO {debezium_principal};\n"
-        f"CREATE PUBLICATION {probe.publication} FOR TABLE {probe.schema}.{TABLE_NAME};\n"
-        f"ALTER ROLE {probe.writer_role} SET search_path TO {probe.schema};\n",
-    )
-    mutations.table_created = True
-
-
-def _connector_document(probe: Probe, namespace: str) -> dict[str, object]:
-    return {
-        "apiVersion": "kafka.strimzi.io/v1",
-        "kind": "KafkaConnector",
-        "metadata": {
-            "name": probe.connector,
-            "namespace": namespace,
-            "labels": {"strimzi.io/cluster": CONNECT_NAME},
-        },
-        "spec": {
-            "class": "io.debezium.connector.postgresql.PostgresConnector",
-            "tasksMax": 1,
-            "config": {
-                "database.hostname": POSTGRES_SERVICE,
-                "database.port": "5432",
-                "database.dbname": probe.database,
-                "database.user": f"${{file:{DEBEZIUM_MOUNT}/username}}",
-                "database.password": f"${{file:{DEBEZIUM_MOUNT}/password}}",
-                "database.sslmode": "disable",
-                "topic.prefix": probe.topic_prefix,
-                "schema.include.list": probe.schema,
-                "table.include.list": f"{probe.schema}.{TABLE_NAME}",
-                "plugin.name": "pgoutput",
-                "slot.name": probe.slot,
-                "publication.name": probe.publication,
-                "publication.autocreate.mode": "disabled",
-                "snapshot.mode": "initial",
-                "tombstones.on.delete": "false",
-                "include.schema.changes": "false",
-                "key.converter": "org.apache.kafka.connect.json.JsonConverter",
-                "key.converter.schemas.enable": "false",
-                "value.converter": "org.apache.kafka.connect.json.JsonConverter",
-                "value.converter.schemas.enable": "false",
-                "topic.creation.enable": "true",
-                "topic.creation.default.replication.factor": "1",
-                "topic.creation.default.partitions": "1",
-            },
-        },
-    }
-
-
-def create_connector(namespace: str, probe: Probe, mutations: Mutations) -> None:
-    manifest = json.dumps(_connector_document(probe, namespace), separators=(",", ":"))
-    mutations.connector_created = True
-    _kubectl(namespace, "apply", "--filename=-", input_text=manifest)
-
-
-def insert_probe(namespace: str, pod: str, probe: Probe) -> None:
-    """Mutate only the dedicated table and authenticate as its throwaway role."""
-    _role_sql(
-        namespace,
-        pod,
-        probe,
-        f"INSERT INTO {probe.schema}.{TABLE_NAME} (id, correlation_id, payload) VALUES "  # noqa: S608
-        f"('{probe.row_id}', '{probe.correlation}', 'live-cluster-cdc');\n",
-    )
-
-
-def _assert_correlation(consumer_output: str, correlation: str) -> Observation | None:
-    """Adapt the POC consumer assertion to a Debezium table-change envelope."""
-    for line in consumer_output.splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(record, dict):
-            continue
-        payload = record.get("payload", record)
-        if not isinstance(payload, dict):
-            continue
-        after = payload.get("after")
-        if isinstance(after, dict) and after.get("correlation_id") == correlation:
-            return Observation(value_bytes=len(line.encode()))
-    return None
-
-
-def consume_correlated(namespace: str, probe: Probe, timeout_seconds: float) -> Observation:
-    """Consume the real Kafka record from inside the deployed Connect pod."""
-    connect_pod = _first_pod(namespace, f"strimzi.io/cluster={CONNECT_NAME}")
-    if connect_pod is None:
-        message = "CDC_PROOF_FAILED: deployed Kafka Connect pod is unavailable for consumer execution"
-        raise CdcProofError(message)
-    timeout_ms = max(1, int(timeout_seconds * 1000))
-    result = _run(
-        [
-            "kubectl",
-            "--namespace",
-            namespace,
-            "exec",
-            connect_pod,
-            "--",
-            "/opt/kafka/bin/kafka-console-consumer.sh",
-            "--bootstrap-server",
-            f"{KAFKA_BOOTSTRAP_SERVICE}:9092",
-            "--topic",
-            probe.topic,
-            "--from-beginning",
-            "--timeout-ms",
-            str(timeout_ms),
-            "--max-messages",
-            "1",
-            "--consumer-property",
-            f"group.id=cdc-acceptance-{probe.token}",
-        ],
-        timeout=timeout_seconds + 15,
+        "python",
+        "-",
+        input_text=_consumer_script(user_id, probe, group_id, timeout_seconds),
+        timeout=timeout_seconds + 30,
         check=False,
     )
-    timeout_markers = ("TimeoutException", "Processed a total of 0 messages")
-    if result.returncode != 0 and not any(marker in result.stderr for marker in timeout_markers):
-        message = "CDC_PROOF_FAILED: Kafka consumer command failed before a delivery assertion was possible"
-        raise CdcProofError(message)
-    observation = _assert_correlation(result.stdout, probe.correlation)
-    if observation is None:
-        message = f"{DELIVERY_TIMEOUT_MESSAGE} within {timeout_seconds:g}s"
-        raise CdcDeliveryTimeoutError(message)
-    return observation
+    if result.returncode != 0:
+        raise _error(CdcConsumerExecutionError, "CDC_CONSUMER_FAILED: in-cluster canonical consumer execution failed")
+    try:
+        document = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise _error(
+            CdcConsumerExecutionError,
+            "CDC_CONSUMER_FAILED: in-cluster consumer returned invalid output",
+        ) from exc
+    if not isinstance(document, dict):
+        raise _error(CdcConsumerExecutionError, "CDC_CONSUMER_FAILED: in-cluster consumer returned invalid output")
+    return _validate_canonical_observation(document, user_id=user_id, phase=probe.phase)
 
 
-def _cleanup(namespace: str, pod: str | None, probe: Probe, mutations: Mutations) -> CleanupEvidence:
-    evidence = CleanupEvidence()
+def _connector_is_running(document: dict[str, object]) -> bool:
+    status = document.get("status")
+    if not isinstance(status, dict):
+        return False
+    connector_status = status.get("connectorStatus")
+    if not isinstance(connector_status, dict):
+        return False
+    connector = connector_status.get("connector")
+    tasks = connector_status.get("tasks")
+    if not isinstance(connector, dict) or connector.get("state") != "RUNNING":
+        return False
+    return (
+        isinstance(tasks, list)
+        and bool(tasks)
+        and all(isinstance(task, dict) and task.get("state") == "RUNNING" for task in tasks)
+    )
 
-    def record(name: str, completed: bool) -> None:
-        setattr(evidence, name, completed)
-        if not completed:
-            evidence.errors.append(name)
 
-    if mutations.table_created and pod is not None:
-        record(
-            "row_deleted",
-            _role_sql(
-                namespace,
-                pod,
-                probe,
-                f"DELETE FROM {probe.schema}.{TABLE_NAME} WHERE id = '{probe.row_id}';\n",  # noqa: S608
-                check=False,
-            ),
-        )
-    if mutations.connector_created:
+def _wait_connector_running(namespace: str, timeout_seconds: float) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
         result = _kubectl(
             namespace,
-            "delete",
-            f"kafkaconnector.kafka.strimzi.io/{probe.connector}",
-            "--ignore-not-found=true",
-            "--wait=true",
+            "get",
+            f"kafkaconnector.kafka.strimzi.io/{CONNECTOR_NAME}",
+            "--output=json",
             check=False,
         )
-        record("connector_deleted", result.returncode == 0)
-        if result.returncode != 0:
-            return evidence
-        time.sleep(2)
-    if mutations.table_created and pod is not None:
-        record(
-            "table_dropped",
-            _admin_sql(
-                namespace,
-                pod,
-                probe.database,
-                f"DROP TABLE IF EXISTS {probe.schema}.{TABLE_NAME};\nDROP SCHEMA IF EXISTS {probe.schema};\n",
-                check=False,
-            ),
-        )
-    if mutations.database_created and pod is not None:
-        _admin_sql(
-            namespace,
-            pod,
-            "postgres",
-            f"SELECT pg_terminate_backend(active_pid) FROM pg_replication_slots "  # noqa: S608
-            f"WHERE slot_name = '{probe.slot}' AND active_pid IS NOT NULL;\n",
-            check=False,
-        )
-        time.sleep(1)
-        _admin_sql(
-            namespace,
-            pod,
-            "postgres",
-            f"SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots "  # noqa: S608
-            f"WHERE slot_name = '{probe.slot}' AND active_pid IS NULL;\n",
-            check=False,
-        )
-        record(
-            "database_dropped",
-            _admin_sql(
-                namespace,
-                pod,
-                "postgres",
-                f"DROP DATABASE IF EXISTS {probe.database} WITH (FORCE);\n",
-                check=False,
-            ),
-        )
-    if mutations.role_created and pod is not None:
-        record(
-            "role_dropped",
-            _admin_sql(
-                namespace,
-                pod,
-                "postgres",
-                f"DROP ROLE IF EXISTS {probe.writer_role};\n",
-                check=False,
-            ),
-        )
+        if result.returncode == 0:
+            document = json.loads(result.stdout)
+            if _connector_is_running(document):
+                return
+        if time.monotonic() >= deadline:
+            raise _error(CdcProofError, "CDC_PROOF_FAILED: canonical connector did not recover after Connect restart")
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+
+def restart_connect(namespace: str, timeout_seconds: float) -> RestartEvidence:
+    """Restart the actual Connect deployment and wait for the canonical connector to recover."""
+    evidence = RestartEvidence()
+    _kubectl(namespace, "rollout", "restart", f"deployment.apps/{CONNECT_DEPLOYMENT}")
+    _kubectl(
+        namespace,
+        "rollout",
+        "status",
+        f"deployment.apps/{CONNECT_DEPLOYMENT}",
+        f"--timeout={max(1, int(timeout_seconds))}s",
+        timeout=timeout_seconds + 30,
+    )
+    evidence.completed = True
+    _wait_connector_running(namespace, timeout_seconds)
+    evidence.connector_running = True
+    return evidence
+
+
+def _register_account(client: NohikiClient, probe: AccountProbe) -> UUID:
+    try:
+        response = client.register(probe.email, probe.password, probe.display_name)
+    except Exception as exc:
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: real user-auth registration transaction failed") from exc
+    if response is None or not isinstance(response.get("id"), str):
+        raise _error(CdcProofError, "CDC_PROOF_FAILED: real user-auth registration returned no account identity")
+    try:
+        return UUID(response["id"])
+    except ValueError as exc:
+        raise _error(
+            CdcProofError,
+            "CDC_PROOF_FAILED: real user-auth registration returned an invalid identity",
+        ) from exc
+
+
+def _cleanup_accounts(
+    namespace: str,
+    pod: str | None,
+    accounts: list[tuple[AccountProbe, NohikiClient, UUID]],
+    timeout_seconds: float,
+) -> CleanupEvidence:
+    evidence = CleanupEvidence()
+    for probe, client, user_id in reversed(accounts):
+        try:
+            client.delete_account()
+            evidence.accounts_deleted += 1
+        except Exception:
+            evidence.errors.append(f"{probe.phase}-account-delete")
+            continue
+        if pod is None:
+            evidence.errors.append(f"{probe.phase}-projection-delete")
+            continue
+        try:
+            _wait_projection_count(namespace, pod, user_id, probe, 0, timeout_seconds)
+            evidence.projections_deleted += 1
+        except CdcProofError:
+            evidence.errors.append(f"{probe.phase}-projection-delete")
     return evidence
 
 
@@ -522,6 +543,10 @@ def _failure_class(error: CdcProofError | None) -> str | None:
         return "absent-deployment"
     if isinstance(error, CdcDeliveryTimeoutError):
         return "delivery-timeout"
+    if isinstance(error, CdcConsumerExecutionError):
+        return "consumer-execution"
+    if isinstance(error, CdcProjectionTimeoutError):
+        return "projection-timeout"
     if error is not None:
         return "proof-error"
     return None
@@ -529,9 +554,10 @@ def _failure_class(error: CdcProofError | None) -> str | None:
 
 def _write_evidence(
     path: Path,
-    probe: Probe,
     error: CdcProofError | None,
-    observation: Observation | None,
+    observations: list[CanonicalObservation],
+    projections: list[ProjectionObservation],
+    restart: RestartEvidence,
     cleanup: CleanupEvidence,
 ) -> None:
     document = {
@@ -539,19 +565,12 @@ def _write_evidence(
         "check": "live-cluster-cdc",
         "status": "failed" if error is not None else "passed",
         "failure_class": _failure_class(error),
-        "topic": probe.topic,
-        "correlation_sha256": hashlib.sha256(probe.correlation.encode()).hexdigest(),
-        "observed": None
-        if observation is None
-        else {"correlated_message_count": 1, "value_bytes": observation.value_bytes},
-        "cleanup": {
-            "row_deleted": cleanup.row_deleted,
-            "connector_deleted": cleanup.connector_deleted,
-            "table_dropped": cleanup.table_dropped,
-            "database_dropped": cleanup.database_dropped,
-            "role_dropped": cleanup.role_dropped,
-            "errors": cleanup.errors[:5],
-        },
+        "canonical_topic": CANONICAL_TOPIC,
+        "connector": CONNECTOR_NAME,
+        "observed": [asdict(observation) for observation in observations],
+        "projections": [asdict(projection) for projection in projections],
+        "restart": asdict(restart),
+        "cleanup": asdict(cleanup),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -560,32 +579,47 @@ def _write_evidence(
     temporary.replace(path)
 
 
-def run(namespace: str, evidence_path: Path, timeout_seconds: float) -> None:
-    probe = Probe.create()
-    mutations = Mutations()
+def run(namespace: str, base_url: str, evidence_path: Path, timeout_seconds: float) -> None:
+    """Execute two real service transactions around a Kafka Connect restart."""
+    accounts: list[tuple[AccountProbe, NohikiClient, UUID]] = []
+    observations: list[CanonicalObservation] = []
+    projections: list[ProjectionObservation] = []
+    restart = RestartEvidence()
+    cleanup = CleanupEvidence()
     pod: str | None = None
-    observation: Observation | None = None
     error: CdcProofError | None = None
     cause: Exception | None = None
-    cleanup = CleanupEvidence()
     try:
         require_cdc_deployment(namespace)
         pod = _primary_pod(namespace)
-        debezium_principal = _debezium_principal(namespace)
-        create_fixture(namespace, pod, probe, debezium_principal, mutations)
-        create_connector(namespace, probe, mutations)
-        insert_probe(namespace, pod, probe)
-        observation = consume_correlated(namespace, probe, timeout_seconds)
+        for phase in ("before-restart", "after-restart"):
+            if phase == "after-restart":
+                restart = restart_connect(namespace, timeout_seconds)
+            probe = AccountProbe.create(phase)
+            client = NohikiClient(base_url)
+            user_id = _register_account(client, probe)
+            accounts.append((probe, client, user_id))
+            observations.append(consume_canonical_account_event(namespace, user_id, probe, timeout_seconds))
+            count = _wait_projection_count(namespace, pod, user_id, probe, 1, timeout_seconds)
+            projections.append(
+                ProjectionObservation(
+                    phase=phase,
+                    row_count=count,
+                    user_id_sha256=hashlib.sha256(str(user_id).encode()).hexdigest(),
+                )
+            )
+        for probe, _client, user_id in accounts:
+            _wait_projection_count(namespace, pod, user_id, probe, 1, 0.001)
     except CdcProofError as exc:
         error = exc
     except Exception as exc:
         cause = exc
         error = CdcProofError(f"CDC_PROOF_FAILED: unexpected {type(exc).__name__}")
     finally:
-        cleanup = _cleanup(namespace, pod, probe, mutations)
+        cleanup = _cleanup_accounts(namespace, pod, accounts, timeout_seconds)
         if error is None and cleanup.errors:
-            error = CdcProofError("CDC_PROOF_FAILED: probe delivered but cleanup was incomplete")
-        _write_evidence(evidence_path, probe, error, observation, cleanup)
+            error = CdcProofError("CDC_PROOF_FAILED: service cleanup was incomplete")
+        _write_evidence(evidence_path, error, observations, projections, restart, cleanup)
     if error is not None:
         if cause is not None:
             raise error from cause
@@ -595,23 +629,18 @@ def run(namespace: str, evidence_path: Path, timeout_seconds: float) -> None:
 def _positive_seconds(value: str) -> float:
     seconds = float(value)
     if seconds <= 0:
-        message = "must be greater than zero"
-        raise argparse.ArgumentTypeError(message)
+        raise _error(argparse.ArgumentTypeError, "must be greater than zero")
     return seconds
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--namespace", default="nohiki")
+    parser.add_argument("--base-url", default=os.getenv("E2E_BASE_URL", "http://nohiki.localhost:8080"))
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--timeout-seconds", type=_positive_seconds, default=120.0)
     args = parser.parse_args(argv)
-    try:
-        run(args.namespace, args.evidence, args.timeout_seconds)
-    except CdcProofError as exc:
-        sys.stderr.write(f"{exc}\n")
-        return 1
-    sys.stdout.write("Live cluster CDC proof consumed the uniquely correlated Kafka record.\n")
+    run(args.namespace, args.base_url, args.evidence, args.timeout_seconds)
     return 0
 
 

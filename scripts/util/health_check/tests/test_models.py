@@ -92,7 +92,7 @@ class TestCheckSuiteResult:
             results=self._make_suite([CheckStatus.PASSED]).results,
             total_duration_ms=100.0,
             platform=PlatformTarget.KUBERNETES,
-            unexercised_ids=("cdc_end_to_end",),
+            unexercised_ids=("unexercised_check",),
         )
 
         assert suite.complete is False

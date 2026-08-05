@@ -213,13 +213,6 @@ INVENTORY_SPECS: Final[Mapping[str, InventorySpec]] = MappingProxyType(
         ),
         "publication": InventorySpec(EndpointClass.DATABASE, _A, _C, ("publication table membership",)),
         "replication_slot": InventorySpec(EndpointClass.DATABASE, _A, _C, ("logical replication slot state",)),
-        "cdc_end_to_end": InventorySpec(
-            EndpointClass.KAFKA,
-            _I,
-            _C,
-            ("synthetic outbox event",),
-            reason="mutates application data; the verification Job is strictly non-mutating",
-        ),
         "core_services": InventorySpec(
             EndpointClass.HTTP,
             _D,
