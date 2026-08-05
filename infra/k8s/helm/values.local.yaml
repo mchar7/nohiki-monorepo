@@ -127,6 +127,8 @@ global:
     version: "4.3.0"
     bootstrapServers: nohiki-kafka-kafka-bootstrap:9092
     dsn: "kafka://nohiki-kafka-kafka-bootstrap:9092"
+    bootstrapGate:
+      enabled: true
     security:
       protocol: PLAINTEXT
 
@@ -439,6 +441,15 @@ ml-gateway-service:
 ml-compute-service:
   enabled: true
   image: *localFirstPartyImage
+  extraEnv:
+    - name: FASTEMBED_CACHE_PATH
+      value: /home/app/.cache/fastembed
+    - name: HF_HOME
+      value: /home/app/.cache/huggingface
+    - name: HF_HUB_OFFLINE
+      value: "1"
+    - name: TRANSFORMERS_OFFLINE
+      value: "1"
   scaling:
     enabled: true
     minReplicas: 1
