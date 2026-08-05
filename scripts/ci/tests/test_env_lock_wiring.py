@@ -84,7 +84,7 @@ def test_prepush_gate_envelopes_every_phase() -> None:
     assert "scripts/dev/env-lock.sh gate pre-push --" in envelope["run"]
     assert "scripts/dev/test-run.sh gate --" in envelope["run"]
     assert "env NOHIKI_GATE_ACTIVE=1 lefthook run pre-push" in envelope["run"]
-    assert all(phase["skip"] == inactive_skip for phase in jobs[1:])
+    assert all(inactive_skip[0] in phase["skip"] for phase in jobs[1:])
 
 
 def test_nested_lock_invocation_is_reentrant() -> None:

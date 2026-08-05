@@ -250,6 +250,10 @@ test-cov service:
     # pytest runs from the monorepo root where no top-level src/ exists.
     {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} pytest "$dir/tests/" --tb=short --cov="$dir/src" --cov-report=term-missing
 
+# Run the hosted job-correlation integration counterpart (requires Docker).
+test-job-correlation-integration:
+    {{ env_lock }} gate pre-push -- {{ test_run }} gate -- env NOHIKI_GATE_ACTIVE=1 NOHIKI_INTEGRATION_GATE_ACTIVE=1 lefthook run pre-push --job job-correlation-integration --force
+
 # Run monorepo integration tests
 test-integration:
     {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package nohiki-integration-tests pytest tests/integration --tb=short

@@ -12,12 +12,22 @@
  *   docs: update API documentation
  *   refactor(kafka): simplify message handler
  */
+const scopeKebabCase = ({ header, scope }) => [
+  scope == null
+    ? !/^[^()\s]+\(\)!?:/.test(header)
+    : /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(scope),
+  'scope must contain lower-case alphanumeric words separated by hyphens',
+];
+
 export default {
   extends: ['@commitlint/config-conventional'],
   // Classic "Merge pull request" subjects must fail, not silently pass.
   defaultIgnores: false,
   // Integration merge subjects are not author-controllable.
   ignores: [(message) => /^Merge (remote-tracking )?branch '.+' into .+/.test(message)],
+  // commitlint's stock scope-case delegates to es-toolkit, which rewrites
+  // established alphanumeric tokens such as `k8s` to `k-8-s`.
+  plugins: [{ rules: { 'scope-kebab-case': scopeKebabCase } }],
   rules: {
     // Allowed commit types
     'type-enum': [
@@ -51,7 +61,8 @@ export default {
     ],
 
     // Scope is a service or library name
-    'scope-case': [2, 'always', 'kebab-case'],
+    'scope-case': [0],
+    'scope-kebab-case': [2, 'always'],
 
     // Spec items 6 and 8: body and footer start one blank line after the
     // preceding section; config-conventional only warns.

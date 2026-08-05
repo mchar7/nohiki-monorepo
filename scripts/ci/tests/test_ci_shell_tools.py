@@ -189,7 +189,7 @@ def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -
     assert isinstance(pre_push, Mapping)
     phases = pre_push.get("jobs")
     assert isinstance(phases, list)
-    local_commands: list[str] = []
+    local_commands: dict[str, str] = {}
     for phase in phases:
         assert isinstance(phase, Mapping)
         if "group" in phase:
@@ -201,12 +201,13 @@ def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -
             nested_jobs = [phase]
         for nested in nested_jobs:
             assert isinstance(nested, Mapping)
-            if nested.get("name") == "python-tests":
+            name = nested.get("name")
+            if name in {"python-tests", "job-correlation-integration"}:
                 run = nested.get("run")
                 assert isinstance(run, str)
-                local_commands.append(run)
-    local_command = next(iter(local_commands))
-    assert "--no-coverage" not in local_command
+                local_commands[str(name)] = run
+    assert "--no-coverage" not in local_commands["python-tests"]
+    assert "--no-coverage" in local_commands["job-correlation-integration"]
 
 
 def test_checks_aggregator_requires_every_required_hosted_lane() -> None:
