@@ -1194,7 +1194,7 @@ services:
 
   nohiki-obs-mimir:
     <<: *common-infrastructure
-    image: docker.io/grafana/mimir:3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d
+    image: docker.io/grafana/mimir:3.1.4@sha256:ea395743a08cc1f41ede12a7264613cb32f0268bbda6277f12a5929b71625a41
     command: ["-config.file=/etc/mimir/mimir.yaml", "-target=all"]
     ports:
       - "${NOHIKI_HOST_IP:-127.0.0.1}:${NOHIKI_PORT_MIMIR:-9009}:9009"
