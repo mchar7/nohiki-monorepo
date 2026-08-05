@@ -832,6 +832,7 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
         # "skipped, a prior run already proved this tree".
         "title_only",
         "reused_run_id",
+        "labels",
     }
 
     change_steps = _steps(changes)
@@ -1464,28 +1465,35 @@ def test_python_test_packages_come_from_change_gate_in_both_classes() -> None:
     assert '--packages "$TEST_PACKAGES"' in selected_tests["run"]
 
 
-def test_router_syncs_gate_managed_labels_only_with_a_writable_internal_pr_token() -> None:
-    changes = _jobs()["changes"]
+def test_label_sync_is_an_advisory_job_off_the_required_router_path() -> None:
+    jobs = _jobs()
+    changes = jobs["changes"]
+    label_sync = jobs["label-sync"]
     assert changes["permissions"] == {
         "actions": "read",
         "contents": "read",
-        "issues": "write",
         "pull-requests": "read",
     }
-    sync = next(step for step in _steps(changes) if step.get("name") == "Sync area labels")
-    assert sync["if"] == (
-        "github.event_name == 'pull_request' "
-        "&& github.event.action != 'edited' "
-        "&& github.event.pull_request.head.repo.fork != true "
-        "&& github.event.pull_request.user.login != 'dependabot[bot]'"
-    )
+    assert changes["outputs"]["labels"] == "${{ steps.gate.outputs.labels }}"
+    assert label_sync["needs"] == ["changes"]
+    assert label_sync["runs-on"] == "ubuntu-24.04"
+    assert label_sync["timeout-minutes"] == 1
+    assert label_sync["continue-on-error"] is True
+    assert label_sync["permissions"] == {"issues": "write"}
+    for name, job in jobs.items():
+        if name == "label-sync":
+            continue
+        needs = job.get("needs", [])
+        dependencies = [needs] if isinstance(needs, str) else needs
+        assert "label-sync" not in dependencies
+
+    sync = next(step for step in _steps(label_sync) if step.get("name") == "Sync area labels")
     assert sync["env"] == {
         "GH_TOKEN": "${{ github.token }}",
         "PR": "${{ github.event.pull_request.number }}",
         "REPO": "${{ github.repository }}",
-        "LABELS": "${{ steps.gate.outputs.labels }}",
+        "LABELS": "${{ needs.changes.outputs.labels }}",
     }
-    assert "continue-on-error" not in sync
     assert cast(dict[str, object], sync)["shell"] == "bash"
     command = str(sync["run"])
     for operation in (
@@ -1498,6 +1506,17 @@ def test_router_syncs_gate_managed_labels_only_with_a_writable_internal_pr_token
     ):
         assert operation in command
     assert "|| true" not in command
+
+
+def test_label_sync_identifies_dependabot_from_the_immutable_pr_author() -> None:
+    condition = str(_jobs()["label-sync"]["if"])
+
+    assert "github.event.pull_request.user.login != 'dependabot[bot]'" in condition
+    assert "github.actor" not in condition
+
+
+def test_label_sync_skips_title_edits_that_can_overlap_substantive_runs() -> None:
+    assert "github.event.action != 'edited'" in str(_jobs()["label-sync"]["if"])
 
 
 def test_label_sync_reconciles_definitions_and_pr_membership(tmp_path: Path) -> None:
@@ -1528,7 +1547,7 @@ esac
     )
     fake_gh.chmod(0o755)
     log = tmp_path / "gh.log"
-    sync = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Sync area labels")
+    sync = next(step for step in _steps(_jobs()["label-sync"]) if step.get("name") == "Sync area labels")
     result = _run_workflow_step(
         sync,
         workflow_values={
@@ -1585,7 +1604,8 @@ esac
     )
     fake_gh.chmod(0o755)
     log = tmp_path / "gh.log"
-    sync = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Sync area labels")
+    label_sync = _jobs()["label-sync"]
+    sync = next(step for step in _steps(label_sync) if step.get("name") == "Sync area labels")
     result = _run_workflow_step(
         sync,
         workflow_values={
@@ -1605,6 +1625,8 @@ esac
     )
 
     assert result.returncode != 0
+    # The command still fails closed, while Actions keeps that advisory failure out of Router.
+    assert label_sync["continue-on-error"] is True
     assert log.read_text(encoding="utf-8").splitlines() == [
         "api --paginate --slurp repos/example/repo/issues/7/labels?per_page=100"
     ]
@@ -1652,7 +1674,7 @@ esac
     fake_gh.chmod(0o755)
     log = tmp_path / "gh.log"
     created = tmp_path / "created"
-    sync = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Sync area labels")
+    sync = next(step for step in _steps(_jobs()["label-sync"]) if step.get("name") == "Sync area labels")
     result = _run_workflow_step(
         sync,
         workflow_values={
@@ -1741,7 +1763,7 @@ def test_push_and_pull_request_runs_each_upload_exactly_one_router_artifact() ->
 
 def test_router_publishes_the_image_selection_as_an_artifact_not_a_job_output() -> None:
     jobs = _jobs()
-    assert set(jobs) == {"changes", "worker", "playwright-image", "title-policy", "checks"}
+    assert set(jobs) == {"changes", "label-sync", "worker", "playwright-image", "title-policy", "checks"}
 
     # `image_matrix_parity` is a lane flag, not a build matrix; no other output may carry one.
     outputs = {name: value for name, value in jobs["changes"]["outputs"].items() if name not in FLAG_NAMES}

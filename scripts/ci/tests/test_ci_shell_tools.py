@@ -69,6 +69,7 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     jobs = workflow["jobs"]
     assert set(jobs) == {
         "changes",
+        "label-sync",
         "worker",
         "playwright-image",
         "title-policy",
@@ -208,7 +209,7 @@ def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -
     assert "--no-coverage" not in local_command
 
 
-def test_checks_aggregator_requires_every_hosted_lane() -> None:
+def test_checks_aggregator_requires_every_required_hosted_lane() -> None:
     workflow = load_workflow(_CHECKS)
     jobs = workflow["jobs"]
     checks = jobs["checks"]
@@ -216,7 +217,8 @@ def test_checks_aggregator_requires_every_hosted_lane() -> None:
     assert checks["if"] == "always()"
     needs = checks["needs"]
     assert isinstance(needs, list)
-    assert set(needs) == set(jobs) - {"checks"}
+    advisory = {job_id for job_id, job in jobs.items() if job.get("continue-on-error") is True}
+    assert set(needs) == set(jobs) - {"checks"} - advisory
 
     contract = str(checks)
     for job in needs:
