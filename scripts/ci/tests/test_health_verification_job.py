@@ -15,6 +15,7 @@ from ci_checks.core.image_inventory import load_inventory
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "verification" / "health"
 _RELEASE = _ROOT / "infra" / "k8s" / "gitops" / "verification" / "helmrelease.yaml"
+_PLATFORM_CHART = _ROOT / "infra" / "k8s" / "helm"
 _LOCAL = _ROOT / "infra" / "k8s" / "gitops" / "clusters" / "local"
 _DOCKERFILE = _ROOT / "scripts" / "util" / "health_check" / "Dockerfile"
 _DIGEST_VALUES = _ROOT / "infra" / "k8s" / "gitops" / "platform" / "local" / "image-digests.values.yaml"
@@ -76,6 +77,44 @@ def _render() -> tuple[dict[str, Any], ...]:
         text=True,
     )
     return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+
+
+@cache
+def _platform_render() -> tuple[dict[str, Any], ...]:
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            "nohiki",
+            ".",
+            "--values",
+            "values.yaml",
+            "--values",
+            "values.local.yaml",
+            "--namespace",
+            "nohiki",
+        ],
+        cwd=_PLATFORM_CHART,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+
+
+def _platform_service_name(app_name: str, *, component: str | None = None) -> str:
+    matches = [
+        document["metadata"]["name"]
+        for document in _platform_render()
+        if document.get("kind") == "Service"
+        and document.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/name") == app_name
+        and (
+            component is None
+            or document.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == component
+        )
+    ]
+    assert len(matches) == 1, (app_name, component, matches)
+    return matches[0]
 
 
 @cache
@@ -300,15 +339,22 @@ def test_health_commands_fail_closed_and_keep_migration_proof_separate() -> None
 
 
 def test_health_job_uses_cluster_dns_and_explicit_observability_inputs() -> None:
+    bff_service = _platform_service_name("bff-service")
+    valkey_service = _platform_service_name("valkey", component="primary")
+    kafka_resources = [
+        document["metadata"]["name"] for document in _platform_render() if document.get("kind") == "Kafka"
+    ]
+    assert len(kafka_resources) == 1
+    kafka_bootstrap = f"{kafka_resources[0]}-kafka-bootstrap:9092"
     env_items = _container()["env"]
     literal_env = {item["name"]: item["value"] for item in env_items if "value" in item}
     assert literal_env == {
         "K8S_NAMESPACE": "nohiki",
         "K8S_LOCAL_MODE": "false",
         "K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": "/evidence/service-dependencies",
-        "E2E_BASE_URL": "http://bff-service:8000",
-        "KAFKA_BOOTSTRAP_SERVERS": "nohiki-kafka-bootstrap:9092",
-        "VALKEY_URL": "redis://valkey:6379",
+        "E2E_BASE_URL": f"http://{bff_service}:8000",
+        "KAFKA_BOOTSTRAP_SERVERS": kafka_bootstrap,
+        "VALKEY_URL": f"redis://{valkey_service}:6379",
         "PROMETHEUS_URL": "http://prometheus-operated:9090",
         "GRAFANA_URL": "http://grafana-service:3000",
         "LOKI_URL": "http://loki-gateway:80",

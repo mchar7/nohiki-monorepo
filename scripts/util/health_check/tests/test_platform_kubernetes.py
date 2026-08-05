@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
+from functools import cache
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from health_check.config.kafka import connector_names_for
+from health_check.config.services import INFRASTRUCTURE_SERVICES
 from health_check.platform.kubernetes import (
     _CRASH_REASONS,
+    _K8S_SERVICE_NAME_MAP,
     K8S_NAME_MAP,
     KubernetesPlatform,
     _ContainerStatus,
@@ -22,6 +26,38 @@ from health_check.platform.kubernetes import (
     _run_kubectl,
 )
 from health_check.platform.models import PlatformTarget, ServiceStatus
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+
+
+@cache
+def _rendered_helm_documents() -> tuple[str, ...]:
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            "nohiki",
+            ".",
+            "--values",
+            "values.yaml",
+            "--values",
+            "values.local.yaml",
+            "--namespace",
+            "audit",
+            "--set",
+            "gotenberg.enabled=true",
+            "--set-string",
+            "gotenberg.chromium.restartAfter=0",
+            "--set-string",
+            "gotenberg.libreOffice.restartAfter=10",
+        ],
+        cwd=_REPOSITORY_ROOT / "infra" / "k8s" / "helm",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return tuple(result.stdout.split("\n---"))
+
 
 # _parse_pod_list
 
@@ -237,11 +273,54 @@ class TestKubernetesPlatformInit:
 
     def test_service_url_uses_selected_namespace_in_cluster(self) -> None:
         platform = KubernetesPlatform(namespace="audit", local_mode=False)
-        assert platform.service_url("qdrant", 6333) == "http://qdrant.audit.svc.cluster.local:6333"
+        assert platform.service_url("qdrant", 6333) == "http://nohiki-qdrant.audit.svc.cluster.local:6333"
 
     def test_service_url_resolves_canonical_kafka_connect_name(self) -> None:
         platform = KubernetesPlatform(namespace="audit", local_mode=False)
         assert platform.service_url("kafka-connect", 8083) == "http://nohiki-connect-api.audit.svc.cluster.local:8083"
+
+    def test_service_resolver_matches_paired_helm_identities(self) -> None:
+        resources = [
+            (
+                kind.group(1),
+                name.group(1),
+                app_name.group(1) if app_name else None,
+            )
+            for document in _rendered_helm_documents()
+            if (kind := re.search(r"\nkind: ([^\n]+)", document))
+            if (name := re.search(r"\nmetadata:\n  name: ([^\n]+)", document))
+            if (
+                app_name := re.search(
+                    r"\n\s+app\.kubernetes\.io/name: \"?([^\"\n]+)",
+                    document,
+                )
+            )
+            or kind.group(1) in {"Kafka", "KafkaConnect"}
+        ]
+        app_names = {
+            "bff": "bff-service",
+            "docling": "docling-serve",
+            "gotenberg": "gotenberg",
+            "qdrant": "qdrant",
+            "rustfs": "rustfs",
+            "valkey": "valkey",
+        }
+        expected = {}
+        for canonical, app_name in app_names.items():
+            candidates = [
+                name
+                for kind, name, rendered_app_name in resources
+                if kind == "Service" and rendered_app_name == app_name and not name.endswith(("-headless", "-metrics"))
+            ]
+            assert len(candidates) == 1, (canonical, candidates)
+            expected[canonical] = candidates[0]
+        kafka_names = [name for kind, name, _ in resources if kind == "Kafka"]
+        connect_names = [name for kind, name, _ in resources if kind == "KafkaConnect"]
+        assert len(kafka_names) == len(connect_names) == 1
+        expected["kafka-bootstrap"] = f"{kafka_names[0]}-kafka-bootstrap"
+        expected["kafka-connect"] = f"{connect_names[0]}-api"
+
+        assert expected == _K8S_SERVICE_NAME_MAP
 
 
 class TestKubernetesPlatformKafkaBootstrap:
@@ -266,12 +345,10 @@ class TestKubernetesPlatformKafkaBootstrap:
 class TestKubernetesPlatformGetServiceStatuses:
     """Tests for get_service_statuses method."""
 
-    def _pod_json(self, name_prefix: str, canonical: str, phase: str, *, ready: bool) -> dict[str, Any]:
-        """Create a pod JSON entry for a known canonical service."""
-        k8s_name = K8S_NAME_MAP.get(canonical, f"nohiki-{canonical}")
-        pod_name = f"{k8s_name}-abc123"
+    def _pod_json(self, name_prefix: str, phase: str, *, ready: bool) -> dict[str, Any]:
+        """Create a pod JSON entry from an independently supplied runtime prefix."""
         return {
-            "metadata": {"name": pod_name},
+            "metadata": {"name": f"{name_prefix}-abc123"},
             "status": {
                 "phase": phase,
                 "containerStatuses": [{"ready": ready, "restartCount": 0}],
@@ -292,9 +369,43 @@ class TestKubernetesPlatformGetServiceStatuses:
             result = platform.get_service_statuses()
         assert result == {}
 
+    def test_rendered_infrastructure_identities_cover_required_inventory(self) -> None:
+        resources = [
+            (kind.group(1), name.group(1))
+            for document in _rendered_helm_documents()
+            if (kind := re.search(r"\nkind: ([^\n]+)", document))
+            if (name := re.search(r"\nmetadata:\n  name: ([^\n]+)", document))
+        ]
+        postgres_names = [name for kind, name in resources if kind == "Cluster"]
+        valkey_names = [
+            name for kind, name in resources if kind == "StatefulSet" and "valkey" in name and name.endswith("-primary")
+        ]
+        kafka_names = [name for kind, name in resources if kind == "Kafka"]
+        assert len(postgres_names) == len(valkey_names) == len(kafka_names) == 1
+        # The health Job is deployed only by the local k3s overlay. K3s owns Traefik
+        # outside this chart and deploys its workload with the `traefik` prefix by
+        # default. Starting local k3s with `--disable=traefik`, or deploying this Job
+        # to a non-k3s cluster, falsifies that assumption and requires revisiting the
+        # canonical infrastructure inventory instead of changing this literal.
+        rendered_prefixes = {
+            "postgres": postgres_names[0],
+            "redis": valkey_names[0],
+            "kafka": kafka_names[0],
+            "traefik": "traefik",
+        }
+        assert set(rendered_prefixes) == INFRASTRUCTURE_SERVICES
+
+        pods = [self._pod_json(prefix, "Running", ready=True) for prefix in rendered_prefixes.values()]
+        platform = KubernetesPlatform(local_mode=False)
+        with patch.object(platform, "_kubectl", return_value=(0, json.dumps({"items": pods}), "")):
+            statuses = platform.get_service_statuses()
+
+        assert set(statuses) >= INFRASTRUCTURE_SERVICES
+        assert all(statuses[name].status is ServiceStatus.HEALTHY for name in INFRASTRUCTURE_SERVICES)
+
     def test_healthy_pod_mapped_correctly(self) -> None:
         """Maps a running+ready pod to HEALTHY status."""
-        pod = self._pod_json("nohiki-bff-service", "bff-service", "Running", ready=True)
+        pod = self._pod_json("nohiki-bff-service", "Running", ready=True)
         data = json.dumps({"items": [pod]})
         platform = KubernetesPlatform()
         with patch.object(platform, "_kubectl", return_value=(0, data, "")):

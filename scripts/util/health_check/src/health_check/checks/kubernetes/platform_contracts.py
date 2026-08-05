@@ -19,7 +19,7 @@ from health_check.core.models import (
     CheckResult,
     CheckStatus,
 )
-from health_check.platform.kubernetes import _run_kubectl
+from health_check.platform.kubernetes import _run_kubectl, resolve_kubernetes_service_name
 from health_check.platform.models import PlatformTarget
 from health_check.platform.protocol import Platform
 
@@ -115,7 +115,8 @@ def _database_contract() -> str | None:
 def _valkey_contract() -> str | None:
     """Verify Valkey responds and is not loading its dataset."""
     try:
-        client = redis.Redis.from_url(os.getenv("VALKEY_URL", "redis://valkey:6379"), socket_timeout=5)
+        valkey_url = os.getenv("VALKEY_URL", f"redis://{resolve_kubernetes_service_name('valkey')}:6379")
+        client = redis.Redis.from_url(valkey_url, socket_timeout=5)
         if not client.ping() or client.info("persistence").get("loading"):
             return "Valkey is unavailable or loading its dataset"
     except redis.RedisError as exc:
@@ -125,7 +126,11 @@ def _valkey_contract() -> str | None:
 
 async def _kafka_contract() -> str | None:
     """Verify broker metadata and every canonical retry/DLQ/topic name."""
-    consumer = AIOKafkaConsumer(bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "nohiki-kafka-bootstrap:9092"))
+    bootstrap = os.getenv(
+        "KAFKA_BOOTSTRAP_SERVERS",
+        f"{resolve_kubernetes_service_name('kafka-bootstrap')}:9092",
+    )
+    consumer = AIOKafkaConsumer(bootstrap_servers=bootstrap)
     try:
         await consumer.start()
         existing = await consumer.topics()

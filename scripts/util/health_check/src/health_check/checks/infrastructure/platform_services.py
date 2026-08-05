@@ -64,10 +64,10 @@ _COMPOSE_ENDPOINTS: Final[tuple[_ServiceEndpoint, ...]] = (
 )
 
 _KUBERNETES_ENDPOINTS: Final[tuple[_ServiceEndpoint, ...]] = (
-    _ServiceEndpoint("RustFS", "http://rustfs:9000/"),
-    _ServiceEndpoint("Qdrant", "http://qdrant:6333/readyz"),
-    _ServiceEndpoint("Gotenberg", "http://gotenberg:3000/health"),
-    _ServiceEndpoint("Docling", "http://docling:5001/readyz"),
+    _ServiceEndpoint("RustFS", f"http://{resolve_kubernetes_service_name('rustfs')}:9000/"),
+    _ServiceEndpoint("Qdrant", f"http://{resolve_kubernetes_service_name('qdrant')}:6333/readyz"),
+    _ServiceEndpoint("Gotenberg", f"http://{resolve_kubernetes_service_name('gotenberg')}:3000/health"),
+    _ServiceEndpoint("Docling", f"http://{resolve_kubernetes_service_name('docling')}:5001/readyz"),
     _ServiceEndpoint(
         "Kafka Connect",
         f"http://{resolve_kubernetes_service_name('kafka-connect')}:{KAFKA_CONNECT_DEFAULT_PORT}/connector-plugins",

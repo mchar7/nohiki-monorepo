@@ -167,7 +167,14 @@ def _restart_request(url: str, timeout: int) -> tuple[int, str, str]:
 
 
 _K8S_SERVICE_NAME_MAP: Final[dict[str, str]] = {
+    "bff": "nohiki-bff-service",
+    "docling": "nohiki-docling",
+    "gotenberg": "nohiki-gotenberg",
+    "kafka-bootstrap": "nohiki-kafka-kafka-bootstrap",
     "kafka-connect": "nohiki-connect-api",
+    "qdrant": "nohiki-qdrant",
+    "rustfs": "nohiki-rustfs",
+    "valkey": "nohiki-valkey-primary",
 }
 
 
@@ -177,10 +184,10 @@ def resolve_kubernetes_service_name(canonical_name: str) -> str:
 
 
 K8S_NAME_MAP: Final[dict[str, str]] = {
-    "postgres": "nohiki-infra-postgres",
-    "redis": "nohiki-infra-redis",
-    "kafka": "nohiki-cp-kafka",
-    "traefik": "nohiki-infra-traefik",
+    "postgres": "nohiki-pg",
+    "redis": "nohiki-valkey-primary",
+    "kafka": "nohiki-kafka",
+    "traefik": "traefik",
     **{
         name: f"nohiki-{name}"
         for name in [
@@ -330,7 +337,9 @@ class KubernetesPlatform:
     @property
     def api_base_url(self) -> str:
         """Base URL for the BFF API gateway."""
-        default = "http://localhost:8000" if self._local_mode else "http://bff-service:8000"
+        default = (
+            "http://localhost:8000" if self._local_mode else f"http://{resolve_kubernetes_service_name('bff')}:8000"
+        )
         return os.getenv("E2E_BASE_URL", default)
 
     @property
@@ -338,7 +347,10 @@ class KubernetesPlatform:
         """Kafka bootstrap server address for CLI tools."""
         if self._local_mode:
             return "localhost:29092"
-        return os.getenv("KAFKA_BOOTSTRAP_SERVERS", "nohiki-kafka-bootstrap:9092")
+        return os.getenv(
+            "KAFKA_BOOTSTRAP_SERVERS",
+            f"{resolve_kubernetes_service_name('kafka-bootstrap')}:9092",
+        )
 
     @property
     def namespace(self) -> str:
@@ -488,7 +500,11 @@ class KubernetesPlatform:
                 code, _, stderr = psql("SELECT 1")
                 return code, "accepting connections" if code == 0 else "", stderr
             if canonical_name == "redis" and command[:2] == ["redis-cli", "INFO"]:
-                return valkey_info()
+                valkey_url = os.getenv(
+                    "VALKEY_URL",
+                    f"redis://{resolve_kubernetes_service_name('valkey')}:6379",
+                )
+                return valkey_info(valkey_url)
             return (
                 2,
                 "",
@@ -537,7 +553,7 @@ class KubernetesPlatform:
         """Execute Kafka metadata operations through the configured deployment path."""
         bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
         if not self._local_mode and bootstrap and "localhost" not in bootstrap:
-            return kafka_command(args)
+            return kafka_command(args, bootstrap)
         if not self._local_mode:
             return self.exec_in_service("kafka", args, timeout=timeout)
         try:

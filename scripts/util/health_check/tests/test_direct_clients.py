@@ -164,32 +164,26 @@ def test_psql_maps_configuration_and_database_failures_to_typed_result(
 
 
 @pytest.mark.parametrize(
-    ("configured_url", "expected_url"),
+    "service_url",
     [
-        ("redis://custom-valkey:6380/2", "redis://custom-valkey:6380/2"),
-        (None, "redis://valkey:6379"),
+        "redis://custom-valkey:6380/2",
+        "redis://nohiki-valkey-primary:6379",
     ],
-    ids=("configured", "in-cluster-default"),
 )
 def test_valkey_info_uses_selected_service_url_and_stable_key_order(
     monkeypatch: pytest.MonkeyPatch,
-    configured_url: str | None,
-    expected_url: str,
+    service_url: str,
 ) -> None:
     client = MagicMock()
     client.info.return_value = {"zeta": 2, "alpha": 1}
     from_url = MagicMock(return_value=client)
-    if configured_url is None:
-        monkeypatch.delenv("VALKEY_URL", raising=False)
-    else:
-        monkeypatch.setenv("VALKEY_URL", configured_url)
     monkeypatch.setattr(direct_clients.redis.Redis, "from_url", from_url)
 
-    result = direct_clients.valkey_info()
+    result = direct_clients.valkey_info(service_url)
 
     assert result == (0, "alpha:1\nzeta:2", "")
     from_url.assert_called_once_with(
-        expected_url,
+        service_url,
         socket_timeout=5,
         decode_responses=True,
     )
@@ -204,7 +198,7 @@ def test_valkey_info_maps_redis_failure_to_typed_result(
         MagicMock(side_effect=direct_clients.redis.RedisError("valkey unavailable")),
     )
 
-    result = direct_clients.valkey_info()
+    result = direct_clients.valkey_info("redis://nohiki-valkey-primary:6379")
 
     assert result == (1, "", "valkey unavailable")
 
@@ -222,10 +216,10 @@ def test_kafka_topic_listing_is_sorted_and_closes_admin_client(
         admins.append(admin)
         return admin
 
-    monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "kafka.nohiki.svc:9092")
+    bootstrap = "kafka.nohiki.svc:9092"
     monkeypatch.setattr(direct_clients, "AIOKafkaAdminClient", admin_factory)
 
-    result = direct_clients.kafka_command(["kafka-topics.sh", "--list"])
+    result = direct_clients.kafka_command(["kafka-topics.sh", "--list"], bootstrap)
 
     assert result == (0, "a-topic\nevents-dlq\nretry-events\nz-topic\n", "")
     assert [(admin.bootstrap_servers, admin.started, admin.closed) for admin in admins] == [
@@ -253,11 +247,14 @@ def test_kafka_group_description_reports_lag_and_closes_both_clients(
         consumers.append(consumer)
         return consumer
 
-    monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "kafka.nohiki.svc:9092")
+    bootstrap = "kafka.nohiki.svc:9092"
     monkeypatch.setattr(direct_clients, "AIOKafkaAdminClient", admin_factory)
     monkeypatch.setattr(direct_clients, "AIOKafkaConsumer", consumer_factory)
 
-    result = direct_clients.kafka_command(["kafka-consumer-groups", "--describe", "--group", "workers"])
+    result = direct_clients.kafka_command(
+        ["kafka-consumer-groups", "--describe", "--group", "workers"],
+        bootstrap,
+    )
 
     assert result == (
         0,
@@ -289,11 +286,11 @@ def test_kafka_rejects_unsupported_commands_and_closes_admin(
     args: list[str],
     expected_error: str,
 ) -> None:
-    monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "nohiki-kafka-bootstrap:9092")
+    bootstrap = "nohiki-kafka-kafka-bootstrap:9092"
     admin = _AdminClient("kafka:9092")
 
     def admin_factory(*, bootstrap_servers: str) -> _AdminClient:
-        assert bootstrap_servers == "nohiki-kafka-bootstrap:9092"
+        assert bootstrap_servers == bootstrap
         return admin
 
     monkeypatch.setattr(
@@ -302,7 +299,7 @@ def test_kafka_rejects_unsupported_commands_and_closes_admin(
         admin_factory,
     )
 
-    result = direct_clients.kafka_command(args)
+    result = direct_clients.kafka_command(args, bootstrap)
 
     assert result == (2, "", expected_error)
     assert admin.closed
@@ -311,14 +308,14 @@ def test_kafka_rejects_unsupported_commands_and_closes_admin(
 def test_kafka_maps_client_failure_and_still_closes_admin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "nohiki-kafka-bootstrap:9092")
+    bootstrap = "nohiki-kafka-kafka-bootstrap:9092"
     admin = _AdminClient(
         "kafka:9092",
         start_error=KafkaError("broker unavailable"),
     )
 
     def admin_factory(*, bootstrap_servers: str) -> _AdminClient:
-        assert bootstrap_servers == "nohiki-kafka-bootstrap:9092"
+        assert bootstrap_servers == bootstrap
         return admin
 
     monkeypatch.setattr(
@@ -327,7 +324,7 @@ def test_kafka_maps_client_failure_and_still_closes_admin(
         admin_factory,
     )
 
-    result = direct_clients.kafka_command(["kafka-topics", "--list"])
+    result = direct_clients.kafka_command(["kafka-topics", "--list"], bootstrap)
 
     assert result == (1, "", "KafkaError: broker unavailable")
     assert admin.closed

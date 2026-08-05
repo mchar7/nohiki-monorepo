@@ -22,7 +22,7 @@ from health_check.core.inventory import (
 )
 from health_check.core.models import CheckCategory, CheckMetadata
 from health_check.core.registry import CheckRegistry, _all_concrete_subclasses
-from health_check.platform.kubernetes import KubernetesPlatform
+from health_check.platform.kubernetes import KubernetesPlatform, resolve_kubernetes_service_name
 from health_check.platform.models import PlatformTarget
 from typer.testing import CliRunner
 
@@ -302,14 +302,10 @@ def test_kubernetes_adaptations_use_cluster_service_discovery(
     endpoint_hosts = {urlsplit(endpoint.url).hostname for endpoint in _KUBERNETES_ENDPOINTS}
 
     assert endpoint_hosts == {
-        "rustfs",
-        "qdrant",
-        "gotenberg",
-        "docling",
-        "nohiki-connect-api",
+        resolve_kubernetes_service_name(name) for name in ("rustfs", "qdrant", "gotenberg", "docling", "kafka-connect")
     }
-    assert urlsplit(platform.api_base_url).hostname == "bff-service"
-    assert platform.kafka_bootstrap_server == "nohiki-kafka-bootstrap:9092"
+    assert urlsplit(platform.api_base_url).hostname == resolve_kubernetes_service_name("bff")
+    assert platform.kafka_bootstrap_server == f"{resolve_kubernetes_service_name('kafka-bootstrap')}:9092"
     assert all(host not in {None, "localhost", "127.0.0.1"} for host in endpoint_hosts)
     assert "localhost" not in platform.api_base_url
     assert "localhost" not in platform.kafka_bootstrap_server

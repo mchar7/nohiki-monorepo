@@ -4,9 +4,12 @@ import json
 import os
 import re
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 from typing import TypedDict, cast
+
+import pytest
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CONNECT_ROOT = _REPOSITORY_ROOT / "infra" / "k8s" / "kafka-connect"
@@ -18,6 +21,7 @@ class _CdcState(TypedDict):
     connectors: list[str]
     slots: dict[str, bool]
     publications: list[str]
+    publication_tables: dict[str, list[str]]
     configs: dict[str, dict[str, object]]
 
 
@@ -55,6 +59,43 @@ def test_connect_image_installs_postgresql_client_before_non_root_user() -> None
     assert not re.fullmatch(r"postgresql-\d+\.\d+-\d+\.fc\d+", install.group("package"))
     assert re.search(r"Fedora\s*\n# 41-based Debezium Connect image", dockerfile)
     assert not re.search(r"Fedora\s*\n# 42-based Debezium Connect image", dockerfile)
+
+
+def test_dsn_secret_is_not_exposed_in_python_process_arguments(tmp_path: Path) -> None:
+    secret = "credential-process-table-marker"
+    secrets_dir = tmp_path / "secrets" / "database"
+    secrets_dir.mkdir(parents=True)
+    dsn = f"postgresql://user:{secret}@postgres:5432/nohiki"
+    (secrets_dir / "dsn").write_text(f"{dsn}\n", encoding="utf-8")
+
+    argv_log = tmp_path / "python-argv.log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    python_wrapper = bin_dir / "python3"
+    python_wrapper.write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "$*" >> "$PYTHON_ARGV_LOG"\nexec {sys.executable} "$@"\n',
+        encoding="utf-8",
+    )
+    python_wrapper.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(_CONNECT_ROOT / "scripts" / "register-connectors.sh"), "help"],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "PYTHON_ARGV_LOG": str(argv_log),
+            "SECRETS_DIR": str(tmp_path / "secrets"),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    observed_argv = argv_log.read_text(encoding="utf-8")
+    assert observed_argv.strip() == "-"
+    assert secret not in observed_argv
+    assert dsn not in observed_argv
 
 
 def test_default_connect_image_is_strimzi_compatible_and_carries_every_plugin() -> None:
@@ -261,22 +302,32 @@ def _run_compose_cdc_reconciliation(
     tmp_path: Path,
     *,
     superseded_slot_active: bool,
+    unsupported_resource: tuple[str, str] | None = None,
+    failed_delete: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], _CdcState]:
     secrets_dir = tmp_path / "secrets" / "database"
     secrets_dir.mkdir(parents=True)
     (secrets_dir / "dsn").write_text("postgresql://user:pass@postgres:5432/nohiki\n", encoding="utf-8")
+    state: _CdcState = {
+        "connectors": ["nohiki-outbox-user_auth"],
+        "slots": {"nohiki_outbox_slot_user_auth": superseded_slot_active},
+        "publications": ["nohiki_outbox_pub_user_auth"],
+        "publication_tables": {"nohiki_outbox_pub_user_auth": ["user_auth_schema.outbox"]},
+        "configs": {},
+    }
+    if unsupported_resource is not None:
+        kind, identity = unsupported_resource
+        if kind == "connector":
+            state["connectors"].append(identity)
+        elif kind == "slot":
+            state["slots"][identity] = False
+        elif kind == "publication":
+            state["publications"].append(identity)
+        else:
+            publication, table = identity.split("|", 1)
+            state["publication_tables"].setdefault(publication, []).append(table)
     state_path = tmp_path / "state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "connectors": ["nohiki-outbox-user_auth"],
-                "slots": {"nohiki_outbox_slot_user_auth": superseded_slot_active},
-                "publications": ["nohiki_outbox_pub_user_auth"],
-                "configs": {},
-            }
-        ),
-        encoding="utf-8",
-    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "curl").write_text(
@@ -300,6 +351,10 @@ def _run_compose_cdc_reconciliation(
             if "/connectors/" in url:
                 name = url.split("/connectors/", 1)[1].split("/", 1)[0]
                 if method == "DELETE":
+                    if name == os.environ.get("FAIL_DELETE_NAME"):
+                        if "-w" in args:
+                            print("500", end="")
+                        raise SystemExit(0)
                     present = name in state["connectors"]
                     if present:
                         state["connectors"].remove(name)
@@ -318,6 +373,10 @@ def _run_compose_cdc_reconciliation(
                     print("{}")
                 raise SystemExit(0)
 
+            if method == "GET" and url.endswith("/connectors"):
+                print(json.dumps(state["connectors"]))
+                raise SystemExit(0)
+
             if method == "POST" and url.endswith("/connectors"):
                 payload = json.load(sys.stdin)
                 name = payload["name"]
@@ -330,6 +389,8 @@ def _run_compose_cdc_reconciliation(
                 if publication := config.get("publication.name"):
                     if publication not in state["publications"]:
                         state["publications"].append(publication)
+                    if table := config.get("table.include.list"):
+                        state["publication_tables"][publication] = [table]
                 save()
             """
         ).lstrip(),
@@ -350,7 +411,19 @@ def _run_compose_cdc_reconciliation(
             args = sys.argv[1:]
             query = args[args.index("-c") + 1]
 
-            if "SELECT CASE WHEN active" in query:
+            if "SELECT slot_name, active FROM pg_replication_slots" in query:
+                print("\\n".join(f"{name}|{'t' if active else 'f'}" for name, active in sorted(state["slots"].items())))
+            elif "SELECT pubname FROM pg_publication" in query:
+                print("\\n".join(sorted(state["publications"])))
+            elif "FROM pg_publication_tables" in query:
+                print(
+                    "\\n".join(
+                        f"{publication}|{table}"
+                        for publication, tables in sorted(state["publication_tables"].items())
+                        for table in sorted(tables)
+                    )
+                )
+            elif "SELECT CASE WHEN active" in query:
                 name = re.search(r"slot_name = '([^']+)'", query).group(1)
                 if name in state["slots"]:
                     print("active" if state["slots"][name] else "inactive")
@@ -362,6 +435,7 @@ def _run_compose_cdc_reconciliation(
                 name = re.search(r'DROP PUBLICATION IF EXISTS "([^"]+)"', query).group(1)
                 if name in state["publications"]:
                     state["publications"].remove(name)
+                state["publication_tables"].pop(name, None)
                 state_path.write_text(json.dumps(state), encoding="utf-8")
             """
         ).lstrip(),
@@ -381,6 +455,7 @@ def _run_compose_cdc_reconciliation(
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "SECRETS_DIR": str(tmp_path / "secrets"),
             "CDC_STATE": str(state_path),
+            "FAIL_DELETE_NAME": failed_delete or "",
         },
         check=False,
         capture_output=True,
@@ -406,9 +481,53 @@ def test_reconcile_compose_cdc_refuses_active_superseded_slot(tmp_path: Path) ->
     result, state = _run_compose_cdc_reconciliation(tmp_path, superseded_slot_active=True)
 
     assert result.returncode != 0
-    assert "superseded replication slot nohiki_outbox_slot_user_auth is still active" in result.stderr
+    assert "active slot nohiki_outbox_slot_user_auth" in result.stderr
+    assert "No resources were changed" in result.stderr
+    assert "nohiki-outbox-user_auth" in state["connectors"]
     assert state["slots"]["nohiki_outbox_slot_user_auth"] is True
     assert "nohiki_outbox_pub_user_auth" in state["publications"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "identity"),
+    [
+        ("connector", "third-party-source"),
+        ("slot", "third_party_slot"),
+        ("publication", "third_party_publication"),
+        ("table", "nohiki_outbox_pub_user_auth|third_party_schema.events"),
+    ],
+)
+def test_reconcile_compose_cdc_refuses_identity_outside_bounded_inventory(
+    tmp_path: Path,
+    kind: str,
+    identity: str,
+) -> None:
+    result, state = _run_compose_cdc_reconciliation(
+        tmp_path,
+        superseded_slot_active=False,
+        unsupported_resource=(kind, identity),
+    )
+
+    assert result.returncode != 0
+    assert f"{kind} {identity}" in result.stderr
+    assert "No resources were changed" in result.stderr
+    assert "manually" in result.stderr
+    assert "nohiki-outbox-user_auth" in state["connectors"]
+    assert "nohiki_outbox_slot_user_auth" in state["slots"]
+    assert "nohiki_outbox_pub_user_auth" in state["publications"]
+
+
+def test_reconcile_compose_cdc_explains_partial_state_after_mutation_failure(tmp_path: Path) -> None:
+    result, _ = _run_compose_cdc_reconciliation(
+        tmp_path,
+        superseded_slot_active=False,
+        failed_delete="nohiki-outbox-user_auth",
+    )
+
+    assert result.returncode != 0
+    assert "state may be partially applied" in result.stderr
+    assert "rerun this command" in result.stderr
+    assert "No automatic rollback occurred" in result.stderr
 
 
 def test_outbox_connectors_use_service_owned_schemas() -> None:

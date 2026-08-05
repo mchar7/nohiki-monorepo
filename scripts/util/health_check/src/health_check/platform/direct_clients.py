@@ -27,11 +27,11 @@ def psql(query: str, field_separator: str = "") -> tuple[int, str, str]:
     return 0, output + ("\n" if output else ""), ""
 
 
-def valkey_info() -> tuple[int, str, str]:
-    """Return Valkey INFO through its cluster Service."""
+def valkey_info(service_url: str) -> tuple[int, str, str]:
+    """Return Valkey INFO through the selected cluster Service."""
     try:
         client = redis.Redis.from_url(
-            os.getenv("VALKEY_URL", "redis://valkey:6379"),
+            service_url,
             socket_timeout=5,
             decode_responses=True,
         )
@@ -41,10 +41,9 @@ def valkey_info() -> tuple[int, str, str]:
     return 0, "\n".join(f"{key}:{value}" for key, value in sorted(info.items())), ""
 
 
-async def _kafka(args: list[str]) -> tuple[int, str, str]:
-    bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "nohiki-kafka-bootstrap:9092")
+async def _kafka(args: list[str], bootstrap_server: str) -> tuple[int, str, str]:
     command = args[0].removesuffix(".sh") if args else ""
-    admin = AIOKafkaAdminClient(bootstrap_servers=bootstrap)
+    admin = AIOKafkaAdminClient(bootstrap_servers=bootstrap_server)
     try:
         await admin.start()
         if command == "kafka-topics" and "--list" in args:
@@ -63,7 +62,7 @@ async def _kafka(args: list[str]) -> tuple[int, str, str]:
             if not members:
                 return 0, f"Consumer group '{group}' has no active members.\n", ""
             offsets = await admin.list_consumer_group_offsets(group)
-            consumer = AIOKafkaConsumer(bootstrap_servers=bootstrap)
+            consumer = AIOKafkaConsumer(bootstrap_servers=bootstrap_server)
             try:
                 await consumer.start()
                 end_offsets = await consumer.end_offsets(list(offsets))
@@ -93,6 +92,6 @@ async def _kafka(args: list[str]) -> tuple[int, str, str]:
         await admin.close()
 
 
-def kafka_command(args: list[str]) -> tuple[int, str, str]:
+def kafka_command(args: list[str], bootstrap_server: str) -> tuple[int, str, str]:
     """Execute the supported read-only Kafka metadata commands."""
-    return asyncio.run(_kafka(args))
+    return asyncio.run(_kafka(args, bootstrap_server))
