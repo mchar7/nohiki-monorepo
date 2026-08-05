@@ -513,6 +513,21 @@ def test_local_helmrelease_consumes_stable_committed_digest_values() -> None:
             },
         ],
     }
+    runtime_secrets = _load_yaml(_ROOT / "infra/k8s/gitops/clusters/local/runtime-secrets.yaml")
+    assert runtime_secrets["spec"]["healthChecks"][:2] == [
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "name": "nohiki-llm-proxy-source",
+            "namespace": "nohiki",
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "name": "nohiki-owner-model-egress-values",
+            "namespace": "flux-system",
+        },
+    ]
     values = _load_yaml(_DIGEST_VALUES)
     global_values = _mapping_at(values, "global")
     digest_map = _mapping_at(global_values, "imageDigests")
