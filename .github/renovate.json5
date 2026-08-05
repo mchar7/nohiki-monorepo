@@ -496,7 +496,7 @@
     {
       // why: the chart dependency, vendored archive, and integrity ledger must move in one pull request.
       "description": "Keep every External Secrets version owner in one update",
-      "matchPackageNames": ["external-secrets"],
+      "matchPackageNames": ["external-secrets", "ghcr.io/external-secrets/external-secrets"],
       "groupName": "External Secrets version parity"
     },
     {

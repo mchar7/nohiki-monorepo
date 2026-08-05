@@ -1150,7 +1150,10 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         ("java-jdk",): "JDK major parity",
         ("gradle",): "Gradle toolchain parity",
         ("keda",): "KEDA version parity",
-        ("external-secrets",): "External Secrets version parity",
+        (
+            "external-secrets",
+            "ghcr.io/external-secrets/external-secrets",
+        ): "External Secrets version parity",
         ("cloudnative-pg",): "CloudNativePG version parity",
         (
             "docker.io/grafana/mimir",
