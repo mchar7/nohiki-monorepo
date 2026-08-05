@@ -13,10 +13,8 @@ import tarfile
 from pathlib import Path
 from types import ModuleType
 
-import boto3
 import pytest
 import yaml
-from botocore.exceptions import ClientError, EndpointConnectionError
 
 _ROOT = Path(__file__).resolve().parents[3]
 _HELPER = _ROOT / "infra/k8s/local/model_archive_seed.py"
@@ -183,6 +181,8 @@ def test_upload_rejects_same_length_remote_corruption(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import boto3
+
     helper = _load_helper()
     spec = helper.ArchiveSpec("owner/model", None, "huggingface", "models/owner/model/model.tar.gz")
     monkeypatch.setattr(helper, "_archive_specs", lambda _manifest: (spec,))
@@ -232,6 +232,8 @@ def test_upload_rejects_same_length_remote_corruption(
 
 
 def test_bucket_readiness_retries_transport_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    from botocore.exceptions import EndpointConnectionError
+
     helper = _load_helper()
     clock = [0.0]
 
@@ -254,6 +256,8 @@ def test_bucket_readiness_retries_transport_failures(monkeypatch: pytest.MonkeyP
 
 
 def test_bucket_readiness_transport_failures_stop_at_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from botocore.exceptions import EndpointConnectionError
+
     helper = _load_helper()
     clock = [0.0]
 
@@ -307,6 +311,8 @@ def test_preexisting_archive_identity_mismatch_is_never_overwritten(tmp_path: Pa
 
 
 def test_conditional_create_race_refuses_a_different_archive(tmp_path: Path) -> None:
+    from botocore.exceptions import ClientError
+
     helper = _load_helper()
     payload = b"prepared-archive"
     path = tmp_path / "model.tar.gz"
