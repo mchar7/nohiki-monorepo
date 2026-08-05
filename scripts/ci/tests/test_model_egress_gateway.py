@@ -576,6 +576,49 @@ def test_every_environment_routes_openai_luna_sol_models_only_through_native_ope
     assert not any(isinstance(node, str) and "openrouter" in node.lower() for node in _walk(backend))
 
 
+def test_provider_endpoint_override_routes_through_plaintext_local_proxy(tmp_path: Path) -> None:
+    values = tmp_path / "values.proxy.yaml"
+    values.write_text(
+        yaml.safe_dump(
+            {
+                "global": {
+                    "modelEgress": {
+                        "providerEndpoints": {
+                            "openai-responses": {
+                                "host": "127.0.0.1",
+                                "port": 8317,
+                                "path": "/v1/responses",
+                                "tls": None,
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    backend = _named(_render(values=values), "AgentgatewayBackend", "nohiki-model-egress-responses")
+    spec = backend["spec"]
+    assert isinstance(spec, dict)
+    ai = spec.get("ai")
+    assert isinstance(ai, dict)
+    groups = ai.get("groups")
+    assert isinstance(groups, list)
+    group = groups[0]
+    assert isinstance(group, dict)
+    providers = group.get("providers")
+    assert isinstance(providers, list)
+    provider = providers[0]
+    assert isinstance(provider, dict)
+    assert provider["host"] == "127.0.0.1"
+    assert provider["port"] == 8317
+    assert provider["path"] == "/v1/responses"
+    policies = provider.get("policies")
+    assert isinstance(policies, dict)
+    assert "tls" not in policies
+
+
 def test_healthz_is_an_exact_unauthenticated_direct_response_route(
     rendered: tuple[Manifest, ...],
 ) -> None:

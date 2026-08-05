@@ -103,10 +103,27 @@ spec:
       - providers:
           {{- range $provider := $group.providers }}
           {{- if ne $provider.enabled false }}
+          {{- $providerEndpoint := (index ($modelEgress.providerEndpoints | default dict) $provider.name) | default dict }}
+          {{- $providerHost := $provider.host }}
+          {{- $providerPort := $provider.port }}
+          {{- $providerPath := $provider.path }}
+          {{- $providerTls := $provider.tls | default dict }}
+          {{- if hasKey $providerEndpoint "host" }}
+          {{- $providerHost = get $providerEndpoint "host" }}
+          {{- end }}
+          {{- if hasKey $providerEndpoint "port" }}
+          {{- $providerPort = get $providerEndpoint "port" }}
+          {{- end }}
+          {{- if hasKey $providerEndpoint "path" }}
+          {{- $providerPath = get $providerEndpoint "path" }}
+          {{- end }}
+          {{- if hasKey $providerEndpoint "tls" }}
+          {{- $providerTls = get $providerEndpoint "tls" }}
+          {{- end }}
           - name: {{ $provider.name }}
-            {{- if $provider.host }}
-            host: {{ $provider.host | quote }}
-            port: {{ required (printf "modelEgress provider %s requires port with host" $provider.name) $provider.port }}
+            {{- if $providerHost }}
+            host: {{ $providerHost | quote }}
+            port: {{ required (printf "modelEgress provider %s requires port with host" $provider.name) $providerPort }}
             {{- end }}
             {{- if eq $provider.type "openai" }}
             openai: {}
@@ -122,7 +139,7 @@ spec:
             {{- else }}
             {{- fail (printf "unsupported modelEgress provider type %q" $provider.type) }}
             {{- end }}
-            {{- with $provider.path }}
+            {{- with $providerPath }}
             path: {{ . | quote }}
             {{- end }}
             policies:
@@ -134,16 +151,18 @@ spec:
                   header:
                     name: {{ . | quote }}
                 {{- end }}
+              {{- with $providerTls }}
               tls:
-                sni: {{ required (printf "modelEgress provider %s requires tls.sni" $provider.name) $provider.tls.sni | quote }}
+                sni: {{ required (printf "modelEgress provider %s requires tls.sni" $provider.name) .sni | quote }}
                 verifySubjectAltNames:
-                  {{- range $san := $provider.tls.verifySubjectAltNames }}
+                  {{- range $san := .verifySubjectAltNames }}
                   - {{ $san | quote }}
                   {{- end }}
-                {{- with $provider.tls.caConfigMapName }}
+                {{- with .caConfigMapName }}
                 caCertificateRefs:
                   - name: {{ . }}
                 {{- end }}
+              {{- end }}
               http:
                 requestTimeout: {{ $backend.requestTimeout | default "180s" }}
               tcp:
