@@ -138,7 +138,7 @@ Available as `settings.observability`. Configured via `OBSERVABILITY__*` env var
 (after the service prefix is stripped).
 
 | Environment Variable | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `{PREFIX}__OBSERVABILITY__OTEL_ENDPOINT` | `str` | `""` | OTel Collector gRPC endpoint. Empty disables export. |
 | `{PREFIX}__OBSERVABILITY__OTEL_INSECURE` | `bool` | `true` | Use non-TLS connection to OTel Collector |
 | `{PREFIX}__OBSERVABILITY__OTEL_SERVICE_NAME` | `str \| null` | `null` | Override service name in traces. Defaults to `service_name`. |
@@ -204,7 +204,7 @@ the service prefix when using a composed `Settings` class. Examples use `MY_SERV
 the prefix.
 
 | Environment Variable | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `MY_SERVICE_ENVIRONMENT` | `str` | `"development"` | Runtime environment name |
 | `MY_SERVICE_DEBUG` | `bool` | `false` | Debug mode |
 | `MY_SERVICE_HOST` | `str` | `"127.0.0.1"` | HTTP server bind address |
@@ -220,7 +220,7 @@ Every service sets `env_prefix` in its `model_config`. All service-specific envi
 variables must be prefixed accordingly:
 
 | Service | Prefix |
-|---|---|
+| --- | --- |
 | `bff-service` | `BFF_` |
 | `user-auth-service` | `USER_AUTH_` |
 | `notification-service` | `NOTIFICATION_` |

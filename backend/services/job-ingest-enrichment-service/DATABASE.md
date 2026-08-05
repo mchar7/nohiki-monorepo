@@ -7,7 +7,7 @@ by all stateful services.
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `enrichment_embedding_saga` | Tracks convergence of parallel embedding callbacks per enrichment job |
 | `outbox` | Transactional outbox for `JOB_INGEST_ENRICHMENT_COMPLETED` publication via Debezium |
 | `processed_events` | Idempotency log preventing duplicate handler execution |

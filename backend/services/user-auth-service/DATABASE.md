@@ -7,7 +7,7 @@ that propagates account lifecycle events to Kafka.
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `accounts` | Primary user identity record (email, hashed password, profile fields) |
 | `refresh_tokens` | Active refresh token hashes with session family tracking for theft detection |
 | `oauth_identities` | OAuth provider links associating external provider accounts to Nohiki accounts |

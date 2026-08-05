@@ -10,7 +10,7 @@ recreated on each deployment.
 ## Entity Overview
 
 | Table | Schema | Purpose |
-|-------|--------|---------|
+| ------- | -------- | --------- |
 | `correlations` | `job_correlation_schema` | One row per job-listing × user-preference pair with match score, feature vector, and interaction lifecycle state |
 | `profile_projections` | `job_correlation_schema` | ECST projection of user search preferences received from `user-pref-service` CDC events |
 | `processed_events` | `job_correlation_schema` | Idempotency log for Kafka event deduplication |
@@ -80,7 +80,7 @@ notification pipeline, and the L2R training data export.
 **Correlation status state machine:**
 
 | Status | Meaning | Valid next states |
-|--------|---------|------------------|
+| -------- | --------- | ------------------ |
 | `pending` | Created but not yet scored | `evaluated` |
 | `evaluated` | Scored and visible to user | `viewed`, `dismissed`, `expired` |
 | `viewed` | User opened the listing detail | `saved`, `applied`, `dismissed`, `expired` |

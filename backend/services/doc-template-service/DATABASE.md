@@ -6,7 +6,7 @@ templates used to render resume and cover letter documents.
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `document_templates` | Versioned Jinja2 HTML templates; each row is an immutable template version |
 | `outbox` | Transactional outbox for CDC event publishing via Debezium |
 | `processed_events` | Idempotency log to deduplicate redelivered Kafka messages |

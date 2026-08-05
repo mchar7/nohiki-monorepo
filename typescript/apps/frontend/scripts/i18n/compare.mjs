@@ -4,7 +4,7 @@
  * Checks consistency between locale files: missing/extra files and key mismatches.
  */
 
-import { error, success, warn } from './report.mjs';
+import { error, success } from './report.mjs';
 
 /** Get all nested keys from a locale JSON object. */
 function getAllKeys(obj, prefix = '') {
@@ -32,11 +32,14 @@ function checkMissingFiles(referenceFiles, files, locale) {
 }
 
 function checkExtraFiles(files, referenceFiles, locale, referenceLocale) {
+  let hasErrors = false;
   for (const file of files) {
     if (!referenceFiles.includes(file)) {
-      warn(`Extra file in ${locale}: ${file} (not in ${referenceLocale})`);
+      error(`Extra file in ${locale}: ${file} (not in ${referenceLocale})`);
+      hasErrors = true;
     }
   }
+  return hasErrors;
 }
 
 /** @param {{ locales: Record<string, any>, referenceLocale: string, locale: string, referenceFiles: string[], files: string[] }} opts */
@@ -55,9 +58,10 @@ function checkKeyMismatches({ locales, referenceLocale, locale, referenceFiles, 
     }
 
     if (extraInLocale.length > 0) {
-      warn(
+      error(
         `${locale}/${file}: Extra keys (not in ${referenceLocale}): ${extraInLocale.join(', ')}`,
       );
+      hasErrors = true;
     }
   }
   return hasErrors;
@@ -78,7 +82,7 @@ function checkLocaleConsistency(locales) {
   for (const locale of localeNames.slice(1)) {
     const files = Object.keys(locales[locale]);
     hasErrors = checkMissingFiles(referenceFiles, files, locale) || hasErrors;
-    checkExtraFiles(files, referenceFiles, locale, referenceLocale);
+    hasErrors = checkExtraFiles(files, referenceFiles, locale, referenceLocale) || hasErrors;
     hasErrors =
       checkKeyMismatches({ locales, referenceLocale, locale, referenceFiles, files }) || hasErrors;
   }

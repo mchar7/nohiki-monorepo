@@ -31,7 +31,7 @@ modifying the CronJob schedule without redeploying the schedule service.
 ## Configuration
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
+| ---------- | --------- | --------- |
 | `KAFKA_BOOTSTRAP_SERVERS` | *(required)* | Kafka broker address |
 | `SCHEDULE_TICK_SOURCE_SERVICE` | `sys-tick-cronjob` | Value for `EventMetadata.source_service` |
 | `SCHEDULE_TICK_BATCH_LIMIT` | `0` | Per-tick query cap (0 = schedule service default) |

@@ -465,7 +465,7 @@ into `just hygiene` once the rollout is complete.
 Use typed exceptions from `nohiki-common-exceptions`:
 
 | Exception | Retry | When |
-|-----------|-------|------|
+| ----------- | ------- | ------ |
 | `DataNotAvailableError` | Exponential backoff | Temporary unavailability |
 | `DataNotFoundError` | No retry → DLQ | Data doesn't exist |
 | `ExternalServiceError` | Exponential backoff | External API failure |
@@ -503,7 +503,7 @@ local snapshot ledgers instead of cross-service queries.
 **Topic naming:** `{domain}.{classification}.{event-name}.v{version}`
 
 | Classification | Purpose | Example |
-|---------------|---------|---------|
+| --------------- | --------- | --------- |
 | `cdc` | Change Data Capture (state with ECST snapshot) | `user-pref.cdc.pref-created.v1` |
 | `cmd` | Command (request expecting callback) | `ml.cmd.embedding-requested.v1` |
 | `sys` | Internal service events / callbacks | `job-correlation.sys.embedding-callback.v1` |
@@ -757,7 +757,7 @@ Projections are updated via Kafka CDC/fct event handlers maintaining eventual co
 ## Service Kafka Roles
 
 | Service | Produces | Consumes | Pattern |
-|---------|----------|----------|---------|
+| --------- | ---------- | ---------- | --------- |
 | user-auth-service | `user-auth.cdc.*` | (none) | Outbox writer |
 | user-pref-service | `user-pref.cdc.*` | account-deleted, skill/embedding callbacks, commands | Command → CDC |
 | user-upload-service | `user-upload.cdc.*` | account-deleted, commands | Command → CDC |

@@ -106,7 +106,7 @@ GPU, supports rerank). The registry indexes providers by operation type and sort
 Three routing strategies are available, configured via `ML_GATEWAY_PROVIDER_REGISTRY__ROUTING_STRATEGY`:
 
 | Strategy | Behaviour | Use case |
-|----------|-----------|----------|
+| ---------- | ----------- | ---------- |
 | `dynamic` (default) | Highest-priority enabled provider; falls back on sustained errors | Production |
 | `balancing` | Round-robin across enabled providers via Redis counter | Distributing load evenly |
 | `explicit` | Single named provider, no fallback | Testing, cost experiments |
@@ -137,7 +137,7 @@ set, rather than receiving no response or seeing a DLQ message.
 Settings are under `ML_GATEWAY_` prefix. Inherits `KafkaMixin` and `RedisMixin`.
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
+| ---------- | --------- | --------- |
 | `ML_GATEWAY_PROVIDER_REGISTRY__ROUTING_STRATEGY` | `dynamic` | Provider selection strategy (`dynamic`, `balancing`, `explicit`) |
 | `ML_GATEWAY_PROVIDER_REGISTRY__EXPLICIT_PROVIDER_NAME` | `None` | Required when strategy is `explicit` |
 | `ML_GATEWAY_PROVIDER_REGISTRY__PROVIDERS` | `[]` | JSON array of `ProviderConfigSettings` for priority/enabled overrides |

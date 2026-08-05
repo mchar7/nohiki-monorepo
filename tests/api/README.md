@@ -88,7 +88,7 @@ K8S_GATEWAY_URL="https://gateway.example" K8S_NAMESPACE="nohiki" just k8s-test
 The session-scoped fixtures significantly reduce test costs:
 
 | Metric | Before | After |
-|--------|--------|-------|
+| -------- | -------- | ------- |
 | Users created per run | 50+ | 1-2 |
 | Kafka events triggered | 250-500 | ~20 |
 | Test duration | 25-40 min | 5-15 min |

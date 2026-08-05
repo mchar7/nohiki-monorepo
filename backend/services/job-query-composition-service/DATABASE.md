@@ -7,7 +7,7 @@ query.
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `ingestion_queries` | Deduplicated scrape queries, keyed by normalized keywords + canonical locations |
 | `query_contributors` | Maps individual user preferences (`pref_id`) to their parent `IngestionQuery` |
 | `outbox` | Transactional outbox for CDC event delivery via Debezium |

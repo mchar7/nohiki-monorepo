@@ -15,7 +15,7 @@ ENV UV_NO_INSTALLER_METADATA=1
 ENV UV_NO_CACHE=1
 # py-rust-stemmers lacks cp314 wheels, needs Rust to build from source
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-RUN apt-get update && apt-get install -y --no-install-recommends cargo gcc libc6-dev && \
+RUN apt-get update && apt-get install -y --no-install-recommends cargo=1.85.0+dfsg3-1 gcc=4:14.2.0-1 libc6-dev=2.41-12+deb13u3 && \
     rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml uv.lock ./
 COPY backend/libs ./backend/libs/

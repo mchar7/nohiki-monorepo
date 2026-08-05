@@ -123,7 +123,7 @@ Settings are loaded in order of precedence:
 ### Key Settings
 
 | Setting | Environment Variable | Default |
-|---------|---------------------|---------|
+| --------- | --------------------- | --------- |
 | Model | `TAILOR_LLM_MODEL` | `openrouter:google/gemini-3-flash-preview` |
 | Gotenberg URL | `TAILOR_GOTENBERG_URL` | `http://localhost:3000` |
 | Templates Dir | `TAILOR_TEMPLATES_DIR` | `backend/services/doc-template-service/seed_templates` |
@@ -161,7 +161,7 @@ This CLI **maximally reuses** existing Nohiki modules:
 ## Output Formats
 
 | Format | Description | Requires |
-|--------|-------------|----------|
+| -------- | ------------- | ---------- |
 | `pdf` | PDF document | Gotenberg |
 | `html` | Raw HTML | - |
 | `text` | Plain text | - |

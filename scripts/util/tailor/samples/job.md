@@ -7,7 +7,9 @@ Salary: $180,000 - $220,000
 
 ## About the Role
 
-We're looking for a Senior Backend Engineer to join our Platform Team and help build the next generation of our cloud-native infrastructure. You'll work on designing and implementing scalable microservices, event-driven architectures, and developer tooling that powers our core product.
+We're looking for a Senior Backend Engineer to join our Platform Team and help build the next
+generation of our cloud-native infrastructure. You'll work on designing and implementing scalable
+microservices, event-driven architectures, and developer tooling that powers our core product.
 
 ## Responsibilities
 

@@ -7,7 +7,7 @@ version history of every listing mutation.
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `listings` | Canonical job listing records: one row per unique real-world job posting |
 | `listing_versions` | Immutable JSONB snapshots of listing state captured before each overwrite |
 | `outbox` | Transactional outbox for CDC and fact event publishing via Debezium |

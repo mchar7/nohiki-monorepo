@@ -68,12 +68,12 @@ relative to the chart path.
 
 ## Environments
 
-| Cluster       | Control source | Stacks source    | Revision          | Namespace        | Chart values |
-|---------------|----------------|------------------|-------------------|------------------|--------------|
-| `local`       | `flux-system`  | `flux-system`    | branch `main`     | `nohiki`         | `infra/k8s/helm/values.yaml`, `values.local.yaml` |
-| `dev-aks`     | `flux-system`  | `flux-system`    | branch `main`     | `nohiki-dev`     | `infra/k8s/helm/values.yaml`, `values.dev.yaml` |
-| `staging-aks` | `flux-system`  | `flux-system`    | branch `main`     | `nohiki-staging` | `infra/k8s/helm/values.yaml`, `values.staging.yaml` |
-| `prod-aks`    | `flux-system`  | `gitops-release` | commit (pinned)   | `nohiki-prod`    | `infra/k8s/helm/values.yaml`, `values.prod.yaml`, `values.prod.identity.yaml`, `values.prod.network.yaml`, `values.prod.digests.yaml` |
+| Cluster | Control source | Stacks source | Revision | Namespace | Chart values |
+| --------------- | ---------------- | ------------------ | ------------------- | ------------------ | -------------- |
+| `local` | `flux-system` | `flux-system` | branch `main` | `nohiki` | `infra/k8s/helm/values.yaml`, `values.local.yaml` |
+| `dev-aks` | `flux-system` | `flux-system` | branch `main` | `nohiki-dev` | `infra/k8s/helm/values.yaml`, `values.dev.yaml` |
+| `staging-aks` | `flux-system` | `flux-system` | branch `main` | `nohiki-staging` | `infra/k8s/helm/values.yaml`, `values.staging.yaml` |
+| `prod-aks` | `flux-system` | `gitops-release` | commit (pinned) | `nohiki-prod` | `infra/k8s/helm/values.yaml`, `values.prod.yaml`, `values.prod.identity.yaml`, `values.prod.network.yaml`, `values.prod.digests.yaml` |
 
 `flux-system` is the branch-tracking GitRepository and Kustomization that
 `flux bootstrap` creates. It is the self-managing control root: a merged change

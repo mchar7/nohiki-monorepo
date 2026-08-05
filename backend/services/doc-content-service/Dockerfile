@@ -2,7 +2,7 @@
 FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS builder
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends gcc libc-dev && rm -rf /var/lib/apt/lists/*
+    apt-get update && apt-get install -y --no-install-recommends gcc=4:14.2.0-1 libc6-dev=2.41-12+deb13u3 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /usr/local/bin/uv
 

@@ -6,12 +6,6 @@ deps:
 lint:
   use:
     - STANDARD
-  except:
-    - PACKAGE_VERSION_SUFFIX
-  ignore:
-    - external
 breaking:
   use:
     - FILE
-  ignore:
-    - external

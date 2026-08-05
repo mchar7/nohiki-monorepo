@@ -253,7 +253,7 @@ Settings inherit from `DatabaseMixin`, `RedisMixin`, `KafkaMixin`, `LLMMixin`, `
 Key non-obvious settings:
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
+| ---------- | --------- | --------- |
 | `JOB_INGEST_ENRICHMENT_RATE_LIMIT__ENABLED` | `true` | Enable Redis-backed LLM rate limiting |
 | `JOB_INGEST_ENRICHMENT_RATE_LIMIT__REQUESTS_PER_WINDOW` | `10` | Max LLM extractions per window |
 | `JOB_INGEST_ENRICHMENT_RATE_LIMIT__WINDOW_SECONDS` | `60` | Rate limit window duration |

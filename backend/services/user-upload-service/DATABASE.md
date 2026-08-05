@@ -7,7 +7,7 @@ and document category.
 ## Entity Overview
 
 | Table | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `uploads` | One row per user-uploaded document; references the RustFS object by storage key |
 | `outbox` | Transactional outbox for CDC event publishing via Debezium |
 

@@ -7,7 +7,7 @@ kgateway is the Gateway API implementation for Nohiki, providing ingress routing
 kgateway was selected based on benchmarking against alternatives:
 
 | Implementation | Route Propagation | Route Changes | Route Scale | Architecture |
-|----------------|-------------------|---------------|-------------|--------------|
+| ---------------- | ------------------- | --------------- | ------------- | -------------- |
 | **kgateway** | ✅ 20x faster | ✅ Zero errors | 🥇 Best (25-50x less memory) | ✅ Spec compliant |
 | Istio | ✅ Good | ✅ Zero errors | ⚠️ 44x more resources | ✅ Spec compliant |
 | Envoy Gateway | ❌ HTTP errors | ❌ 503s during changes | ⚠️ 108x more resources, memory leak | ⚠️ Namespace violations |
@@ -82,7 +82,7 @@ The local workstation reaches these Gateway hosts at
 ### Created Resources
 
 | Resource | Name | Purpose |
-|----------|------|---------|
+| ---------- | ------ | --------- |
 | Gateway | `nohiki-gateway` | Entry point for traffic |
 | HTTPRoute | `nohiki-jwks-route` | `/.well-known/jwks.json` -> user-auth-service |
 | HTTPRoute | `nohiki-auth-route` | `/api/v1/auth/*` -> user-auth-service |

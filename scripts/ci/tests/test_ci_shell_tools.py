@@ -154,11 +154,14 @@ def test_workflow_validators_are_pinned_in_hosted_and_local_paths() -> None:
     workflow = load_workflow(_CHECKS)
     lint = next(step for step in _steps(workflow["jobs"]["worker"]) if step.get("name") == "Lint workflows")
     command = str(lint["run"])
-    ignore = '-ignore \'^step must run script with "run" section or run action with "uses" section$\''
+    parallel_diagnostic = 'step must run script with "run" section or run action with "uses" section'
     assert command.endswith("just workflow-lint")
 
     policy = _JUSTFILE.read_text(encoding="utf-8")
-    assert ignore in policy
+    assert "actionlint -ignore" not in policy
+    assert "actionlint -oneline" in policy
+    assert policy.count(parallel_diagnostic) == 4
+    assert "suppress only their exact source locations" in policy
     assert "check-jsonschema" in policy
     assert "--builtin-schema vendor.github-workflows .github/workflows/*.yml" in policy
 

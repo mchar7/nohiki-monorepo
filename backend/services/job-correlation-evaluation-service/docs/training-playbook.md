@@ -12,7 +12,7 @@ through the feedback service.
 ### Model Components
 
 | Component | Format | Purpose |
-|-----------|--------|---------|
+| ----------- | -------- | --------- |
 | L2R Model | `.txt` (LightGBM) | LambdaMART ranking model |
 | Calibrator | `.joblib` (sklearn) | Isotonic regression for score calibration |
 | Metadata | `.json` | Version history and deployment info |
@@ -39,7 +39,7 @@ through the feedback service.
 All scripts are located in `backend/job-correlation-evaluation-service/scripts/`:
 
 | Script | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `train_l2r_model.py` | Train new model from feedback data |
 | `evaluate_model.py` | Evaluate model performance |
 | `deploy_model.py` | Deploy model version to production |
@@ -156,7 +156,7 @@ kubectl rollout restart deployment job-correlation-evaluation-service
 ### Primary Metrics
 
 | Metric | Description | Target |
-|--------|-------------|--------|
+| -------- | ------------- | -------- |
 | **NDCG@10** | Normalized Discounted Cumulative Gain at 10 | > 0.80 |
 | **NDCG@5** | NDCG at 5 | > 0.75 |
 | **MRR** | Mean Reciprocal Rank | > 0.70 |
@@ -164,7 +164,7 @@ kubectl rollout restart deployment job-correlation-evaluation-service
 ### Secondary Metrics
 
 | Metric | Description |
-|--------|-------------|
+| -------- | ------------- |
 | Precision@5 | Relevant items in top 5 |
 | Precision@10 | Relevant items in top 10 |
 
@@ -182,7 +182,7 @@ Before deploying a new model, verify:
 The model uses 32 features in the following order:
 
 | Index | Feature | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | 0 | maxsim_score | ColBERT MaxSim score (Stage 2) |
 | 1 | rerank_score | LLM reranker score (Stage 3) |
 | 2 | distance_km | Distance to job location in kilometers |
@@ -223,7 +223,7 @@ The model uses 32 features in the following order:
 Feedback types map to training labels as follows:
 
 | Feedback | Label | Description |
-|----------|-------|-------------|
+| ---------- | ------- | ------------- |
 | Applied | 5.0 | User applied to job |
 | Liked | 4.0 | Explicit positive signal |
 | Saved | 3.5 | Intent to revisit |
@@ -236,7 +236,7 @@ Feedback types map to training labels as follows:
 Recommended training cadence:
 
 | Stage | Frequency | Min Samples |
-|-------|-----------|-------------|
+| ------- | ----------- | ------------- |
 | Initial (bootstrap) | Once | 100 |
 | Early (first users) | Weekly | 1000 |
 | Growth | Bi-weekly | 5000 |
@@ -300,7 +300,7 @@ Model file not found: models/l2r_lightgbm_v20251221.txt
 ## File Locations
 
 | Environment | Model Path | Config |
-|-------------|------------|--------|
+| ------------- | ------------ | -------- |
 | Development | `./models/` | `SCORING_L2R_MODEL_PATH` |
 | Docker | `/app/models/` | ENV in Dockerfile |
 | Kubernetes | ConfigMap mount | Helm values |

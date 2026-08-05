@@ -203,7 +203,7 @@ All personas are `ListingSnapshot` instances with deterministic UUIDs, fixed tim
 (`2025-01-15T10:00:00Z`), pre-computed embeddings, and canonicalized skill requirements.
 
 | Constant | Role | Arrangement | Seniority |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `SENIOR_PYTHON_REMOTE` | Senior Python Engineer | Remote | Senior |
 | `JUNIOR_FRONTEND_HYBRID` | Junior Frontend Developer | Hybrid | Entry |
 | `STAFF_PLATFORM_HYBRID` | Staff Software Engineer, Platform | Hybrid | Staff |
@@ -230,7 +230,7 @@ All personas are `SearchPrefSnapshot` instances with realistic `search_keywords`
 `disallowed_keywords`, skill lists, salary preferences, and `FeatureImportancePrefs`.
 
 | Constant | Profile | Industry |
-|---|---|---|
+| --- | --- | --- |
 | `BACKEND_ENGINEER_PREF` | Backend Engineering Roles | Software |
 | `FRONTEND_DEVELOPER_PREF` | Frontend Development Positions | Software |
 | `FULLSTACK_DEVELOPER_PREF` | Full-Stack Development | Software |

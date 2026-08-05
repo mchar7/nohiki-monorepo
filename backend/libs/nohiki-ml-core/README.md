@@ -363,7 +363,7 @@ if not check_pylate_available():
 The base package installs without any ML libraries. Add extras based on the execution context:
 
 | Extra | Adds | Use when |
-|-------|------|----------|
+| ------- | ------ | ---------- |
 | `[inference]` | numpy, pylate, fastembed, sentence-transformers, scikit-learn, onnxruntime, httpx | Direct ColBERT and Dense inference; Dense ONNX and HTTP TEI inference |
 | `[cache]` | nohiki-s3-client, nohiki-redis-utils | Using `ModelCacheManager` |
 | `[gpu]` | triton | GPU acceleration on Linux (requires NVIDIA hardware) |
@@ -380,7 +380,7 @@ dependencies = [
 The encoding layer for Nohiki's 4-stage retrieval pipeline:
 
 | Stage | Method | Encoder | Purpose |
-|-------|--------|---------|---------|
+| ------- | -------- | --------- | --------- |
 | 1 -- ANN | Qdrant HNSW | `MLEncodingPipeline.encode_document/query` → MUVERA FDE | Fast approximate candidate retrieval (thousands of candidates → hundreds) |
 | 1 -- Hybrid | Qdrant sparse | `SparseEncoder` | Keyword-sensitive recall alongside MUVERA |
 | 2 -- Rerank | MaxSim | ColBERT tokens stored in Qdrant multivector | Precise late-interaction scoring of Stage 1 candidates |

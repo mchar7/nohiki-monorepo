@@ -69,7 +69,7 @@ inspects this field to determine handler behavior, with no configuration require
 The mapping is:
 
 | Exception | `retry_strategy` | Kafka handler behavior | Severity |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `DataNotAvailableError` | `RETRY_EXPONENTIAL` | Retry with exponential backoff | HIGH |
 | `StaleDataError` | `RETRY_IMMEDIATE` | Retry immediately (no delay) | MEDIUM |
 | `ExternalServiceError` | `RETRY_EXPONENTIAL` | Retry with exponential backoff | HIGH |

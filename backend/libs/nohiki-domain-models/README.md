@@ -168,7 +168,7 @@ The `nohiki` package is organized as `nohiki.{domain}.{subdomain}.v{N}`. Import 
 Shared types used across all domains. Services import from here constantly.
 
 | Type | Kind | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `EventMetadata` | Message | Base metadata on every event |
 | `ListingReference` | Message | Lightweight job listing reference (URL + source) |
 | `PrefReference` | Message | User search preference reference |
@@ -206,7 +206,7 @@ Canonical job listing lifecycle events. Consumed by `bff-service`, `job-correlat
 `job-ingest-enrichment-service`, and `notification-service`.
 
 | Type | Kind | Topic |
-|------|------|-------|
+| ------ | ------ | ------- |
 | `ListingCreated` | Event | `listings.fct.listing-created.v1` |
 | `ListingUpdated` | Event | `listings.cdc.listing-updated.v1` |
 | `ListingDeleted` | Event | `listings.cdc.listing-deleted.v1` |
@@ -229,7 +229,7 @@ Job discovery and enrichment pipeline messages, produced and consumed by the thr
 `job-ingest-*` services.
 
 | Type | Kind | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `ListingDiscovered` | Event | Raw listing found by the scraper |
 | `DiscoveredListing` | Entity | Structured scraped data (replaces raw JSON blob) |
 | `EnrichmentCompleted` | Event | LLM enrichment finished; carries structured data |
@@ -243,7 +243,7 @@ Job discovery and enrichment pipeline messages, produced and consumed by the thr
 Job-to-user match (correlation) evaluation results and feedback.
 
 | Type | Kind | Topic |
-|------|------|-------|
+| ------ | ------ | ------- |
 | `CorrelationEvaluated` | Event | `job-correlation.cdc.evaluated.v1` |
 | `FeedbackRecorded` | Event | `job-correlation.fct.feedback-recorded.v1` |
 | `CorrelationSnapshot` | Snapshot | Full correlation state embedded in events |
@@ -255,7 +255,7 @@ User account lifecycle. Published exclusively by `user-auth-service` via the tra
 outbox; consumed by BFF, pref-service, upload-service, and entitlement-service.
 
 | Type | Kind | Topic |
-|------|------|-------|
+| ------ | ------ | ------- |
 | `AccountUpdated` | CDC Event | `user-auth.cdc.account-updated.v1` |
 | `AccountDeleted` | Fact Event | `accounts.fct.account-deleted.v1` |
 | `UserActivity` | Fact Event | `accounts.fct.user-activity.v1` |
@@ -267,7 +267,7 @@ User job search preferences. The largest domain module -- covers CRUD commands f
 CDC events from pref-service, and the `SearchPrefSnapshot` consumed by the ML pipeline.
 
 | Type | Kind | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `PrefCreated` / `PrefUpdated` / `PrefDeleted` | CDC Events | Preference lifecycle |
 | `PrefCreateRequested` / `PrefUpdateRequested` / `PrefDeleteRequested` | Commands | BFF → pref-service |
 | `SearchPrefSnapshot` | Snapshot | Full preference state for ECST; embedded in CDC events |
@@ -285,7 +285,7 @@ CDC events are consumed by pref-service (to associate uploads with preferences) 
 doc-process-service (to extract structured content).
 
 | Type | Kind | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `UploadCreated` / `UploadDeleted` | CDC Events | Upload lifecycle |
 | `UploadCreateRequested` | Command | BFF → upload-service |
 
@@ -295,7 +295,7 @@ Subscription and feature entitlement tracking. Published by `user-entitlement-se
 response to `AccountUpdated` and payment webhook events.
 
 | Type | Kind | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `EntitlementCreated` / `EntitlementChanged` | Events | Tier change lifecycle |
 | `Entitlement` | Entity | Current subscription tier, limits, and feature flags |
 
@@ -305,7 +305,7 @@ Document template management and PDF rendering. `doc-template-service` handles b
 CRUD (via commands from BFF) and Gotenberg rendering (via `DocumentRenderRequested` commands).
 
 | Type | Kind | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `TemplateCreated` / `TemplateUpdated` / `TemplateDeleted` | CDC Events | Template lifecycle |
 | `DocumentRenderRequested` | Command | Trigger Gotenberg PDF/HTML/image rendering |
 | `DocumentRenderCompleted` | Callback | Render result with S3 storage key |
@@ -322,7 +322,7 @@ Docling-based document processing for user-uploaded files. Extracts structured c
 uploaded PDFs/DOCX, enabling resume parsing for profile pre-population.
 
 | Type | Kind | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `ProcessedDocumentSnapshot` | Snapshot | Extracted structured content from a document |
 | `ProcessingLevel` | Enum | Depth of Docling extraction (`BASIC`, `FULL`, `OCR`) |
 
@@ -333,7 +333,7 @@ identities by `skill-graph-service`. The types here flow through the normalizati
 carry the results embedded in enriched listing snapshots.
 
 | Type | Kind | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `SkillNormalizationRequested` | Command | Request skill normalization with callback |
 | `SkillNormalizationCallback` | Callback | Normalized skill results |
 | `CanonicalSkill` | Entity | A deduplicated, normalized skill node |
@@ -347,7 +347,7 @@ ML compute routing types shared between `ml-gateway-service`, `ml-compute-servic
 service that requests embeddings (via `nohiki-embedding-client`).
 
 | Type | Kind | Purpose |
-|------|------|---------|
+| ------ | ------ | --------- |
 | `EmbeddingRequested` | Command | Single embedding request to ml-gateway |
 | `EmbeddingCallback` | Callback | Single embedding result carrying `EmbeddingVector` values |
 | `BatchEmbeddingCallback` | Callback | Batch embedding result for bulk embedding requests |

@@ -144,7 +144,7 @@ the actual boot sequence:
 The `ConsumerSupervisor` classifies failures by type:
 
 | Error category | Examples | Action |
-|----------------|----------|--------|
+| ---------------- | ---------- | -------- |
 | `TRANSIENT` | `KafkaConnectionError`, `OSError`, `TimeoutError` | Restart with exponential backoff |
 | `COORDINATOR` | `NodeNotReadyError`, `CommitFailedError`, `UnknownMemberIdError` | Restart with exponential backoff |
 | `AUTH` | `GroupAuthorizationFailedError` | Stop (non-recoverable) |
@@ -206,7 +206,7 @@ String literals for topic names never appear in service code.
 Topic naming convention: `{scope-subdomain}.{classification}.{event-name}.v{version}`
 
 | Classification | Meaning | Example |
-|----------------|---------|---------|
+| ---------------- | --------- | --------- |
 | `cdc` | Change Data Capture: entity state change with ECST snapshot | `user-pref.cdc.pref-created.v1` |
 | `cmd` | Command: request to perform an action, expects a state change | `user-pref.cmd.create-requested.v1` |
 | `fct` | Fact: immutable event recording that something happened | `job-ingest.fct.listing-discovered.v1` |
@@ -273,7 +273,7 @@ Controls how many handler coroutines may run simultaneously within one consumer 
 is 10. Valid range: 1-200. Tune per workload:
 
 | Workload type | Setting | Rationale |
-|---------------|---------|-----------|
+| --------------- | --------- | ----------- |
 | CPU-bound (ML compute, heavy inference) | 1-2 | Avoid thrashing; one task saturates the CPU |
 | I/O-bound (DB projection updates, pure routing) | 15-20 | Overlap I/O wait across messages |
 | Mixed (LLM calls with DB writes) | 5-10 | Balance I/O overlap with connection pool pressure |
@@ -472,7 +472,7 @@ All Kafka settings use nested env var format with `KAFKA__` prefix (after the se
 prefix). With `env_nested_delimiter="__"`:
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| ---------- | --------- | ------------- |
 | `KAFKA__DSN` | `kafka://localhost:29092` | Broker connection string |
 | `KAFKA__CONSUMER_GROUP` | `default-group` | Base consumer group ID |
 | `KAFKA__USE_SSL` | `false` | Enable TLS (required in production) |

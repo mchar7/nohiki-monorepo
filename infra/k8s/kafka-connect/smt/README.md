@@ -26,11 +26,11 @@ SELECT pg_logical_emit_message(
 
 ### Output: Kafka record (byte-identical to current outbox EventRouter output)
 
-| Field  | Value |
-|--------|-------|
-| Topic  | `prefix.topic` |
-| Key    | `prefix.aggregate_id` as `OPTIONAL_STRING_SCHEMA` |
-| Value  | `message.content` as `OPTIONAL_BYTES_SCHEMA` (raw protobuf bytes) |
+| Field | Value |
+| -------- | ------- |
+| Topic | `prefix.topic` |
+| Key | `prefix.aggregate_id` as `OPTIONAL_STRING_SCHEMA` |
+| Value | `message.content` as `OPTIONAL_BYTES_SCHEMA` (raw protobuf bytes) |
 | Header `aggregatetype` | `prefix.aggregate_type` |
 | Header `tracingspancontext` | `prefix.correlation_id` |
 | Header `id` | `prefix.id` |
@@ -75,7 +75,7 @@ docker run --rm -v "$PWD/smt:/build" -w /build gradle:9.6.1-jdk25-alpine@sha256:
 All versions pinned to current stable releases:
 
 | Component | Version | Purpose |
-|-----------|---------|---------|
+| ----------- | --------- | --------- |
 | Gradle | 9.6.1 | build tool |
 | JDK (build) | 25 (Alpine toolchain) | latest LTS for compiler/tooling |
 | JDK (bytecode target) | 21 (`--release 21`) | binary compat with Debezium runtime |

@@ -98,7 +98,7 @@ includes `distance_km`, `distance_miles`, boolean same-city/state/country flags,
 The `confidence` field reflects location precision using `PRECISION_CONFIDENCE`:
 
 | Precision enum value | Confidence |
-|---|---|
+| --- | --- |
 | `EXACT_ADDRESS` (1) | 1.0 |
 | `NEIGHBORHOOD` (2) | 0.9 |
 | `CITY_CENTER` (3) | 0.6 |
@@ -167,7 +167,7 @@ callers should geocode locations before calling it.
 `create_cached_geocoder` accepts keyword arguments to override defaults:
 
 | Parameter | Default | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `cache_ttl` | `604800` (7 days) | Redis TTL in seconds for geocode results |
 | `rate_limit_requests` | `50` | Max Nominatim calls per window |
 | `rate_limit_window` | `60` | Window duration in seconds |

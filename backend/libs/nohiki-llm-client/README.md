@@ -97,7 +97,7 @@ errors, with `Retry-After` header support. This operates below the PydanticAI la
 The exception hierarchy used by `LLMClient` to classify outcomes:
 
 | Exception | Retried by Tenacity | Kafka consumer action |
-|---|---|---|
+| --- | --- | --- |
 | `LLMTransientError` | Yes (up to 3 attempts) | Exponential backoff retry |
 | `LLMRateLimitError` | No at the application layer (HTTP transport honors `Retry-After`) | Backoff retry |
 | `LLMValidationError` | No | DLQ |
@@ -326,7 +326,7 @@ All variables are prefixed by the service's `env_prefix`. The examples below use
 **Provider / model chain:**
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `MY_SERVICE__LLM__PROVIDER__MODELS__0__MODEL` | *(required)* | Primary model in `provider:name` format |
 | `MY_SERVICE__LLM__PROVIDER__MODELS__1__MODEL` | -- | Fallback model (tried when primary fails) |
 | `MY_SERVICE__LLM__PROVIDER__API_KEYS__OPENROUTER` | -- | OpenRouter API key |
@@ -342,14 +342,14 @@ All variables are prefixed by the service's `env_prefix`. The examples below use
 **Caching (OpenRouter only):**
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `MY_SERVICE__LLM__CACHING__ENABLED` | `true` | Enable `cache_control` on system prompts |
 | `MY_SERVICE__LLM__CACHING__TTL` | `5m` | Cache TTL: `5m` or `1h` |
 
 **Instrumentation (Phoenix/OpenInference):**
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `MY_SERVICE__LLM__INSTRUMENTATION__ENABLED` | `false` | Enable Phoenix tracing |
 | `MY_SERVICE__LLM__INSTRUMENTATION__COLLECTOR_ENDPOINT` | `""` | Phoenix gRPC collector URL |
 | `MY_SERVICE__LLM__INSTRUMENTATION__PROJECT_NAME` | `nohiki` | Phoenix project name |
@@ -371,7 +371,7 @@ MY_SERVICE__LLM__CHAINS__DOCUMENT_GENERATION__MODELS__0__REASONING_EFFORT=high
 **Ollama-specific options:**
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `MY_SERVICE__LLM__PROVIDER__OLLAMA__NUM_CTX` | `16384` | Context window tokens |
 | `MY_SERVICE__LLM__PROVIDER__OLLAMA__TOP_K` | `40` | Top-K token candidates |
 | `MY_SERVICE__LLM__PROVIDER__OLLAMA__REPEAT_PENALTY` | `1.1` | Repetition penalty |

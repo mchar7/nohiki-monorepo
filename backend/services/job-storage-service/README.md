@@ -145,7 +145,7 @@ The service uses `DatabaseMixin` and `KafkaMixin` from `nohiki-core-settings`.
 Key settings (prefix `JOB_STORAGE_`):
 
 | Variable | Default | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `DATABASE__URL` | -- | PostgreSQL DSN (required) |
 | `KAFKA__DSN` | `kafka://localhost:29092` | Kafka bootstrap server |
 | `KAFKA__CONSUMER_GROUP` | `default-group` | Base consumer group for ingest handlers |
