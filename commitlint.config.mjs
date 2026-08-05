@@ -12,8 +12,10 @@
  *   docs: update API documentation
  *   refactor(kafka): simplify message handler
  */
-const scopeKebabCase = ({ scope }) => [
-  scope == null || /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(scope),
+const scopeKebabCase = ({ header, scope }) => [
+  scope == null
+    ? !/^[^()\s]+\(\)!?:/.test(header)
+    : /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(scope),
   'scope must contain lower-case alphanumeric words separated by hyphens',
 ];
 

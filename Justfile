@@ -252,7 +252,7 @@ test-cov service:
 
 # Run the hosted job-correlation integration counterpart (requires Docker).
 test-job-correlation-integration:
-    NOHIKI_INTEGRATION_GATE_ACTIVE=1 lefthook run pre-push --job job-correlation-integration --force
+    {{ env_lock }} gate pre-push -- {{ test_run }} gate -- env NOHIKI_GATE_ACTIVE=1 NOHIKI_INTEGRATION_GATE_ACTIVE=1 lefthook run pre-push --job job-correlation-integration --force
 
 # Run monorepo integration tests
 test-integration:

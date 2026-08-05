@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from _documents import load_mapping, load_workflow, string_at
 
 _ROOT = Path(__file__).resolve().parents[3]
 _TYPESCRIPT = _ROOT / "typescript"
+_LEFTHOOK = _ROOT / "lefthook.yml"
+_CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _COMMIT_MESSAGE_CORPUS = (
     ("fix(k8s): accept an established alphanumeric scope", True),
     ("fix(s3-client): accept a hyphenated alphanumeric scope", True),
     ("docs: accept a message without a scope", True),
     ("fix(K8s): reject upper-case scope characters", False),
     ("fix(k8s_api): reject underscore separators", False),
+    ("fix(): reject explicit empty parentheses", False),
     ("feature(k8s): reject an unknown type", False),
 )
 
@@ -28,20 +34,42 @@ def _lint(subject: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _named_run(node: object, name: str) -> str:
+    if isinstance(node, Mapping):
+        if node.get("name") == name:
+            run = node.get("run")
+            assert isinstance(run, str)
+            return run
+        for child in node.values():
+            try:
+                return _named_run(child, name)
+            except LookupError:
+                pass
+    elif isinstance(node, list):
+        for child in node:
+            try:
+                return _named_run(child, name)
+            except LookupError:
+                pass
+    raise LookupError(name)
+
+
+def _edit_command(message_path: Path) -> list[str]:
+    command = string_at(load_mapping(_LEFTHOOK), "commit-msg", "commands", "commitlint", "run")
+    return shlex.split(command.replace("{1}", str(message_path)))
+
+
+def _range_command(commit: str) -> list[str]:
+    command = _named_run(load_workflow(_CHECKS)["jobs"]["worker"], "Validate PR commit messages")
+    command = command.replace("${{ github.event.pull_request.base.sha }}", "HEAD")
+    command = command.replace("${{ github.event.pull_request.head.sha }}", commit)
+    return shlex.split(command)
+
+
 def _lint_edit(subject: str, message_path: Path) -> subprocess.CompletedProcess[str]:
     message_path.write_text(f"{subject}\n", encoding="utf-8")
     return subprocess.run(
-        [
-            str(_ROOT / "scripts/dev/env-lock.sh"),
-            "shared",
-            "node_modules",
-            "--",
-            "pnpm",
-            "exec",
-            "commitlint",
-            "--edit",
-            str(message_path),
-        ],
+        _edit_command(message_path),
         cwd=_ROOT,
         capture_output=True,
         text=True,
@@ -71,7 +99,7 @@ def _lint_range(subject: str) -> subprocess.CompletedProcess[str]:
         check=True,
     ).stdout.strip()
     return subprocess.run(
-        ["pnpm", "exec", "commitlint", "--from", "HEAD", "--to", commit, "--verbose"],
+        _range_command(commit),
         cwd=_ROOT,
         capture_output=True,
         text=True,
