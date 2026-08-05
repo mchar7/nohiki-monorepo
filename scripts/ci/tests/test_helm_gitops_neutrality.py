@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from _documents import Manifest, load_manifests
+from _documents import Manifest, containers_of, load_manifests, mapping_at
 from test_image_digest_gitops import _digest_values
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -171,20 +171,20 @@ def test_model_runtime_is_offline_only_in_the_local_render() -> None:
         )
         environment = {
             item["name"]: item.get("value")
-            for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+            for item in containers_of(deployment)[0].get("env", [])
             if item["name"] in {"HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"}
         }
         assert environment == expected
 
 
 def test_only_local_platform_install_and_upgrade_run_hooks_before_readiness() -> None:
-    local_spec = _platform_release("local")["spec"]
-    assert local_spec["install"]["disableWait"] is True
-    assert local_spec["upgrade"]["disableWait"] is True
+    local_spec = mapping_at(_platform_release("local"), "spec")
+    assert mapping_at(local_spec, "install")["disableWait"] is True
+    assert mapping_at(local_spec, "upgrade")["disableWait"] is True
     for overlay in ("dev", "staging", "prod"):
-        spec = _platform_release(overlay)["spec"]
-        assert "disableWait" not in spec["install"]
-        assert "disableWait" not in spec["upgrade"]
+        spec = mapping_at(_platform_release(overlay), "spec")
+        assert "disableWait" not in mapping_at(spec, "install")
+        assert "disableWait" not in mapping_at(spec, "upgrade")
 
 
 def test_managed_secret_hooks_survive_neutrality() -> None:

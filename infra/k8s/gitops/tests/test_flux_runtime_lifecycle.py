@@ -279,6 +279,8 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
         gets += 1
         if "configmap" in argv:
             pytest.fail("finalize must use the exact ConfigMap binding guard")
+        if "storageclass" in argv:
+            return {"items": [{"metadata": {"name": "standard"}}]}
         if "fluxinstance" in argv:
             return {
                 "metadata": {"uid": "flux-uid"},
