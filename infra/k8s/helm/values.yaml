@@ -212,6 +212,7 @@ global:
 
   # Kafka configuration (Strimzi, DSN format: kafka://host:port)
   kafka:
+    # renovate: datasource=maven depName=org.apache.kafka:kafka_2.13
     version: 4.3.0
     bootstrapServers: nohiki-kafka-kafka-bootstrap:9092
     dsn: "kafka://nohiki-kafka-kafka-bootstrap:9092"
@@ -751,6 +752,7 @@ strimzi:
 kafkaCluster:
   enabled: false
   name: nohiki-kafka
+  # renovate: datasource=maven depName=org.apache.kafka:kafka_2.13
   version: 4.3.0
   replicas: 1
   listeners:

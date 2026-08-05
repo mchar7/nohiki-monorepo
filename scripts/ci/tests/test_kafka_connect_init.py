@@ -21,6 +21,22 @@ class _CdcState(TypedDict):
     configs: dict[str, dict[str, object]]
 
 
+def _fetch_jars(dockerfile: str) -> list[tuple[str, str, str]]:
+    matches = re.finditer(
+        r"(?m)^\s*fetch_jar (?P<coordinate>\S+) \\\n"
+        r"\s+(?P<checksum>\S+) \\\n"
+        r"\s+(?P<destination>\S+);(?: \\)?$",
+        dockerfile,
+    )
+    return [(match["coordinate"], match["checksum"], match["destination"]) for match in matches]
+
+
+def _dockerfile_arg(name: str) -> str:
+    values = re.findall(rf"(?m)^ARG {re.escape(name)}=(\S+)\s*$", _DOCKERFILE)
+    assert len(values) == 1, name
+    return values[0]
+
+
 def test_connect_image_installs_postgresql_client_before_non_root_user() -> None:
     dockerfile = _DOCKERFILE
     registration = _REGISTRATION
@@ -55,28 +71,44 @@ def test_default_connect_image_is_strimzi_compatible_and_carries_every_plugin() 
 
 def test_connect_image_replaces_vulnerable_netty_family_as_one_unit() -> None:
     dockerfile = _DOCKERFILE
-    version = "4.1.135.Final"
-    artifacts = {
-        "netty-buffer": "2a194f99fc93d07c4d442d04ac71bd2dc56d3188cd0e4270cdc2a953d1956bf9",
-        "netty-codec": "7252171264dbb5bb8ed38e77f89643b31e3cabc96144ec27b6882435d718a61e",
-        "netty-codec-dns": "5e996d7ac7597f368ab114fbb91d16788918c7e5bf166345c51e56db54d50fd1",
-        "netty-codec-http": "4018529d3d6aecf4044b98c75d9a90c91839ddf49c7aa484c5ac81c90a15da02",
-        "netty-codec-http2": "aa4e81ab5fa3b7b243eb3e814aa582ab26c073d31b0abffdbb58ee150fa49c16",
-        "netty-codec-socks": "ec7a39e8d7d7e223014115a021273f011c3cb1e8fb187cbfb90a74e76d68c25c",
-        "netty-common": "26775ca95820711403cf065fa2ec0134a0a04ff5417c688c0237aee68b55838d",
-        "netty-handler": "245e74e04b6f4e8ef98853152412e3bf1499ce6fcf15329b798c8ce36c3537e2",
-        "netty-handler-proxy": "75661010630a44468f0e85d7ed8be7779c0cb1369fe85d30799cedc52e9ed3b7",
-        "netty-resolver": "77dd03865965b6c12b9e521bddec82f035caeb33156e09c158289c5094318481",
-        "netty-resolver-dns": "ca25581e4cebd55797ef3b4d0953b75df32c1af77fe771b96bfaa9e701cdb7c3",
-        "netty-transport": "6bde734d1ec073142eed31b1e68cd5d68fbf241e060b37f07a164e5ecb15631c",
-        "netty-transport-native-unix-common": "a7895075f112611d1640a596c2678a28aab92d5681c1c14755b109b8998f995e",
+    fetches = _fetch_jars(dockerfile)
+    assert fetches
+    assert all(re.fullmatch(r"[0-9a-f]{64}", checksum) for _, checksum, _ in fetches)
+
+    netty_fetches = [
+        (coordinate, checksum, destination)
+        for coordinate, checksum, destination in fetches
+        if coordinate.startswith("io/netty/")
+    ]
+    expected_artifacts = {
+        "netty-buffer",
+        "netty-codec",
+        "netty-codec-dns",
+        "netty-codec-http",
+        "netty-codec-http2",
+        "netty-codec-socks",
+        "netty-common",
+        "netty-handler",
+        "netty-handler-proxy",
+        "netty-resolver",
+        "netty-resolver-dns",
+        "netty-transport",
+        "netty-transport-native-unix-common",
     }
+    artifacts = {coordinate.split("/")[2] for coordinate, _, _ in netty_fetches}
+    versions = {coordinate.split("/")[3] for coordinate, _, _ in netty_fetches}
+    assert artifacts == expected_artifacts
+    assert len(versions) == 1
+    version = next(iter(versions))
+    assert re.fullmatch(r"\d+\.\d+\.\d+\.Final", version)
+    for coordinate, _, destination in netty_fetches:
+        _, group, artifact, artifact_version, filename = coordinate.split("/")
+        assert group == "netty"
+        assert artifact_version == version
+        assert filename == f"{artifact}-{version}.jar"
+        assert destination == f"/kafka/external_libs/apicurio/{filename}"
 
     assert "/kafka/external_libs/apicurio/netty-*.jar" in dockerfile
-    assert "4.1.133.Final" not in dockerfile
-    for artifact, checksum in artifacts.items():
-        assert f"fetch_jar io/netty/{artifact}/{version}/{artifact}-{version}.jar" in dockerfile
-        assert checksum in dockerfile
 
 
 def test_registration_accepts_asyncpg_database_dsn(tmp_path: Path) -> None:
@@ -168,11 +200,10 @@ def test_registration_accepts_asyncpg_database_dsn(tmp_path: Path) -> None:
 
 def test_qdrant_connector_restores_shaded_dns_name_resolver_provider() -> None:
     dockerfile = _DOCKERFILE
-
-    assert "ARG QDRANT_CONNECTOR_VERSION=1.3.3" in dockerfile
-    assert (
-        "ARG QDRANT_CONNECTOR_SHA256=f35b1eef7db212e561019b9e9218e4674d231ca577b603a40e028e1de8f59fa6"
-    ) in dockerfile
+    version = _dockerfile_arg("QDRANT_CONNECTOR_VERSION")
+    checksum_value = _dockerfile_arg("QDRANT_CONNECTOR_SHA256")
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version)
+    assert re.fullmatch(r"[0-9a-f]{64}", checksum_value)
 
     install_start = dockerfile.index("WORKDIR /kafka/connect/qdrant-kafka")
     install_end = dockerfile.index("WORKDIR /kafka", install_start + 1)

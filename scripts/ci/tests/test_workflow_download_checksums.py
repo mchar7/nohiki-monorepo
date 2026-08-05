@@ -19,17 +19,19 @@ _ACTION = re.compile(
     re.MULTILINE,
 )
 _DOWNLOAD_ARTIFACT_MAJOR = "v8"
-_OPENTOFU_VERSION = "1.12.3"
 _INFRASTRUCTURE_SETUP_COUNTS = {
     "cd_deploy-to-aks_nohiki.yml": 1,
     "cd_destroy-aks_nohiki.yml": 1,
 }
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_SEMVER = re.compile(
+    r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 _DOWNLOAD = re.compile(r"\b(?:curl|wget)\b.*https://")
 
 _GATEWAY_API_CRDS = _REPOSITORY_ROOT / "infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml"
-_GATEWAY_API_VERSION = "v1.3.0"
-_GATEWAY_API_EXPECTED_HEX = "3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8"
 _VENDOR_MARKER = b"# ---8<--- BEGIN VENDORED CONTENT ---8<---\n"
 
 
@@ -69,13 +71,18 @@ def test_vendored_gateway_api_crds_match_pinned_release_checksum() -> None:
     assert marker, "vendored provenance marker missing"
 
     provenance = header.decode("utf-8")
-    assert _GATEWAY_API_VERSION in provenance
-    assert _GATEWAY_API_EXPECTED_HEX in provenance
-    assert f"releases/download/{_GATEWAY_API_VERSION}/experimental-install.yaml" in provenance
+    versions = re.findall(r"(?m)^# version:\s*(v\d+\.\d+\.\d+)\s*$", provenance)
+    digests = re.findall(r"(?m)^# sha256:\s*([0-9a-f]{64})\s*$", provenance)
+    source_versions = re.findall(
+        r"(?m)^# Source:\s+\S+/releases/download/(v\d+\.\d+\.\d+)/experimental-install\.yaml\s*$",
+        provenance,
+    )
+    assert len(versions) == len(digests) == len(source_versions) == 1
+    assert source_versions == versions
 
-    # Bytes after the marker are the upstream asset verbatim, so their digest must match the pin.
+    # Bytes after the marker are the upstream asset verbatim, so their digest must match the provenance header.
     assert vendored, "no vendored CRD content after provenance marker"
-    assert hashlib.sha256(vendored).hexdigest() == _GATEWAY_API_EXPECTED_HEX
+    assert hashlib.sha256(vendored).hexdigest() == digests[0]
 
 
 def test_every_download_artifact_action_supports_cross_run_retrieval() -> None:
@@ -134,7 +141,14 @@ def test_infrastructure_workflows_use_the_declared_opentofu_toolchain() -> None:
     assert not setup_terraform, f"infrastructure workflows must use only setup-opentofu: {setup_terraform}"
     assert counts == _INFRASTRUCTURE_SETUP_COUNTS
     assert all(tofu_invocations.values()), tofu_invocations
-    assert all((version, wrapper) == (_OPENTOFU_VERSION, True) for _, version, wrapper in occurrences), occurrences
+    assert occurrences
+    versions = {version for _, version, _ in occurrences}
+    assert None not in versions
+    assert len(versions) == 1
+    version = next(iter(versions))
+    assert isinstance(version, str)
+    assert _SEMVER.fullmatch(version)
+    assert all(wrapper is True for _, _, wrapper in occurrences)
 
 
 def test_third_party_actions_are_immutable_and_duplicate_pins_stay_aligned() -> None:

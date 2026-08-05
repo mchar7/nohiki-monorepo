@@ -131,6 +131,7 @@
             '';
           };
 
+        # Bump procedure: update the Flux versions and every releasePlatform checksum in one reviewed change.
         fluxVersion = "2.9.2";
         fluxPackage = mkTarCli {
           pname = "flux";
@@ -172,6 +173,7 @@
           '';
         };
 
+        # Bump procedure: update package metadata, this version, revision, source hash, and vendor hash together.
         lefthookVersion = "2.1.10";
         lefthookPackage = pkgs.buildGo126Module {
           pname = "lefthook";

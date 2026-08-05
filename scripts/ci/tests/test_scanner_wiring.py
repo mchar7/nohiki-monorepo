@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -376,7 +377,7 @@ def test_deadcode_cli_publishes_the_predicate_to_github_output(
 
 @pytest.mark.parametrize(
     ("installed_version", "expected_version"),
-    [("4.30.0", "4.30.0"), (None, "unknown")],
+    [("123.456.789", "123.456.789"), (None, "unknown")],
 )
 @pytest.mark.asyncio
 async def test_deadcode_summary_uses_sha_pinned_finding_links(
@@ -717,11 +718,18 @@ def test_deadcode_command_uses_pinned_fork_static_cache_offline() -> None:
 
     assert command[:3] == [sys.executable, "-m", "ci_checks.checks.skylos_cache"]
     assert command[3 : command.index("--json")] == ["package/src/live.py"]
-    assert _CI_PROJECT["dependency-groups"]["deadcode"] == ["skylos==4.30.0"]
-    assert _CI_PROJECT["tool"]["uv"]["sources"]["skylos"] == {
-        "git": "ssh://git@github.com/mchar7/skylos",
-        "rev": "52ccaf2058fa2ed36453c85f7f721e799b6c5c7e",
-    }
+    deadcode_requirements = _CI_PROJECT["dependency-groups"]["deadcode"]
+    assert isinstance(deadcode_requirements, list)
+    assert len(deadcode_requirements) == 1
+    requirement = deadcode_requirements[0]
+    assert isinstance(requirement, str)
+    assert re.fullmatch(r"skylos==\d+\.\d+\.\d+", requirement)
+    source = _CI_PROJECT["tool"]["uv"]["sources"]["skylos"]
+    assert isinstance(source, dict)
+    assert set(source) == {"git", "rev"}
+    assert source["git"] == "ssh://git@github.com/mchar7/skylos"
+    assert isinstance(source["rev"], str)
+    assert re.fullmatch(r"[0-9a-f]{40}", source["rev"])
     assert "uvx" not in command
     cache_index = command.index("--cache-static")
     assert command[cache_index : cache_index + 3] == [
@@ -872,4 +880,10 @@ def test_semgrep_uses_pinned_sovereign_host_runtime() -> None:
                 semgrep_commands.append(command)
     assert len(semgrep_commands) == 1
     assert semgrep_commands[0] == "just hygiene-arch"
-    assert _SEMGREP_OVERRIDES == ["semgrep==1.170.0", "ruamel-yaml-clib>=0.2.15"]
+    override_by_name = {
+        requirement.split(maxsplit=1)[0].split("==", maxsplit=1)[0].split(">=", maxsplit=1)[0]: requirement
+        for requirement in _SEMGREP_OVERRIDES
+    }
+    assert set(override_by_name) == {"semgrep", "ruamel-yaml-clib"}
+    assert re.fullmatch(r"semgrep==\d+\.\d+\.\d+", override_by_name["semgrep"])
+    assert re.fullmatch(r"ruamel-yaml-clib>=\d+\.\d+\.\d+", override_by_name["ruamel-yaml-clib"])

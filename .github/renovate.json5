@@ -20,13 +20,14 @@
     "**/examples/**",
     "**/__tests__/**",
     "**/test/**",
-    "**/tests/**/!(Dockerfile.api-runner)",
+    "**/tests/**/!(Dockerfile.api-runner|pyproject.toml|test_eso_ownership.py|test_declarative_foundation.py)",
     "**/__fixtures__/**"
   ],
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 7am on monday"]
   },
+  "postUpdateOptions": ["helmUpdateSubChartArchives"],
   "enabledManagers": [
     "npm",
     "pep621",
@@ -40,6 +41,7 @@
     "flux",
     "kubernetes",
     "custom.regex",
+    "terraform",
     "nix"
   ],
   "pep621": {
@@ -121,6 +123,114 @@
       "depNameTemplate": "com.google.googlejavaformat:google-java-format",
       "packageNameTemplate": "com.google.googlejavaformat:google-java-format",
       "datasourceTemplate": "maven"
+    },
+    {
+      // why: the scaffold template is the canonical Python image pin but is not named Dockerfile.
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^scripts\\/util\\/scaffold\\/src\\/nohiki_scaffold\\/templates\\/service\\/Dockerfile\\.j2$/"
+      ],
+      "matchStrings": [
+        "public\\.ecr\\.aws/docker/library/python:(?<currentValue>\\d+\\.\\d+\\.\\d+)-slim@(?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "depNameTemplate": "public.ecr.aws/docker/library/python",
+      "datasourceTemplate": "docker"
+    },
+    {
+      // why: these charts split the Docker tag and digest into sibling keys.
+      "customType": "regex",
+      "managerFilePatterns": ["/^infra\\/k8s\\/helm\\/values\\.yaml$/"],
+      "matchStrings": [
+        "(?<indentation>[ \\t]*)registry:\\s*(?<registry>docker\\.io|quay\\.io)\\s+repository:\\s*(?<depName>(?:grafana/alloy|prometheus-operator/prometheus-config-reloader))\\s+tag:\\s*(?<currentValue>v?[0-9][A-Za-z0-9_.-]*)\\s+digest:\\s*(?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "packageNameTemplate": "{{{registry}}}/{{{depName}}}",
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": "{{{indentation}}}registry: {{{registry}}}\n{{{indentation}}}repository: {{{depName}}}\n{{{indentation}}}tag: {{{newValue}}}\n{{{indentation}}}digest: {{{newDigest}}}"
+    },
+    {
+      // why: kube-prometheus-stack expects a raw digest in sha rather than a sha256-prefixed value.
+      "customType": "regex",
+      "managerFilePatterns": ["/^infra\\/k8s\\/helm\\/values\\.yaml$/"],
+      "matchStrings": [
+        "(?<indentation>[ \\t]*)repository:\\s*(?<depName>prometheus/(?:prometheus|alertmanager))\\s+tag:\\s*(?<currentValue>v?[0-9][A-Za-z0-9_.-]*)\\s+sha:\\s*(?<currentDigest>[0-9a-f]{64})"
+      ],
+      "packageNameTemplate": "quay.io/{{{depName}}}",
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": "{{{indentation}}}repository: {{{depName}}}\n{{{indentation}}}tag: {{{newValue}}}\n{{{indentation}}}sha: {{{replace '^sha256:' '' newDigest}}}"
+    },
+    {
+      // why: the runtime, Strimzi resource, and Kafka Connect template must target one broker version.
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^infra\\/k8s\\/helm\\/values(?:\\.local)?\\.yaml$/",
+        "/^infra\\/k8s\\/helm\\/templates\\/strimzi-kafka-connect\\.yaml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+version:\\s*\"?(?<currentValue>\\d+\\.\\d+\\.\\d+)\"?",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+version:\\s*\\{\\{[^\\n\"]*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "versioningTemplate": "maven"
+    },
+    {
+      // why: setup-opentofu's tool version is separate from the action revision.
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github\\/workflows\\/cd_(?:deploy-to|destroy)-aks_nohiki\\.yml$/"
+      ],
+      "matchStrings": ["tofu_version:\\s*[\"']?(?<currentValue>\\d+\\.\\d+\\.\\d+)[\"']?"],
+      "depNameTemplate": "opentofu/opentofu",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      // why: the Kafka Connect README repeats its Gradle builder for reproducible local commands.
+      "customType": "regex",
+      "managerFilePatterns": ["/^infra\\/k8s\\/kafka-connect\\/smt\\/README\\.md$/"],
+      "matchStrings": [
+        "gradle:(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)-jdk\\d+@(?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "depNameTemplate": "gradle",
+      "datasourceTemplate": "docker"
+    },
+    {
+      // why: the compatibility override is a pip input outside a PEP 621 project.
+      "customType": "regex",
+      "managerFilePatterns": ["/^semgrep-overrides\\.txt$/"],
+      "matchStrings": ["semgrep==(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "semgrep",
+      "datasourceTemplate": "pypi"
+    },
+    {
+      // why: the test ledger attests the exact vendored External Secrets chart bytes.
+      "customType": "regex",
+      "managerFilePatterns": ["/^scripts\\/ci\\/tests\\/test_eso_ownership\\.py$/"],
+      "matchStrings": [
+        "_ESO_CHART_LEDGER = \\(\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\", \"(?<currentDigest>[0-9a-f]{64})\"\\)"
+      ],
+      "depNameTemplate": "external-secrets",
+      "datasourceTemplate": "helm",
+      "registryUrlTemplate": "https://charts.external-secrets.io"
+    },
+    {
+      // why: the KEDA test ledger attests the exact vendored chart bytes.
+      "customType": "regex",
+      "managerFilePatterns": ["/^scripts\\/ci\\/tests\\/test_declarative_foundation\\.py$/"],
+      "matchStrings": [
+        "\"keda-(?<currentValue>\\d+\\.\\d+\\.\\d+)\\.tgz\": \"(?<currentDigest>[0-9a-f]{64})\""
+      ],
+      "depNameTemplate": "keda",
+      "datasourceTemplate": "helm",
+      "registryUrlTemplate": "https://kedacore.github.io/charts"
+    },
+    {
+      // why: the CloudNativePG test ledger attests the exact vendored chart bytes.
+      "customType": "regex",
+      "managerFilePatterns": ["/^scripts\\/ci\\/tests\\/test_declarative_foundation\\.py$/"],
+      "matchStrings": [
+        "\"cloudnative-pg-(?<currentValue>\\d+\\.\\d+\\.\\d+)\\.tgz\": \"(?<currentDigest>[0-9a-f]{64})\""
+      ],
+      "depNameTemplate": "cloudnative-pg",
+      "datasourceTemplate": "helm",
+      "registryUrlTemplate": "https://cloudnative-pg.github.io/charts"
     }
   ],
   "packageRules": [
@@ -144,18 +254,6 @@
         "org.apache.kafka:connect-transforms"
       ],
       "allowedVersions": "/^4\\.3\\./"
-    },
-    {
-      // why: one PR must move the Nix JDK and Gradle language toolchain together.
-      "description": "Keep duplicate JDK major declarations aligned",
-      "matchPackageNames": ["java-jdk"],
-      "groupName": "JDK major parity"
-    },
-    {
-      // why: the wrapper, Nix package, and builder image must use one Gradle release.
-      "description": "Keep Gradle toolchain declarations aligned",
-      "matchPackageNames": ["gradle"],
-      "groupName": "Gradle toolchain parity"
     },
     {
       // why: workspace members are never published to PyPI, so a lookup can only fail.
@@ -276,6 +374,26 @@
       "groupName": "Docker minor, patch, and digest"
     },
     {
+      "description": "Group custom Docker pin updates with native container updates",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Docker minor, patch, and digest"
+    },
+    {
+      "description": "Group custom Helm ledgers with native chart updates",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["helm"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Kubernetes and Helm minor, patch, and digest"
+    },
+    {
+      "description": "Group Terraform provider and module updates",
+      "matchManagers": ["terraform"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Terraform minor, patch, and digest"
+    },
+    {
       "description": "Group Helm/Kubernetes updates",
       "matchManagers": ["helmv3", "helm-values", "flux", "kubernetes"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
@@ -294,9 +412,9 @@
       "pinDigests": false
     },
     {
-      // cause: helm-values ignores sibling digest/sha keys, so updating these tags alone leaves stale image pins,
-      // exit: remove this after the CPR trigger gives sibling digests a native owner through Flux image-automation,
-      "description": "Keep separate-key Helm image pins under manual pair ownership",
+      // why: the paired custom manager updates sibling tag and digest keys together; disabling helm-values here
+      // prevents its tag-only update from racing that owner and producing an unpullable mixed pin.
+      "description": "Reserve separate-key Helm image pins for their paired custom manager",
       "matchManagers": ["helm-values"],
       "matchFileNames": ["infra/k8s/helm/values.yaml"],
       "matchPackageNames": [
@@ -305,6 +423,29 @@
         "docker.io/grafana/alloy",
         "quay.io/prometheus-operator/prometheus-config-reloader"
       ],
+      "enabled": false
+    },
+    {
+      // why: vendored chart bytes and their reviewed SHA-256 ledgers must be refreshed by the owner.
+      "description": "Keep integrity-attested vendored charts owner-gated",
+      "matchPackageNames": [
+        "agentgateway",
+        "agentgateway-crds",
+        "kgateway",
+        "kgateway-crds"
+      ],
+      "enabled": false
+    },
+    {
+      // why: uv changes require four Nix fetch hashes plus every runtime image digest.
+      "description": "Keep the uv toolchain ledger owner-gated",
+      "matchPackageNames": ["ghcr.io/astral-sh/uv"],
+      "enabled": false
+    },
+    {
+      // why: Lefthook changes require a Git revision and two Nix fixed-output hashes.
+      "description": "Keep the Lefthook source ledger owner-gated",
+      "matchPackageNames": ["lefthook"],
       "enabled": false
     },
     {
@@ -324,6 +465,54 @@
       "description": "Keep duplicate Playwright declarations aligned",
       "matchPackageNames": ["@playwright/test"],
       "groupName": "Playwright version parity"
+    },
+    {
+      // why: one PR must move the Nix JDK and Gradle language toolchain together.
+      "description": "Keep duplicate JDK major declarations aligned",
+      "matchPackageNames": ["java-jdk"],
+      "groupName": "JDK major parity"
+    },
+    {
+      // why: the wrapper, Nix package, and builder image must use one Gradle release.
+      "description": "Keep Gradle toolchain declarations aligned",
+      "matchPackageNames": ["gradle"],
+      "groupName": "Gradle toolchain parity"
+    },
+    {
+      // why: replacing bytes under an unchanged chart version is an immutable-release violation, not an update.
+      "description": "Reject same-version vendored chart digest replacements",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["helm"],
+      "matchPackageNames": ["external-secrets", "keda", "cloudnative-pg"],
+      "matchUpdateTypes": ["digest"],
+      "enabled": false
+    },
+    {
+      // why: KEDA is repeated in Terraform, the wrapper chart, its vendored archive, and the integrity ledger.
+      "description": "Keep every KEDA version owner in one update",
+      "matchPackageNames": ["keda"],
+      "groupName": "KEDA version parity"
+    },
+    {
+      // why: the chart dependency, vendored archive, and integrity ledger must move in one pull request.
+      "description": "Keep every External Secrets version owner in one update",
+      "matchPackageNames": ["external-secrets", "ghcr.io/external-secrets/external-secrets"],
+      "groupName": "External Secrets version parity"
+    },
+    {
+      // why: the chart dependency, vendored archive, and integrity ledger must move in one pull request.
+      "description": "Keep every CloudNativePG version owner in one update",
+      "matchPackageNames": ["cloudnative-pg"],
+      "groupName": "CloudNativePG version parity"
+    },
+    {
+      "description": "Keep images shared by Compose and Helm in one pull request",
+      "matchPackageNames": [
+        "docker.io/grafana/mimir",
+        "quay.io/prometheus/prometheus",
+        "quay.io/docling-project/docling-serve-cpu"
+      ],
+      "groupName": "Compose and Helm image parity"
     }
   ],
   "vulnerabilityAlerts": {

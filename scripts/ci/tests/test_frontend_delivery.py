@@ -32,7 +32,6 @@ _CHECKS_WORKFLOW = _ROOT / ".github" / "workflows" / "checks.yml"
 _IMAGE_INVENTORY = _ROOT / "infra" / "k8s" / "local" / "images.json"
 _DOCKERIGNORE = _ROOT / ".dockerignore"
 _LOCAL_PLATFORM = _ROOT / "infra" / "k8s" / "gitops" / "platform" / "local"
-_FRONTEND_ARCHIVE = _CHART / "charts" / "nohiki-frontend-0.1.0.tgz"
 _PROD_IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
 _PROD_NETWORK = Path(__file__).parent / "fixtures" / "values.prod.network.yaml"
 _IMAGE_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
@@ -379,6 +378,7 @@ def test_frontend_chart_is_an_enabled_source_dependency_with_canonical_image_nam
 
 def test_frontend_chart_lock_and_archive_exactly_match_source() -> None:
     metadata = yaml.safe_load((_FRONTEND_CHART / "Chart.yaml").read_text(encoding="utf-8"))
+    frontend_archive = _CHART / "charts" / f"{metadata['name']}-{metadata['version']}.tgz"
     lock = yaml.safe_load((_CHART / "Chart.lock").read_text(encoding="utf-8"))
     assert [dependency for dependency in lock["dependencies"] if dependency["name"] == metadata["name"]] == [
         {
@@ -387,14 +387,14 @@ def test_frontend_chart_lock_and_archive_exactly_match_source() -> None:
             "version": metadata["version"],
         }
     ]
-    assert _FRONTEND_ARCHIVE.name == f"{metadata['name']}-{metadata['version']}.tgz"
+    assert frontend_archive.name == f"{metadata['name']}-{metadata['version']}.tgz"
 
     source_files = {
         path.relative_to(_FRONTEND_CHART).as_posix(): path.read_bytes()
         for path in _FRONTEND_CHART.rglob("*")
         if path.is_file()
     }
-    with tarfile.open(_FRONTEND_ARCHIVE, mode="r:gz") as archive:
+    with tarfile.open(frontend_archive, mode="r:gz") as archive:
         prefix = f"{metadata['name']}/"
         archived_files = {
             member.name.removeprefix(prefix): extracted.read()
@@ -464,7 +464,10 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     assert buildx["if"] == (
         "env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"
     )
-    assert buildx["uses"] == ("docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c")
+    action, separator, ref = buildx["uses"].rpartition("@")
+    assert separator
+    assert action == "docker/setup-buildx-action"
+    assert re.fullmatch(r"[0-9a-f]{40}", ref)
     frontend_build = next(step for step in frontend_steps if step.get("name") == "Build production frontend image")
     assert frontend_build["if"] == (
         "env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"

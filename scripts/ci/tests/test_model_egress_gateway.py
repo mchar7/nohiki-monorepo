@@ -12,12 +12,12 @@ from typing import cast
 import jsonschema
 import pytest
 import yaml
-from _documents import Manifest, load_manifests, load_mapping
+from _documents import Manifest, load_manifests, load_mapping, mapping_sequence_at
 from ci_checks.core.image_inventory import load_inventory
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra/k8s/helm"
-_AGENTGATEWAY_CRDS = _ROOT / "infra/k8s/helm-foundation/charts/agentgateway-crds-v1.3.1.tgz"
+_FOUNDATION_CHART = _ROOT / "infra/k8s/helm-foundation"
 _GATEWAY_API_CRDS = _ROOT / "infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml"
 _IDENTITY = Path(__file__).parent / "fixtures/values.prod.identity.yaml"
 _NETWORK = Path(__file__).parent / "fixtures/values.prod.network.yaml"
@@ -117,6 +117,17 @@ def _walk(value: object) -> Iterator[object]:
     elif isinstance(value, list):
         for child in value:
             yield from _walk(child)
+
+
+def _foundation_dependency_archive(name: str) -> tuple[Path, dict[str, object]]:
+    chart = load_mapping(_FOUNDATION_CHART / "Chart.yaml")
+    dependencies = mapping_sequence_at(chart, "dependencies")
+    matches = [dependency for dependency in dependencies if dependency.get("name") == name]
+    assert len(matches) == 1
+    dependency = matches[0]
+    version = dependency.get("version")
+    assert isinstance(version, str)
+    return _FOUNDATION_CHART / "charts" / f"{name}-{version}.tgz", dependency
 
 
 def _render(
@@ -223,7 +234,16 @@ def _named(documents: tuple[Manifest, ...], kind: str, name: str) -> Manifest:
 
 @cache
 def _agentgateway_crds() -> dict[str, Manifest]:
-    with tarfile.open(_AGENTGATEWAY_CRDS) as archive:
+    archive_path, dependency = _foundation_dependency_archive("agentgateway-crds")
+    with tarfile.open(archive_path) as archive:
+        metadata_stream = archive.extractfile(f"{dependency['name']}/Chart.yaml")
+        assert metadata_stream is not None
+        metadata = yaml.safe_load(metadata_stream.read())
+        assert isinstance(metadata, dict)
+        assert (metadata["name"], metadata["version"]) == (
+            dependency["name"],
+            dependency["version"],
+        )
         members = [member for member in archive.getmembers() if member.name.endswith(".yaml")]
         documents = [
             document
@@ -339,12 +359,13 @@ def _container_env(deployment: Manifest) -> dict[str, str]:
     return entries
 
 
-def test_rendered_gateway_resources_validate_against_vendored_1_3_1_schemas(
+def test_rendered_gateway_resources_validate_against_vendored_schemas(
     rendered: tuple[Manifest, ...],
     managed_rendered: tuple[Manifest, ...],
 ) -> None:
-    assert _AGENTGATEWAY_CRDS.is_file(), (
-        "run `helm dependency build infra/k8s/helm-foundation`; pinned agentgateway 1.3.1 schemas are required"
+    archive_path, _ = _foundation_dependency_archive("agentgateway-crds")
+    assert archive_path.is_file(), (
+        f"run `helm dependency build infra/k8s/helm-foundation`; pinned {archive_path.name} schemas are required"
     )
     crds = _gateway_api_crds() | _agentgateway_crds()
     assert {
@@ -680,7 +701,8 @@ def test_healthz_is_an_exact_unauthenticated_direct_response_route(
 def test_models_lane_is_not_claimed_when_vendored_schema_does_not_support_it(
     rendered: tuple[Manifest, ...],
 ) -> None:
-    if _AGENTGATEWAY_CRDS.is_file():
+    archive_path, _ = _foundation_dependency_archive("agentgateway-crds")
+    if archive_path.is_file():
         backend_schema = _schema(_agentgateway_crds()["AgentgatewayBackend"], "v1alpha1")
         enums: list[list[str]] = []
         for node in _walk(backend_schema):
@@ -695,7 +717,7 @@ def test_models_lane_is_not_claimed_when_vendored_schema_does_not_support_it(
         )
         assert "Models" not in custom_formats
     assert not any(node == "/v1/models" for document in rendered for node in _walk(document)), (
-        "agentgateway 1.3.1 custom providers have no Models format and must not advertise that lane"
+        "vendored custom provider schemas have no Models format and must not advertise that lane"
     )
 
 

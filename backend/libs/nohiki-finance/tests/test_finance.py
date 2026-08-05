@@ -27,6 +27,7 @@ from nohiki_finance import (
     to_minor_units,
 )
 
+# Bump procedure: review a new ISO 4217 current list one, then update the code count, exclusions, and hash.
 EXPECTED_ISO_CODE_COUNT = 165
 EXPECTED_ISO_MAP_SHA256 = "c08353e42531ed78a430624b93a65b8ec8c2ee107e22f1af4fee03393d5b7ed9"
 NA_MINOR_UNIT_CODES = frozenset(

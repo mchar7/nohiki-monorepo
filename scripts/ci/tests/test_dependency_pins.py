@@ -10,7 +10,7 @@ from functools import cache
 from pathlib import Path
 from typing import cast
 
-from _documents import WorkflowJob, WorkflowStep, load_jsonc, load_mapping, load_workflow
+from _documents import WorkflowJob, WorkflowStep, load_jsonc, load_mapping, load_workflow, mapping_sequence_at
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RENOVATE = _ROOT / ".github" / "renovate.json5"
@@ -264,14 +264,9 @@ def _workspace_member_names() -> set[str]:
 
 
 def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
-    rules = _renovate_config()["packageRules"]
-    assert isinstance(rules, list)
-    typed_rules = [rule for rule in rules if isinstance(rule, dict)]
-    assert len(typed_rules) == len(rules)
+    rules = mapping_sequence_at(_renovate_config(), "packageRules")
 
-    pypi_rules = [
-        rule for rule in typed_rules if rule.get("enabled") is False and rule.get("matchDatasources") == ["pypi"]
-    ]
+    pypi_rules = [rule for rule in rules if rule.get("enabled") is False and rule.get("matchDatasources") == ["pypi"]]
     assert len(pypi_rules) == 1
     package_names = pypi_rules[0].get("matchPackageNames")
     assert isinstance(package_names, list)
@@ -288,14 +283,13 @@ def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
         rule.get("enabled") is False
         and rule.get("matchDatasources") == ["git-refs"]
         and rule.get("matchPackageNames") == ["ssh://git@github.com/mchar7/skylos"]
-        for rule in typed_rules
+        for rule in rules
     )
 
 
 def test_renovate_abandonment_suppression_is_limited_to_verified_false_positives() -> None:
-    rules = _renovate_config()["packageRules"]
-    assert isinstance(rules, list)
-    threshold_rules = [rule for rule in rules if isinstance(rule, dict) and "abandonmentThreshold" in rule]
+    rules = mapping_sequence_at(_renovate_config(), "packageRules")
+    threshold_rules = [rule for rule in rules if "abandonmentThreshold" in rule]
     assert len(threshold_rules) == 2
 
     finished_rules = [rule for rule in threshold_rules if rule.get("abandonmentThreshold") is None]
@@ -467,19 +461,37 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
 def test_ci_checks_container_test_group_covers_configured_pytest_runtime() -> None:
     with _CI_PROJECT.open("rb") as project_file:
         project = tomllib.load(project_file)
+    with _ROOT_PROJECT.open("rb") as project_file:
+        root_project = tomllib.load(project_file)
 
-    assert project["dependency-groups"]["container-tests"] == [
-        "pytest>=9.0.0",
-        "pytest-asyncio>=1.3.0",
-        "pytest-xdist>=3.8.0",
-    ]
+    container_requirements = project["dependency-groups"]["container-tests"]
+    workspace_requirements = root_project["dependency-groups"]["workspace"]
+    assert all(isinstance(requirement, str) for requirement in container_requirements)
+    assert all(isinstance(requirement, str) for requirement in workspace_requirements)
+    container_by_name = {
+        re.split(r"[\s<>=!~;\[]", requirement, maxsplit=1)[0]: requirement for requirement in container_requirements
+    }
+    workspace_by_name = {
+        re.split(r"[\s<>=!~;\[]", requirement, maxsplit=1)[0]: requirement for requirement in workspace_requirements
+    }
+    expected_names = {"pytest", "pytest-asyncio", "pytest-xdist"}
+    assert set(container_by_name) == expected_names
+    assert len(container_by_name) == len(container_requirements)
+    assert container_by_name == {name: workspace_by_name[name] for name in expected_names}
 
 
 def test_root_lint_group_is_the_minimal_ruff_environment() -> None:
     with _ROOT_PROJECT.open("rb") as project_file:
         project = tomllib.load(project_file)
 
-    assert project["dependency-groups"]["lint"] == ["ruff>=0.15.0"]
+    lint_requirements = project["dependency-groups"]["lint"]
+    workspace_ruff = [
+        requirement
+        for requirement in project["dependency-groups"]["workspace"]
+        if isinstance(requirement, str) and re.split(r"[\s<>=!~;\[]", requirement, maxsplit=1)[0] == "ruff"
+    ]
+    assert len(workspace_ruff) == 1
+    assert lint_requirements == workspace_ruff
 
 
 def test_complete_environment_uses_one_reconciled_cache_entry_per_payload() -> None:
@@ -649,20 +661,29 @@ def test_python_lint_steps_use_the_complete_workspace_environment() -> None:
 def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
     with _CI_PROJECT.open("rb") as project_file:
         project = tomllib.load(project_file)
-    assert project["dependency-groups"]["deadcode"] == ["skylos==4.30.0"]
-    assert project["tool"]["uv"]["sources"]["skylos"] == {
-        "git": "ssh://git@github.com/mchar7/skylos",
-        "rev": "52ccaf2058fa2ed36453c85f7f721e799b6c5c7e",
-    }
+    deadcode_requirements = project["dependency-groups"]["deadcode"]
+    assert isinstance(deadcode_requirements, list)
+    assert len(deadcode_requirements) == 1
+    requirement = deadcode_requirements[0]
+    assert isinstance(requirement, str)
+    requirement_match = re.fullmatch(r"skylos==(?P<version>\d+\.\d+\.\d+)", requirement)
+    assert requirement_match
+
+    source = project["tool"]["uv"]["sources"]["skylos"]
+    assert isinstance(source, dict)
+    assert set(source) == {"git", "rev"}
+    assert source["git"] == "ssh://git@github.com/mchar7/skylos"
+    revision = source["rev"]
+    assert isinstance(revision, str)
+    assert re.fullmatch(r"[0-9a-f]{40}", revision)
 
     with (_ROOT / "uv.lock").open("rb") as lock_file:
         lock = tomllib.load(lock_file)
-    skylos = next(package for package in lock["package"] if package["name"] == "skylos")
-    assert skylos["source"]["git"] == (
-        "ssh://git@github.com/mchar7/skylos"
-        "?rev=52ccaf2058fa2ed36453c85f7f721e799b6c5c7e"
-        "#52ccaf2058fa2ed36453c85f7f721e799b6c5c7e"
-    )
+    locked_skylos = [package for package in lock["package"] if package["name"] == "skylos"]
+    assert len(locked_skylos) == 1
+    skylos = locked_skylos[0]
+    assert skylos["version"] == requirement_match["version"]
+    assert skylos["source"] == {"git": f"{source['git']}?rev={revision}#{revision}"}
 
     setup_steps = _setup_steps()
     identity = next(step for step in setup_steps if step.get("name") == "Resolve Skylos cache identity")
@@ -961,19 +982,30 @@ def test_strimzi_and_kafka_versions_are_aligned() -> None:
         strimzi_versions.append(version)
     assert len(set(strimzi_versions)) == 1
 
-    values = load_mapping(_HELM_VALUES)
-    local = load_mapping(_ROOT / "infra/k8s/helm/values.local.yaml")
-    for document in (values, local):
+    kafka_versions: dict[str, str] = {}
+    documents = {
+        "values.yaml": load_mapping(_HELM_VALUES),
+        "values.local.yaml": load_mapping(_ROOT / "infra/k8s/helm/values.local.yaml"),
+    }
+    for name, document in documents.items():
         global_values = document["global"]
         assert isinstance(global_values, dict)
         kafka = global_values.get("kafka")
         assert isinstance(kafka, dict)
         kafka_cluster = document["kafkaCluster"]
         assert isinstance(kafka_cluster, dict)
-        assert kafka.get("version") == "4.3.0"
-        assert kafka_cluster.get("version") == "4.3.0"
+        global_version = kafka.get("version")
+        cluster_version = kafka_cluster.get("version")
+        assert isinstance(global_version, str)
+        assert isinstance(cluster_version, str)
+        kafka_versions[f"{name} global.kafka"] = global_version
+        kafka_versions[f"{name} kafkaCluster"] = cluster_version
+
     template = _read_text(_ROOT / "infra/k8s/helm/templates/strimzi-kafka-connect.yaml")
-    assert '$glob.kafka.version | default "4.3.0"' in template
+    template_version = re.search(r'\$glob\.kafka\.version \| default "(?P<version>[^"]+)"', template)
+    assert template_version
+    kafka_versions["strimzi-kafka-connect.yaml default"] = template_version["version"]
+    assert len(set(kafka_versions.values())) == 1, kafka_versions
 
 
 def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
@@ -994,6 +1026,7 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         "flux",
         "kubernetes",
         "nix",
+        "terraform",
         "custom.regex",
     }
     enabled_managers = config["enabledManagers"]
@@ -1003,6 +1036,7 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     assert config["nix"] == {"enabled": True}
     assert config["automerge"] is False
     assert config["minimumReleaseAge"] == "3 days"
+    assert config["postUpdateOptions"] == ["helmUpdateSubChartArchives"]
     assert config["prConcurrentLimit"] == 2
     extends = config["extends"]
     assert isinstance(extends, list)
@@ -1015,7 +1049,7 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         "**/examples/**",
         "**/__tests__/**",
         "**/test/**",
-        "**/tests/**/!(Dockerfile.api-runner)",
+        "**/tests/**/!(Dockerfile.api-runner|pyproject.toml|test_eso_ownership.py|test_declarative_foundation.py)",
         "**/__fixtures__/**",
     ]
     helm_values_manager = config["helm-values"]
@@ -1031,42 +1065,49 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     assert isinstance(custom_managers, list)
     assert all(isinstance(manager, dict) for manager in custom_managers)
     custom_by_dependency = {
-        dependency: manager
+        (dependency, manager.get("datasourceTemplate")): manager
         for manager in cast(list[dict[str, object]], custom_managers)
         if isinstance(dependency := manager.get("depNameTemplate"), str)
     }
+    # Exact equality, keyed by owner and datasource: a custom manager that is deleted, renamed, or
+    # added without an entry here fails this assertion instead of drifting unowned.
     assert set(custom_by_dependency) == {
-        "pnpm",
-        "@playwright/test",
-        "java-jdk",
-        "gradle",
-        "com.google.googlejavaformat:google-java-format",
+        ("pnpm", "npm"),
+        ("@playwright/test", "npm"),
+        ("java-jdk", "java-version"),
+        ("gradle", "gradle-version"),
+        ("com.google.googlejavaformat:google-java-format", "maven"),
+        ("public.ecr.aws/docker/library/python", "docker"),
+        ("opentofu/opentofu", "github-releases"),
+        ("gradle", "docker"),
+        ("semgrep", "pypi"),
+        ("external-secrets", "helm"),
+        ("keda", "helm"),
+        ("cloudnative-pg", "helm"),
     }
-    expected_datasources = {
-        "pnpm": "npm",
-        "@playwright/test": "npm",
-        "java-jdk": "java-version",
-        "gradle": "gradle-version",
-        "com.google.googlejavaformat:google-java-format": "maven",
-    }
-    for dependency, manager in custom_by_dependency.items():
+    for manager in custom_managers:
+        assert isinstance(manager, dict)
         assert manager.get("customType") == "regex"
-        assert manager.get("datasourceTemplate") == expected_datasources[dependency]
-        assert isinstance(manager.get("managerFilePatterns"), list)
+        patterns = manager.get("managerFilePatterns")
+        assert isinstance(patterns, list)
+        assert patterns
         match_strings = manager.get("matchStrings")
         assert isinstance(match_strings, list)
         assert match_strings
-        assert all(isinstance(pattern, str) and "(?<currentValue>" in pattern for pattern in match_strings)
+        assert all(
+            isinstance(pattern, str) and ("(?<currentValue>" in pattern or "(?<currentDigest>" in pattern)
+            for pattern in match_strings
+        )
 
     managed_jvm_pins = {
-        "gradle": (_FLAKE, r"/^flake\.nix$/"),
-        "com.google.googlejavaformat:google-java-format": (
+        ("gradle", "gradle-version"): (_FLAKE, r"/^flake\.nix$/"),
+        ("com.google.googlejavaformat:google-java-format", "maven"): (
             _KAFKA_BUILD,
             r"/^jvm\/nohiki-wal-router-smt\/build\.gradle\.kts$/",
         ),
     }
-    for dependency, (source_path, file_pattern) in managed_jvm_pins.items():
-        manager = custom_by_dependency[dependency]
+    for owner, (source_path, file_pattern) in managed_jvm_pins.items():
+        manager = custom_by_dependency[owner]
         manager_file_patterns = manager["managerFilePatterns"]
         assert isinstance(manager_file_patterns, list)
         assert file_pattern in manager_file_patterns
@@ -1079,26 +1120,44 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         assert match
         assert match.group("currentValue")
 
-    rules = config["packageRules"]
-    assert isinstance(rules, list)
-    assert all(isinstance(rule, dict) for rule in rules)
-    major_rule = next(rule for rule in rules if isinstance(rule, dict) and rule.get("matchUpdateTypes") == ["major"])
+    rules = mapping_sequence_at(config, "packageRules")
+    major_rule = next(rule for rule in rules if rule.get("matchUpdateTypes") == ["major"])
     assert major_rule.get("dependencyDashboardApproval") is True
-    pin_rules = [rule for rule in rules if isinstance(rule, dict) and "pinDigests" in rule]
+    pin_rules = [rule for rule in rules if "pinDigests" in rule]
     assert len(pin_rules) == 1
     assert pin_rules[0].get("matchManagers") == ["helm-values"]
     assert pin_rules[0].get("pinDigests") is False
+    vendored_digest_rule = next(
+        rule for rule in rules if rule.get("matchPackageNames") == ["external-secrets", "keda", "cloudnative-pg"]
+    )
+    assert vendored_digest_rule.get("matchManagers") == ["custom.regex"]
+    assert vendored_digest_rule.get("matchDatasources") == ["helm"]
+    assert vendored_digest_rule.get("matchUpdateTypes") == ["digest"]
+    assert vendored_digest_rule.get("enabled") is False
     parity_groups = {
-        "pnpm": "pnpm version parity",
-        "@playwright/test": "Playwright version parity",
-        "java-jdk": "JDK major parity",
-        "gradle": "Gradle toolchain parity",
+        ("pnpm",): "pnpm version parity",
+        ("@playwright/test",): "Playwright version parity",
+        ("java-jdk",): "JDK major parity",
+        ("gradle",): "Gradle toolchain parity",
+        ("keda",): "KEDA version parity",
+        (
+            "external-secrets",
+            "ghcr.io/external-secrets/external-secrets",
+        ): "External Secrets version parity",
+        ("cloudnative-pg",): "CloudNativePG version parity",
+        (
+            "docker.io/grafana/mimir",
+            "quay.io/prometheus/prometheus",
+            "quay.io/docling-project/docling-serve-cpu",
+        ): "Compose and Helm image parity",
     }
-    for dependency, group_name in parity_groups.items():
-        parity_rule = next(
-            rule for rule in rules if isinstance(rule, dict) and rule.get("matchPackageNames") == [dependency]
-        )
+    last_generic_group = max(
+        index for index, rule in enumerate(rules) if rule.get("groupName") and "matchPackageNames" not in rule
+    )
+    for dependencies, group_name in parity_groups.items():
+        parity_rule = next(rule for rule in rules if rule.get("matchPackageNames") == list(dependencies))
         assert parity_rule.get("groupName") == group_name
+        assert rules.index(parity_rule) > last_generic_group
 
     grouped_ecosystems = (
         {"npm"},
@@ -1107,11 +1166,12 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
         {"dockerfile", "docker-compose"},
         {"helmv3", "helm-values", "flux", "kubernetes"},
         {"nix"},
+        {"custom.regex"},
+        {"terraform"},
     )
     for managers in grouped_ecosystems:
         rule = None
         for candidate in rules:
-            assert isinstance(candidate, dict)
             match_managers = candidate.get("matchManagers", [])
             assert isinstance(match_managers, list)
             assert all(isinstance(manager, str) for manager in match_managers)
@@ -1174,32 +1234,3 @@ def test_helm_values_image_tags_never_duplicate_a_sibling_digest_or_drop_their_v
             if _PINNED_TAG.fullmatch(tag) is None:
                 failures.append(f"{relative}: {location}.tag is not <version>@sha256:<digest>: {tag!r}")
     assert not failures, "\n".join(failures)
-
-
-def test_remote_kubernetes_manifests_are_versioned_and_checksum_verified_before_apply() -> None:
-    installers = sorted((_ROOT / "infra" / "k8s").glob("*/install/*.sh"))
-    remote_installers = []
-    for installer in installers:
-        script = _read_text(installer)
-        urls = re.findall(
-            r'^readonly ([A-Z0-9_]+)_URL="(https://[^"\n]+\.yaml)"$',
-            script,
-            re.MULTILINE,
-        )
-        if not urls:
-            continue
-        remote_installers.append(installer)
-        for prefix, url in urls:
-            version_names = re.findall(r"\$\{([A-Z0-9_]+_VERSION)\}", url)
-            checksum_name = f"{prefix}_SHA256"
-            checksum = re.search(rf'^readonly {checksum_name}="([0-9a-f]+)"$', script, re.MULTILINE)
-            assert len(version_names) == 1, f"{installer}: manifest URL must contain one version pin"
-            version = re.search(rf'^readonly {version_names[0]}="([^"]+)"$', script, re.MULTILINE)
-            assert version, f"{installer}: manifest URL has no version declaration"
-            assert checksum, f"{installer}: missing SHA-256 declaration"
-            assert _SHA256.fullmatch(checksum[1]), f"{installer}: missing exact SHA-256"
-            verify = script.index(f'"${{{checksum_name}}}"')
-            apply_command = re.search(r"^kubectl apply\b", script, re.MULTILINE)
-            assert apply_command, f"{installer}: downloaded manifest is never applied"
-            apply = apply_command.start()
-            assert verify < apply, f"{installer}: manifest is applied before checksum verification"

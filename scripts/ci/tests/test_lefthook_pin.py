@@ -20,19 +20,17 @@ _CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
 _PACKAGE = _ROOT / "package.json"
 _PNPM_LOCK = _ROOT / "pnpm-lock.yaml"
 _LEFTHOOK = _ROOT / "lefthook.yml"
-_LEFTHOOK_VERSION = "2.1.10"
-_LEFTHOOK_NIX_SOURCE = {
-    "pname": "lefthook",
-    "version": _LEFTHOOK_VERSION,
-    "revision": "8d9cfec5f52367af6374a5430b4e9568844856e5",
-    "sourceHash": "sha256-GR97Z9wnM6z6gNIcf35leBGkhdj1d6OHQ9oFnaz3f1s=",
-    "vendorHash": "sha256-G+v6ZqnkcFdPDzXlN89oqD7mOnHfq1tvIkFxdoVnBNo=",
-}
 
 
 @cache
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _lefthook_version() -> str:
+    match = re.search(r'lefthookVersion\s*=\s*"([^"]+)";', _read_text(_FLAKE))
+    assert match, "flake.nix must declare lefthookVersion"
+    return match[1]
 
 
 @cache
@@ -275,23 +273,19 @@ def test_lefthook_version_is_exact_across_project_metadata() -> None:
     package_version = json.loads(_PACKAGE.read_text(encoding="utf-8"))["devDependencies"]["lefthook"]
     lock = _load_yaml(_PNPM_LOCK)
     lock_entry = lock["importers"]["."]["devDependencies"]["lefthook"]
-    configured_version = str(_load_yaml(_LEFTHOOK)["min_version"])
-    flake_version = re.search(r'lefthookVersion\s*=\s*"([^"]+)";', _read_text(_FLAKE))
-
-    assert flake_version, "flake.nix must declare lefthookVersion"
+    canonical_version = _lefthook_version()
     versions = {
-        "flake.nix": flake_version[1],
-        "lefthook.yml": configured_version,
+        "lefthook.yml": str(_load_yaml(_LEFTHOOK)["min_version"]),
         "package.json": package_version,
         "pnpm-lock.yaml specifier": lock_entry["specifier"],
         "pnpm-lock.yaml resolved version": lock_entry["version"],
     }
-    assert versions == dict.fromkeys(versions, _LEFTHOOK_VERSION), versions
+    assert versions == dict.fromkeys(versions, canonical_version), versions
 
     for section in ("packages", "snapshots"):
         lefthook_keys = [key for key in lock[section] if key.startswith("lefthook")]
         assert lefthook_keys, f"pnpm-lock.yaml {section} has no lefthook entries"
-        assert all(key.endswith(f"@{_LEFTHOOK_VERSION}") for key in lefthook_keys), (
+        assert all(key.endswith(f"@{canonical_version}") for key in lefthook_keys), (
             f"pnpm-lock.yaml {section} contains stale lefthook entries: {lefthook_keys}"
         )
 
@@ -310,7 +304,15 @@ def test_lefthook_nix_attribute_evaluates_to_verified_source() -> None:
         ),
     )
 
-    assert json.loads(package) == _LEFTHOOK_NIX_SOURCE
+    metadata = json.loads(package)
+    assert set(metadata) == {"pname", "version", "revision", "sourceHash", "vendorHash"}
+    assert metadata["pname"] == "lefthook"
+    assert metadata["version"] == _lefthook_version()
+    assert isinstance(metadata["revision"], str)
+    assert re.fullmatch(r"[0-9a-f]{40}", metadata["revision"])
+    for key in ("sourceHash", "vendorHash"):
+        assert isinstance(metadata[key], str)
+        assert re.fullmatch(r"sha256-[A-Za-z0-9+/]{43}=", metadata[key])
 
 
 def test_standard_ci_worker_checks_flake_and_ci_shell_lefthook_version() -> None:
@@ -320,7 +322,7 @@ def test_standard_ci_worker_checks_flake_and_ci_shell_lefthook_version() -> None
     commands = "\n".join(str(step.get("run", "")) for step in flat)
     lefthook_step = steps["Check Lefthook version"]
 
-    assert lefthook_step["env"]["LEFTHOOK_VERSION"] == _LEFTHOOK_VERSION
+    assert lefthook_step["env"]["LEFTHOOK_VERSION"] == _lefthook_version()
     assert steps["Check flake"]["run"] == "nix develop .#ci --command just nix-check"
     report = render_report_summary(
         "worker",

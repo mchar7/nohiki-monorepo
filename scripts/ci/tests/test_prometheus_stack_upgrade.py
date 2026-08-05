@@ -1,32 +1,66 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
+from typing import TypeIs
 
 import pytest
-from _documents import Manifest, load_manifests, load_mapping
+import yaml
+from _documents import Manifest, load_manifests, load_mapping, mapping_at, mapping_sequence_at, string_at
 from helm_test_utils import runtime_eso_args
 from test_image_digest_gitops import _digest_values
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _ENVS = ("local", "staging", "prod")
-_STACK_VERSION = "87.15.0"
-_STACK_ARCHIVE = _CHART / "charts" / f"kube-prometheus-stack-{_STACK_VERSION}.tgz"
-_OPERATOR = (
-    "quay.io/prometheus-operator/prometheus-operator:v0.92.1@sha256:"
-    "7d9247d2351480fc74587e24681578f815f387bafb2ee7b86a852a94c4cd3774"
-)
-_RELOADER = (
-    "quay.io/prometheus-operator/prometheus-config-reloader:v0.92.1@sha256:"
-    "74550ba3e8bf93f47bc574231090d340ae9c01d25cd11ff74799e65f9fdb9a48"
-)
-_WEBHOOK = (
-    "ghcr.io/jkroepke/kube-webhook-certgen:1.8.4@sha256:"
-    "76a2170cd0c9a7758c4ac8ac5bbe9b6f73e869a15ffb77d9f684664f7d7b96b1"
-)
+_PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
+_RAW_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_string_mapping(value: object) -> TypeIs[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _dependency(document: dict[str, object], name: str) -> dict[str, object]:
+    dependencies = mapping_sequence_at(document, "dependencies")
+    return next(item for item in dependencies if item.get("name") == name)
+
+
+def _stack_archive() -> Path:
+    dependency = _dependency(load_mapping(_CHART / "Chart.lock"), "kube-prometheus-stack")
+    return _CHART / "charts" / f"{dependency['name']}-{dependency['version']}.tgz"
+
+
+def _archived_mapping(member: str) -> dict[str, object]:
+    with tarfile.open(_stack_archive()) as archive:
+        stream = archive.extractfile(f"kube-prometheus-stack/{member}")
+        assert stream is not None
+        document: object = yaml.safe_load(stream)
+    assert _is_string_mapping(document)
+    return document
+
+
+def _image_ref(defaults: dict[str, object], overrides: dict[str, object]) -> str:
+    return f"{defaults['registry']}/{defaults['repository']}:{overrides['tag']}@sha256:{overrides['sha']}"
+
+
+def _expected_stack_images() -> tuple[str, str, str]:
+    defaults = mapping_at(_archived_mapping("values.yaml"), "prometheusOperator")
+    operator = mapping_at(load_mapping(_CHART / "values.yaml"), "kube-prometheus-stack", "prometheusOperator")
+    return (
+        _image_ref(mapping_at(defaults, "image"), mapping_at(operator, "image")),
+        _image_ref(
+            mapping_at(defaults, "prometheusConfigReloader", "image"),
+            mapping_at(operator, "prometheusConfigReloader", "image"),
+        ),
+        _image_ref(
+            mapping_at(defaults, "admissionWebhooks", "patch", "image"),
+            mapping_at(operator, "admissionWebhooks", "patch", "image"),
+        ),
+    )
 
 
 def _render(environment: str) -> list[Manifest]:
@@ -92,58 +126,35 @@ def _inventory(documents: list[Manifest], kind: str) -> set[str]:
     return {document["metadata"]["name"] for document in documents if document["kind"] == kind}
 
 
-def test_kube_prometheus_stack_dependency_is_locked_to_87_15() -> None:
+def test_kube_prometheus_stack_dependency_is_locked_and_packaged() -> None:
     chart = load_mapping(_CHART / "Chart.yaml")
     lock = load_mapping(_CHART / "Chart.lock")
-    chart_dependencies = chart["dependencies"]
-    lock_dependencies = lock["dependencies"]
-    assert isinstance(chart_dependencies, list)
-    assert isinstance(lock_dependencies, list)
-    assert all(isinstance(dependency, dict) for dependency in chart_dependencies)
-    assert all(isinstance(dependency, dict) for dependency in lock_dependencies)
-    assert (
-        next(
-            dependency.get("version")
-            for dependency in chart_dependencies
-            if isinstance(dependency, dict) and dependency.get("name") == "kube-prometheus-stack"
-        )
-        == _STACK_VERSION
-    )
-    assert (
-        next(
-            dependency.get("version")
-            for dependency in lock_dependencies
-            if isinstance(dependency, dict) and dependency.get("name") == "kube-prometheus-stack"
-        )
-        == _STACK_VERSION
-    )
-    assert _STACK_ARCHIVE.is_file()
+    chart_dependency = _dependency(chart, "kube-prometheus-stack")
+    lock_dependency = _dependency(lock, "kube-prometheus-stack")
+    assert chart_dependency["version"] == lock_dependency["version"]
+    assert chart_dependency["repository"] == lock_dependency["repository"]
+
+    archive = _stack_archive()
+    assert archive.is_file()
+    metadata = _archived_mapping("Chart.yaml")
+    assert metadata["name"] == lock_dependency["name"]
+    assert metadata["version"] == lock_dependency["version"]
 
 
 def test_operator_values_use_current_keys_and_immutable_images() -> None:
     values = load_mapping(_CHART / "values.yaml")
-    stack = values["kube-prometheus-stack"]
-    assert isinstance(stack, dict)
-    operator = stack.get("prometheusOperator")
-    assert isinstance(operator, dict)
-    assert operator.get("image") == {
-        "tag": "v0.92.1",
-        "sha": "7d9247d2351480fc74587e24681578f815f387bafb2ee7b86a852a94c4cd3774",
-    }
-    reloader = operator.get("prometheusConfigReloader")
-    assert isinstance(reloader, dict)
-    assert reloader.get("image") == {
-        "tag": "v0.92.1",
-        "sha": "74550ba3e8bf93f47bc574231090d340ae9c01d25cd11ff74799e65f9fdb9a48",
-    }
-    admission_webhooks = operator.get("admissionWebhooks")
-    assert isinstance(admission_webhooks, dict)
-    patch = admission_webhooks.get("patch")
-    assert isinstance(patch, dict)
-    assert patch.get("image") == {
-        "tag": "1.8.4",
-        "sha": "76a2170cd0c9a7758c4ac8ac5bbe9b6f73e869a15ffb77d9f684664f7d7b96b1",
-    }
+    operator = mapping_at(values, "kube-prometheus-stack", "prometheusOperator")
+    operator_image = mapping_at(operator, "image")
+    reloader_image = mapping_at(operator, "prometheusConfigReloader", "image")
+    webhook_image = mapping_at(operator, "admissionWebhooks", "patch", "image")
+    for image in (operator_image, reloader_image, webhook_image):
+        assert set(image) == {"tag", "sha"}
+        assert isinstance(image["tag"], str)
+        assert _RAW_SHA256.fullmatch(string_at(image, "sha"))
+    metadata = _archived_mapping("Chart.yaml")
+    assert operator_image["tag"] == metadata["appVersion"]
+    assert reloader_image["tag"] == operator_image["tag"]
+    assert all(_PINNED_IMAGE.fullmatch(image) for image in _expected_stack_images())
     assert "configReloaderImage" not in operator
     assert "prometheusConfigReloaderImage" not in operator
 
@@ -152,8 +163,9 @@ def test_operator_values_use_current_keys_and_immutable_images() -> None:
 def test_stack_renders_expected_workloads_and_exact_images(environment: str) -> None:
     documents = _render(environment)
     images = _images(documents)
-    assert {_OPERATOR, _WEBHOOK} <= images
-    assert any(_RELOADER in value for value in _collect_strings(documents))
+    operator_image, reloader_image, webhook_image = _expected_stack_images()
+    assert {operator_image, webhook_image} <= images
+    assert any(reloader_image in value for value in _collect_strings(documents))
     workloads = {
         (kind, name)
         for kind in ("DaemonSet", "Deployment", "Job")
@@ -176,7 +188,7 @@ def test_stack_renders_expected_workloads_and_exact_images(environment: str) -> 
 
 
 def test_current_monitoring_crds_are_packaged() -> None:
-    archive = _STACK_ARCHIVE
+    archive = _stack_archive()
     with tarfile.open(archive) as chart:
         texts: list[str] = []
         for member in chart.getmembers():
@@ -212,13 +224,8 @@ def test_current_monitoring_crds_are_packaged() -> None:
 
 def test_observability_contract_is_preserved_across_environments() -> None:
     values = load_mapping(_CHART / "values.yaml")
-    stack = values["kube-prometheus-stack"]
-    assert isinstance(stack, dict)
-    prometheus_values = stack.get("prometheus")
-    assert isinstance(prometheus_values, dict)
-    base = prometheus_values.get("prometheusSpec")
-    assert isinstance(base, dict)
-    base_storage_spec = base.get("storageSpec")
+    base = mapping_at(values, "kube-prometheus-stack", "prometheus", "prometheusSpec")
+    base_storage_spec = mapping_at(base, "storageSpec")
     assert base_storage_spec == {
         "volumeClaimTemplate": {
             "spec": {
@@ -227,10 +234,7 @@ def test_observability_contract_is_preserved_across_environments() -> None:
             }
         }
     }
-    remote_write = base.get("remoteWrite")
-    assert isinstance(remote_write, list)
-    assert all(isinstance(item, dict) for item in remote_write)
-    assert isinstance(remote_write[0], dict)
+    remote_write = mapping_sequence_at(base, "remoteWrite")
     assert remote_write[0].get("headers") == {"X-Scope-OrgID": "nohiki"}
     assert remote_write[0].get("writeRelabelConfigs") == [
         {"sourceLabels": ["__name__"], "regex": "go_.*", "action": "drop"}
@@ -238,44 +242,23 @@ def test_observability_contract_is_preserved_across_environments() -> None:
     rendered = {environment: _render(environment) for environment in _ENVS}
     for environment, documents in rendered.items():
         prometheus = next(document for document in documents if document["kind"] == "Prometheus")
-        overlay_values = load_mapping(_CHART / f"values.{environment}.yaml")
-        overlay_stack = overlay_values["kube-prometheus-stack"]
-        assert isinstance(overlay_stack, dict)
-        overlay_prometheus = overlay_stack.get("prometheus")
-        assert isinstance(overlay_prometheus, dict)
-        overlay_spec = overlay_prometheus.get("prometheusSpec")
-        assert isinstance(overlay_spec, dict)
-        storage_spec = overlay_spec.get("storageSpec", base_storage_spec)
-        assert isinstance(storage_spec, dict)
-        volume_claim = storage_spec.get("volumeClaimTemplate")
-        assert isinstance(volume_claim, dict)
-        claim_spec = volume_claim.get("spec")
-        assert isinstance(claim_spec, dict)
-        resources = claim_spec.get("resources")
-        assert isinstance(resources, dict)
-        requests = resources.get("requests")
-        assert isinstance(requests, dict)
+        overlay_spec = mapping_at(
+            load_mapping(_CHART / f"values.{environment}.yaml"),
+            "kube-prometheus-stack",
+            "prometheus",
+            "prometheusSpec",
+        )
+        storage_spec = mapping_at(overlay_spec, "storageSpec") if "storageSpec" in overlay_spec else base_storage_spec
+        requests = mapping_at(storage_spec, "volumeClaimTemplate", "spec", "resources", "requests")
         expected_storage = requests.get("storage")
 
-        prometheus_spec = prometheus["spec"]
-        assert isinstance(prometheus_spec, dict)
-        rendered_storage = prometheus_spec.get("storage")
-        assert isinstance(rendered_storage, dict)
-        rendered_claim = rendered_storage.get("volumeClaimTemplate")
-        assert isinstance(rendered_claim, dict)
-        rendered_claim_spec = rendered_claim.get("spec")
-        assert isinstance(rendered_claim_spec, dict)
-        rendered_resources = rendered_claim_spec.get("resources")
-        assert isinstance(rendered_resources, dict)
-        rendered_requests = rendered_resources.get("requests")
-        assert isinstance(rendered_requests, dict)
+        prometheus_spec = mapping_at(prometheus, "spec")
+        rendered_claim_spec = mapping_at(prometheus_spec, "storage", "volumeClaimTemplate", "spec")
+        rendered_requests = mapping_at(rendered_claim_spec, "resources", "requests")
         assert rendered_requests.get("storage") == expected_storage
         assert rendered_claim_spec.get("accessModes") == ["ReadWriteOnce"]
         namespace = "nohiki" if environment == "local" else f"nohiki-{environment}"
-        rendered_remote_write = prometheus_spec.get("remoteWrite")
-        assert isinstance(rendered_remote_write, list)
-        assert all(isinstance(item, dict) for item in rendered_remote_write)
-        assert isinstance(rendered_remote_write[0], dict)
+        rendered_remote_write = mapping_sequence_at(prometheus_spec, "remoteWrite")
         assert rendered_remote_write[0].get("url") == f"http://nohiki-mimir-nginx.{namespace}.svc:80/api/v1/push"
     assert (
         _inventory(rendered["local"], "PrometheusRule")

@@ -53,16 +53,18 @@ def test_script_dependencies_are_owned_by_workspace_packages() -> None:
     }
     assert "tree-sitter-python" in _dependencies("scripts/util/ast_explorer")
 
-    canonical_build_system = {
-        "requires": ["uv_build>=0.11.7,<0.12"],
-        "build-backend": "uv_build",
-    }
+    build_systems: list[dict[str, object]] = []
     for package in _SCRIPT_PACKAGES:
         with (_ROOT / package / "pyproject.toml").open("rb") as project_file:
             package_config = tomllib.load(project_file)
-        assert package_config["build-system"] == canonical_build_system
+        build_system = package_config["build-system"]
+        assert build_system["build-backend"] == "uv_build"
+        assert len(build_system["requires"]) == 1
+        assert re.fullmatch(r"uv_build>=\d+\.\d+\.\d+,<\d+\.\d+", build_system["requires"][0])
+        build_systems.append(build_system)
         module_name = package.rsplit("/", maxsplit=1)[-1]
         assert (_ROOT / package / "src" / module_name / "__init__.py").is_file()
+    assert all(build_system == build_systems[0] for build_system in build_systems[1:])
 
 
 def test_deptry_exceptions_are_package_scoped() -> None:
