@@ -175,7 +175,14 @@ def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -
         pytest_options = tomllib.load(project_file)["tool"]["pytest"]["ini_options"]
     assert pytest_options["addopts"] == "-n auto --dist=worksteal"
     workflow = load_workflow(_CHECKS)
-    hosted_command = "\n".join(_commands(workflow["jobs"]["worker"]))
+    worker_steps = {step.get("name"): step for step in _steps(workflow["jobs"]["worker"])}
+    selected_tests = worker_steps["Run selected Python tests"].get("run")
+    integration_tests = worker_steps["Run job correlation integration tests"].get("run")
+    assert isinstance(selected_tests, str)
+    assert isinstance(integration_tests, str)
+    assert "--no-coverage" not in selected_tests
+    assert "--no-coverage" in integration_tests
+
     lefthook = load_mapping(_LEFTHOOK)
     pre_push = lefthook["pre-push"]
     assert isinstance(pre_push, Mapping)
@@ -198,7 +205,6 @@ def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -
                 assert isinstance(run, str)
                 local_commands.append(run)
     local_command = next(iter(local_commands))
-    assert "--no-coverage" not in hosted_command
     assert "--no-coverage" not in local_command
 
 

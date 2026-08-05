@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import cast
+
+import sqlalchemy as sa
+
 
 class TestSchedulerSettings:
     """Tests for SchedulerSettings."""
@@ -99,10 +103,11 @@ def test_initial_migration_keeps_schema_constraints_without_outbox() -> None:
     assert 'name="ck_schedule_hours_old_range"' in migration
     assert "results_wanted BETWEEN 1 AND 100" in migration
     assert 'name="ck_schedule_results_wanted_range"' in migration
+    table = cast(sa.Table, IngestionSchedule.__table__)
 
     model_checks = {
         constraint.name: str(constraint.sqltext)
-        for constraint in IngestionSchedule.__table__.constraints
+        for constraint in table.constraints
         if constraint.name is not None and hasattr(constraint, "sqltext")
     }
     assert model_checks["ck_schedule_hours_old_range"] == "hours_old BETWEEN 1 AND 168"

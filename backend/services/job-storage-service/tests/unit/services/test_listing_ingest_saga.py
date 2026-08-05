@@ -52,7 +52,9 @@ async def test_new_url_creates_saga() -> None:
     assert result.is_new is True
     assert result.saga_id == saga.id
     repo.create.assert_awaited_once()
-    created_saga = repo.create.await_args.args[1]
+    create_call = repo.create.await_args
+    assert create_call is not None
+    created_saga = create_call.args[1]
     assert created_saga.query_id == _QUERY_ID
     assert created_saga.correlation_id == uuid.UUID(_CORRELATION_ID)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import cast
 
 import pytest
 import sqlalchemy as sa
@@ -48,10 +49,11 @@ def test_fresh_upgrade_enforces_canonical_location_shape_and_uniqueness(
     assert canonical_index["unique"] is True
     assert canonical_index["column_names"] == ["search_keywords", "locations"]
 
+    table = cast(sa.Table, DBIngestionQuery.__table__)
     model_check = next(
         constraint
-        for constraint in DBIngestionQuery.__table__.constraints
-        if constraint.name == "chk_locations_json_array"
+        for constraint in table.constraints
+        if isinstance(constraint, sa.CheckConstraint) and constraint.name == "chk_locations_json_array"
     )
     assert str(model_check.sqltext) == "locations IS JSON ARRAY"
 
