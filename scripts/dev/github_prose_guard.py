@@ -294,7 +294,8 @@ def _gh_json(gh: str, repository: Path, endpoint: str, *, paginate: bool) -> obj
 def _pages(value: object, surface: str) -> list[object]:
     if not isinstance(value, list) or any(not isinstance(page, list) for page in value):
         _fail(f"GitHub API returned malformed {surface} pages")
-    return [item for page in value for item in page]
+    pages = cast(list[list[object]], value)
+    return [item for page in pages for item in page]
 
 
 def _required_int(item: object, key: str, surface: str) -> int:
