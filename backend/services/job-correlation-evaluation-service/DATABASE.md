@@ -1,143 +1,161 @@
-# Job Correlation Evaluation Database Design
+# Job Correlation Evaluation Service Database Design
 
-The service persists one scoring record for each evaluated job-listing and user-preference pair. These records combine
-the calibrated match result, the raw 32-feature learning-to-rank input, user interaction state, and feedback needed for
-later model training. Separate feedback records capture more granular score-quality signals and explicit score
-corrections.
+Schema `job_correlation_schema` stores one correlation record per job-profile pair, including
+the integer match score, the raw 32-dimensional L2R feature vector, interaction lifecycle
+flags, and user feedback signals used to train future model iterations. A second schema,
+`feedback`, holds granular score quality signals in two separate tables.
 
-The listing belongs to `job-storage-service`, and the preference belongs to `user-pref-service`. Those references cross
-service ownership boundaries and are reconciled through events rather than synchronous database relationships.
+The `correlations` table is the central domain entity. Each row links a `listing_id` (owned by
+`job-storage-service`) to a `pref_id` (owned by `user-pref-service`) via a UNIQUE constraint
+that enforces one score per pair and serves as the idempotency key for event handlers.
+`profile_projections` provides the local replica of all active preferences that the scoring
+pipeline reads at runtime without querying `user-pref-service`. Transactional logical messages
+ensure `CorrelationEvaluated` events commit atomically with correlation writes;
+`asymmetric_feedback` and `manual_adjustments` capture user signals that flow back into the L2R
+training pipeline.
 
-## Scoring Records
+## `correlations`
 
-A scoring record represents the result of evaluating one listing against one search preference. A record is meaningful
-even when its score is zero. The calibrated score is produced from the LightGBM raw score through isotonic calibration,
-scaling to the 0-100 display range, and rounding. Pending records do not yet have a completed score or evaluation time.
+Stores the result of evaluating a single job listing against a single user search preference.
+A row exists for every pair the service has scored, regardless of the resulting score value.
+A 0% correlation is still a correlation. The table drives the BFF's job match display, the
+notification pipeline, and the L2R training data export.
 
-The records support the BFF's job-match display, notification delivery, and learning-to-rank training export. They
-retain:
+- **`pref_id`:** References `user-pref-service`'s preference record by UUID. No foreign key
+  constraint: cross-schema references are resolved via events per EDA principles.
+- **`listing_id`:** References `job-storage-service`'s listing record by UUID. No foreign key
+  constraint. Listing deletions are handled by consuming
+  `job-listing.cdc.listing-deleted.v1` events.
+- **`user_id`:** Denormalized from the profile snapshot at scoring time. Enables user-scoped
+  queries without joining to `profile_projections`.
 
-- the raw 32-feature vector passed to the model, ordered by `FeatureIndex` from `nohiki-ml-manifest` (with
-  `nohiki-l2r-core` as the architectural target owner), so historical examples can be trained on without re-scoring;
-- explicit user feedback as a learning signal;
-- whether the user viewed, saved, applied to, or dismissed a match, allowing downstream behavior and BFF filtering to
-  follow the interaction lifecycle; and
-- the evaluation time used to order actionable results.
+The correlation score is either `NULL` until the pair is scored or an integer from 0 through 100.
+Rows whose `feature_vector` is `NULL` are excluded from training-sample exports.
 
-A record created with a zero score because of disqualification can omit the feature vector.
+`feature_vector` holds the raw feature inputs composed for the model, not a derived or
+human-readable explanation. There is no persisted `ml_explanation` column: the human-facing
+deterministic ranking explanation is built at publish time as a typed `FitRankingBreakdown`,
+and the legacy `CorrelationEvaluated.correlation_metadata` map is left empty.
 
-The database does not persist an `ml_explanation` or human-readable attribution. Raw model inputs remain in the feature
-vector for internal evaluation. When publishing `CorrelationEvaluated`, the service leaves the legacy
-`correlation_metadata` map empty and constructs a versioned, deterministic `fit_ranking_breakdown` from role relevance
-and each fit factor's compatibility, user importance, and signed contribution points.
+**`is_actionable`:** Stored (not virtual) because PostgreSQL 18 does not support virtual
+generated columns on tables using user-defined enum types. Drives the partial index used by the
+BFF's actionable matches query.
 
-### Identity and concurrency
+**Access patterns and rationale:**
 
-At most one score is retained for a given preference and listing pair. That pair is also the event-handler idempotency
-key: a redelivered listing-created event attempts the same write and is skipped rather than creating another score.
-Kafka event processing is additionally tracked in a local deduplication log.
+- The event handler uses `ON CONFLICT DO NOTHING` against this constraint for idempotency. If
+  the same `ListingCreated` event is redelivered, the insert is silently skipped.
+- Serves the BFF's "top matches for user" query. The descending score order means PostgreSQL can
+  satisfy `ORDER BY score DESC LIMIT 50` with an index scan rather than a sort.
+- Serves the BFF's actionable matches endpoint. The partial condition filters to only the rows
+  the BFF ever queries, keeping the index small even as the total row count grows.
+- Used by `dismiss_matches_for_deleted_job` when a `ListingDeleted` event arrives and all
+  correlations for that listing must be located.
+- Supports user-scoped administrative queries.
+- Serves equality lookups on status (e.g., finding all `expired` rows for cleanup).
+- Low-overhead time-range scan for training data export queries that filter by date range.
 
-Time-ordered identifiers keep records inserted in scoring bursts physically close together. For example, the records
-produced when one new job is evaluated against many profiles tend to be colocated.
+**Correlation status state machine:**
 
-### Denormalization and access patterns
+| Status | Meaning | Valid next states |
+| -------- | --------- | ------------------ |
+| `pending` | Created but not yet scored | `evaluated` |
+| `evaluated` | Scored and visible to user | `viewed`, `dismissed`, `expired` |
+| `viewed` | User opened the listing detail | `saved`, `applied`, `dismissed`, `expired` |
+| `saved` | User bookmarked the listing | `applied`, `dismissed`, `expired` |
+| `applied` | User applied for the job | `expired` |
+| `dismissed` | User dismissed the listing | terminal |
+| `expired` | Job posting expired | terminal |
 
-The user's identity is copied from the preference snapshot at scoring time so user-scoped queries do not need the
-preference projection. The listing URL is copied so consumers of `CorrelationEvaluated` can render a link without
-querying `job-storage-service`.
+**Lifecycle:**
 
-The storage layout is optimized around the service's actual access patterns:
+- **Created** when a `JOB_LISTING_CREATED` or `JOB_CORRELATION_BACKFILL_LISTINGS` event is
+  processed and a new job-profile pair is identified. The row and the transactional WAL
+  logical message are written in a single `AsyncSession` transaction.
+- **Updated** when the user views, saves, applies to, or dismisses the listing (BFF events),
+  or when a `JOB_CORRELATION_FEEDBACK_RECORDED` event updates `user_feedback`.
+- **Soft-deleted** (status to `dismissed`) when `JOB_LISTING_DELETED` is consumed, marking all
+  correlations for that listing as non-actionable without deleting historical data.
+- **Not hard-deleted**: Rows are retained as training data even after the listing or preference
+  is removed.
 
-- score-ordered access lets the BFF fetch a preference's top 50 matches without sorting the full history;
-- an access path limited to pending or evaluated, non-dismissed records keeps the actionable working set small as
-  retained history grows and returns the newest evaluations first;
-- targeted access supports dismissing every match for a deleted listing, user-scoped administration, and status-based
-  cleanup; and
-- low-overhead time-range access supports training exports without imposing the cost of a fully ordered structure on the
-  complete history.
+## `profile_projections`
 
-### State transitions
+A local ECST projection of user search preferences, populated by consuming `user-pref-service`
+CDC events. The scoring pipeline reads from this table at runtime to avoid any cross-service
+HTTP calls. Every `SearchPrefSnapshot`, including the profile's pre-computed MUVERA, ColBERT,
+and sparse query encodings: the full snapshot is stored here as JSONB so the service can reconstruct a
+`QueryEncoding` for the Qdrant pipeline without requesting embeddings from `ml-gateway-service`.
 
-| State       | Meaning                            | Valid next states                          |
-| ----------- | ---------------------------------- | ------------------------------------------ |
-| `pending`   | Created but not yet scored         | `evaluated`                                |
-| `evaluated` | Scored and visible to the user     | `viewed`, `dismissed`, `expired`           |
-| `viewed`    | The user opened the listing detail | `saved`, `applied`, `dismissed`, `expired` |
-| `saved`     | The user bookmarked the listing    | `applied`, `dismissed`, `expired`          |
-| `applied`   | The user applied for the job       | `expired`                                  |
-| `dismissed` | The user dismissed the listing     | -- terminal                                |
-| `expired`   | The job posting expired            | -- terminal                                |
+**`is_active` and access patterns:**
 
-Only pending or evaluated records that have not been dismissed are actionable.
+- **`is_active`:** When `false`, the profile is excluded from the `get_active_profiles` query.
+- Used by `get_active_profiles()`, which is called on every `JOB_LISTING_CREATED` event. The
+  partial index makes this a near-instant scan regardless of total profile count.
+- Supports user-scoped administrative queries on `user_id`.
 
-### Lifecycle and retention
+**Lifecycle:**
 
-A scoring record is created when a `JOB_LISTING_CREATED` or `JOB_CORRELATION_BACKFILL_LISTINGS` event identifies a new
-listing-preference pair. The record and its publication work are committed in the same asynchronous database
-transaction.
+- **Created** (upserted) when `USER_PREF_CREATED` is consumed. The same `upsert_profile()`
+  call is used for both create and update paths, and it applies a snapshot only when the
+  event's source revision is newer than the stored revision, so duplicate or reordered
+  deliveries cannot replace newer state.
+- **Updated** (upserted) when `USER_PREF_UPDATED` is consumed. The full snapshot, including
+  new embeddings if the profile text changed, replaces the previous row when its source
+  revision advances.
+- **Tombstoned** when `USER_PREF_DELETED` is consumed. The row is retained with `is_active`
+  set to false and the deletion revision recorded so delayed CDC cannot resurrect it; any
+  existing `correlations` rows referencing this `pref_id` remain as historical data.
 
-BFF interaction events advance the view, save, application, and dismissal state. A `JOB_CORRELATION_FEEDBACK_RECORDED`
-event updates the record's explicit user feedback.
+## `feedback.asymmetric_feedback`
 
-When `JOB_LISTING_DELETED` is consumed, every score for that listing is moved to `dismissed` so it is no longer
-actionable. The service does not hard-delete scoring records when listings or preferences disappear; they remain
-available as historical training data.
+Captures score quality feedback from users indicating whether a given correlation score is
+accurate (GOOD), too high (TOO_HIGH), or too low (TOO_LOW). This "asymmetric" feedback is
+more granular than binary thumbs up/down: it tells the model not just whether the user liked
+or disliked a job, but whether the *score itself* was calibrated correctly. These records feed
+into calibration analysis during model retraining.
 
-## Preference Projection
+**Lifecycle:**
 
-The service keeps a local ECST projection of user search preferences from `user-pref-service` CDC events. The scoring
-path reads this projection rather than making a cross-service HTTP request.
+- **Created** when `FEEDBACK_SCORE_FEEDBACK_REQUESTED` is consumed, if the referenced
+  correlation row exists.
+- **Never updated or deleted**: Feedback records are immutable audit data.
 
-Each projection contains the complete `SearchPrefSnapshot`, including the precomputed MUVERA, ColBERT, and sparse query
-encodings, required skills, disallowed keywords, location, salary expectations, and experience requirements. This is
-everything `FeatureComposer` needs to construct the 32-feature model input and lets the Qdrant path reconstruct its
-`QueryEncoding` without asking `ml-gateway-service` for embeddings.
+## `feedback.manual_adjustments`
 
-Preference-created and preference-updated events use the same full-snapshot upsert, so either event can be reprocessed
-safely. An update replaces the prior snapshot, including embeddings changed with the profile text. Inactive profiles are
-excluded from scoring; profiles are currently active, but this boundary allows a projection to be disabled without
-deleting it.
+Stores user-provided score overrides where the user specifies an exact score they believe is
+correct, plus a free-text explanation. The original model score is snapshotted when the adjustment
+is consumed and does not follow later re-scoring: it is converted from the `correlations` table's
+0-100 integer to a 0.0-1.0 probability by dividing by 100, and stored as 0.0 when the correlation
+is not yet scored. The adjusted score uses the same 0.0-1.0 scale. These records provide
+high-signal training examples where the user has explicitly expressed the desired outcome.
 
-The projection's read paths support user-scoped administrative counts and the active-profile scan run for every
-listing-created event. Limiting that scoring access path to active profiles keeps it fast regardless of the total
-projection count.
+**Lifecycle:**
 
-A preference-deleted event hard-deletes the local projection. Historical scoring records for that preference remain
-retained.
+- **Created** when `FEEDBACK_SCORE_ADJUSTMENT_REQUESTED` is consumed, if the referenced
+  correlation row exists.
+- **Never updated or deleted**: Immutable audit data.
 
-## Feedback and Audit Records
+## Transactional WAL Messages
 
-### Score-quality feedback
+Every `CorrelationEvaluated` event is emitted with `pg_logical_emit_message(..., true, ...)`
+inside the same `AsyncSession` transaction as the `correlations` insert. PostgreSQL commits the
+row and logical message together, so Debezium cannot observe either side independently.
 
-Asymmetric feedback records whether a score was calibrated correctly or was directionally too high or too low. This is
-more useful than a simple like/dislike signal because it evaluates the score itself, and it feeds calibration analysis
-during model retraining.
+The dedicated `job-correlation-evaluation-service-wal` connector captures logical messages and
+routes them through `NohikiWalRouterSmt` to Kafka. Its minimal filtered publication contains only
+`job_correlation_schema.processed_events`; the SMT drops all publication row records.
 
-The user identity is copied into the feedback record for user-scoped analysis. The feedback representation remains
-decoupled from the correlation lifecycle representation. A record is created when `FEEDBACK_SCORE_FEEDBACK_REQUESTED` is
-consumed, then remains immutable as audit data.
+**Events published via transactional WAL:**
 
-### Manual adjustments
+- **`job-correlation.cdc.correlation-evaluated.v1`** (`CorrelationEvaluated`): Published for
+  every successfully scored correlation.
 
-A manual adjustment captures the exact score a user believes is correct and their free-text explanation. It also
-snapshots the original calibrated score from the scoring record at the time of the request. These are high-signal
-training examples because the user has explicitly stated the desired outcome.
+## Schema Sources
 
-An adjustment is created when `FEEDBACK_SCORE_ADJUSTMENT_REQUESTED` is consumed, but only if the referenced scoring
-record exists. It is never updated or deleted and remains immutable audit data. The user identity is copied into the
-record for user-scoped analysis.
+- `src/job_correlation_evaluation_service/db/models.py`
+- `src/job_correlation_evaluation_service/db/feedback_models.py`
+- `alembic/versions/001_initial_migration.py`
 
-## Transactional WAL Publication
-
-Every `CorrelationEvaluated` event is emitted as a transactional PostgreSQL logical message in the same `AsyncSession`
-transaction as its scoring record. PostgreSQL commits the record and logical message together, so Debezium cannot
-observe either side independently.
-
-The dedicated `job-correlation-evaluation-service-wal` connector captures these logical messages and routes them through
-`NohikiWalRouterSmt` to Kafka. Its narrowly filtered publication includes only the processed-event ledger needed by the
-connector, and the SMT drops those publication row records. Successfully scored correlations are published on
-`job-correlation.cdc.correlation-evaluated.v1`.
-
-The schema itself is defined by the service's SQLAlchemy models in `src/job_correlation_evaluation_service/db/models.py`
-and `src/job_correlation_evaluation_service/db/feedback_models.py` and Alembic revision
-`alembic/versions/001_initial_migration.py`.
+Migration commands and the clean-cut deployment policy live in
+[Database Migration Workflow](../../../README.md#database-migration-workflow).

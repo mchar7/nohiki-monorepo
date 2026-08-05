@@ -1,181 +1,298 @@
-# Skill Graph Database Design
+# Skill Graph Service Database Design
 
-Schema `skill_graph_schema` is owned by `skill-graph-service`. It is the source of truth for the canonical skill
-taxonomy, alias resolution, skill-to-skill graph, taxonomy provenance, governance of novel skills, and
-occupation-to-skill evidence. It also holds the transactional outbox used to announce taxonomy changes and the
-idempotency records used by Kafka consumers.
+Schema `skill_graph_schema` stores the canonical skill taxonomy, alias mappings, skill
+relationships, occupation-to-skill links, governance staging, and supporting analytics for the
+`skill-graph-service`.
 
-The canonical skill registry is the graph's vertex set. Aliases and skill relationships hang from that registry, while
-occupation data forms a largely independent subgraph joined through canonical skills. Embeddings are not stored in
-PostgreSQL: skill and occupation vectors live in Qdrant.
+`skill_node` is the graph's vertex set. Every other table is either an edge type or a support
+structure that hangs off it. `skill_alias` provides the lookup surface for deterministic
+normalization: an incoming raw string like "ReactJS" traverses `skill_alias` to reach the
+canonical `skill_node` for "react". `skill_relationship` forms the directed edge set that
+encodes hierarchical and associative links between canonical skills, modeled as an adjacency
+list where each row is one directed edge `(source_skill_id → target_skill_id)` with a typed
+`relationship_type` and a `bidirectional` flag that governs whether traversal in both
+directions is semantically meaningful.
 
-## Canonical Taxonomy and Normalization
+The occupation tables are a second, largely independent subgraph. `occupation_skill_relation`
+stores curated ESCO taxonomy associations. Nothing in the service reads either occupation
+relation table: seeding is the only code path that touches them, and occupation-based
+pre-filtering of normalization or correlation queries is not implemented.
 
-### Canonical skills
+The governance tables (`proposed_skill`) form a staging area between LLM extraction and the
+canonical skill registry. A proposed skill accumulates evidence rows and is promoted to
+`skill_node` automatically once it has been observed five times, triggering an outbox write
+and a triple-embedding request.
 
-A canonical skill is the authoritative, deduplicated identity for a skill. References from job listings, user
-preferences, correlation features, and BFF projections use the canonical skill UUID rather than copying the skill text.
+## Table Details
 
-Canonical text is lowercase, trimmed, single-spaced, and excludes quotes. There is exactly one canonical identity for
-each such form, which makes exact-match normalization and repeated inserts idempotent regardless of the write path. A
-separate display label preserves human-friendly capitalization and spacing. ESCO imports also contribute taxonomy
-classification, reuse, category, and subcategory metadata; skills promoted through governance may not have that taxonomy
-context. Quality confidence is retained for ranking and future model-derived scoring.
+### `skill_node`
 
-The normalization pipeline depends on several distinct access patterns:
+#### Purpose
 
-1. Stage 1 resolves exact canonical text.
-2. Stage 2 resolves aliases, including context-specific aliases before the universal fallback.
-3. Stage 3 scans the canonical corpus for Jaccard candidates.
+The authoritative record for one deduplicated canonical skill. Every other reference to a skill
+anywhere in Nohiki, including job listings, user preferences, correlation features, and BFF projections,
+is a UUID that points back to a row in this table.
 
-Candidate ranking can use quality confidence. Demand counters record total mentions and distinguish job-listing demand
-from profile demand, allowing downstream scoring and BFF views to surface trending skills. First-seen and last-seen
-times bound skill activity, with the latter refreshed on every `SkillMentionCreated` event.
+#### Constraints & Invariants
 
-Canonical skills enter the registry through Tabiya taxonomy seeding or when governance approves a proposal after at
-least five distinct observations. Seeded skills and automatically promoted proposals enter as approved. Proposal
-promotion also initiates the triple-embedding flow and records a skill-created event in the outbox. During normal
-operation, mention events update demand and activity signals, but canonical skills are not deleted; removal occurs only
-with a full schema drop.
+- One canonical entry per lowercase skill form. The normalization pipeline relies on this
+  guarantee for idempotent inserts.
+- `normalized_text` is rejected at the database level when it is non-lowercase, untrimmed,
+  multi-space, or quoted, ensuring the lookup invariant holds regardless of the insert path.
 
-The approved population is expected to dominate, so governance access is optimized around the small set that still needs
-review rather than the full registry. The registry is append-heavy, and UUIDv7 creation ordering correlates physical row
-order with creation time; this is why low-overhead time-range access is favored over a large general-purpose time index.
+#### Data Lifecycle
 
-### Aliases
+- **Created** via the Tabiya seeding CLI (batch upserts from ESCO CSV) or via `_approve_proposal`
+  when `handle_skill_proposed` auto-approves a `proposed_skill` at `proposal_count >= 5`. Only the
+  reinforcement path (`_reinforce_existing_proposal`) can reach that threshold; a first-time
+  proposal is always stored with status `pending`.
+- **Updated** by `handle_skill_mention_created` (increments `mention_count`, refreshes
+  `last_seen_at`) for each consumed `skill.fct.mention-created.v1` event. `job_count` counts
+  mentions whose `source_type` is `JOB`; `profile_count` counts `PROFILE` mentions. The handler
+  returns early without updating counts when the message carries no `match` or no `mention`.
+  No service in this repository publishes that topic, so the counters stay at their defaults
+  today.
+- **Deleted** only on full schema drop. No soft-delete or event-driven deletion path exists.
 
-Aliases map observed surface forms such as "ReactJS" to a canonical identity such as "react" and provide deterministic
-normalization without fuzzy computation. Resolution lowercases the input, tries an alias scoped to the supplied industry
-or category context, and then falls back to a universal alias. The same surface form may resolve differently in
-different contexts, but it is unambiguous within a context.
+---
 
-Alias records retain their origin. Tabiya alternative labels, aliases suggested by approved proposals, and dynamically
-learned aliases can therefore be distinguished, and a learned alias may retain the originating job listing for evidence
-traceability. Repeated evidence reinforces an existing alias: an upsert increases confidence by 0.01 up to 1.0, while
-both upserts and successful resolutions contribute to its usage signal. Forward traversal from a canonical skill
-supplies all known forms for exports and BFF display.
+### `skill_alias`
 
-Tabiya seeding creates aliases from ESCO alternative labels. Governance approval may attach up to five suggested aliases
-to the promoted skill. During live operation, `skill.fct.alias-learned.v1` causes `handle_alias_learned` to create or
-reinforce the relevant mapping. An alias has no lifecycle independent of its canonical skill and is removed if that
-skill is removed.
+#### Purpose
 
-### Skill relationships
+Maps alternative surface forms of a skill to its canonical `skill_node`. The alias table is
+the backbone of normalization stage 2: an incoming raw string is lowercased and looked up
+against `alias_text`, optionally scoped to a `context_hint`, and returns the linked canonical
+skill without requiring any fuzzy computation.
+When a context hint is present, `resolve_alias` tries the context-specific alias first and then
+falls back to the universal NULL context. The supporting `ix_skill_alias_lookup` expression
+index couples `LOWER(alias_text)` and `context_hint` to that lookup.
 
-Skill relationships are an adjacency-list graph of typed, directed edges between canonical skills. The edge vocabulary
-distinguishes hierarchy, association, requirements, and optional knowledge. Each stored edge has an explicit source and
-target. A symmetric marker means traversal in either direction is semantically valid, but it does not make the stored
-pair undirected; directional hierarchy still requires the appropriate edge direction.
+#### Constraints & Invariants
 
-Relationships also carry a strength signal for traversal and ranking. Seeded relationships use full strength; the signal
-is reserved for future model-derived edge weighting.
+- Each surface form is unambiguous within a context. Because the uniqueness constraint treats
+  NULLs as equal, there can be at most one universal (NULL context) alias per `alias_text`
+  alongside its context-specific siblings.
+- `upsert_alias` refuses to repoint an existing alias: the conflict update is gated on the
+  incoming `canonical_skill_id` matching the stored one, and a mismatch raises
+  `DataIntegrityError`.
+- Alias rows are automatically removed when their canonical skill is deleted.
 
-Only one edge of a given meaning may exist for an ordered pair, although edges with different meanings may coexist.
-Self-edges are excluded because they create trivial cycles and undermine traversal. Removing a canonical skill also
-removes every incident edge.
+#### Data Lifecycle
 
-Relationships are imported from the Tabiya ESCO taxonomy. Live normalization does not infer or add new graph edges, so
-the seeded taxonomy remains the source of truth between imports.
+- **Created** in bulk during Tabiya ESCO seeding (alt labels from ESCO CSV become aliases with
+  `source = "tabiya_esco"`).
+- **Created** when a `proposed_skill` is auto-approved: up to 5 `suggested_aliases` are
+  inserted with `source = "proposal_approved"`.
+- **Upserted** by `handle_alias_learned` when any service publishes `skill.fct.alias-learned.v1`
+  after observing a new surface form in the wild. Only this conflict path moves `usage_count` and
+  `confidence`: an existing row gains one usage and 0.01 confidence (capped at 1.0). Alias
+  resolution during normalization does not touch either counter.
+- **Deleted** via CASCADE when the linked `skill_node` is removed.
 
-## Governance, Provenance, and Seeding
+---
 
-### Novel-skill governance
+### `skill_relationship`
 
-`proposed_skill` is the audit-preserving staging area between LLM extraction and the canonical registry.
-`job-ingest-enrichment-service` proposes an unresolved skill through `skill.cmd.skill-proposed.v1`. Proposals retain the
-service or mechanism that introduced them and use a normalized canonical name, so repeated evidence reinforces one
-proposal rather than creating parallel candidates. Contributing job IDs are retained and deduplicated, preventing one
-job from inflating the evidence count.
+#### Purpose
 
-The configurable auto-approval threshold is five distinct proposals. The state machine permits `pending -> approved` and
-`pending -> rejected -> pending`; the latter allows a rejected candidate to return to review when new evidence warrants
-it. A successful promotion retains a forward link from the audit record to the resulting canonical skill.
+An adjacency-list edge table encoding typed directed relationships between canonical skills.
+Each row is a single directed edge from `source_skill_id` to `target_skill_id` with a string
+`relationship_type`. The `bidirectional` flag indicates
+whether the semantic relationship holds in both directions, but the edge itself is always stored
+as a directed pair. Traversal in both directions requires either a bidirectional flag check or
+two separate rows. The Tabiya parser (`_parse_relationship_row`) emits the CSV `RELATIONTYPE`
+verbatim in lowercase, assigns `strength` 1.0 to `essential` edges and 0.5 to everything else,
+and always writes `bidirectional = False`, so no seeded edge is currently marked symmetric.
 
-Approval is atomic: the service creates the canonical skill, adds up to five suggested aliases, marks the proposal
-approved, and writes `skill.fct.skill-created.v1` to the outbox in the same transaction. If a canonical skill is later
-removed, the proposal history remains even though its forward link no longer resolves. Proposal records are otherwise
-retained indefinitely as the review and evidence trail.
+#### Constraints & Invariants
 
-### Taxonomy provenance
+- Duplicate edges of the same type between any ordered pair are rejected. A `"broader"` edge and
+  a `"related"` edge may coexist between the same two nodes.
+- Self-referential edges, which would create trivial cycles and confuse graph traversal
+  algorithms, are rejected.
+- Deleting a `skill_node` removes all incident edges in both directions.
 
-Every seeded canonical skill is linked to the named taxonomy source and version that introduced it, including the
-external identifier and URI needed for cross-reference, editorial review, and update detection. A skill present in
-multiple taxonomy sources keeps separate provenance for each source rather than collapsing their identities.
+#### Data Lifecycle
 
-Sources have an ordered authority. Lower authority numbers have higher precedence, and the highest-authority source wins
-when display labels or taxonomy metadata disagree. There is one provenance association per skill and source. Provenance
-is created during seeding and has no lifecycle independent of the canonical skill.
+- **Created** during Tabiya ESCO seeding from the relationships CSV, in batches of 1,000 rows.
+- **Deleted** via CASCADE when either endpoint `skill_node` is removed.
+- No event-driven creation path exists after bootstrap. Live normalization does not add
+  relationship edges.
 
-### Seed lifecycle and observability
+---
 
-A seed batch record represents one taxonomy source and version and prevents duplicate lifecycle records for the same
-import. It moves from pending to running and then to either completed or failed. Cumulative outcomes report skills and
-occupations added or updated, aliases and relationships added, and errors; failures retain diagnostic detail without
-requiring operators to scan the full taxonomy.
+### `proposed_skill`
 
-Operational monitoring should focus on in-flight and failed imports, their error counts and details, and the cumulative
-outcomes for the source version. Completed imports remain available as an import history and comparison point for later
-taxonomy versions.
+#### Purpose
 
-## Occupation Model
+Staging area for skills that could not be resolved to a canonical skill and were subsequently
+proposed by `job-ingest-enrichment-service` via `skill.cmd.skill-proposed.v1`. A proposal accumulates
+evidence from multiple job listings before entering the canonical skill registry.
 
-Occupation data supports job-title-to-occupation inference and constrains skill normalization to the roughly 50-200
-skills relevant to an inferred role instead of searching all roughly 13,890 canonical skills. Curated taxonomy
-associations and empirical live observations are deliberately kept separate and combined only during inference.
+#### Constraints & Invariants
 
-### Curated occupation-to-skill associations
+- One proposal record per lowercase canonical name.
+  The governance logic reinforces the existing row rather than inserting a duplicate.
+- `source_job_ids` provides evidence traceability and deduplication, so a job listing already in
+  the set does not inflate the stored set of job IDs. Each accepted event still increments
+  `proposal_count`, including a repeat of an already-recorded job ID.
+- Auto-approval triggers at `proposal_count >= 5` (`AUTO_APPROVE_THRESHOLD` in
+  `skill_governance.py`).
+- `ProposedSkill` declares the transitions `pending → approved`, `pending → rejected`, and
+  `rejected → pending` through `StateMachineMixin`, but `_approve_proposal` sets
+  `status = "approved"` with a direct UPDATE that bypasses the mixin, and no code path ever
+  writes `"rejected"`: a near-duplicate proposal is rejected in-memory by
+  `process_skill_proposal` and never persisted.
+- If the resulting `skill_node` is ever removed
+  (schema drop only), the proposal record is preserved with `approved_skill_id = NULL`.
 
-Curated associations are the authoritative ESCO statement of how a canonical skill relates to an occupation. Their
-semantics distinguish skills required by the occupation, skills that are beneficial but optional, and skills merely
-mentioned in its description. Normalization defaults to the strongest, required associations when pre-filtering, while
-the correlation pipeline can use the broader relationship semantics.
+#### Data Lifecycle
 
-Associations are independently queryable by ESCO occupation code and can also be traversed from a skill to the
-occupations that use it. The occupation label is intentionally repeated on the association so the common
-occupation-to-skills path avoids a join. Source-specific metadata and source/version provenance support editorial
-traceability and re-seeding comparisons, and multiple taxonomy sources may contribute the same occupation-skill pair
-without colliding.
+- **Created** by `handle_skill_proposed` when `process_skill_proposal` finds no existing
+  proposal for the `canonical_name`.
+- **Updated** (proposal_count incremented, source_job_ids accumulated) on subsequent
+  `skill.cmd.skill-proposed.v1` events for the same `canonical_name`. `process_skill_proposal`
+  selects the existing row `FOR UPDATE`, so concurrent proposals for one name serialize.
+- **Promoted to `approved`** by `_approve_proposal` when `proposal_count >= AUTO_APPROVE_THRESHOLD`.
+  The same transaction inserts the `skill_node`, inserts alias rows, and writes
+  `skill.fct.skill-created.v1` to the outbox.
+- **Never deleted** during normal operation: proposal history is retained as audit trail.
 
-Curated associations are created by the Tabiya ESCO import and do not change through live event handling. They are
-removed if their canonical skill is removed.
+---
 
-### Empirical occupation observations
+### `skill_seed_provenance`
 
-Empirical observations accumulate occupation-skill co-occurrences from live job listings and are not a replacement for
-curated taxonomy data. One running observation exists for each occupation-skill pair; later sightings increment it
-instead of producing duplicates. The record also preserves the dominant observed relationship semantics and the first
-and last observation times for freshness-sensitive decisions.
+#### Purpose
 
-`OccupationService` combines curated associations with empirical observations during inference. An empirical pair must
-have at least three observations before it participates, suppressing noise from one-off listings. Observation volume and
-recency are therefore the principal operational signals for live occupation evidence. Observations are removed if their
-canonical skill is removed.
+Links each canonical `skill_node` to the named taxonomy source that introduced it. When the
+same skill exists in multiple taxonomies (e.g., ESCO v1.1.0 and ESCO v1.1.1), each source
+gets its own row, preserving external identifiers and URIs for cross-reference and update
+detection.
 
-### Occupation catalog and vector boundary
+#### Constraints & Invariants
 
-Occupation nodes represent both ESCO job-role concepts and locally defined occupation concepts used to infer an
-occupation from a job title. Official and alternative titles provide the text used during bootstrap embedding, while
-ISCO grouping supports broader occupational classification. The relational catalog also supports title search for BFF
-queries and retains taxonomy provenance for re-seeding.
+- One provenance record per skill per source.
+- `authority` is an ordered priority level (1, 2, or 3) where the higher value wins:
+  `SourceAuthority` ranks `NOHIKI_LEARNED = 1`, `TABIYA = 2`, `CURATED = 3`. The only consumer of
+  that ordering is `_fetch_provenance_for_skill_ids`, whose `DISTINCT ON (skill_id)` with
+  `ORDER BY authority DESC` picks one row per skill for the provenance attached to bootstrap
+  `skill.fct.skill-created.v1` payloads. Nothing resolves `skill_node` display name or metadata
+  from provenance.
 
-Occupation embeddings live in the Qdrant occupations collection, not PostgreSQL. Vector similarity against a job title
-selects likely occupation codes, which then connect to curated and empirical skill evidence in PostgreSQL. Occupation
-nodes are imported during Tabiya seeding and remain static between seed runs; live handlers do not update them.
+#### Data Lifecycle
 
-## Event Delivery and Consumer Idempotency
+- **Created** during seeding for every `skill_node` upserted from a taxonomy CSV.
+- **Deleted** via CASCADE when the linked `skill_node` is removed.
 
-Canonical skill creation uses the transactional outbox pattern. Whether creation happens during bootstrap seeding or
-proposal approval, the canonical skill and its `skill.fct.skill-created.v1` outbox event are recorded in one database
-transaction. A failed commit records neither; a successful commit makes both visible together.
+---
 
-Debezium reads the PostgreSQL WAL and routes the outbox event to Kafka through the Outbox Event Router SMT. This
-atomicity covers the database state and the intent to publish; relay and consumer processing remain asynchronous.
-Consumers therefore use `processed_events` message IDs to skip redelivery and prevent repeated side effects.
+### `seed_batch_record`
 
-`bff-service` consumes skill-created events to populate its skills projection. `job-correlation-evaluation-service`
-consumes them to refresh its local skill index. Connector configuration lives under
-`infra/k8s/kafka-connect/connectors/`.
+#### Purpose
 
-The schema itself is defined by the service's SQLAlchemy models in
-`backend/services/skill-graph-service/src/skill_graph_service/db/models.py` and Alembic revision
-`backend/services/skill-graph-service/alembic/versions/001_initial_migration.py`.
+Tracks the lifecycle and cumulative outcome statistics for each seeding run identified by
+`(source_name, source_version)`. Provides observability into whether a seed batch completed
+successfully and how many entities were inserted or updated, without requiring a scan of the
+full `skill_node` table.
+
+#### Constraints & Invariants
+
+- Exactly one batch record exists per `(source_name, source_version)` import.
+- `error_details` is never written: `_complete_batch_record` updates only status, counters, and
+  `completed_at`, and `_start_batch_record` resets `error_details` to NULL. A failed run is
+  identifiable by `status = "failed"` plus `error_count`, with the cause only in the logs.
+
+#### Data Lifecycle
+
+- **Created** by `SkillGraphSeeder._start_batch_record` at the start of each import, directly
+  with `status = "running"`.
+- **Rerun** of the same `(source_name, source_version)` reuses the row and resets it: counters
+  back to zero, `completed_at` and `error_details` to NULL, `started_at` to now.
+- **Updated** to `"completed"` or `"failed"` on completion. Any batch-level insert error is
+  counted, and `_raise_if_seed_errors` turns a nonzero `error_count` into the failure path.
+
+---
+
+### `occupation_skill_relation`
+
+#### Purpose
+
+Stores curated ESCO taxonomy associations between occupation codes and canonical skills. Each
+row declares that a given occupation requires or benefits from a specific skill, classified as
+`"essential"`, `"optional"`, or `"mentioned"`. `occupation_label` is stored denormalized here to
+avoid joins in the common query path, and `occupation_code` is deliberately not a foreign key to
+`occupation_node`, so the relation table is independently queryable by code.
+
+#### Constraints & Invariants
+
+- One relation per occupation-skill pair per source, allowing multiple taxonomy sources to
+  contribute to the same occupation without collision.
+
+#### Data Lifecycle
+
+- **Created** during Tabiya ESCO seeding from the occupation-skills CSV.
+- **Deleted** via CASCADE when the linked `skill_node` is removed.
+- Never read: no query in the service selects from this table.
+
+---
+
+### `occupation_skill_observation`
+
+This table is created by the baseline migration only. It has no SQLAlchemy model, no writer, and
+no reader anywhere in the repository, so it is permanently empty until an owner is implemented.
+
+---
+
+### `occupation_node`
+
+#### Purpose
+
+Stores ESCO occupation entities (job roles defined in the ESCO taxonomy) intended to support
+semantic job title → occupation inference. Occupation embeddings would live in the Qdrant
+occupations collection rather than in this table, but nothing requests them:
+`build_occupation_batch_item` has no production caller, so the occupations collection is never
+populated and no occupation-based narrowing of the skill search space happens.
+`handle_batch_embedding_callback` can still route `EntityType.OCCUPATION` results if any arrive.
+
+#### Data Lifecycle
+
+- **Created** during Tabiya ESCO seeding from the occupations CSV.
+- **Not updated** by live event handlers. The occupation taxonomy is static between seed runs.
+
+---
+
+## Outbox Table
+
+This service uses the transactional outbox pattern for guaranteed delivery of all
+`skill.fct.skill-created.v1` events. On proposal auto-approval, the `skill_node` INSERT and the
+`outbox` row write happen in the same database transaction. Debezium's PostgreSQL connector
+reads the outbox table from the WAL and routes events to Kafka via the Outbox Event Router SMT.
+
+Bootstrap uses a separate consumer transaction after the seeding CLI has committed the
+`skill_node` rows. `handle_skill_graph_seeded` calls
+`publish_skill_created_events_for_bootstrap` with `commit_batches=False`, so the processed-event
+claim, every outbox batch, and the embedding commands commit together. A crash before that
+commit replays the whole handler rather than permanently skipping work.
+
+The `processed_events` table provides idempotency for the state-changing Kafka handlers:
+`handle_skill_graph_seeded`, `handle_skill_mention_created`, `handle_alias_learned`, and
+`handle_skill_proposed` each call `_claim_event_once`, which claims `metadata.event_id` in the
+handler transaction and returns early when the event was already claimed. An event without an
+`event_id` is processed without deduplication. The embedding and normalization callback handlers
+do not claim events.
+
+**Events published via outbox:**
+
+- **`skill.fct.skill-created.v1`** (`SkillCreated`): Published whenever a canonical `skill_node`
+  enters the taxonomy. `bff-service` consumes this to populate its skills projection table.
+  `job-correlation-evaluation-service` consumes it to update its local skill index.
+
+Debezium connector configuration: `infra/k8s/kafka-connect/connectors/`.
+
+## Schema Sources
+
+- Models: `backend/services/skill-graph-service/src/skill_graph_service/db/models.py`
+- Baseline revision:
+  `backend/services/skill-graph-service/alembic/versions/001_initial_migration.py`
+- Migration workflow: [root README](../../../README.md#database-migration-workflow)

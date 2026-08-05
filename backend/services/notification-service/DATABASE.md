@@ -1,102 +1,124 @@
 # Notification Service Database Design
 
-## Ownership and boundaries
+Schema `notification_schema` stores notification messages and their delivery lifecycle: from initial
+enqueue through provider dispatch outcomes.
 
-The `notification_schema` schema is the notification service's durable source of truth for delivery work and delivery
-outcomes. Every notification accepted for delivery has exactly one persisted message that carries its recipient and
-channel, rendered content, scheduling and retry state, provider selection and response context, and origin metadata
-through the full delivery lifecycle.
+Every notification the service enqueues has exactly one `messages` row. The row tracks the
+recipient, channel, rendered content, retry state, and provider-assigned message ID. When the
+outbox worker transitions a message to `sent` or `failed`, it writes a corresponding outbox row
+in the same database transaction: the status update and the event publication are atomic.
 
-User identity comes from the ECST event snapshot rather than a database relationship to the account service. Listing
-identity refers to the job-storage domain when a notification concerns a specific listing. The service retains those
-identities for history and correlation without claiming ownership of either domain. The persisted message identity is
-the outbox aggregate identity. The originating Kafka correlation identifier follows the notification separately for
-tracing, falling back to the message identity when no originating correlation is available.
+## `messages`
 
-The storage vocabulary for notification channels is intentionally independent of current provider availability. Delivery
-routing currently implements email only. A message may name a provider or allow the worker to use the configured
-provider. Active inline notifications render their Jinja content safely before enqueue. The lifecycle also supports an
-external document-template rendering handoff, in which a message waits for rendered content, although the current
-notification types do not use that path. Template context is retained for rendering and audit, while provider delivery
-context can retain details such as a plain-text alternative.
+Represents a single outbound notification in the delivery queue. A row is created by a Kafka
+event handler when it determines a notification should be sent, and the outbox worker transitions
+it through its lifecycle states until the message is `sent`, `failed`, or `cancelled`.
 
-## Delivery lifecycle
+The `channel` value is the canonical delivery channel. Storage vocabulary is independent of
+provider availability; the service currently implements provider routing only for `EMAIL`.
 
-A Kafka handler creates the durable message after deciding that a notification should be sent. A message normally begins
-`pending`; an external rendering request instead begins `waiting_for_render`. The outbox worker advances eligible work
-through the lifecycle until it becomes `sent`, `failed`, or `cancelled`:
+Active inline Jinja2 notifications are rendered safely before enqueue. A row enters
+`waiting_for_render` when template rendering has been requested via
+`DOC_TEMPLATE_RENDER_REQUESTED`. The body remains `NULL`; no render-result handler exists, so the
+row stays parked until the expiry sweep cancels it. The external layout reference is currently
+unused in practice for the two active notification types, which use inline Jinja2 templates
+rather than Gotenberg-rendered layouts.
 
-- `waiting_for_render` becomes dispatchable when the render callback supplies the content.
-- `pending` work is eligible once any scheduled delivery time has passed.
-- A retryable provider failure moves the message to `retrying`, records the latest error, and defers another attempt
-  until the computed retry time. The delay grows exponentially from the configured base, is capped by the configured
-  maximum, and honors a provider `Retry-After` value as a minimum.
-- Provider confirmation moves the message to `sent`, records the successful delivery time and provider-assigned message
-  identity for provider-side tracing, and resets the attempt count.
-- Exhausted retries or a non-retryable provider error move the message to `failed`.
-- Manual cancellation is allowed only while a message remains pending, waiting for rendering, or retrying. Terminal
-  messages cannot be cancelled.
+### Queue and retry semantics
 
-Eligible work is dispatched by priority, with older work first among equal priorities. The worker skips future-scheduled
-messages and retrying messages whose retry time has not arrived.
+The `priority` value controls queue ordering: higher values are dispatched first. A partial
+dispatch index covers the outbox worker's queue query: highest-priority messages first, then
+oldest-created. It excludes already-terminal rows.
 
-Expiry is based on the message's delivery horizon. For future-scheduled work, that horizon starts at the scheduled time
-rather than enqueue time. The expiry sweep cancels elapsed messages that are still awaiting delivery, and the worker
-rechecks expiry immediately before each provider dispatch to cover the race between sweep selection and send. Both paths
-persist a `NOTIFICATION_FAILED` outbox outcome in the same transaction as cancellation, so expiry is observable
-downstream rather than silently stopping work. Messages without an expiry remain eligible indefinitely.
+The outbox worker skips messages where `scheduled_at > now()`.
 
-## Deduplication and concurrency
+Retry timing is set by `RetryStrategy`
+using exponential backoff: `base_delay_seconds × 2^(retry_count - 1)`, capped at
+`max_retry_delay_seconds`. The worker skips messages where `retry_at > now()`.
 
-A user can receive at most one notification for the same stored listing. This database invariant is the idempotency
-guard for the job-correlation handler: a second correlation event for the same pair is rejected instead of producing
-another email.
+The retry count resets to 0 on successful delivery. If `provider_name` is absent, the worker uses
+the configured default.
 
-The shared processed-event log records Kafka message identities that have completed successfully. It supplies a second,
-message-level deduplication layer, including notification flows that have no listing identity, such as
-document-generation notifications. Together these guards cover domain-level duplicates and redelivery of the same Kafka
-message.
+### Expiry
 
-The dispatch queue claims `pending` and `retrying` work. Expiry also covers `waiting_for_render`, so a stalled rendering
-handoff can expire without becoming dispatchable; both paths exclude terminal history. Concurrent workers claim delivery
-work through the repository's queue semantics rather than treating a read as ownership.
+`expires_at` is the point past which the message is cancelled instead of sent.
+Stamped at creation from `message_ttl.default_ttl_hours`, relative to `scheduled_at` when a
+schedule is given. `MessageExpirySweep` cancels elapsed rows that are still awaiting delivery,
+and the outbox worker re-checks the value before each dispatch to cover the gap between claim
+and send. Either path writes a `NotificationFailed` outbox row in the same transaction, so an
+expiry is observable downstream rather than a row that silently stopped moving. NULL means
+no expiry.
 
-## Transactional outcomes and CDC
+A partial expiry index covers the sweep's claim query and excludes terminal rows and rows without
+an expiry. Its status list is every state still awaiting a delivery attempt and must stay identical
+to `MessageExpirySweep.build_expired_query`, or the sweep degrades to a sequential scan.
 
-The service uses the standard `nohiki-db-utils` transactional outbox. `NotificationEventPublisher` adds an outcome to
-the caller's database transaction and never commits independently. The caller always commits, so the message transition
-and its outcome either both commit or neither commits.
+### Duplicate suppression
 
-A provider-confirmed delivery records `NOTIFICATION_SENT`, including the notification, recipient and channel, provider
-outcome, user and listing context, and delivery time. A terminal provider failure or expiry records
-`NOTIFICATION_FAILED`, including the error, failure cause, attempt history, and failure time. These are delivery facts
-for downstream projections; the notification database remains the source of truth for the message lifecycle.
+The unique user-listing constraint prevents the service from sending duplicate notifications for
+the same user-listing pair. It acts as the idempotency guard for the
+`JOB_CORRELATION_EVALUATED` handler: a second correlation event for the same listing and user is
+silently rejected by an `IntegrityError` rather than producing a second email.
 
-Debezium's PostgreSQL connector and Outbox Event Router SMT read committed outbox entries from the WAL and publish them
-to Kafka after commit. Database atomicity therefore covers the lifecycle transition and outbox entry; Kafka publication
-is the subsequent CDC step. Connector configuration lives under `infra/k8s/kafka-connect/connectors/`.
+`user_id` identifies the account owned by `user-auth-service`, and `stored_listing_id` identifies
+`job_storage_schema.listings.id`. Both are cross-schema references without foreign keys.
 
-## Operations, retention, and access rationale
+### Data Lifecycle
 
-Lifecycle state, scheduled and retry timing, attempt count, the most recent provider error, successful-delivery time,
-expiry, and provider message identity are the primary operational signals for delayed, repeatedly failing, expired, and
-provider-confirmed notifications. The latest error intentionally replaces the prior one so operators see the current
-failure, while retry history remains visible through the attempt count and lifecycle outcomes.
+- **Created** by `handle_notification_event` when a `JOB_CORRELATION_EVALUATED` or
+  `DOC_CONTENT_GENERATION_COMPLETED` Kafka event passes all threshold and status checks.
+  Initial status is `pending` (body pre-rendered) or `waiting_for_render` (if body requires
+  external template rendering).
+- **Updated** by the outbox worker on each dispatch attempt: status transitions to `retrying`
+  (failure, will retry), `sent` (success), or `failed` (exhausted retries or non-retryable error).
+  `retry_count`, `retry_at`, `sent_at`, `last_error`, and `provider_msg_id` are updated
+  accordingly.
+- **Cancelled** via `MessageRepository.cancel()` if the message is in a cancellable state
+  (`pending`, `waiting_for_render`, or `retrying`). Terminal states (`sent`, `failed`) cannot be
+  cancelled.
+- **Deleted** only via schema DROP on deployment. No row-level deletion occurs in normal operation.
 
-Access paths reflect the workload rather than serving as a general schema catalog:
+## Outbox Table
 
-- Notification history is overwhelmingly append-only, so chronological scans exploit the physical correlation between
-  creation order and stored rows.
-- Worker access concentrates on the active lifecycle set. Its queue path excludes terminal history and supports
-  highest-priority, then oldest-first dispatch; state equality is optimized because the worker repeatedly selects
-  pending and retrying work.
-- Expiry access is limited to nonterminal messages that actually expire, so a sweep does not scan terminal rows or
-  messages with no delivery horizon.
-- User history, origin-correlation tracing, and listing-specific lookup paths cover only messages that carry the
-  relevant association, avoiding unnecessary entries for system or unrelated messages.
+The service uses the transactional outbox pattern for guaranteed delivery of notification lifecycle
+events. The `outbox` table structure is defined by `nohiki-db-utils` (`get_create_outbox_table_sql`)
+and follows the standard Nohiki outbox schema.
 
-Notification rows are retained for lifecycle and audit history. Normal operation does not perform row-level deletion.
+`NotificationEventPublisher` (`services/outbox/event_publisher.py`) writes outbox rows using
+`OutboxWriter` from `nohiki-db-utils`. The caller (outbox worker) always writes the outbox row
+**before** calling `db.commit()`, ensuring the domain state change and the event record land in
+the same PostgreSQL transaction.
 
-The schema itself is defined by the service's SQLAlchemy models in
-`backend/services/notification-service/src/notification_service/db/models.py` and Alembic revision
-`backend/services/notification-service/alembic/versions/001_initial_migration.py`.
+**Events published via outbox:**
+
+- **`NOTIFICATION_SENT`** (`notification.fct.sent.v1`): Written when a provider confirms
+  delivery.
+
+- **`NOTIFICATION_FAILED`** (`notification.fct.failed.v1`): Written when a message reaches
+  terminal failure, and when the TTL path cancels a message. A dispatch attempt that defers the
+  message to `retrying` writes no outbox row; the event is emitted once the retry budget is spent.
+
+Both event kinds use aggregate type `"notification"` and the message ID as `aggregate_id`.
+Debezium uses `aggregate_id` as the Kafka message key, preserving per-message partition ordering.
+
+`correlation_id` tracks the originating Kafka message correlation ID through the delivery
+lifecycle. If absent, it falls back to the message id.
+
+Debezium's PostgreSQL connector with the Outbox Event Router SMT reads the outbox table from the
+WAL and publishes events to Kafka after commit. See
+`infra/k8s/kafka-connect/connectors/` for the connector configuration. Neither the connector nor
+the service deletes outbox rows, so rows remain after publication.
+
+## Processed Events Table
+
+The `processed_events` table is created by the migration via `get_create_processed_events_sql` from
+`nohiki-db-utils`. No handler in this service currently writes or reads it, so it provides no
+deduplication today. Handler idempotency rests on the unique `(user_id, stored_listing_id)`
+constraint, which does not cover notifications enqueued without a `stored_listing_id` (for example
+document generation notifications).
+
+## Sources
+
+- Models: `src/notification_service/db/models.py`
+- Baseline revision: `alembic/versions/001_initial_migration.py`
+- Migration workflow: [../../../README.md#database-migration-workflow](../../../README.md#database-migration-workflow)

@@ -1,70 +1,74 @@
-# Job Ingest Schedule Database Design
+# Job Ingest Schedule Service Database Design
 
-The `job_schedule_schema` schema stores the materialized scheduling state for registered search
-queries: the search configuration needed for dispatch, activation state, and previous and planned
-execution times. It is a projection of events from the job-query-composition-service. That service
-remains the source of truth for query definitions; this service owns only the scheduling metadata
-derived from them.
+Schema `job_schedule_schema` stores the materialized scheduling state for all registered search
+queries: their configuration, activation status, and next/last execution timestamps. This schema
+is a projection of events from the job-query-composition-service; it does not own the query
+definitions, only the scheduling metadata derived from them.
 
-## Projection and Ownership Boundaries
+`ingestion_schedules` is the sole domain table. Each row corresponds to a query owned by
+`job_query_schema`, referenced by `query_id` (no cross-schema FK). Discovery commands are
+published directly to Kafka; this schema has no outbox table.
 
-Each schedule represents one query owned by the job-query-composition-service. Its identity and
-search criteria are copied from query-created and query-updated CDC events, making the query
-identity a logical cross-service reference rather than a locally generated identity. Keeping the
-keywords, locations, work arrangements, and job-board sources in the projection lets the scheduler
-publish a complete discovery command without reading the source service when a query becomes due.
-Unspecified work-arrangement and source values are not retained in the projection.
+## `ingestion_schedules`
 
-The scraper lookback and result target come from this service's configuration rather than the CDC
-payload. The schedule frequency comes from the event payload. This separation keeps query-owned
-configuration synchronized through CDC while leaving scheduler-controlled dispatch parameters
-under this service's control.
+### Purpose
 
-## Scheduling Lifecycle
+Represents the scheduling state for a single search query. Stores the full set of search
+parameters denormalized from the job-query-composition-service's CDC events alongside
+the scheduling fields (`frequency`, `is_active`, `next_run_at`, `last_run_at`) that the
+tick handler uses to determine which queries are due for execution.
 
-A query-created event creates its schedule. Processing the same creation more than once does not
-create another schedule: the handler first checks whether the query already has one.
+### Field Semantics
 
-A query-updated event refreshes the projected query parameters and activation state. If an update
-arrives before its corresponding creation event, the handler creates the missing schedule, allowing
-out-of-order delivery to converge on a usable projection.
+- **`query_id`**: Carries the `query_id` from the `job-query-composition-service`. Not generated
+  here: it is sourced directly from the `JOB_QUERY_CREATED` / `JOB_QUERY_UPDATED` event payload.
+  Enforces one schedule row per query. Also serves as the idempotency key for
+  `JOB_QUERY_CREATED` handlers: the handler checks for an existing row before inserting.
+- **`work_arrangements`**: The `UNSPECIFIED` variant is filtered out on write. Python property
+  accessors convert between string names and proto enum instances at the ORM boundary.
+- **`sources`**: Job board platforms to scrape. `UNSPECIFIED` is filtered out on write.
+- **`hours_old`**: How many hours back the scraper should search for listings. Not sourced from
+  the event payload.
+- **`results_wanted`**: Target number of results per scrape run. Not sourced from the event
+  payload.
+- **`frequency`**: How often this query runs. Sourced from `frequency_seconds` in the event
+  payload (converted to `timedelta`).
+- **`is_active`**: Whether the scheduler should dispatch this query on ticks. Inactive queries
+  are skipped entirely by the due-schedule query.
+- **`next_run_at`**: The next time the scheduler should dispatch this query. `NULL` for inactive
+  queries. On activation it is set one frequency interval after the immediate dispatch
+  timestamp; the scheduler advances it by `frequency` after each successful dispatch.
+- **`last_run_at`**: The timestamp of the most recent successful dispatch. `NULL` until the first
+  tick processes this query. Updated alongside `next_run_at` after each dispatch.
 
-An active query is dispatched immediately when it is activated, then planned for one frequency
-interval after that dispatch. Scheduler ticks consider only active schedules whose planned execution
-time has arrived. After a successful dispatch, the schedule records that dispatch as its most recent
-successful run and advances the next execution by one frequency interval. The successful-run
-marker remains absent until the first tick dispatch. Inactive schedules have no planned execution
-time and are excluded from due processing.
+### Access Patterns
 
-A query-deleted event removes the schedule. Deleting an already missing schedule is treated as
-success, so deletion is idempotent.
+The tick handler uses an access path over `next_run_at` restricted to active rows with a scheduled
+run. `process_due_schedules` filters on `is_active = true` and `next_run_at <= now()`; the
+restriction covers both predicates while keeping inactive rows out entirely.
 
-## Delivery and Idempotency
+A BRIN access path supports time-range queries on creation time. BRIN is appropriate because rows
+are largely append-ordered and its storage overhead is minimal.
 
-Kafka messages are delivered at least once. A consumer-side processing log, provided by
-`nohiki-db-utils`, records the message offset or correlation identifier after successful processing
-so redeliveries can be skipped. These records are not updated or deleted; the log grows
-monotonically as the service processes messages.
+### Data Lifecycle
 
-Discovery commands are published directly to Kafka. The schema has no transactional outbox, so
-command delivery is not mediated by database outbox state.
+- **Created** when `JOB_QUERY_CREATED` (`job-query.cdc.query-created.v1`) is consumed. The
+  handler also creates a row when `JOB_QUERY_UPDATED` arrives for a `query_id` that has no
+  existing row (out-of-order delivery guard).
+- **Updated** when `JOB_QUERY_UPDATED` (`job-query.cdc.query-updated.v1`) is consumed
+  (query parameters or activation state changed), or when `SYS_SCHEDULE_TICK` processing
+  advances `last_run_at` and `next_run_at` after a successful dispatch.
+- **Deleted** when `JOB_QUERY_DELETED` (`job-query.cdc.query-deleted.v1`) is consumed.
+  The handler is idempotent: a missing row is treated as already deleted.
 
-## Due-Query and Storage Design
+## `processed_events`
 
-The scheduler's primary read path selects active schedules whose planned execution time is due.
-The corresponding storage optimization excludes inactive schedules and schedules without a planned
-execution, matching that predicate while keeping the due-read structure compact.
+Consumer-side idempotency store provided by `nohiki-db-utils`. The baseline revision provisions
+the table, but no handler in this service calls `check_and_mark_processed`, so nothing writes to
+it; redelivery is absorbed by the row-existence checks in the query handlers.
 
-Activation-state equality lookups use an equality-oriented structure because single-value equality
-access on a low-cardinality value is smaller and faster than a general ordered structure.
-Creation-time range access uses a low-overhead range summary because rows
-are expected to be largely append-ordered. These choices support the service's operational reads
-without changing the projection's ownership boundaries.
+## Source of Truth
 
-The most recent successful dispatch and next planned execution retain their distinct operational
-meaning: one records completed dispatch progress, while the other drives future due selection.
-
-The schema itself is defined by the service's SQLAlchemy models in
-`backend/services/job-ingest-schedule-service/src/job_ingest_schedule_service/db/models.py` and
-Alembic revision
-`backend/services/job-ingest-schedule-service/alembic/versions/001_initial_migration.py`.
+- Models: `src/job_ingest_schedule_service/db/models.py`
+- Baseline revision: `alembic/versions/001_initial_migration.py`
+- Migration commands and workflow: [root README](../../../README.md#database-migration-workflow)

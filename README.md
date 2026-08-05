@@ -67,6 +67,23 @@ invariants, and operational behavior.
 </details>
 <!-- markdownlint-enable MD033 -->
 
+## Database migration workflow
+
+Stateful services use clean-cut deployment: stop the services, drop and recreate their schemas, and apply each baseline
+Alembic revision to the empty database. Update the baseline revision in place rather than accumulating incremental
+revisions.
+
+This workflow is possible because Nohiki is pre-release and has no production data. It does not require data migrations
+or backward compatibility between schema versions.
+
+Run these commands from the service directory:
+
+```bash
+uv run alembic upgrade head
+uv run alembic revision --autogenerate -m "description"
+uv run alembic current
+```
+
 ## Repository map
 
 | Path                                                              | Contents                                                                     |

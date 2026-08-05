@@ -1,88 +1,81 @@
-# User Entitlement Database Design
+# User Entitlement Service Database Design
 
-The user-entitlement service owns `user_entitlement_schema` and is the authority for each
-Nohiki user's active subscription tier, billing lifecycle, and effective access limits. A user
-has one entitlement record, identified by the account owned by `user-auth-service`. Downstream
-services consume the resulting `EntitlementSnapshot`; they do not query this service for limits.
+Schema `user_entitlement_schema` stores one entitlement record per Nohiki user, capturing
+their active subscription tier, computed per-tier limits, and billing provider references.
 
-## Entitlement Lifecycle
+## `entitlements`
 
-### Provisioning and Idempotency
+The `entitlements` table is the only domain table. Every `USER_AUTH_ACCOUNT_UPDATED` delivery is
+paired with an `outbox` row in the same nested transaction, including the idempotent path where
+the row already exists and is returned unchanged, so `USER_ENTITLEMENT_CHANGED` is republished on
+every account update rather than only on provisioning.
 
-`USER_AUTH_ACCOUNT_UPDATED` provisions an entitlement when the user has none. Provisioning
-starts the user on the free tier with no billing relationship. The service deliberately attempts
-the create rather than performing a read-before-write check. Concurrent or repeated delivery for
-the same user is resolved by the one-entitlement-per-user invariant: the losing create is rolled
-back and the existing entitlement is returned. This keeps provisioning safe under Kafka's
-at-least-once delivery model.
+Stores the subscription tier and computed access limits for each user account. One row per user,
+identified by `user_id`. This row is the authoritative record that drives the
+`EntitlementSnapshot` carried in all downstream events. `user_id` references
+`user_auth_schema.accounts.id` without a database-level foreign key, because the reference
+crosses schemas, and it serves as the idempotency key for the `USER_AUTH_ACCOUNT_UPDATED`
+handler. The primary key is a standard row identifier, not used as a join key by other services
+(those use `user_id` instead).
 
-Incoming event identities are also recorded so that repeated Kafka messages do not repeat
-consumer side effects.
+The computed limit columns (`discovery_frequency_limit`, `max_prefs`, `max_uploads_per_pref`,
+`allowed_sources`, `features_enabled`) are derived from the tier by `core/tiers.py`, which is the
+single source of truth for what each tier grants.
 
-### Tier-Derived Access
+Uniqueness on `user_id` enforces one entitlement per account. The `create_default_entitlements`
+function catches `IntegrityError` on duplicate insert and returns the existing row, preventing
+duplicate entitlement rows under at-least-once Kafka delivery. It does not claim the event or
+prevent another outbox event. An `IntegrityError` that is not a duplicate user is re-raised
+unchanged.
 
-The active tier determines the complete effective limit set. `src/user_entitlement_service/core/tiers.py`
-is the source of truth for these grants:
+Fetching an entitlement by user ID is the primary lookup pattern. Account deletion also deletes
+by user ID. The schema supports bulk queries scoped to a tier and queries scoped to subscription
+state, although no current service code issues either query.
 
-- **Free** -- daily discovery, one preference profile, three uploads per preference, Indeed as
-  the allowed source, and no additional features.
-- **Basic** -- daily discovery, two preference profiles, five uploads per preference, Indeed and
-  LinkedIn as allowed sources, and no additional features.
-- **Pro** -- twice-daily discovery, five preference profiles, ten uploads per preference, Indeed,
-  LinkedIn, and Glassdoor as allowed sources, with automatic tailoring and priority matching.
-- **Enterprise** -- hourly discovery, twenty preference profiles, twenty-five uploads per
-  preference, the Pro sources plus ZipRecruiter and Google, with the Pro features plus API access.
+### Subscription state
 
-A tier change rewrites the entire derived limit set from that configuration in the same
-transaction. The stored limits are therefore a materialized entitlement decision, not an
-independent configuration to edit piecemeal. They are included in the downstream snapshot so
-consumers can enforce access without querying this database. In particular,
-`job-ingest-schedule-service` uses the discovery frequency decision to schedule discovery work.
+`subscription_status` is a state machine field backed by `StateMachineMixin`. The model permits
+`NONE` to transition to `TRIALING` or `ACTIVE`. Validation happens only when a caller invokes
+`transition_to`, which raises `InvalidTransitionError` for undeclared targets. No current code
+path in this service calls it, so no status change is validated today.
 
-### Billing Lifecycle
+### Data Lifecycle
 
-Free-tier provisioning begins with no billing relationship. Paid activation associates the
-entitlement with its billing provider, external customer and subscription identities, and the
-provider's current billing period.
+- **Created** when `USER_AUTH_ACCOUNT_UPDATED` is consumed for a user that has no existing
+  entitlement row. The initial tier is always `FREE` with `subscription_status = NONE`.
+- **Updated** by no code path in this service. Creation is the only writer of tier and limit
+  columns, so the derived limits are applied once, at provisioning.
+- **Deleted** when `USER_AUTH_ACCOUNT_DELETED` is consumed. No cascade exists; this is a direct
+  `DELETE WHERE user_id = ?`. No outbox event is published on deletion.
 
-The model enforces billing lifecycle transitions before persistence:
+## Outbox Table
 
-- No billing relationship can enter trialing or active service.
-- Trialing service can become active, canceled, or expired.
-- Active service can become past due, canceled, or paused.
-- Past-due service can return to active or become canceled or expired.
-- Canceled service can become expired or reactivate.
-- Paused service can return to active or become canceled or expired.
-- Expired service can reactivate or begin another trial.
+The service uses the transactional outbox pattern for guaranteed event delivery. Every
+`USER_AUTH_ACCOUNT_UPDATED` delivery writes an `outbox` row in the same nested transaction as the
+entitlement insert attempt, including when the existing entitlement is returned unchanged.
+Debezium's PostgreSQL connector with the Outbox Event Router SMT reads the table from the
+PostgreSQL WAL and publishes events to Kafka.
 
-Attempts to move outside this graph fail before a database write.
+**Event published via outbox:**
 
-### Deletion
+- `USER_ENTITLEMENT_CHANGED` (`user-entitlement.cdc.entitlement-changed.v1`), published on every
+  `USER_AUTH_ACCOUNT_UPDATED` delivery. The `aggregateid` column is set to `user_id`; the
+  `aggregatetype` column is `"entitlement"`.
 
-`USER_AUTH_ACCOUNT_DELETED` causes the service to hard-delete the user's entitlement directly.
-Deletion does not publish an entitlement-change outbox event, so consumers that retain an
-entitlement projection must use the account-deleted lifecycle event to remove it.
+The application never deletes outbox rows, and Debezium does not remove source rows after reading
+them. The connector disables tombstones on source deletion. Without external cleanup, the table
+only grows.
 
-## Transactional Event Publication
+The migration also provisions a `processed_events` table for consumer idempotency. No handler in
+this service calls `check_and_mark_processed`, so nothing writes to it and incoming events are not
+claimed. Duplicate `USER_AUTH_ACCOUNT_UPDATED` deliveries are absorbed only at the entitlement
+insert by uniqueness on `user_id`; each delivery still writes another outbox event.
 
-Every entitlement create or update writes a `USER_ENTITLEMENT_CHANGED` event to the transactional
-outbox alongside the domain change. A transaction commits both the entitlement state and its
-corresponding event record, or neither, eliminating an application-level database/Kafka dual
-write. The event is associated with the user as the entitlement aggregate and carries the full
-snapshot of tier, billing status, derived limits, allowed sources, and enabled features.
+See `infra/k8s/kafka-connect/` for the Debezium connector configuration.
 
-Debezium reads committed outbox records from the PostgreSQL WAL and publishes them to
-`user-entitlement.cdc.entitlement-changed.v1` after the database transaction. Publication is
-therefore asynchronous, while the durable outbox record remains atomic with the entitlement
-change. Connector behavior is configured under `infra/k8s/kafka-connect/connectors/`.
+## Sources
 
-## Operational Use
-
-The primary access path is by user identity. Tier-scoped selection supports recomputing and
-backfilling materialized limits when tier policy changes, while billing-lifecycle selection
-supports operational work such as retrying past-due subscriptions. These uses explain the
-service's lookup design without making this database a query surface for other services.
-
-The schema itself is defined by the service's SQLAlchemy models in
-[`src/user_entitlement_service/db/models.py`](./src/user_entitlement_service/db/models.py) and
-Alembic revision [`alembic/versions/001_initial_migration.py`](./alembic/versions/001_initial_migration.py).
+- Models: `backend/services/user-entitlement-service/src/user_entitlement_service/db/models.py`
+- Baseline revision:
+  `backend/services/user-entitlement-service/alembic/versions/001_initial_migration.py`
+- Migration workflow: [root README](../../../README.md#database-migration-workflow)
