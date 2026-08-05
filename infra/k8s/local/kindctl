@@ -28,6 +28,9 @@ FLUX_VERSION = "2.9.2"
 FLUX_OPERATOR_VERSION = "0.55.0"
 CREATE_TIMEOUT = 120
 MIN_NODE_POD_CAPACITY = 200
+# Acceptance reached 5,575 node processes before final convergence. The next
+# power of two above twice that failed-run census preserves real burst headroom.
+NODE_PID_LIMIT = 16_384
 REGISTRY_HOSTS = b'''server = "http://127.0.0.1:30500"
 
 [host."http://127.0.0.1:30500"]
@@ -481,7 +484,7 @@ def kind_modules_override(
     raise KindctlError(f"kernel modules tree is unavailable; probed paths: {probed}")
 
 
-def install_kind_provider_wrapper(runtime: Path, modules: Path) -> Path:
+def install_kind_provider_wrapper(runtime: Path, modules: Path | None) -> Path:
     executable = shutil.which("podman")
     if executable is None:
         raise KindctlError("required executable is missing: podman")
@@ -491,14 +494,33 @@ def install_kind_provider_wrapper(runtime: Path, modules: Path) -> Path:
     directory = runtime / "provider-bin"
     directory.mkdir(mode=0o700)
     wrapper = directory / "podman"
+    module_replacement = None if modules is None else f"{modules}:/lib/modules:ro"
     program = f"""#!/usr/bin/env python3
 import os
 import sys
 
 podman = {json.dumps(str(podman))}
-source = "/lib/modules:/lib/modules:ro"
-replacement = {json.dumps(f"{modules}:/lib/modules:ro")}
-argv = [replacement if value == source else value for value in sys.argv[1:]]
+module_source = "/lib/modules:/lib/modules:ro"
+module_replacement = {module_replacement!r}
+argv = [
+    module_replacement if module_replacement is not None and value == module_source else value
+    for value in sys.argv[1:]
+]
+if argv and argv[0] in {{"create", "run"}}:
+    rewritten = []
+    skip = False
+    for value in argv[1:]:
+        if skip:
+            skip = False
+            continue
+        if value == "--pids-limit":
+            skip = True
+            continue
+        if value.startswith("--pids-limit="):
+            continue
+        rewritten.append(value)
+    argv = [argv[0], *rewritten]
+    argv.insert(1, "--pids-limit={NODE_PID_LIMIT}")
 os.execv(podman, [podman, *argv])
 """
     descriptor = os.open(wrapper, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700)
@@ -644,8 +666,8 @@ def require_node_pid_limits(nodes: Sequence[str]) -> dict[str, int]:
         document = command_json(("podman", "inspect", "--type", "container", node), timeout=10)
         container = document[0] if isinstance(document, list) else document
         limit = container.get("HostConfig", {}).get("PidsLimit")
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
-            raise KindctlError(f"node PidsLimit must be a positive integer: {node}")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < NODE_PID_LIMIT:
+            raise KindctlError(f"node PidsLimit must be at least {NODE_PID_LIMIT}: {node}")
         limits[node] = limit
     return limits
 def install_registry_hosts(kubeconfig: Path, nodes: Sequence[str]) -> str:
@@ -2125,7 +2147,7 @@ def create(attempt: Path) -> dict[str, Any]:
     runtime.mkdir(mode=0o700)
     try:
         proxy_values = write_llm_proxy_values(runtime, proxy_source)
-        provider_bin = install_kind_provider_wrapper(runtime, modules) if modules is not None else None
+        provider_bin = install_kind_provider_wrapper(runtime, modules)
         descriptor = os.open(kubeconfig, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         os.close(descriptor)
         run_command(create_argv(kubeconfig, provider_bin), timeout=CREATE_TIMEOUT)

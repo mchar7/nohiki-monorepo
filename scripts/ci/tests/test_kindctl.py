@@ -329,7 +329,25 @@ Path({json.dumps(str(log))}).write_text(json.dumps(sys.argv[1:]), encoding="utf-
     )
 
     observed = json.loads(log.read_text(encoding="utf-8"))
-    assert observed == ["create", "--volume", f"{modules}:/lib/modules:ro", "node"]
+    assert observed == [
+        "create",
+        "--pids-limit=16384",
+        "--volume",
+        f"{modules}:/lib/modules:ro",
+        "node",
+    ]
+    pid_only_runtime = tmp_path / "pid-only-runtime"
+    pid_only_runtime.mkdir(mode=0o700)
+    pid_only_bin = runner.install_kind_provider_wrapper(pid_only_runtime, None)
+    pid_only_path = runner.create_argv(runtime / "kubeconfig", pid_only_bin)
+    pid_only_assignment = next(value for value in pid_only_path if value.startswith("PATH="))
+    pid_only_environment = os.environ | {"PATH": pid_only_assignment.removeprefix("PATH=")}
+    subprocess.run(["podman", "run", "node"], check=True, env=pid_only_environment)
+    assert json.loads(log.read_text(encoding="utf-8")) == [
+        "run",
+        "--pids-limit=16384",
+        "node",
+    ]
 
 
 def test_preflight_accepts_pinned_client_outputs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -534,6 +552,7 @@ def test_create_executes_the_scoped_command_under_its_own_lock(
         "env",
         "KIND_EXPERIMENTAL_PROVIDER=podman",
         f"KUBECONFIG={kubeconfig}",
+        f"PATH={attempt}/runtime/provider-bin:{os.environ['PATH']}",
         "kind",
         "create",
         "cluster",
@@ -659,20 +678,22 @@ def test_storage_provisioner_is_recreated_after_network_convergence(
     assert timeouts == [30, 125]
 
 
-def test_node_pid_limit_must_be_a_recorded_positive_integer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_node_pid_limit_must_cover_failed_campaign_process_census(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runner = _load_runner()
     monkeypatch.setattr(
         runner,
         "command_json",
-        lambda *_args, **_kwargs: [{"HostConfig": {"PidsLimit": 2048}}],
+        lambda *_args, **_kwargs: [{"HostConfig": {"PidsLimit": 16384}}],
     )
-    assert runner.require_node_pid_limits(["nohiki-control-plane"]) == {"nohiki-control-plane": 2048}
+    assert runner.require_node_pid_limits(["nohiki-control-plane"]) == {"nohiki-control-plane": 16384}
     monkeypatch.setattr(
         runner,
         "command_json",
-        lambda *_args, **_kwargs: [{"HostConfig": {"PidsLimit": 0}}],
+        lambda *_args, **_kwargs: [{"HostConfig": {"PidsLimit": 8192}}],
     )
-    with pytest.raises(runner.KindctlError, match="positive integer"):
+    with pytest.raises(runner.KindctlError, match="at least 16384"):
         runner.require_node_pid_limits(["nohiki-control-plane"])
 
 
