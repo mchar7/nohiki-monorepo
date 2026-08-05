@@ -150,6 +150,34 @@ def test_malformed_review_summary_fails_closed() -> None:
         guard.fetch_surfaces(responses.__getitem__, "example/project", 17)
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "surface"),
+    [
+        ("repos/example/project/pulls/17", "pull request body"),
+        ("repos/example/project/issues/17/comments?per_page=100", "comment"),
+        ("repos/example/project/pulls/17/reviews?per_page=100", "review summary"),
+        ("repos/example/project/pulls/17/comments?per_page=100", "review comment"),
+    ],
+)
+def test_missing_body_key_fails_closed(endpoint: str, surface: str) -> None:
+    responses: dict[str, object] = {
+        "repos/example/project/pulls/17": {
+            "number": 17,
+            "title": "Synthetic title",
+            "body": "Synthetic body",
+        },
+        "repos/example/project/issues/17/comments?per_page=100": [[]],
+        "repos/example/project/pulls/17/comments?per_page=100": [[]],
+        "repos/example/project/pulls/17/reviews?per_page=100": [[]],
+    }
+    responses[endpoint] = (
+        {"number": 17, "title": "Synthetic title"} if endpoint == "repos/example/project/pulls/17" else [[{}]]
+    )
+
+    with pytest.raises(RuntimeError, match=rf"malformed {surface}"):
+        guard.fetch_surfaces(responses.__getitem__, "example/project", 17)
+
+
 def test_unexpected_scanner_error_refuses_without_echoing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

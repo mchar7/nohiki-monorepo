@@ -305,9 +305,12 @@ def _required_int(item: object, key: str, surface: str) -> int:
 
 
 def _body(item: object, key: str, surface: str) -> str:
-    if not isinstance(item, dict) or ((value := item.get(key)) is not None and not isinstance(value, str)):
+    if not isinstance(item, dict) or key not in item:
         _fail(f"GitHub API returned malformed {surface}")
-    return value or ""
+    value = item[key]
+    if value is not None and not isinstance(value, str):
+        _fail(f"GitHub API returned malformed {surface}")
+    return "" if value is None else value
 
 
 def _url_number(item: object, key: str, surface: str) -> int:
