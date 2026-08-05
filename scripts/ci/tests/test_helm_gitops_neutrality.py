@@ -157,12 +157,8 @@ def test_qdrant_and_skill_bootstrap_jobs_keep_helm_hooks() -> None:
     assert bootstrap[0]["metadata"].get("annotations", {}) == _BOOTSTRAP_HOOK
 
 
-def test_model_runtime_is_offline_only_in_the_local_render() -> None:
-    for values_file, expected in (
-        ("values.local.yaml", {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}),
-        ("values.dev.yaml", {}),
-        ("values.staging.yaml", {}),
-    ):
+def test_model_runtime_can_populate_an_empty_cache_in_every_environment() -> None:
+    for values_file in ("values.local.yaml", "values.dev.yaml", "values.staging.yaml"):
         documents = load_manifests(_template(values_file))
         deployment = next(
             document
@@ -170,11 +166,11 @@ def test_model_runtime_is_offline_only_in_the_local_render() -> None:
             if document["kind"] == "Deployment" and document["metadata"]["name"] == "nohiki-ml-compute-service"
         )
         environment = {
-            item["name"]: item.get("value")
+            item["name"]
             for item in containers_of(deployment)[0].get("env", [])
             if item["name"] in {"HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"}
         }
-        assert environment == expected
+        assert not environment
 
 
 def test_only_local_platform_install_and_upgrade_run_hooks_before_readiness() -> None:

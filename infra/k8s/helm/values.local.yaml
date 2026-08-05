@@ -445,10 +445,6 @@ ml-compute-service:
       value: /home/app/.cache/fastembed
     - name: HF_HOME
       value: /home/app/.cache/huggingface
-    - name: HF_HUB_OFFLINE
-      value: "1"
-    - name: TRANSFORMERS_OFFLINE
-      value: "1"
   scaling:
     enabled: true
     minReplicas: 1
