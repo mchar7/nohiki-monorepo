@@ -236,10 +236,10 @@ INVENTORY_SPECS: Final[Mapping[str, InventorySpec]] = MappingProxyType(
         ),
         "service_dependencies": InventorySpec(
             EndpointClass.KUBERNETES,
-            _I,
-            _W,
-            ("installed package imports",),
-            reason="requires command execution in application containers",
+            _D,
+            _C,
+            ("digest-pinned service-image module evidence",),
+            adaptation="digest-pinned service-image init-container evidence",
         ),
         "stale_services": InventorySpec(
             EndpointClass.KAFKA,

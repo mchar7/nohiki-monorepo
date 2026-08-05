@@ -87,6 +87,18 @@ class TestCheckSuiteResult:
         suite = self._make_suite([CheckStatus.PASSED, CheckStatus.SKIPPED])
         assert suite.passed is True
 
+    def test_not_passed_when_designed_capability_is_unexercised(self) -> None:
+        suite = CheckSuiteResult(
+            results=self._make_suite([CheckStatus.PASSED]).results,
+            total_duration_ms=100.0,
+            platform=PlatformTarget.KUBERNETES,
+            unexercised_ids=("cdc_end_to_end",),
+        )
+
+        assert suite.complete is False
+        assert suite.passed is False
+        assert suite.total_count == 2
+
     def test_not_passed_when_failed(self) -> None:
         suite = self._make_suite([CheckStatus.PASSED, CheckStatus.FAILED])
         assert suite.passed is False

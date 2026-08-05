@@ -139,8 +139,16 @@ def _remediation_panel(suite: CheckSuiteResult) -> Panel | None:
 
 def _summary_banner(suite: CheckSuiteResult) -> Panel:
     """Build a summary banner showing overall pass/fail status."""
-    total = len(suite.results)
-    if suite.passed:
+    total = suite.total_count
+    if not suite.complete:
+        headline = Text("! INCOMPLETE COVERAGE", style="bold yellow")
+        icon = "!"
+        detail = (
+            f"{suite.passed_count}/{total} passed, {len(suite.unexercised_ids)} unexercised: "
+            f"{', '.join(suite.unexercised_ids)}"
+        )
+        border = "yellow"
+    elif suite.passed:
         headline = Text("✓ ALL SYSTEMS OPERATIONAL", style="bold green")
         icon, detail, border = "🟢", f"All {total} checks passed", "green"
     else:
@@ -207,14 +215,17 @@ def display_json(suite: CheckSuiteResult, console: Console) -> None:
     """
     data = {
         "passed": suite.passed,
+        "complete": suite.complete,
         "platform": suite.platform.value,
         "total_duration_ms": round(suite.total_duration_ms, 1),
         "summary": {
             "passed": suite.passed_count,
             "failed": suite.failed_count,
             "skipped": suite.skipped_count,
-            "total": len(suite.results),
+            "unexercised": len(suite.unexercised_ids),
+            "total": suite.total_count,
         },
+        "unexercised_ids": list(suite.unexercised_ids),
         "results": [
             {
                 "id": r.check_id,
@@ -318,13 +329,19 @@ def display_suite_results_boring(
                 con.print(f"      Error: {record.action.error[:400]}")
             con.print(f"    AFTER: {record.after.status.value}: {record.after.summary}")
     con.print()
-    total = len(suite.results)
-    status_line = (
-        f"ALL PASSED ({total}/{total})"
-        if suite.passed
-        else f"{suite.passed_count}/{total} passed, {suite.failed_count} failed"
-        + (f", {suite.skipped_count} skipped" if suite.skipped_count else "")
-    )
+    total = suite.total_count
+    if not suite.complete:
+        status_line = (
+            f"INCOMPLETE: {suite.passed_count}/{total} passed, {suite.failed_count} failed, "
+            f"{suite.skipped_count} skipped, {len(suite.unexercised_ids)} unexercised "
+            f"({', '.join(suite.unexercised_ids)})"
+        )
+    elif suite.passed:
+        status_line = f"ALL PASSED ({total}/{total})"
+    else:
+        status_line = f"{suite.passed_count}/{total} passed, {suite.failed_count} failed" + (
+            f", {suite.skipped_count} skipped" if suite.skipped_count else ""
+        )
     con.print(f"SUMMARY: {status_line} - {format_duration(suite.total_duration_ms)}")
 
 

@@ -56,6 +56,11 @@ _ROUTE_PATHS_BY_ENVIRONMENT = {
         "nohiki-model-egress-messages": "/v1/messages",
     },
 }
+_ROUTE_TYPES = {
+    "nohiki-model-egress-responses": "Responses",
+    "nohiki-model-egress-completions": "Completions",
+    "nohiki-model-egress-messages": "Messages",
+}
 _ROUTE_CLIENTS_BY_ENVIRONMENT = {
     "local": {
         "nohiki-model-egress-responses": {
@@ -514,6 +519,21 @@ def test_exact_supported_lanes_use_agentgateway_backends_and_preserve_models(
                 "verifySubjectAltNames": ["api.anthropic.com"],
             }
 
+        route_type_policies = {
+            document["metadata"]["name"].removesuffix("-health"): document
+            for document in documents
+            if document.get("kind") == "AgentgatewayPolicy" and document["metadata"]["name"].endswith("-health")
+        }
+        assert set(route_type_policies) == set(expected_paths)
+        for name, path in expected_paths.items():
+            policy_spec = route_type_policies[name]["spec"]
+            assert isinstance(policy_spec, dict)
+            backend_policy = policy_spec.get("backend")
+            assert isinstance(backend_policy, dict)
+            backend_ai = backend_policy.get("ai")
+            assert isinstance(backend_ai, dict)
+            assert backend_ai.get("routes") == {path: _ROUTE_TYPES[name]}
+
 
 @pytest.mark.parametrize(
     "values_name",
@@ -554,6 +574,49 @@ def test_every_environment_routes_openai_luna_sol_models_only_through_native_ope
         "verifySubjectAltNames": ["api.openai.com"],
     }
     assert not any(isinstance(node, str) and "openrouter" in node.lower() for node in _walk(backend))
+
+
+def test_provider_endpoint_override_routes_through_plaintext_local_proxy(tmp_path: Path) -> None:
+    values = tmp_path / "values.proxy.yaml"
+    values.write_text(
+        yaml.safe_dump(
+            {
+                "global": {
+                    "modelEgress": {
+                        "providerEndpoints": {
+                            "openai-responses": {
+                                "host": "127.0.0.1",
+                                "port": 8317,
+                                "path": "/v1/responses",
+                                "tls": None,
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    backend = _named(_render(values=values), "AgentgatewayBackend", "nohiki-model-egress-responses")
+    spec = backend["spec"]
+    assert isinstance(spec, dict)
+    ai = spec.get("ai")
+    assert isinstance(ai, dict)
+    groups = ai.get("groups")
+    assert isinstance(groups, list)
+    group = groups[0]
+    assert isinstance(group, dict)
+    providers = group.get("providers")
+    assert isinstance(providers, list)
+    provider = providers[0]
+    assert isinstance(provider, dict)
+    assert provider["host"] == "127.0.0.1"
+    assert provider["port"] == 8317
+    assert provider["path"] == "/v1/responses"
+    policies = provider.get("policies")
+    assert isinstance(policies, dict)
+    assert "tls" not in policies
 
 
 def test_healthz_is_an_exact_unauthenticated_direct_response_route(
@@ -697,7 +760,7 @@ def test_route_auth_selectors_authorize_only_the_declared_client_matrix(
             expected_header = "x-api-key" if route == "messages" else "Authorization"
             expected_header_config = {"name": expected_header}
             if expected_header == "Authorization":
-                expected_header_config["prefix"] = "Bearer"
+                expected_header_config["prefix"] = "Bearer "
             assert auth.get("location") == {"header": expected_header_config}
             selectors[route_name] = auth.get("secretSelector")
 
@@ -789,6 +852,32 @@ def test_route_auth_selectors_authorize_only_the_declared_client_matrix(
             auth: object = policies.get("auth")
             assert isinstance(auth, dict)
             assert auth.get("location") == {"header": {"name": "x-api-key"}}
+
+
+def test_api_key_auth_prefixes_include_the_header_separator(
+    rendered: tuple[Manifest, ...],
+    managed_rendered: tuple[Manifest, ...],
+) -> None:
+    for documents in (rendered, managed_rendered):
+        prefixes = [
+            prefix
+            for document in documents
+            if document.get("kind") == "AgentgatewayPolicy"
+            for spec in [document.get("spec")]
+            if isinstance(spec, dict)
+            for traffic in [spec.get("traffic")]
+            if isinstance(traffic, dict)
+            for auth in [traffic.get("apiKeyAuthentication")]
+            if isinstance(auth, dict)
+            for location in [auth.get("location")]
+            if isinstance(location, dict)
+            for header in [location.get("header")]
+            if isinstance(header, dict)
+            for prefix in [header.get("prefix")]
+            if isinstance(prefix, str)
+        ]
+        assert prefixes
+        assert all(prefix.strip() and prefix.endswith(" ") for prefix in prefixes)
 
 
 def test_client_route_labels_are_declared_per_client_and_emit_the_responses_only_matrix(

@@ -2,6 +2,8 @@
 
 import importlib.util
 import os
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -18,6 +20,36 @@ from nohiki_core_settings.observability import ObservabilitySettings
 type SecretsDirMissing = Literal["ok", "warn", "error"]
 
 DEFAULT_SECRETS_DIR = "/run/secrets"
+
+
+class _KubeletNestedSecretsSettingsSource(NestedSecretsSettingsSource):
+    """Load logical secret paths without traversing kubelet control entries first."""
+
+    @staticmethod
+    def _iter_secret_files(path: Path) -> Iterator[Path]:
+        root = path.resolve()
+        seen_dirs: set[Path] = set()
+
+        def walk(directory: Path) -> Iterator[Path]:
+            resolved_dir = directory.resolve()
+            if resolved_dir in seen_dirs:
+                return
+            seen_dirs.add(resolved_dir)
+            try:
+                entries = sorted(directory.iterdir())
+            except OSError:
+                return
+            for entry in entries:
+                if directory == path and entry.name.startswith(".."):
+                    continue
+                resolved = entry.resolve()
+                if resolved.is_dir():
+                    if resolved == root or root in resolved.parents:
+                        yield from walk(entry)
+                elif resolved.is_file() and root in resolved.parents:
+                    yield entry
+
+        yield from walk(path)
 
 
 def _check_azure_identity_available() -> bool:
@@ -102,7 +134,7 @@ class NohikiBaseSettings(BaseSettings):
             init_settings,
             env_settings,
             dotenv_settings,
-            NestedSecretsSettingsSource(
+            _KubeletNestedSecretsSettingsSource(
                 file_secret_settings,
                 secrets_dir=secrets_dir,
                 secrets_nested_subdir=True,

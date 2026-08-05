@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Final
 
 from nohiki_ml_manifest import ManifestCache
 
-from health_check.config.paths import MANIFEST_PATH
+from health_check.config.paths import get_manifest_path
 from health_check.config.thresholds import HTTP_CHECK_TIMEOUT_SECONDS, QDRANT_PORT
 from health_check.core.base import HealthCheck
 from health_check.core.models import CheckCategory, CheckMetadata, CheckResult, CheckStatus
@@ -49,7 +49,7 @@ class _PopulationCheck(HealthCheck):
     sql: str
 
     async def execute(self, platform: Platform) -> CheckResult:
-        collection = ManifestCache.get(MANIFEST_PATH).get_collection_name(self.entity)
+        collection = ManifestCache.get(get_manifest_path()).get_collection_name(self.entity)
         (entities, db_error), (points, qdrant_error) = await asyncio.gather(
             _db_count(platform, self.sql), _point_count(platform, collection)
         )

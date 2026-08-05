@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import re
 import subprocess
@@ -36,6 +37,37 @@ from health_check.platform.models import PlatformTarget
 _REPO = Path(__file__).resolve().parents[4]
 _CONNECT_ROOT = _REPO / "infra" / "k8s" / "kafka-connect"
 _HELM_CHART = _REPO / "infra" / "k8s" / "helm"
+
+
+def test_paths_are_lazy_and_explicit_project_root_is_authoritative(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import nohiki_test_utils.paths as shared_paths
+    from health_check.config import paths
+
+    def reject_discovery() -> Path:
+        pytest.fail("explicit PROJECT_ROOT must not invoke monorepo discovery")
+
+    # This proves resolver behavior in an installed-image-shaped layout. It does not
+    # prove the health Dockerfile's COPY or ENV because CI has no health-image executor.
+    image_root = tmp_path / "app"
+    manifest = image_root / "data" / "config" / "semantic_representation_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}\n", encoding="utf-8")
+
+    with monkeypatch.context() as patch:
+        patch.delenv("PROJECT_ROOT", raising=False)
+        patch.setattr(shared_paths, "get_repo_root", reject_discovery)
+        reloaded_paths = importlib.reload(paths)
+        patch.setenv("PROJECT_ROOT", str(image_root))
+
+        assert reloaded_paths.get_project_root() == image_root
+        resolved_manifest = reloaded_paths.get_manifest_path()
+        assert resolved_manifest == manifest
+        assert resolved_manifest.read_text(encoding="utf-8") == "{}\n"
+
+    importlib.reload(paths)
 
 
 def _array_entries(script: str, variable: str) -> tuple[str, ...]:

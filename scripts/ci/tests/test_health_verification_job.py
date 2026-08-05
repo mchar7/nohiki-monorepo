@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from functools import cache
@@ -15,9 +16,20 @@ _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "verification" / "health"
 _RELEASE = _ROOT / "infra" / "k8s" / "gitops" / "verification" / "helmrelease.yaml"
 _LOCAL = _ROOT / "infra" / "k8s" / "gitops" / "clusters" / "local"
+_DOCKERFILE = _ROOT / "scripts" / "util" / "health_check" / "Dockerfile"
 _DIGEST_VALUES = _ROOT / "infra" / "k8s" / "gitops" / "platform" / "local" / "image-digests.values.yaml"
 _NAME = "nohiki-health-verification"
 _DIGEST = "sha256:" + "a" * 64
+_DEPENDENCY_MODULES = {
+    "user-pref-service": {"nohiki_kafka_client", "nohiki_db_utils"},
+    "job-ingest-enrichment-service": {"nohiki_kafka_client", "nohiki_llm_client"},
+    "job-correlation-evaluation-service": {"nohiki_kafka_client", "nohiki_qdrant_client"},
+    "ml-compute-service": {"nohiki_ml_core", "nohiki_kafka_client"},
+}
+_IMAGE_DIGESTS = {
+    "health-runner": _DIGEST,
+    **{service: f"sha256:{character * 64}" for service, character in zip(_DEPENDENCY_MODULES, "bcde", strict=True)},
+}
 _READ_ONLY_VERBS = {"get", "list", "watch"}
 _FORBIDDEN_RESOURCES = {"secrets", "pods/exec", "pods/portforward"}
 _MIGRATION_SERVICES = (
@@ -55,8 +67,8 @@ def _render() -> tuple[dict[str, Any], ...]:
             str(_CHART),
             "--namespace",
             "nohiki",
-            "--set-string",
-            f"global.imageDigests.health-runner={_DIGEST}",
+            "--set-json",
+            f"global.imageDigests={json.dumps(_IMAGE_DIGESTS)}",
         ],
         cwd=_ROOT,
         check=True,
@@ -214,6 +226,31 @@ def test_health_image_is_inventory_owned_and_digest_rendered() -> None:
         assert re.fullmatch(r"sha256:[0-9a-f]{64}", committed_digests["health-runner"])
 
 
+def test_service_dependency_init_containers_use_workload_digests_and_fail_closed_evidence() -> None:
+    pod = _job()["spec"]["template"]["spec"]
+    init_containers = pod["initContainers"]
+    assert len(init_containers) == len(_DEPENDENCY_MODULES)
+    for container in init_containers:
+        service = container["name"].removeprefix("dependency-") + "-service"
+        assert service in _DEPENDENCY_MODULES
+        repository = f"localhost:5000/{service}"
+        assert container["image"] == f"{repository}:immutable@{_IMAGE_DIGESTS[service]}"
+        assert container["command"] == ["python", "-c"]
+        assert len(container["args"]) == 1
+        script = container["args"][0]
+        assert set(re.findall(r'"(nohiki_[a-z0-9_]+)"', script)) == _DEPENDENCY_MODULES[service]
+        assert f'{service}.json"' in script
+        assert "find_spec(module) is not None" in script
+        assert container["volumeMounts"] == [{"name": "evidence", "mountPath": "/evidence"}]
+        assert container["securityContext"] == {
+            "allowPrivilegeEscalation": False,
+            "readOnlyRootFilesystem": True,
+            "capabilities": {"drop": ["ALL"]},
+        }
+
+    assert {"name": "evidence", "emptyDir": {}} in pod["volumes"]
+
+
 def test_health_chart_rejects_missing_or_invalid_image_digest() -> None:
     missing = subprocess.run(
         ["helm", "template", _NAME, str(_CHART), "--namespace", "nohiki"],
@@ -268,6 +305,7 @@ def test_health_job_uses_cluster_dns_and_explicit_observability_inputs() -> None
     assert literal_env == {
         "K8S_NAMESPACE": "nohiki",
         "K8S_LOCAL_MODE": "false",
+        "K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": "/evidence/service-dependencies",
         "E2E_BASE_URL": "http://bff-service:8000",
         "KAFKA_BOOTSTRAP_SERVERS": "nohiki-kafka-bootstrap:9092",
         "VALKEY_URL": "redis://valkey:6379",

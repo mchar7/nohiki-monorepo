@@ -13,7 +13,7 @@ from typing import Final
 from urllib.parse import quote
 
 from health_check.config.kafka import connector_names_for
-from health_check.config.paths import COMPOSE_DIR
+from health_check.config.paths import get_compose_dir
 from health_check.platform.models import PlatformTarget, ServiceInfo, ServiceStatus
 from health_check.platform.runtime import ContainerRuntime, detect_container_runtime
 
@@ -40,7 +40,7 @@ def _run_cmd(
             check=False,
             capture_output=True,
             text=True,
-            cwd=cwd or COMPOSE_DIR,
+            cwd=cwd or get_compose_dir(),
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
@@ -247,7 +247,7 @@ class ComposePlatform:
     ) -> None:
         """Initialise the Compose platform with an optional runtime override."""
         self._runtime: ContainerRuntime = runtime or detect_container_runtime()
-        self._compose_dir: Path = compose_dir or COMPOSE_DIR
+        self._compose_dir: Path = compose_dir or get_compose_dir()
         self._compose_file: Path = self._compose_dir / compose_file
         self._container_names: dict[str, str] = {}
 

@@ -1,6 +1,12 @@
 {{- $migrationInventory := .Files.Get "files/migration-heads.json" | fromJson -}}
 {{- $digest := required "global.imageDigests.health-runner is required" (index .Values.global.imageDigests "health-runner") -}}
 {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) -}}{{ fail "health-runner digest must be sha256" }}{{- end }}
+{{- $dependencyImages := list
+      (dict "service" "user-pref-service" "modules" (list "nohiki_kafka_client" "nohiki_db_utils"))
+      (dict "service" "job-ingest-enrichment-service" "modules" (list "nohiki_kafka_client" "nohiki_llm_client"))
+      (dict "service" "job-correlation-evaluation-service" "modules" (list "nohiki_kafka_client" "nohiki_qdrant_client"))
+      (dict "service" "ml-compute-service" "modules" (list "nohiki_ml_core" "nohiki_kafka_client"))
+-}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -27,6 +33,39 @@ spec:
         runAsGroup: 65532
         fsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
+      initContainers:
+{{- range $entry := $dependencyImages }}
+{{- $dependencyRepository := printf "%s/%s" (trimSuffix "/" $.Values.global.nohikiImage.registry) $entry.service }}
+{{- $dependencyDigest := required (printf "global.imageDigests.%s is required" $entry.service) (index $.Values.global.imageDigests $entry.service) }}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $dependencyDigest) }}{{ fail (printf "global.imageDigests.%s must be sha256" $entry.service) }}{{- end }}
+        - name: {{ printf "dependency-%s" ($entry.service | trimSuffix "-service") }}
+          image: {{ printf "%s:%s@%s" $dependencyRepository $.Values.global.imageTag $dependencyDigest | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import importlib.util
+              import json
+              from pathlib import Path
+
+              modules = {{ $entry.modules | toJson }}
+              evidence = {module: importlib.util.find_spec(module) is not None for module in modules}
+              directory = Path("/evidence/service-dependencies")
+              directory.mkdir(mode=0o700, exist_ok=True)
+              directory.joinpath({{ printf "%s.json" $entry.service | quote }}).write_text(
+                  json.dumps(evidence, sort_keys=True), encoding="utf-8"
+              )
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - {name: evidence, mountPath: /evidence}
+{{- end }}
       containers:
         - name: health
           image: {{ printf "%s/health-runner:%s@%s" .Values.global.nohikiImage.registry .Values.global.imageTag $digest | quote }}
@@ -42,6 +81,7 @@ spec:
           env:
             - {name: K8S_NAMESPACE, value: {{ .Release.Namespace | quote }}}
             - {name: K8S_LOCAL_MODE, value: "false"}
+            - {name: K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR, value: "/evidence/service-dependencies"}
 {{- range $entry := $migrationInventory.entries }}
             - name: {{ printf "MIGRATION_DATABASE_URL_%s" ($entry.service | upper | replace "-" "_") }}
               valueFrom:

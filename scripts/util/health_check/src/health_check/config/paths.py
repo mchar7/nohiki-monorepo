@@ -1,23 +1,25 @@
-"""Portable path resolution for the health check module.
-
-All paths are resolved relative to the monorepo root, located via
-``nohiki_test_utils.paths.get_repo_root()``. This function checks the
-``PROJECT_ROOT`` environment variable first, then walks up the directory tree
-looking for a root ``pyproject.toml`` with ``[tool.uv.workspace]``, making
-path resolution work on any developer's machine without hardcoding.
-"""
+"""Lazy, portable path resolution for the health check module."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Final
 
-from nohiki_test_utils.paths import get_repo_root
+from nohiki_test_utils.paths import get_repo_root as _discover_repo_root
 
-REPO_ROOT: Final[Path] = get_repo_root()
 
-COMPOSE_DIR: Final[Path] = REPO_ROOT / "infra" / "compose"
+def get_project_root() -> Path:
+    """Return the explicitly configured project root or discover the monorepo."""
+    if root := os.environ.get("PROJECT_ROOT"):
+        return Path(root)
+    return _discover_repo_root()
 
-CONNECTOR_CONFIG_DIR: Final[Path] = REPO_ROOT / "infra" / "kafka-connect" / "connectors"
 
-MANIFEST_PATH: Final[Path] = REPO_ROOT / "data" / "config" / "semantic_representation_manifest.json"
+def get_compose_dir() -> Path:
+    """Return the directory containing the Compose deployment."""
+    return get_project_root() / "infra" / "compose"
+
+
+def get_manifest_path() -> Path:
+    """Return the semantic representation manifest path."""
+    return get_project_root() / "data" / "config" / "semantic_representation_manifest.json"

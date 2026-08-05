@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final, TypedDict, cast
 from urllib.parse import quote, urlsplit
 
@@ -213,6 +215,50 @@ K8S_HOST_INFRA: Final[frozenset[str]] = frozenset(
         "traefik",
     }
 )
+
+_SERVICE_DEPENDENCY_EVIDENCE_ENV: Final = "K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR"
+_SERVICE_DEPENDENCY_MODULES: Final[dict[str, frozenset[str]]] = {
+    "user-pref-service": frozenset({"nohiki_kafka_client", "nohiki_db_utils"}),
+    "job-ingest-enrichment-service": frozenset({"nohiki_kafka_client", "nohiki_llm_client"}),
+    "job-correlation-evaluation-service": frozenset({"nohiki_kafka_client", "nohiki_qdrant_client"}),
+    "ml-compute-service": frozenset({"nohiki_ml_core", "nohiki_kafka_client"}),
+}
+_FIND_SPEC_MODULE: Final = re.compile(r"\.find_spec\('([a-z0-9_]+)'\)")
+
+
+def _service_dependency_evidence(
+    canonical_name: str,
+    command: list[str],
+) -> tuple[int, str, str] | None:
+    if canonical_name not in _SERVICE_DEPENDENCY_MODULES or command[:2] != ["python", "-c"] or len(command) != 3:
+        return None
+    modules = tuple(_FIND_SPEC_MODULE.findall(command[2]))
+    expected_modules = _SERVICE_DEPENDENCY_MODULES[canonical_name]
+    evidence_directory = os.getenv(_SERVICE_DEPENDENCY_EVIDENCE_ENV)
+    precondition_error = ""
+    if not modules:
+        precondition_error = "service dependency probe did not name any modules"
+    elif not set(modules) <= expected_modules:
+        precondition_error = f"service dependency probe is invalid: {canonical_name}"
+    elif not evidence_directory or not Path(evidence_directory).is_absolute():
+        precondition_error = "service dependency evidence directory is unavailable"
+    if precondition_error:
+        return 2, "", precondition_error
+    evidence_path = Path(cast("str", evidence_directory), f"{canonical_name}.json")
+    try:
+        document = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except OSError, json.JSONDecodeError:
+        return 2, "", f"service dependency evidence is missing or malformed: {canonical_name}"
+    if (
+        not isinstance(document, dict)
+        or set(document) != expected_modules
+        or not all(isinstance(value, bool) for value in document.values())
+    ):
+        return 2, "", f"service dependency evidence is incomplete or malformed: {canonical_name}"
+    missing = [module for module in modules if document[module] is not True]
+    if missing:
+        return 1, "", f"service image is missing dependencies: {', '.join(missing)}"
+    return 0, "service image dependencies verified", ""
 
 
 def _get_waiting_reason(cs: _ContainerStatus) -> str | None:
@@ -435,6 +481,8 @@ class KubernetesPlatform:
         timeout: int = 30,
     ) -> tuple[int, str, str]:
         """Use read-only direct clients in the verification Job; retain admin access elsewhere."""
+        if not self._local_mode and (evidence := _service_dependency_evidence(canonical_name, command)) is not None:
+            return evidence
         if self._uses_cluster_database():
             if canonical_name == "postgres" and command and command[0] == "pg_isready":
                 code, _, stderr = psql("SELECT 1")

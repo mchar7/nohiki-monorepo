@@ -37,6 +37,7 @@ def _make_suite(
     *,
     platform: PlatformTarget = PlatformTarget.COMPOSE,
     duration_ms: float = 250.0,
+    unexercised_ids: tuple[str, ...] = (),
 ) -> CheckSuiteResult:
     """Build a CheckSuiteResult with the given statuses."""
     resolved = statuses or [CheckStatus.PASSED]
@@ -45,6 +46,7 @@ def _make_suite(
         results=results,
         total_duration_ms=duration_ms,
         platform=platform,
+        unexercised_ids=unexercised_ids,
     )
 
 
@@ -203,6 +205,21 @@ class TestDisplaySuiteResults:
         output = buf.getvalue()
         assert "ISSUES" in output or "failed" in output.lower()
 
+    def test_unexercised_capability_renders_incomplete_coverage(self) -> None:
+        from health_check.cli.display import display_suite_results
+
+        suite = _make_suite(
+            platform=PlatformTarget.KUBERNETES,
+            unexercised_ids=("cdc_end_to_end",),
+        )
+        buf = io.StringIO()
+        display_suite_results(suite, Console(file=buf, no_color=True, markup=False))
+
+        output = buf.getvalue()
+        assert "INCOMPLETE COVERAGE" in output
+        assert "cdc_end_to_end" in output
+        assert "SYSTEMS OPERATIONAL" not in output
+
     def test_verbose_includes_detail_lines(self) -> None:
         from health_check.cli.display import display_suite_results
 
@@ -272,6 +289,30 @@ class TestDisplayJson:
         data = json.loads(buf.getvalue().strip())
         assert data["platform"] == "kubernetes"
 
+    def test_json_surfaces_unexercised_capability_in_denominator(self) -> None:
+        import json
+
+        from health_check.cli.display import display_json
+
+        suite = _make_suite(
+            platform=PlatformTarget.KUBERNETES,
+            unexercised_ids=("cdc_end_to_end",),
+        )
+        buf = io.StringIO()
+        display_json(suite, Console(file=buf, no_color=True, markup=False, highlight=False))
+        data = json.loads(buf.getvalue().strip())
+
+        assert data["passed"] is False
+        assert data["complete"] is False
+        assert data["summary"] == {
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "unexercised": 1,
+            "total": 2,
+        }
+        assert data["unexercised_ids"] == ["cdc_end_to_end"]
+
 
 class TestDisplaySuiteResultsBoring:
     def test_renders_pass_summary(self) -> None:
@@ -333,6 +374,21 @@ class TestDisplaySuiteResultsBoring:
 
         suite = _make_suite([CheckStatus.PASSED, CheckStatus.FAILED, CheckStatus.SKIPPED])
         display_suite_results_boring(suite)
+
+    def test_incomplete_summary_names_unexercised_capability(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from health_check.cli.display import display_suite_results_boring
+
+        suite = _make_suite(
+            platform=PlatformTarget.KUBERNETES,
+            unexercised_ids=("cdc_end_to_end",),
+        )
+        display_suite_results_boring(suite)
+
+        output = capsys.readouterr().out
+        assert "INCOMPLETE" in output
+        assert "1/2 passed" in output
+        assert "cdc_end_to_end" in output
+        assert "ALL PASSED" not in output
 
 
 class TestMakeLiveCallback:
@@ -533,7 +589,7 @@ def _patched_init_run(
 
     return mock.patch.multiple(
         "health_check.cli.commands.run",
-        _init_run=mock.MagicMock(return_value=(platform, checks)),
+        _init_run=mock.MagicMock(return_value=(platform, checks, ())),
         _run_suite=_fake_run_suite,
     )
 
@@ -548,9 +604,10 @@ class TestInitRunFunction:
         mock_platform = mock.MagicMock()
         mock_platform.target = PlatformTarget.COMPOSE
         with mock.patch("health_check.cli.commands.run.get_platform", return_value=mock_platform):
-            platform, checks = _init_run("compose", None, None, None)
+            platform, checks, unexercised_ids = _init_run("compose", None, None, None)
         assert platform is mock_platform
         assert isinstance(checks, list)
+        assert not unexercised_ids
 
     def test_category_filter_propagated(self) -> None:
         from health_check.cli.commands.run import _init_run
@@ -559,7 +616,7 @@ class TestInitRunFunction:
         mock_platform = mock.MagicMock()
         mock_platform.target = PlatformTarget.COMPOSE
         with mock.patch("health_check.cli.commands.run.get_platform", return_value=mock_platform):
-            _, checks = _init_run("compose", ["infrastructure"], None, None)
+            _, checks, _ = _init_run("compose", ["infrastructure"], None, None)
         for check in checks:
             assert check.metadata.category.value == "infrastructure"
 
@@ -570,9 +627,21 @@ class TestInitRunFunction:
         mock_platform = mock.MagicMock()
         mock_platform.target = PlatformTarget.COMPOSE
         with mock.patch("health_check.cli.commands.run.get_platform", return_value=mock_platform):
-            _, checks = _init_run("compose", None, None, ["postgres_connectivity"])
+            _, checks, _ = _init_run("compose", None, None, ["postgres_connectivity"])
         ids = [c.metadata.check_id for c in checks]
         assert "postgres_connectivity" not in ids
+
+    def test_full_kubernetes_run_surfaces_inapplicable_capabilities(self) -> None:
+        from health_check.cli.commands.run import _init_run
+        from health_check.platform.models import PlatformTarget
+
+        mock_platform = mock.MagicMock()
+        mock_platform.target = PlatformTarget.KUBERNETES
+        with mock.patch("health_check.cli.commands.run.get_platform", return_value=mock_platform):
+            _, checks, unexercised_ids = _init_run("k8s", None, None, None)
+
+        assert unexercised_ids == ("cdc_end_to_end",)
+        assert "cdc_end_to_end" not in {check.metadata.check_id for check in checks}
 
     def test_invalid_category_raises_value_error(self) -> None:
         from health_check.cli.commands.run import _init_run
@@ -601,6 +670,24 @@ class TestRunSuiteFunction:
         assert suite.platform == PlatformTarget.COMPOSE
         assert suite.passed is True
 
+    async def test_unexercised_capability_makes_suite_incomplete(self) -> None:
+        from health_check.cli.commands.run import _run_suite
+        from health_check.platform.models import PlatformTarget
+
+        mock_platform = mock.MagicMock()
+        mock_platform.target = PlatformTarget.KUBERNETES
+        console = Console(file=io.StringIO(), no_color=True)
+        suite = await _run_suite(
+            [],
+            mock_platform,
+            console,
+            show_progress=False,
+            unexercised_ids=("cdc_end_to_end",),
+        )
+
+        assert suite.complete is False
+        assert suite.passed is False
+
     async def test_with_progress_path(self) -> None:
         from health_check.cli.commands.run import _run_suite
         from health_check.platform.models import PlatformTarget
@@ -625,6 +712,16 @@ class TestRunCommand:
             result = _runner.invoke(app, ["run", "--no-progress", "--output-mode", "boring"])
         assert result.exit_code == 1
 
+    def test_exits_1_when_designed_capability_is_unexercised(self) -> None:
+        suite = _make_suite(
+            [CheckStatus.PASSED],
+            platform=PlatformTarget.KUBERNETES,
+            unexercised_ids=("cdc_end_to_end",),
+        )
+        with _patched_init_run(suite):
+            result = _runner.invoke(app, ["run", "--no-progress", "--output-mode", "boring"])
+        assert result.exit_code == 1
+
     def test_json_flag(self) -> None:
         suite = _make_suite([CheckStatus.PASSED])
         with _patched_init_run(suite):
@@ -642,10 +739,23 @@ class TestRunCommand:
         platform.target = PlatformTarget.COMPOSE
         with mock.patch.multiple(
             "health_check.cli.commands.run",
-            _init_run=mock.MagicMock(return_value=(platform, [])),
+            _init_run=mock.MagicMock(return_value=(platform, [], ())),
         ):
             result = _runner.invoke(app, ["run", "--output-mode", "boring"])
         assert result.exit_code == 0
+
+    def test_no_checks_exits_1_when_capabilities_remain_unexercised(self) -> None:
+        platform = mock.MagicMock()
+        platform.target = PlatformTarget.KUBERNETES
+        with mock.patch.multiple(
+            "health_check.cli.commands.run",
+            _init_run=mock.MagicMock(return_value=(platform, [], ("unprobed_check",))),
+        ):
+            result = _runner.invoke(app, ["run", "--no-progress", "--output-mode", "boring"])
+
+        assert result.exit_code == 1
+        assert "SUMMARY: INCOMPLETE" in result.output
+        assert "unprobed_check" in result.output
 
     def test_init_run_error_exits_2(self) -> None:
         with mock.patch(
@@ -669,7 +779,7 @@ class TestRunCommand:
         checks = [mock.MagicMock()]
         with mock.patch.multiple(
             "health_check.cli.commands.run",
-            _init_run=mock.MagicMock(return_value=(mock_platform, checks)),
+            _init_run=mock.MagicMock(return_value=(mock_platform, checks, ())),
             _run_suite=mock.AsyncMock(side_effect=DependencyCycleError("cycle detected")),
         ):
             result = _runner.invoke(app, ["run", "--no-progress", "--output-mode", "boring"])
