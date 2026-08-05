@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Annotated
 
 import typer
@@ -75,7 +76,7 @@ def _init_run(
     categories: list[str] | None,
     check_ids: list[str] | None,
     excluded_ids: list[str] | None,
-) -> tuple[Platform, list[HealthCheck]]:
+) -> tuple[Platform, list[HealthCheck], tuple[str, ...]]:
     """Initialise the platform and resolve the filtered check list.
 
     Deliberately does not handle ``typer.Exit`` -- the caller is responsible for
@@ -88,7 +89,7 @@ def _init_run(
         excluded_ids: Optional denylist of check IDs.
 
     Returns:
-        Tuple of (resolved platform, filtered check list).
+        Tuple of (resolved platform, filtered check list, unexercised capability IDs).
 
     Raises:
         ValueError: If any category string is invalid.
@@ -98,6 +99,7 @@ def _init_run(
     registry = CheckRegistry()
     registry.discover()
     requested_ids = frozenset(check_ids) if check_ids else None
+    unexercised_ids: tuple[str, ...] = ()
     if (
         platform.target is PlatformTarget.KUBERNETES
         and categories is None
@@ -105,6 +107,7 @@ def _init_run(
         and not excluded_ids
     ):
         checks = registry.get_k3s_checks()
+        unexercised_ids = tuple(sorted(registry.inventory().inapplicable_ids))
     else:
         checks = registry.get_checks(
             platform=platform.target,
@@ -112,7 +115,7 @@ def _init_run(
             check_ids=requested_ids,
             excluded_ids=frozenset(excluded_ids) if excluded_ids else frozenset(),
         )
-    return platform, checks
+    return platform, checks, unexercised_ids
 
 
 def _validate_repair_request(
@@ -142,6 +145,7 @@ async def _run_suite(
     *,
     show_progress: bool,
     repair_check_ids: frozenset[str] = frozenset(),
+    unexercised_ids: tuple[str, ...] = (),
 ) -> CheckSuiteResult:
     """Execute the check suite, optionally with a live progress bar.
 
@@ -153,6 +157,7 @@ async def _run_suite(
         console: Rich console for progress output.
         show_progress: If True, display an animated progress bar.
         repair_check_ids: Explicitly selected checks eligible for repair.
+        unexercised_ids: Designed target capabilities omitted from execution.
 
     Returns:
         Completed ``CheckSuiteResult``.
@@ -167,9 +172,10 @@ async def _run_suite(
                 on_check_complete=make_live_callback(progress, task_id),
                 repair_check_ids=repair_check_ids,
             )
-            return await runner.run()
-
-    return await CheckRunner(checks, platform, repair_check_ids=repair_check_ids).run()
+            suite = await runner.run()
+    else:
+        suite = await CheckRunner(checks, platform, repair_check_ids=repair_check_ids).run()
+    return replace(suite, unexercised_ids=unexercised_ids)
 
 
 def _resolve_output_mode(output_mode: OutputMode | None) -> OutputMode:
@@ -244,7 +250,7 @@ def run_command(
     console = Console(stderr=quiet)
 
     try:
-        platform, checks = _init_run(target, categories, check_ids, excluded_ids)
+        platform, checks, unexercised_ids = _init_run(target, categories, check_ids, excluded_ids)
     except (ValueError, HealthCheckError) as exc:
         _emit_error(f"Initialisation error: {exc}", mode, console)
         raise typer.Exit(_EXIT_ERROR) from exc
@@ -267,6 +273,7 @@ def run_command(
                 console,
                 show_progress=not no_progress and not quiet and mode == OutputMode.RICH,
                 repair_check_ids=validated_repairs,
+                unexercised_ids=unexercised_ids,
             )
         )
     except (DependencyCycleError, HealthCheckError) as exc:

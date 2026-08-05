@@ -161,20 +161,33 @@ class CheckSuiteResult:
     """Aggregate result of a complete health check suite run.
 
     Attributes:
-        results: All check results in execution order.
+        results: All executed check results in execution order.
         total_duration_ms: Wall-clock time for the entire suite.
         platform: Deployment target that was checked.
+        unexercised_ids: Designed capabilities excluded by the target inventory.
+
     """
 
     results: tuple[CheckResult, ...]
     total_duration_ms: float
     platform: PlatformTarget
     remediations: tuple[RemediationResult, ...] = field(default_factory=tuple)
+    unexercised_ids: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def passed(self) -> bool:
-        """Return True when no checks failed or errored."""
-        return all(r.passed or r.status == CheckStatus.SKIPPED for r in self.results)
+        """Return True only when the complete target inventory has no failures."""
+        return not self.unexercised_ids and all(r.passed or r.status == CheckStatus.SKIPPED for r in self.results)
+
+    @property
+    def complete(self) -> bool:
+        """Return True when every designed target capability was exercised."""
+        return not self.unexercised_ids
+
+    @property
+    def total_count(self) -> int:
+        """Count executed checks and explicitly unexercised capabilities."""
+        return len(self.results) + len(self.unexercised_ids)
 
     @property
     def passed_count(self) -> int:
