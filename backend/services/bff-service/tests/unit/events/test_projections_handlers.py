@@ -30,6 +30,7 @@ from bff_service.events.projections.user_auth import (
     handle_account_updated,
 )
 from bff_service.events.projections.user_pref import (
+    handle_pref_enrichment_failed,
     handle_profile_created,
     handle_profile_deleted,
     handle_profile_updated,
@@ -40,6 +41,7 @@ from bff_service.events.projections.user_upload import (
     handle_attachment_created,
     handle_attachment_deleted,
 )
+from bff_service.sse.events import CommandStatusPayload, DocumentStatusPayload
 from nohiki.common.v1 import (
     CommutePreferences,
     CurrencyCode,
@@ -109,17 +111,24 @@ def _make_context(*, db_session: AsyncMock | None = None) -> MessageContext:
     )
 
 
-def _assert_command_marked_completed(mock_session: AsyncMock, request_id: uuid.UUID) -> None:
-    """Assert a correlated CDC event transitions only its pending command row."""
+def _assert_command_marked_completed(
+    mock_session: AsyncMock,
+    request_id: uuid.UUID,
+    active_statuses: str | list[str] = "pending",
+    user_id: uuid.UUID | None = None,
+) -> None:
+    """Assert a correlated CDC event transitions only an active command row."""
     assert mock_session.execute.await_count == 2
     statement = mock_session.execute.await_args_list[1].args[0]
     compiled = statement.compile(compile_kwargs={"literal_binds": False})
     sql = str(compiled).lower()
     assert "command_requests" in sql
     assert "status" in sql
-    assert "pending" in compiled.params.values()
+    assert active_statuses in compiled.params.values()
     assert "completed" in compiled.params.values()
     assert request_id in compiled.params.values()
+    if user_id is not None:
+        assert user_id in compiled.params.values()
 
 
 @pytest.mark.asyncio
@@ -454,6 +463,7 @@ async def test_handle_profile_created(experience_years: int) -> None:
     """Created projections preserve exact experience years under API field names."""
     pref_id = uuid.uuid4()
     user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
 
     snapshot = SearchPrefSnapshot()
     snapshot.id = str(pref_id)
@@ -466,13 +476,17 @@ async def test_handle_profile_created(experience_years: int) -> None:
     event = PrefCreated()
     event.pref_id = str(pref_id)
     event.pref_snapshot = snapshot
+    event.user_id = str(user_id)
+    event.metadata = MagicMock(correlation_id=str(request_id))
 
     mock_session = create_mock_session()
     ctx = _make_context(db_session=mock_session)
 
     await handle_profile_created(event, ctx)
 
-    statement = mock_session.execute.await_args.args[0]
+    _assert_command_marked_completed(mock_session, request_id, ["pending", "in_progress"], user_id)
+    mock_session.commit.assert_not_awaited()
+    statement = mock_session.execute.await_args_list[0].args[0]
     assert {
         "experience_years": experience_years,
         "seniority_levels": [],
@@ -485,6 +499,7 @@ async def test_handle_profile_updated(experience_years: int) -> None:
     """Updated projections preserve exact experience years under API field names."""
     pref_id = uuid.uuid4()
     user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
 
     snapshot = SearchPrefSnapshot()
     snapshot.id = str(pref_id)
@@ -497,17 +512,85 @@ async def test_handle_profile_updated(experience_years: int) -> None:
     event = PrefUpdated()
     event.pref_id = str(pref_id)
     event.pref_snapshot = snapshot
+    event.user_id = str(user_id)
+    event.metadata = MagicMock(correlation_id=str(request_id))
 
     mock_session = create_mock_session()
     ctx = _make_context(db_session=mock_session)
 
     await handle_profile_updated(event, ctx)
 
-    statement = mock_session.execute.await_args.args[0]
+    _assert_command_marked_completed(mock_session, request_id, ["pending", "in_progress"], user_id)
+    mock_session.commit.assert_not_awaited()
+    statement = mock_session.execute.await_args_list[0].args[0]
     assert {
         "experience_years": experience_years,
         "seniority_levels": [],
     } in statement.compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_pref_enrichment_failure_updates_only_active_command_and_emits_status() -> None:
+    """A matched failure becomes terminal and is visible on the existing SSE channel."""
+    request_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    event = MagicMock(
+        request_id=str(request_id),
+        user_id=str(user_id),
+        error_message="Embedding service unavailable",
+    )
+    result = MagicMock()
+    result.one_or_none.return_value = (user_id, "create_profile")
+    session = create_mock_session()
+    session.execute.return_value = result
+    bridge = MagicMock()
+    bridge.publish = AsyncMock()
+
+    with patch("bff_service.events.projections.user_pref.get_sse_bridge", return_value=bridge):
+        await handle_pref_enrichment_failed(event, _make_context(db_session=session))
+
+    statement = session.execute.await_args.args[0]
+    params = statement.compile().params.values()
+    assert request_id in params
+    assert user_id in params
+    assert ["pending", "in_progress"] in params
+    assert "failed" in params
+    assert "Embedding service unavailable" in params
+    assert any(isinstance(value, datetime) for value in params)
+    session.commit.assert_not_awaited()
+    bridge.publish.assert_awaited_once()
+    assert bridge.publish.await_args is not None
+    published_user_id, payload = bridge.publish.await_args.args
+    assert published_user_id == user_id
+    assert isinstance(payload, CommandStatusPayload)
+    assert not isinstance(payload, DocumentStatusPayload)
+    assert payload.request_id == str(request_id)
+    assert payload.type == "command_status"
+    assert payload.command_type == "create_profile"
+    assert payload.status == "failed"
+    assert payload.error_message == "Embedding service unavailable"
+
+
+@pytest.mark.asyncio
+async def test_pref_enrichment_failure_without_active_command_emits_no_status() -> None:
+    """Completed, failed, missing, and mismatched rows do not produce a new status event."""
+    event = MagicMock(
+        request_id=str(uuid.uuid4()),
+        user_id=str(uuid.uuid4()),
+        error_message="Late failure",
+    )
+    result = MagicMock()
+    result.one_or_none.return_value = None
+    session = create_mock_session()
+    session.execute.return_value = result
+    bridge = MagicMock()
+    bridge.publish = AsyncMock()
+
+    with patch("bff_service.events.projections.user_pref.get_sse_bridge", return_value=bridge):
+        await handle_pref_enrichment_failed(event, _make_context(db_session=session))
+
+    session.commit.assert_not_awaited()
+    bridge.publish.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

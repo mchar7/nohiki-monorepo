@@ -4,7 +4,9 @@ from uuid import UUID
 
 import pytest
 from bff_service.sse.events import (
+    SSE_EVENT_COMMAND_STATUS,
     SSE_EVENT_DOCUMENT_STATUS,
+    CommandStatusPayload,
     DocumentStatusPayload,
     build_stream_name,
 )
@@ -30,6 +32,25 @@ def test_to_sse_data_returns_valid_json_with_all_fields() -> None:
     assert parsed["file_size"] == 1024
     assert parsed["content_hash"] == "deadbeef"
     assert parsed["error_message"] is None
+
+
+def test_command_status_payload_has_distinct_contract() -> None:
+    payload = CommandStatusPayload(
+        type=SSE_EVENT_COMMAND_STATUS,
+        request_id="command-123",
+        command_type="update_profile",
+        status="failed",
+        error_message="Enrichment failed",
+    )
+
+    assert json.loads(payload.to_sse_data()) == {
+        "type": "command_status",
+        "request_id": "command-123",
+        "status": "failed",
+        "command_type": "update_profile",
+        "error_message": "Enrichment failed",
+    }
+    assert not isinstance(payload, DocumentStatusPayload)
 
 
 def test_build_stream_name_scopes_user_and_request() -> None:
@@ -64,5 +85,6 @@ def test_none_optional_fields_are_serialized() -> None:
     assert parsed["error_message"] == "LLM timeout"
 
 
-def test_sse_event_constant_value() -> None:
+def test_sse_event_constant_values() -> None:
     assert SSE_EVENT_DOCUMENT_STATUS == "document_status"
+    assert SSE_EVENT_COMMAND_STATUS == "command_status"

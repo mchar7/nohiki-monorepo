@@ -95,6 +95,14 @@ message SearchPrefSnapshot {
   repeated nohiki.ml.v1.EmbeddingVector query_retrieval_embeddings = 85 [
     (buf.validate.field).repeated = {max_items: 4}
   ];
+  // Projection identity for generation-safe asynchronous index updates.
+  uint64 semantic_content_generation = 86;
+  string semantic_content_hash = 87 [
+    (buf.validate.field).string = {max_len: 64, pattern: "^[a-f0-9]*$"}
+  ];
+  string collection_version = 88 [
+    (buf.validate.field).string = {max_len: 10, pattern: "^(v[0-9]+)?$"}
+  ];
 
   // Status
   bool is_active = 50;

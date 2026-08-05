@@ -9,11 +9,12 @@ Field names align with SearchPrefSnapshot proto from nohiki.user.pref.v1.
 from __future__ import annotations
 
 import uuid
+from enum import StrEnum
 from typing import Any
 
 import sqlalchemy as sa
 from nohiki.common.v1 import JobBoardSource, SeniorityLevel, WorkArrangement
-from nohiki_db_utils import BaseEntity
+from nohiki_db_utils import BaseEntity, SagaBaseMixin
 from nohiki_db_utils.db_mixins import RepresentableMixin
 from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy import Enum as SQLEnum
@@ -127,11 +128,87 @@ class SearchPref(BaseEntity, Base):
     semantic_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     collection_version: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
-    is_enrichment_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sa.text("false"))
+    enrichment_terminal_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     attachments: Mapped[list[SearchPrefUpload]] = relationship(
         "SearchPrefUpload", back_populates="search_pref", cascade="all, delete-orphan"
     )
+
+
+class PrefEnrichmentAction(StrEnum):
+    """Lifecycle fact emitted when preference enrichment completes."""
+
+    CREATE = "CREATE"
+    UPDATE = "UPDATE"
+
+
+class PrefEnrichmentSaga(SagaBaseMixin, Base):
+    """Durable callback and retry state for preference enrichment."""
+
+    __tablename__ = "pref_enrichment_saga"
+    __table_args__ = (
+        sa.Index("ix_pref_enrichment_saga_pref_id", "pref_id"),
+        sa.Index(
+            "uq_pref_enrichment_saga_pending_pref",
+            "pref_id",
+            unique=True,
+            postgresql_where=sa.text("status = 'PENDING'"),
+        ),
+        sa.Index(
+            "ix_pref_enrichment_saga_status_pending",
+            "status",
+            postgresql_where=sa.text("status = 'PENDING'"),
+        ),
+        sa.Index(
+            "ix_pref_enrichment_saga_expires",
+            "expires_at",
+            postgresql_where=sa.text("status = 'PENDING'"),
+        ),
+        sa.CheckConstraint(
+            "status IN ('PENDING','COMPLETED','FAILED','EXPIRED','CANCELLED')",
+            name="pref_enrichment_saga_status_check",
+        ),
+        sa.CheckConstraint(
+            "action IN ('CREATE','UPDATE')",
+            name="pref_enrichment_saga_action_check",
+        ),
+        sa.CheckConstraint("attempts_remaining >= 0", name="pref_enrichment_saga_attempts_nonnegative"),
+        {"schema": SCHEMA_NAME},
+    )
+
+    pref_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(),
+        ForeignKey(f"{SCHEMA_NAME}.search_prefs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(), nullable=False)
+    request_id: Mapped[uuid.UUID] = mapped_column(UUID(), nullable=False, unique=True)
+    action: Mapped[PrefEnrichmentAction] = mapped_column(
+        SQLEnum(
+            PrefEnrichmentAction,
+            native_enum=False,
+            create_type=False,
+            values_callable=lambda enum: [value.value for value in enum],
+            length=16,
+            validate_strings=True,
+        ),
+        nullable=False,
+    )
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    raw_skills: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=SQL_EMPTY_JSONB_ARRAY)
+    last_dispatch_ids: Mapped[dict[str, str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=sa.text("'{}'::jsonb"),
+    )
+    skills_persisted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sa.text("false"))
+    embedding_persisted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sa.text("false"))
+    semantic_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    semantic_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempts_remaining: Mapped[int] = mapped_column(Integer, nullable=False)
+    failed_step: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
 
 class SearchPrefUpload(RepresentableMixin, Base):

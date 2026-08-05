@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from nohiki.ml.v1 import EntityType
 from nohiki.user.pref.v1 import (
     PrefAttachUploadRequested,
     PrefCreateRequested,
@@ -15,51 +14,28 @@ from nohiki.user.pref.v1 import (
     UserPrefSettingsUpdateRequested,
 )
 from nohiki_fastapi_utils.errors import NotFoundError
-from nohiki_kafka_client import CommandContext, MessageContext, Topics
+from nohiki_kafka_client import MessageContext, Topics
 from nohiki_observability import get_logger
 
-from user_pref_service.core.config import get_manifest, get_settings
-from user_pref_service.core.embedding import (
-    PREF_EMBEDDING_SPEC,
-    PrefEmbeddingState,
-    build_profile_embedding_text,
-    get_embedding_publisher,
-    profile_embedding_content_hash,
-)
+from user_pref_service.core.config import get_settings
+from user_pref_service.core.embedding import build_profile_embedding_text
 from user_pref_service.core.kafka import kafka_client
-from user_pref_service.db.models import SearchPref
+from user_pref_service.core.saga_policy import NewEnrichmentSaga
+from user_pref_service.db.models import PrefEnrichmentAction, SearchPref
 from user_pref_service.events.publishers import (
+    publish_pref_command_rejected,
     publish_profile_deleted_event,
     publish_profile_updated_event,
     publish_settings_created_event,
     publish_settings_updated_event,
 )
-from user_pref_service.services import profile_service, settings_service
-from user_pref_service.services.profile_vector_service import delete_profile_points
-from user_pref_service.services.skill_integration import request_skill_normalization
+from user_pref_service.services import profile_service, saga_service, settings_service
 
 logger = get_logger(__name__)
 settings = get_settings()
 
 USER_DOES_NOT_OWN_PROFILE = "User does not own profile"
 command_group_id = f"{settings.kafka.consumer_group}-commands"
-
-
-def _semantic_state_kwargs(profile: SearchPref) -> dict[str, int]:
-    """Return callback identity only when persisted profile metadata is available."""
-    generation = getattr(profile, "semantic_content_generation", 0)
-    if not isinstance(generation, int) or generation <= 0:
-        return {}
-    return {"semantic_generation": generation}
-
-
-def _persist_embedding_identity(profile: SearchPref, embedding_text: str) -> str:
-    """Persist and return the hash for a profile's exact embedding text."""
-    if not isinstance(embedding_text, str):
-        return ""
-    content_hash = profile_embedding_content_hash(embedding_text)
-    profile.semantic_content_hash = content_hash
-    return content_hash
 
 
 def _profile_embedding_text(profile: SearchPref) -> str:
@@ -91,44 +67,43 @@ def _collect_canonical_skill_ids(message: PrefCreateRequested | PrefUpdateReques
     )
 
 
-async def _request_profile_embedding(
-    pref_id: str,
-    embedding_text: str,
+async def _start_enrichment_saga(
+    context: MessageContext,
     *,
-    action: str,
-    semantic_generation: int = 0,
-    semantic_hash: str = "",
+    profile: SearchPref,
+    message: PrefCreateRequested | PrefUpdateRequested,
+    action: PrefEnrichmentAction,
+    canonical_skill_ids: list[str],
 ) -> None:
-    """Publish a fire-and-forget profile query embedding request."""
-    state = PrefEmbeddingState(
-        pref_id=pref_id,
-        action=action,
-        embedded_text=embedding_text if not semantic_hash else "",
-        semantic_generation=semantic_generation,
-        semantic_hash=semantic_hash,
+    """Persist the current workflow identity before dispatching enrichment."""
+    db = context.require_db_session()
+    outbox = context.require_outbox()
+    embedding_text = _profile_embedding_text(profile)
+    semantic_hash = profile_service.set_profile_semantic_hash(profile, embedding_text)
+    profile.enrichment_terminal_status = None
+    await db.flush()
+    saga = await saga_service.create_enrichment_saga(
+        db,
+        NewEnrichmentSaga(
+            pref_id=profile.id,
+            user_id=UUID(message.user_id),
+            request_id=UUID(message.request_id),
+            correlation_id=(message.metadata.correlation_id if message.metadata else None) or message.request_id,
+            action=action,
+            raw_skills=canonical_skill_ids,
+            semantic_generation=profile.semantic_content_generation,
+            semantic_hash=semantic_hash,
+        ),
     )
-    operation_id = await get_embedding_publisher().request_embedding(
-        text=embedding_text,
-        entity_id=pref_id,
-        entity_type=EntityType.PROFILE,
-        spec=PREF_EMBEDDING_SPEC,
-        context=CommandContext(caller_context=state.to_bytes()),
-    )
-    logger.info(
-        "Profile query embedding requested",
-        pref_id=pref_id,
-        action=action,
-        operation_id=operation_id,
-    )
+    await saga_service.dispatch_next_step(db, outbox, saga, profile)
 
 
 @kafka_client.message_handler(Topics.USER_PREF_CREATE_REQUESTED, PrefCreateRequested, group_id=command_group_id)
 @kafka_client.with_db_session(schema=settings.database.schema_name)
 async def handle_pref_create_requested(message: PrefCreateRequested, context: MessageContext) -> None:
-    """Handle profile create command with completion-aware idempotency."""
+    """Create a profile and one durable enrichment workflow per request."""
     user_id = UUID(message.user_id)
-    correlation_id = (message.metadata.correlation_id if message.metadata else None) or message.request_id
-
+    request_id = UUID(message.request_id)
     if not message.work_arrangements:
         logger.warning(
             "Rejecting pref create without work arrangements",
@@ -136,162 +111,104 @@ async def handle_pref_create_requested(message: PrefCreateRequested, context: Me
             user_id=str(user_id),
         )
         return
-
-    logger.info(
-        "Processing pref create command",
-        request_id=message.request_id,
-        user_id=str(user_id),
-    )
-
     db = context.require_db_session()
-    if existing := await profile_service.get_profile_by_request_id(db, UUID(message.request_id)):
-        current_version = get_manifest().get_entity_version(EntityType.PROFILE)
-        if existing.is_enrichment_complete and (
-            existing.collection_version in (None, current_version) or not isinstance(existing.collection_version, str)
-        ):
-            logger.info("Command already fully processed", request_id=message.request_id)
-            return
-        profile = existing
-    else:
+    if await saga_service.get_saga_by_request_id(db, request_id) is not None:
+        logger.info("Command already processed", request_id=message.request_id)
+        return
+    profile = await profile_service.get_profile_by_request_id(db, request_id)
+    if profile is None:
         profile = await profile_service.create_profile(db, user_id, message)
-
-    canonical_skill_ids = _collect_canonical_skill_ids(message)
-    if canonical_skill_ids:
-        semantic_generation = _semantic_state_kwargs(profile).get("semantic_generation")
-        if semantic_generation is None:
-            await request_skill_normalization(
-                canonical_skill_ids=canonical_skill_ids,
-                profile_id=profile.id,
-                correlation_id=correlation_id,
-                action="create",
-            )
-        else:
-            await request_skill_normalization(
-                canonical_skill_ids=canonical_skill_ids,
-                profile_id=profile.id,
-                correlation_id=correlation_id,
-                action="create",
-                semantic_generation=semantic_generation,
-            )
-    else:
-        embedding_text = _profile_embedding_text(profile)
-        semantic_hash = _persist_embedding_identity(profile, embedding_text)
-        await db.flush()
-        semantic_generation = _semantic_state_kwargs(profile).get("semantic_generation")
-        if semantic_generation is None:
-            await _request_profile_embedding(str(profile.id), embedding_text, action="create")
-        else:
-            await _request_profile_embedding(
-                str(profile.id),
-                embedding_text,
-                action="create",
-                semantic_generation=semantic_generation,
-                semantic_hash=semantic_hash,
-            )
-
-    logger.info(
-        "Pref create command completed",
-        request_id=message.request_id,
-        pref_id=str(profile.id),
+    await _start_enrichment_saga(
+        context,
+        profile=profile,
+        message=message,
+        action=PrefEnrichmentAction.CREATE,
+        canonical_skill_ids=_collect_canonical_skill_ids(message),
     )
+    logger.info("Pref create enrichment started", request_id=message.request_id, pref_id=str(profile.id))
 
 
 @kafka_client.message_handler(Topics.USER_PREF_UPDATE_REQUESTED, PrefUpdateRequested, group_id=command_group_id)
 @kafka_client.with_db_session(schema=settings.database.schema_name)
 async def handle_pref_update_requested(message: PrefUpdateRequested, context: MessageContext) -> None:
-    """Handle profile update command with the unified enrichment pattern."""
+    """Update a profile and supersede any older in-flight enrichment."""
     user_id = UUID(message.user_id)
     pref_id = UUID(message.pref_id)
-    correlation_id = (message.metadata.correlation_id if message.metadata else None) or message.request_id
-
-    logger.info(
-        "Processing pref update command",
-        request_id=message.request_id,
-        pref_id=str(pref_id),
-    )
-
+    request_id = UUID(message.request_id)
     db = context.require_db_session()
+    if await saga_service.get_saga_by_request_id(db, request_id) is not None:
+        logger.info("Command already processed", request_id=message.request_id)
+        return
     try:
-        profile = await profile_service.get_profile_by_id(db, pref_id)
+        profile = await profile_service.get_profile_by_id_for_update(db, pref_id)
     except NotFoundError:
         logger.warning("Profile not found for update, skipping stale event", pref_id=str(pref_id))
+        await publish_pref_command_rejected(
+            db,
+            context.require_outbox(),
+            message,
+            error_message="Preference profile was not found or is not owned by this user",
+        )
         return
     if profile.user_id != user_id:
         logger.warning(USER_DOES_NOT_OWN_PROFILE, user_id=str(user_id), pref_id=str(pref_id))
-        return
-
-    profile = await profile_service.update_profile(db, pref_id, message)
-    profile.is_enrichment_complete = False
-    skill_fields = getattr(message, "updated_fields", ())
-    if not isinstance(skill_fields, (list, tuple, set, frozenset)):
-        skill_fields = (
-            ("user_skills", "required_skills", "preferred_skills") if _collect_canonical_skill_ids(message) else ()
+        await publish_pref_command_rejected(
+            db,
+            context.require_outbox(),
+            message,
+            error_message="Preference profile was not found or is not owned by this user",
         )
-    skill_fields_updated = bool(set(skill_fields) & {"user_skills", "required_skills", "preferred_skills"})
-    canonical_skill_ids = _collect_canonical_skill_ids(message) if skill_fields_updated else []
-    if skill_fields_updated:
-        semantic_generation = _semantic_state_kwargs(profile).get("semantic_generation")
-        if semantic_generation is None:
-            await request_skill_normalization(
-                canonical_skill_ids=canonical_skill_ids,
-                profile_id=profile.id,
-                correlation_id=correlation_id,
-                action="update",
-            )
-        else:
-            await request_skill_normalization(
-                canonical_skill_ids=canonical_skill_ids,
-                profile_id=profile.id,
-                correlation_id=correlation_id,
-                action="update",
-                semantic_generation=semantic_generation,
-            )
-    else:
-        embedding_text = _profile_embedding_text(profile)
-        semantic_hash = _persist_embedding_identity(profile, embedding_text)
-        await db.flush()
-        semantic_generation = _semantic_state_kwargs(profile).get("semantic_generation")
-        if semantic_generation is None:
-            await _request_profile_embedding(str(profile.id), embedding_text, action="update")
-        else:
-            await _request_profile_embedding(
-                str(profile.id),
-                embedding_text,
-                action="update",
-                semantic_generation=semantic_generation,
-                semantic_hash=semantic_hash,
-            )
-    logger.info(
-        "Pref update command completed",
-        request_id=message.request_id,
-        pref_id=str(pref_id),
+        return
+    if await saga_service.get_saga_by_request_id(db, request_id) is not None:
+        logger.info("Command already processed after profile lock", request_id=message.request_id)
+        return
+    outbox = context.require_outbox()
+    await saga_service.cancel_pending_enrichment(
+        db,
+        outbox,
+        profile,
+        message="Preference enrichment superseded by a newer update",
     )
+    profile = await profile_service.update_profile(db, pref_id, message)
+    updated_fields = getattr(message, "updated_fields", ())
+    if not isinstance(updated_fields, (list, tuple, set, frozenset)):
+        updated_fields = ()
+    skill_fields_updated = bool(set(updated_fields) & {"user_skills", "required_skills", "preferred_skills"})
+    await _start_enrichment_saga(
+        context,
+        profile=profile,
+        message=message,
+        action=PrefEnrichmentAction.UPDATE,
+        canonical_skill_ids=_collect_canonical_skill_ids(message) if skill_fields_updated else [],
+    )
+    logger.info("Pref update enrichment started", request_id=message.request_id, pref_id=str(pref_id))
 
 
 @kafka_client.message_handler(Topics.USER_PREF_DELETE_REQUESTED, PrefDeleteRequested, group_id=command_group_id)
 @kafka_client.with_db_session(schema=settings.database.schema_name)
 async def handle_pref_delete_requested(message: PrefDeleteRequested, context: MessageContext) -> None:
-    """Handle profile delete command - performs authoritative write (idempotent)."""
+    """Cancel enrichment and commit profile deletion before Qdrant projection."""
     request_id = message.request_id
     user_id = UUID(message.user_id)
     pref_id = UUID(message.pref_id)
-
-    logger.info("Processing pref delete command", request_id=request_id, pref_id=str(pref_id))
-
     db = context.require_db_session()
-    profile = await profile_service.get_profile_by_id_optional(db, pref_id)
-    if profile is None:
+    try:
+        profile = await profile_service.get_profile_by_id_for_update(db, pref_id)
+    except NotFoundError:
         logger.info("Profile already deleted (idempotent)", pref_id=str(pref_id))
         return
-
     if profile.user_id != user_id:
         logger.warning(USER_DOES_NOT_OWN_PROFILE, user_id=str(user_id), pref_id=str(pref_id))
         return
-
-    await delete_profile_points([pref_id])
+    outbox = context.require_outbox()
+    await saga_service.cancel_pending_enrichment(
+        db,
+        outbox,
+        profile,
+        message="Profile deleted while preference enrichment was in flight",
+    )
     await profile_service.delete_profile(db, pref_id)
-    await publish_profile_deleted_event(db, context.require_outbox(), pref_id, user_id)
-
+    await publish_profile_deleted_event(db, outbox, pref_id, user_id)
     logger.info("Pref delete command completed", request_id=request_id, pref_id=str(pref_id))
 
 

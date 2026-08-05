@@ -155,7 +155,7 @@ class ProfileService:
             return _profile_to_detail(profile)
         return None
 
-    async def create_profile_command(self, user_id: UUID, data: dict[str, Any]) -> str:
+    async def create_profile_command(self, db: AsyncSession, user_id: UUID, data: dict[str, Any]) -> str:
         """Publish profile create command event."""
         request_id = str(uuid7())
 
@@ -184,12 +184,20 @@ class ProfileService:
         if exp_pref := data.get("experience_preference"):
             event.experience_preference = ExperiencePreference.from_dict(exp_pref)
 
+        await self._track_command(db, request_id, user_id, "create_profile")
+
         await kafka_client.publish(Topics.USER_PREF_CREATE_REQUESTED, event, key=request_id)
 
         logger.info("Published profile create command", user_id=str(user_id), request_id=request_id)
         return request_id
 
-    async def update_profile_command(self, user_id: UUID, pref_id: UUID, data: dict[str, Any]) -> str:
+    async def update_profile_command(
+        self,
+        db: AsyncSession,
+        user_id: UUID,
+        pref_id: UUID,
+        data: dict[str, Any],
+    ) -> str:
         """Publish profile update command event."""
         request_id = str(uuid7())
 
@@ -206,6 +214,8 @@ class ProfileService:
 
         _apply_update_lists(event, data)
         _apply_update_values(event, data)
+
+        await self._track_command(db, request_id, user_id, "update_profile")
 
         await kafka_client.publish(Topics.USER_PREF_UPDATE_REQUESTED, event, key=request_id)
 

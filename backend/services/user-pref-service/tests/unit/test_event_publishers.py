@@ -8,12 +8,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nohiki.common.v1 import EntityTimestamps
-from nohiki.user.pref.v1 import PrefCreated, PrefDeleted, PrefUpdated, SearchPrefSnapshot
+from nohiki.user.pref.v1 import (
+    PrefCreated,
+    PrefDeleted,
+    PrefEnrichmentFailed,
+    PrefEnrichmentFailedFailureReason,
+    PrefUpdated,
+    SearchPrefSnapshot,
+)
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import Topics
 from user_pref_service.db.models import SearchPref
 from user_pref_service.events.publishers import (
     AGGREGATE_TYPE,
+    publish_pref_command_rejected,
     publish_profile_created_event,
     publish_profile_deleted_event,
     publish_profile_updated_batch,
@@ -31,6 +39,7 @@ class TestPublishProfileCreatedEvent:
         mock_outbox = AsyncMock()
         mock_outbox.write_event = AsyncMock(return_value=uuid.uuid4())
 
+        correlation_id = str(uuid.uuid4())
         profile = MagicMock(spec=SearchPref)
         profile.id = uuid.uuid4()
         profile.user_id = uuid.uuid4()
@@ -71,7 +80,7 @@ class TestPublishProfileCreatedEvent:
                 return_value=profile,
             ),
         ):
-            await publish_profile_created_event(mock_db, mock_outbox, profile)
+            await publish_profile_created_event(mock_db, mock_outbox, profile, correlation_id=correlation_id)
 
         mock_outbox.write_event.assert_awaited_once()
         call_kwargs = mock_outbox.write_event.call_args.kwargs
@@ -86,6 +95,7 @@ class TestPublishProfileCreatedEvent:
         assert event.pref_id == str(profile.id)
         assert event.user_id == str(profile.user_id)
         assert event.pref_snapshot == mock_snapshot
+        assert event.metadata.correlation_id == correlation_id
 
 
 class TestPublishProfileUpdatedEvent:
@@ -98,6 +108,7 @@ class TestPublishProfileUpdatedEvent:
         mock_outbox = AsyncMock()
         mock_outbox.write_event = AsyncMock(return_value=uuid.uuid4())
 
+        correlation_id = str(uuid.uuid4())
         profile = MagicMock(spec=SearchPref)
         profile.id = uuid.uuid4()
         profile.user_id = uuid.uuid4()
@@ -138,7 +149,7 @@ class TestPublishProfileUpdatedEvent:
                 return_value=profile,
             ),
         ):
-            await publish_profile_updated_event(mock_db, mock_outbox, profile)
+            await publish_profile_updated_event(mock_db, mock_outbox, profile, correlation_id=correlation_id)
 
         mock_outbox.write_event.assert_awaited_once()
         call_kwargs = mock_outbox.write_event.call_args.kwargs
@@ -150,6 +161,7 @@ class TestPublishProfileUpdatedEvent:
         assert event.pref_id == str(profile.id)
         assert event.user_id == str(profile.user_id)
         assert event.pref_snapshot == mock_snapshot
+        assert event.metadata.correlation_id == correlation_id
 
 
 class TestPublishProfileUpdatedBatch:
@@ -232,7 +244,7 @@ class TestPublishProfileUpdatedBatch:
                 id=str(profile_1.id),
                 user_id=str(profile_1.user_id),
                 pref_name="Test Profile",
-                search_keywords=[],
+                search_keywords=["python"],
                 is_active=True,
                 timestamps=EntityTimestamps(created_at=datetime.now(UTC), updated_at=datetime.now(UTC)),
             ),
@@ -272,6 +284,37 @@ class TestPublishProfileDeletedEvent:
         assert isinstance(event, PrefDeleted)
         assert event.pref_id == str(pref_id)
         assert event.user_id == str(user_id)
+
+
+class TestPublishPrefCommandRejected:
+    @pytest.mark.asyncio
+    async def test_publishes_correlated_terminal_rejection(self) -> None:
+        mock_db = create_mock_session()
+        mock_outbox = AsyncMock()
+        pref_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        request_id = uuid.uuid4()
+        correlation_id = str(request_id)
+        message = MagicMock(
+            pref_id=str(pref_id),
+            user_id=str(user_id),
+            request_id=str(request_id),
+        )
+        message.metadata.correlation_id = correlation_id
+
+        await publish_pref_command_rejected(
+            mock_db,
+            mock_outbox,
+            message,
+            error_message="Profile unavailable",
+        )
+
+        mock_outbox.write_event.assert_awaited_once()
+        event = mock_outbox.write_event.await_args.kwargs["event"]
+        assert isinstance(event, PrefEnrichmentFailed)
+        assert event.reason == PrefEnrichmentFailedFailureReason.REJECTED
+        assert event.request_id == str(request_id)
+        assert event.metadata.correlation_id == correlation_id
 
 
 class TestEventConstants:

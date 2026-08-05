@@ -5,6 +5,22 @@ from dataclasses import asdict, dataclass
 from uuid import UUID
 
 SSE_EVENT_DOCUMENT_STATUS = "document_status"
+SSE_EVENT_COMMAND_STATUS = "command_status"
+
+
+@dataclass(frozen=True, slots=True)
+class CommandStatusPayload:
+    """SSE payload for an asynchronously tracked command status."""
+
+    type: str
+    request_id: str
+    status: str
+    command_type: str | None = None
+    error_message: str | None = None
+
+    def to_sse_data(self) -> str:
+        """Serialize the command status payload for SSE."""
+        return json.dumps(asdict(self))
 
 
 @dataclass(frozen=True, slots=True)

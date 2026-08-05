@@ -60,6 +60,9 @@ class TestBuildProfileSnapshot:
         profile.updated_at = datetime.now(UTC)
         profile.experience_years = experience_years
         profile.seniority_levels = [1]
+        profile.semantic_content_generation = 7
+        profile.semantic_content_hash = "a" * 64
+        profile.collection_version = "v2"
 
         snapshot = build_profile_snapshot(profile)
 
@@ -72,6 +75,9 @@ class TestBuildProfileSnapshot:
         assert snapshot.experience_preference.experience_years == experience_years
         assert snapshot.timestamps is not None
         assert snapshot.timestamps.updated_at == profile.updated_at
+        assert snapshot.semantic_content_generation == 7
+        assert snapshot.semantic_content_hash == "a" * 64
+        assert snapshot.collection_version == "v2"
 
     def test_snapshot_skills_embedding_none_when_profile_has_no_embedding(self) -> None:
         """Snapshot user_skills_embedding is None before normalization completes."""

@@ -12,7 +12,7 @@ from nohiki_observability import get_logger
 from uuid_utils.compat import uuid7
 
 from user_pref_service.core.config import get_settings
-from user_pref_service.core.embedding import PrefEmbeddingState
+from user_pref_service.core.embedding import PrefEnrichmentSagaContext
 from user_pref_service.core.kafka import kafka_client
 
 if TYPE_CHECKING:
@@ -26,22 +26,18 @@ async def request_skill_normalization(
     profile_id: UUID,
     correlation_id: str,
     *,
-    action: str = "create",
-    semantic_generation: int = 0,
+    saga_id: str,
 ) -> str:
     """Request skill normalization via async callback to skill-graph-service.
 
-    Profile context is carried in the CommandHeader.caller_context bytes field
-    using PrefEmbeddingState, which skill-graph-service echoes back in
-    SkillNormalizationCallback, allowing the callback handler to identify the
-    target profile without any DB lookups.
+    The durable saga ID is the only callback carrier; callback guards and
+    lifecycle context are loaded from owned database state.
 
     Args:
         canonical_skill_ids: Canonical skill UUIDs to resolve and aggregate.
         profile_id: Target profile ID.
         correlation_id: Correlation ID for tracing.
-        action: Lifecycle action ("create" or "update") for event publishing.
-        semantic_generation: Persisted semantic generation expected by the callback.
+        saga_id: Durable preference-enrichment saga identity.
 
     Returns:
         The operation_id for this request.
@@ -49,7 +45,7 @@ async def request_skill_normalization(
     """
     settings = get_settings()
     operation_id = str(uuid7())
-    state = PrefEmbeddingState(pref_id=str(profile_id), action=action, semantic_generation=semantic_generation)
+    state = PrefEnrichmentSagaContext(saga_id=saga_id)
 
     await kafka_client.publish(
         Topics.SKILL_NORMALIZATION_REQUESTED,

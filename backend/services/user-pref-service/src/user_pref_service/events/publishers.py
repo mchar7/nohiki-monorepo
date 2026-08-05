@@ -9,7 +9,10 @@ from uuid import UUID
 from nohiki.user.pref.v1 import (
     PrefCreated,
     PrefDeleted,
+    PrefEnrichmentFailed,
+    PrefEnrichmentFailedFailureReason,
     PrefUpdated,
+    PrefUpdateRequested,
     UserPrefSettingsCreated,
     UserPrefSettingsUpdated,
 )
@@ -28,7 +31,7 @@ if TYPE_CHECKING:
     from nohiki_db_utils import OutboxWriter
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from user_pref_service.db.models import SearchPref
+    from user_pref_service.db.models import PrefEnrichmentSaga, SearchPref
     from user_pref_service.db.models import UserPrefSettings as UserPrefSettingsModel
 
 logger = get_logger(__name__)
@@ -51,10 +54,11 @@ def _build_profile_updated_request(
     profile: SearchPref,
     *,
     user_skills: list[UserSkillEntry] | None = None,
+    correlation_id: str | None = None,
 ) -> tuple[OutboxEventParams, PrefUpdated]:
     """Build the outbox request for a profile updated event."""
     event = PrefUpdated(
-        metadata=create_event_metadata(settings.service_name),
+        metadata=create_event_metadata(settings.service_name, correlation_id),
         pref_id=str(profile.id),
         user_id=str(profile.user_id),
         pref_snapshot=build_profile_snapshot(profile, user_skills=user_skills),
@@ -73,6 +77,7 @@ async def publish_profile_created_event(
     profile: SearchPref,
     *,
     user_skills: list[UserSkillEntry] | None = None,
+    correlation_id: str | None = None,
 ) -> None:
     """Publish profile created event with SearchPrefSnapshot (ECST) via outbox."""
     await db.flush()
@@ -80,7 +85,7 @@ async def publish_profile_created_event(
     snapshot = build_profile_snapshot(fresh, user_skills=user_skills)
 
     event = PrefCreated(
-        metadata=create_event_metadata(settings.service_name),
+        metadata=create_event_metadata(settings.service_name, correlation_id),
         pref_id=str(fresh.id),
         user_id=str(fresh.user_id),
         pref_snapshot=snapshot,
@@ -104,11 +109,12 @@ async def publish_profile_updated_event(
     profile: SearchPref,
     *,
     user_skills: list[UserSkillEntry] | None = None,
+    correlation_id: str | None = None,
 ) -> None:
     """Publish profile updated event with SearchPrefSnapshot (ECST) via outbox."""
     await db.flush()
     fresh = await get_profile_by_id(db, profile.id)
-    params, event = _build_profile_updated_request(fresh, user_skills=user_skills)
+    params, event = _build_profile_updated_request(fresh, user_skills=user_skills, correlation_id=correlation_id)
 
     await outbox.write_event(db=db, params=params, event=event)
     logger.info("Published profile updated event", pref_id=str(fresh.id))
@@ -156,6 +162,75 @@ async def publish_profile_deleted_event(
         event=event,
     )
     logger.info("Published profile deleted event", pref_id=str(pref_id))
+
+
+async def publish_pref_enrichment_failed(
+    db: AsyncSession,
+    outbox: OutboxWriter,
+    saga: PrefEnrichmentSaga,
+    *,
+    reason: PrefEnrichmentFailedFailureReason,
+    error_message: str,
+) -> None:
+    """Write a request-correlated terminal enrichment fact to the outbox."""
+    event = PrefEnrichmentFailed(
+        metadata=create_event_metadata(settings.service_name, saga.correlation_id),
+        pref_id=str(saga.pref_id),
+        user_id=str(saga.user_id),
+        reason=reason,
+        error_message=error_message,
+        saga_id=str(saga.id),
+        request_id=str(saga.request_id),
+    )
+    await outbox.write_event(
+        db=db,
+        params=OutboxEventParams(
+            aggregate_type=AGGREGATE_TYPE,
+            aggregate_id=str(saga.pref_id),
+            event_type=Topics.USER_PREF_ENRICHMENT_FAILED,
+        ),
+        event=event,
+    )
+    logger.warning(
+        "Published terminal preference enrichment fact",
+        saga_id=str(saga.id),
+        request_id=str(saga.request_id),
+        reason=reason.name,
+    )
+
+
+async def publish_pref_command_rejected(
+    db: AsyncSession,
+    outbox: OutboxWriter,
+    message: PrefUpdateRequested,
+    *,
+    error_message: str,
+) -> None:
+    """Write a correlated rejection for an update that cannot start a saga."""
+    correlation_id = (message.metadata.correlation_id if message.metadata else None) or message.request_id
+    event = PrefEnrichmentFailed(
+        metadata=create_event_metadata(settings.service_name, correlation_id),
+        pref_id=message.pref_id,
+        user_id=message.user_id,
+        reason=PrefEnrichmentFailedFailureReason.REJECTED,
+        error_message=error_message,
+        saga_id="",
+        request_id=message.request_id,
+    )
+    await outbox.write_event(
+        db=db,
+        params=OutboxEventParams(
+            aggregate_type=AGGREGATE_TYPE,
+            aggregate_id=message.pref_id,
+            event_type=Topics.USER_PREF_ENRICHMENT_FAILED,
+        ),
+        event=event,
+    )
+    logger.warning(
+        "Published rejected preference command",
+        request_id=message.request_id,
+        reason=PrefEnrichmentFailedFailureReason.REJECTED.name,
+    )
 
 
 async def publish_settings_created_event(

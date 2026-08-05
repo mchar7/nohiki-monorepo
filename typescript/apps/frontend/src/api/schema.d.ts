@@ -328,6 +328,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/profiles/commands/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Profile Command Status
+         * @description Return an owned profile command request's current status.
+         */
+        get: operations["get_profile_command_status_api_v1_profiles_commands__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/profiles/commands/{request_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Profile Command Events
+         * @description Stream durable status events for an owned profile command request.
+         */
+        get: operations["stream_profile_command_events_api_v1_profiles_commands__request_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/profiles/{pref_id}": {
         parameters: {
             query?: never;
@@ -1502,6 +1542,24 @@ export interface components {
             status: string;
         };
         /**
+         * CommandStatusDetail
+         * @description Command request status returned from the service layer.
+         */
+        CommandStatusDetail: {
+            /** Request Id */
+            request_id: string;
+            /** Command Type */
+            command_type: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+        };
+        /**
          * CompleteUploadRequest
          * @description Metadata sent by the client after uploading to object storage.
          *
@@ -2105,10 +2163,8 @@ export interface components {
              * @default false
              */
             open_to_relocation: boolean;
-            /** @description Salary preference required for ML scoring */
-            salary_preference: components["schemas"]["SalaryPreferenceRequest"];
-            /** @description Experience preference required for ML scoring */
-            experience_preference: components["schemas"]["ExperiencePreferenceRequest"];
+            salary_preference?: components["schemas"]["SalaryPreferenceRequest"] | null;
+            experience_preference?: components["schemas"]["ExperiencePreferenceRequest"] | null;
         };
         /**
          * ProfileResponse
@@ -2966,6 +3022,68 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CommandAcceptedResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_profile_command_status_api_v1_profiles_commands__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandStatusDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_profile_command_events_api_v1_profiles_commands__request_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

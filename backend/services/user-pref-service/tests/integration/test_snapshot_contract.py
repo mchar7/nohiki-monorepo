@@ -1,7 +1,6 @@
 """End-to-end contract coverage for canonical empty preference updates."""
 
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -9,15 +8,18 @@ from nohiki.common.v1 import CallbackHeader, WorkArrangement
 from nohiki.ml.v1 import (
     DenseData,
     EmbeddingCallback,
+    EmbeddingRequested,
     EmbeddingResult,
     EmbeddingType,
     EmbeddingVector,
     EncodingMode,
     EntityType,
+    MultiVectorData,
+    SparseData,
 )
 from nohiki.user.pref.v1 import PrefUpdated, PrefUpdateRequested
 from nohiki_db_utils import create_event_metadata
-from nohiki_kafka_client import CommandContext, MessageContext
+from nohiki_kafka_client import MessageContext
 from user_pref_service.core.config import get_manifest
 from user_pref_service.db.models import SearchPref
 from user_pref_service.events.callbacks import handle_embedding_callback
@@ -28,34 +30,16 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-class _CapturingEmbeddingPublisher:
-    def __init__(self) -> None:
-        self.caller_context = b""
-        self.text = ""
-        self.operation_id = str(uuid4())
-
-    async def request_embedding(
-        self,
-        *,
-        text: str,
-        entity_id: str,
-        entity_type: EntityType,
-        spec: object,
-        context: CommandContext,
-    ) -> str:
-        del entity_id, entity_type, spec
-        self.text = text
-        self.caller_context = context.caller_context
-        return self.operation_id
-
-
 class _CapturingOutbox:
     def __init__(self) -> None:
+        self.events: list[object] = []
         self.event: PrefUpdated | None = None
 
-    async def write_event(self, *, db: object, params: object, event: PrefUpdated) -> UUID:
+    async def write_event(self, *, db: object, params: object, event: object) -> UUID:
         del db, params
-        self.event = event
+        self.events.append(event)
+        if isinstance(event, PrefUpdated):
+            self.event = event
         return uuid4()
 
 
@@ -80,7 +64,6 @@ async def test_empty_update_emits_snapshot_through_real_embedding_callback(
     await async_session.flush()
 
     outbox = _CapturingOutbox()
-    embedding_publisher = _CapturingEmbeddingPublisher()
     context = MessageContext(
         topic="user-pref.cmd.update-requested.v1",
         partition=0,
@@ -100,45 +83,66 @@ async def test_empty_update_emits_snapshot_through_real_embedding_callback(
         updated_fields=["search_keywords", "work_arrangements"],
     )
 
-    with patch(
-        "user_pref_service.events.commands.get_embedding_publisher",
-        return_value=embedding_publisher,
-    ):
-        await handle_pref_update_requested(command, context)
+    await handle_pref_update_requested(command, context)
+    embedding_request = outbox.events[0]
+    assert isinstance(embedding_request, EmbeddingRequested)
 
     callback = EmbeddingCallback(
         metadata=create_event_metadata("ml-compute-service-test"),
         callback=CallbackHeader(
-            operation_id=embedding_publisher.operation_id,
-            caller_context=embedding_publisher.caller_context,
+            operation_id=embedding_request.command.operation_id,
+            caller_context=embedding_request.command.caller_context,
         ),
         entity_id=str(profile.id),
         entity_type=EntityType.PROFILE,
         success=EmbeddingResult(
             collection_version=get_manifest().get_entity_version(EntityType.PROFILE),
             content_hash=profile.semantic_content_hash or "",
-            requested_types=[EmbeddingType.DENSE],
+            requested_types=[
+                EmbeddingType.MUVERA,
+                EmbeddingType.SPARSE,
+                EmbeddingType.COLBERT,
+            ],
             encoding_mode=EncodingMode.QUERY,
             embeddings=[
                 EmbeddingVector(
-                    embedding_type=EmbeddingType.DENSE,
+                    embedding_type=EmbeddingType.MUVERA,
                     dense=DenseData(values=[0.1]),
                     content_hash=profile.semantic_content_hash or "",
                     collection_version=get_manifest().get_entity_version(EntityType.PROFILE),
-                )
+                ),
+                EmbeddingVector(
+                    embedding_type=EmbeddingType.SPARSE,
+                    sparse=SparseData(indices=[1], values=[0.2]),
+                    content_hash=profile.semantic_content_hash or "",
+                    collection_version=get_manifest().get_entity_version(EntityType.PROFILE),
+                ),
+                EmbeddingVector(
+                    embedding_type=EmbeddingType.COLBERT,
+                    multi_vector=MultiVectorData(values=[0.3], num_tokens=1, token_dim=1),
+                    content_hash=profile.semantic_content_hash or "",
+                    collection_version=get_manifest().get_entity_version(EntityType.PROFILE),
+                ),
             ],
         ),
     )
 
-    with patch(
-        "user_pref_service.events.callbacks.upsert_profile_point",
-        new_callable=AsyncMock,
-    ):
-        await handle_embedding_callback(callback, context)
+    await handle_embedding_callback(callback, context)
 
     assert outbox.event is not None
     snapshot = outbox.event.pref_snapshot
     assert snapshot.search_keywords == []
     assert snapshot.work_arrangements == []
-    assert snapshot.query_embedding is not None
-    assert snapshot.query_embedding.content_hash == profile.semantic_content_hash
+    assert len(snapshot.query_retrieval_embeddings) == 3
+    assert {embedding.embedding_type for embedding in snapshot.query_retrieval_embeddings} == {
+        EmbeddingType.MUVERA,
+        EmbeddingType.SPARSE,
+        EmbeddingType.COLBERT,
+    }
+    assert all(
+        embedding.collection_version == get_manifest().get_entity_version(EntityType.PROFILE)
+        for embedding in snapshot.query_retrieval_embeddings
+    )
+    assert all(
+        embedding.content_hash == profile.semantic_content_hash for embedding in snapshot.query_retrieval_embeddings
+    )

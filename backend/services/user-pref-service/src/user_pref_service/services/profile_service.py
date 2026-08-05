@@ -168,6 +168,9 @@ def build_profile_snapshot(
         user_skills_embedding=_extract_skills_embedding(profile),
         query_embedding=_extract_query_embedding(profile),
         query_retrieval_embeddings=_extract_query_retrieval_embeddings(profile),
+        semantic_content_generation=profile.semantic_content_generation,
+        semantic_content_hash=profile.semantic_content_hash or "",
+        collection_version=profile.collection_version or "",
     )
 
 

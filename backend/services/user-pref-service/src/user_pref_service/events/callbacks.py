@@ -1,80 +1,128 @@
-"""Callback handlers for enrichment completions.
-
-Handles skill normalization and embedding callbacks from downstream services.
-State is carried via ECST (PrefEmbeddingState in CommandHeader.caller_context).
-Full user skill data is persisted to the DB by persist_skill_enrichment so that
-handle_embedding_callback can load it from the profile row without needing to
-carry it inline: keeping PrefEmbeddingState at ~80 bytes per the plan.
-
-Flow:
-  SkillNormalizationCallback (success) → persist full skill data to DB → request query embedding
-  EmbeddingCallback (success)          → persist embedding → load skills from DB → publish lifecycle event
-"""
+"""Durable skill-normalization and embedding callback handlers."""
 
 from __future__ import annotations
 
-from enum import StrEnum
+from datetime import UTC, datetime
 from uuid import UUID
 
-from nohiki.ml.v1 import EmbeddingCallback, EmbeddingResult, EntityType
-from nohiki.skill.v1 import SkillNormalizationCallback, SkillNormalizationResult
+from nohiki.common.v1 import ErrorInfo
+from nohiki.ml.v1 import EmbeddingCallback, EmbeddingType, EntityType
+from nohiki.skill.v1 import SkillNormalizationCallback
+from nohiki.user.pref.v1 import PrefEnrichmentFailedFailureReason
 from nohiki_common_exceptions import ValidationError
-from nohiki_kafka_client import CommandContext, MessageContext, Topics
+from nohiki_db_utils import SagaStatus
+from nohiki_kafka_client import MessageContext, Topics
 from nohiki_observability import get_logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from user_pref_service.core.config import get_manifest, get_settings
 from user_pref_service.core.embedding import (
     PREF_EMBEDDING_SPEC,
-    PrefEmbeddingState,
-    build_profile_embedding_text,
-    get_embedding_publisher,
+    PrefEnrichmentSagaContext,
     profile_embedding_content_hash,
 )
 from user_pref_service.core.kafka import kafka_client
-from user_pref_service.db.models import SearchPref
-from user_pref_service.events.publishers import (
-    publish_profile_created_event,
-    publish_profile_updated_event,
-)
-from user_pref_service.services import profile_service
+from user_pref_service.core.saga_policy import WALL_CLOCK_CAP, SagaTermination
+from user_pref_service.db.models import PrefEnrichmentSaga, SearchPref
+from user_pref_service.services import profile_service, saga_service
 from user_pref_service.services.enrichment_completion import (
-    load_user_skills_from_profile,
     persist_query_enrichment,
     persist_skill_enrichment,
 )
-from user_pref_service.services.profile_vector_service import upsert_profile_point
 
 logger = get_logger(__name__)
 settings = get_settings()
 
 
-class _PrefAction(StrEnum):
-    CREATE = "create"
-    UPDATE = "update"
+def _callback_operation_id(message: SkillNormalizationCallback | EmbeddingCallback) -> str:
+    return message.callback.operation_id
 
 
-def _state_matches_profile(profile: SearchPref, state: PrefEmbeddingState) -> bool:
-    """Check callback identity against the current persisted semantic state."""
-    if state.semantic_generation and getattr(profile, "semantic_content_generation", None) != state.semantic_generation:
-        return False
-    if state.semantic_hash:
-        return getattr(profile, "semantic_content_hash", None) == state.semantic_hash
-    if state.embedded_text:
-        try:
-            current_text = profile_service.build_profile_embedding_text_from_profile(profile)
-            return profile_embedding_content_hash(current_text) == profile_embedding_content_hash(state.embedded_text)
-        except TypeError, ValueError, ValidationError:
-            return False
-    return True
+async def _load_current_saga(
+    context: MessageContext,
+    message: SkillNormalizationCallback | EmbeddingCallback,
+    *,
+    step: str,
+) -> tuple[AsyncSession, SearchPref | None, PrefEnrichmentSaga | None]:
+    state = PrefEnrichmentSagaContext.from_bytes(message.callback.caller_context)
+    db = context.require_db_session()
+    locked = await saga_service.lock_profile_then_saga(db, UUID(state.saga_id))
+    if locked is None:
+        logger.info("Ignoring callback for missing preference saga", saga_id=state.saga_id, step=step)
+        return db, None, None
+    profile, saga = locked
+    if saga.status != SagaStatus.PENDING:
+        logger.info("Ignoring callback for non-pending preference saga", saga_id=state.saga_id, step=step)
+        return db, None, None
+    deadline = min(saga.expires_at, saga.created_at + WALL_CLOCK_CAP)
+    if deadline <= datetime.now(UTC):
+        await saga_service.terminate_enrichment(
+            db,
+            context.require_outbox(),
+            profile,
+            saga,
+            SagaTermination(
+                status=SagaStatus.EXPIRED,
+                reason=PrefEnrichmentFailedFailureReason.EXPIRED,
+                error_message="Preference enrichment deadline expired",
+            ),
+        )
+        logger.info("Expired late preference enrichment callback", saga_id=state.saga_id, step=step)
+        return db, None, None
+    if not saga_service.operation_matches(saga, step, _callback_operation_id(message)):
+        logger.info(
+            "Ignoring stale preference enrichment callback",
+            saga_id=state.saga_id,
+            step=step,
+            operation_id=_callback_operation_id(message),
+        )
+        return db, None, None
+    if (step == "skill" and saga.skills_persisted) or (step == "embedding" and saga.embedding_persisted):
+        logger.info("Ignoring duplicate preference enrichment callback", saga_id=state.saga_id, step=step)
+        return db, None, None
+    return db, profile, saga
 
 
-def _persisted_embedding_text(profile: SearchPref, fallback: str) -> str:
-    """Build text from persisted fields, retaining legacy callback fallback."""
-    try:
-        text = profile_service.build_profile_embedding_text_from_profile(profile)
-    except TypeError, ValueError, ValidationError:
-        return fallback
-    return text or fallback
+async def _handle_declared_error(
+    context: MessageContext,
+    profile: SearchPref,
+    saga: PrefEnrichmentSaga,
+    *,
+    step: str,
+    error: ErrorInfo,
+) -> None:
+    db = context.require_db_session()
+    if error.retryable:
+        await saga_service.record_retryable_error(
+            db,
+            saga,
+            step=step,
+            error_code=error.error_code,
+            error_message=error.error_message,
+        )
+        logger.warning(
+            "Preference enrichment step left pending for retry",
+            saga_id=str(saga.id),
+            step=step,
+            error_code=error.error_code,
+        )
+        return
+    reason = (
+        PrefEnrichmentFailedFailureReason.SKILL_NORMALIZATION_FAILED
+        if step == "skill"
+        else PrefEnrichmentFailedFailureReason.EMBEDDING_FAILED
+    )
+    await saga_service.terminate_enrichment(
+        db,
+        context.require_outbox(),
+        profile,
+        saga,
+        SagaTermination(
+            status=SagaStatus.FAILED,
+            reason=reason,
+            error_message=error.error_message or error.error_code,
+        ),
+    )
 
 
 @kafka_client.message_handler(
@@ -87,98 +135,33 @@ async def handle_skill_normalization_callback(
     message: SkillNormalizationCallback,
     context: MessageContext,
 ) -> None:
-    """Persist skills and defer query embedding via fire-and-forget.
-
-    Deserializes PrefEmbeddingState from caller_context, persists the full
-    skill normalization result (embedding vector + canonical IDs + UserSkillEntry
-    data) to the DB, then either requests async query embedding (when query text
-    exists) or publishes the lifecycle event immediately (when not).
-    On error, logs and returns: downstream retry re-delivers.
-    """
-    state = PrefEmbeddingState.from_bytes(message.callback.caller_context)
-    pref_id = UUID(state.pref_id)
-
-    if (success := message.success) is not None:
-        await _process_normalization_success(success, state, pref_id, context)
-    elif (error := message.error) is not None:
-        logger.error(
-            "Skill normalization failed -- enrichment aborted",
-            pref_id=str(pref_id),
-            action=state.action,
-            error_code=error.error_code,
-            error_message=error.error_message,
-        )
-    else:
+    """Persist one operation-matched skill callback or classify its typed error."""
+    db, profile, saga = await _load_current_saga(context, message, step="skill")
+    if profile is None or saga is None:
+        return
+    if (error := message.error) is not None:
+        await _handle_declared_error(context, profile, saga, step="skill", error=error)
+        return
+    if (success := message.success) is None:
         msg = "Empty skill normalization callback result"
         raise ValidationError(msg)
 
-
-async def _process_normalization_success(
-    success: SkillNormalizationResult,
-    state: PrefEmbeddingState,
-    pref_id: UUID,
-    context: MessageContext,
-) -> None:
-    """Persist full skill data to DB then trigger query embedding or publish immediately."""
-    db = context.require_db_session()
-    persist_kwargs = {"expected_generation": state.semantic_generation} if state.semantic_generation else {}
-    profile = await persist_skill_enrichment(db, pref_id, success, **persist_kwargs)
-    if profile is None:
-        logger.info("Discarded stale skill normalization callback", pref_id=str(pref_id))
+    persisted_profile = await persist_skill_enrichment(
+        db,
+        saga.pref_id,
+        success,
+        expected_generation=saga.semantic_generation,
+        locked_profile=profile,
+    )
+    if persisted_profile is None:
+        logger.info("Ignoring superseded skill callback", saga_id=str(saga.id))
         return
-
-    try:
-        embedding_text = profile_service.build_profile_embedding_text_from_profile(profile)
-    except TypeError, ValueError, ValidationError:
-        keywords = profile.search_keywords if isinstance(getattr(profile, "search_keywords", None), list) else []
-        skill_names = [
-            req.skill_name for req in success.skill_requirements if isinstance(req.skill_name, str) and req.skill_name
-        ]
-        embedding_text = build_profile_embedding_text(
-            str(getattr(profile, "pref_name", "")),
-            keywords,
-            skill_names,
-        )
-    semantic_generation = profile.semantic_content_generation
-    if not isinstance(getattr(profile, "user_skills_data", None), list) and success.skill_requirements:
-        skill_names = [
-            req.skill_name for req in success.skill_requirements if isinstance(req.skill_name, str) and req.skill_name
-        ]
-        keywords = profile.search_keywords if isinstance(getattr(profile, "search_keywords", None), list) else []
-        embedding_text = build_profile_embedding_text(str(getattr(profile, "pref_name", "")), keywords, skill_names)
-    semantic_hash = profile_service.set_profile_semantic_hash(profile, embedding_text)
-    await db.flush()
-    embedding_state = PrefEmbeddingState(
-        pref_id=state.pref_id,
-        action=state.action,
-        embedded_text=embedding_text
-        if not isinstance(semantic_generation, int) and isinstance(getattr(profile, "pref_name", None), str)
-        else "",
-        semantic_hash=semantic_hash if isinstance(semantic_generation, int) else "",
-    )
-    await _request_query_embedding(embedding_text, embedding_state, pref_id)
-
-
-async def _request_query_embedding(
-    query_text: str,
-    state: PrefEmbeddingState,
-    pref_id: UUID,
-) -> None:
-    """Publish a QUERY-mode profile embedding after skill normalization."""
-    publisher = get_embedding_publisher()
-    operation_id = await publisher.request_embedding(
-        text=query_text,
-        entity_id=str(pref_id),
-        entity_type=EntityType.PROFILE,
-        spec=PREF_EMBEDDING_SPEC,
-        context=CommandContext(caller_context=state.to_bytes()),
-    )
-    logger.info(
-        "Query embedding requested after skill normalization",
-        pref_id=str(pref_id),
-        action=state.action,
-        operation_id=operation_id,
-    )
+    embedding_text = profile_service.build_profile_embedding_text_from_profile(profile)
+    semantic_hash = profile_embedding_content_hash(embedding_text)
+    profile.semantic_content_hash = semantic_hash
+    saga.semantic_hash = semantic_hash
+    await saga_service.record_success(db, saga, "skill")
+    await saga_service.dispatch_next_step(db, context.require_outbox(), saga, profile)
 
 
 @kafka_client.message_handler(
@@ -187,105 +170,73 @@ async def _request_query_embedding(
     group_id="user-pref-embedding-callback-primary",
 )
 @kafka_client.with_db_session(schema=settings.database.schema_name)
-async def handle_embedding_callback(
-    message: EmbeddingCallback,
-    context: MessageContext,
-) -> None:
-    """Persist query embedding and publish lifecycle event on success.
-
-    Deserializes PrefEmbeddingState from caller_context, persists the retrieval
-    vectors, marks enrichment complete, loads user skills from the DB (persisted
-    during the skill normalization stage), then publishes the lifecycle event.
-    On error, logs the downstream-declared failure and acknowledges the callback.
-    """
-    state = PrefEmbeddingState.from_bytes(message.callback.caller_context)
-    pref_id = UUID(state.pref_id)
-
-    if (success := message.success) is not None:
-        await _process_embedding_success(success, state, pref_id, context)
-    elif (error := message.error) is not None:
-        logger.error(
-            "Embedding failed -- enrichment aborted",
-            pref_id=str(pref_id),
-            action=state.action,
-            error_code=error.error_code,
-            error_message=error.error_message,
-        )
-    else:
+async def handle_embedding_callback(message: EmbeddingCallback, context: MessageContext) -> None:
+    """Commit persisted query vectors, saga completion, and lifecycle fact atomically."""
+    db, profile, saga = await _load_current_saga(context, message, step="embedding")
+    if profile is None or saga is None:
+        return
+    if (error := message.error) is not None:
+        await _handle_declared_error(context, profile, saga, step="embedding", error=error)
+        return
+    if (success := message.success) is None:
         msg = "Empty embedding callback result"
         raise ValidationError(msg)
 
-
-async def _process_embedding_success(
-    success: EmbeddingResult,
-    state: PrefEmbeddingState,
-    pref_id: UUID,
-    context: MessageContext,
-) -> None:
-    """Persist query embedding vectors and publish lifecycle event.
-
-    User skills are loaded from the DB profile row (user_skills_data column)
-    rather than from ECST state, keeping PrefEmbeddingState at ~80 bytes.
-    """
-    db = context.require_db_session()
     current_version = get_manifest().get_entity_version(EntityType.PROFILE)
     if success.collection_version != current_version:
-        profile = await profile_service.get_profile_by_id(db, pref_id)
-        if not _state_matches_profile(profile, state):
-            logger.info("Discarded stale profile embedding callback", pref_id=str(pref_id))
-            return
-        retry_text = _persisted_embedding_text(profile, state.embedded_text)
-        await _request_query_embedding(retry_text, state, pref_id)
+        await saga_service.retry_enrichment(db, context.require_outbox(), profile, saga)
         logger.info(
-            "Stale profile embedding callback replaced",
-            pref_id=str(pref_id),
+            "Replaced stale-version preference embedding callback",
+            saga_id=str(saga.id),
             callback_version=success.collection_version,
             current_version=current_version,
         )
         return
     callback_hash = success.content_hash if isinstance(success.content_hash, str) else ""
-    if state.semantic_hash and callback_hash and callback_hash != state.semantic_hash:
-        logger.info("Discarded profile embedding with mismatched content hash", pref_id=str(pref_id))
-        return
-    expected_hash = (
-        state.semantic_hash
-        or callback_hash
-        or (profile_embedding_content_hash(state.embedded_text) if state.embedded_text else "")
-    )
-
-    expected_generation = state.semantic_generation or None
-    if expected_generation is not None and expected_hash:
-        profile = await persist_query_enrichment(
+    if callback_hash and callback_hash != saga.semantic_hash:
+        await saga_service.record_retryable_error(
             db,
-            pref_id,
-            success,
-            expected_generation=expected_generation,
-            expected_hash=expected_hash,
+            saga,
+            step="embedding",
+            error_code="CONTENT_HASH_MISMATCH",
+            error_message="Embedding callback content hash does not match the active preference workflow",
         )
-    elif expected_generation is not None:
-        profile = await persist_query_enrichment(db, pref_id, success, expected_generation=expected_generation)
-    elif expected_hash:
-        profile = await persist_query_enrichment(db, pref_id, success, expected_hash=expected_hash)
-    else:
-        profile = await persist_query_enrichment(db, pref_id, success)
-    if profile is None:
-        logger.info("Discarded stale profile embedding callback", pref_id=str(pref_id))
         return
-    embedded_text = _persisted_embedding_text(profile, state.embedded_text)
-    if expected_hash and profile_embedding_content_hash(embedded_text) != expected_hash:
-        logger.info("Discarded profile embedding with changed semantic text", pref_id=str(pref_id))
+    returned_types = [embedding.embedding_type for embedding in success.embeddings]
+    required_types = set(PREF_EMBEDDING_SPEC.requested_types)
+    if len(returned_types) != len(set(returned_types)) or set(returned_types) != required_types:
+        required_names = sorted(embedding_type.name for embedding_type in required_types)
+        returned_names = sorted(embedding_type.name for embedding_type in returned_types)
+        await saga_service.record_retryable_error(
+            db,
+            saga,
+            step="embedding",
+            error_code="EMBEDDING_RESULT_TYPES_MISMATCH",
+            error_message=(
+                f"Embedding callback types {returned_names} do not exactly match required types {required_names}"
+            ),
+        )
         return
-    user_skills = load_user_skills_from_profile(profile)
-    profile.is_enrichment_complete = True
-    await upsert_profile_point(profile, success, embedded_text=embedded_text)
-    outbox = context.require_outbox()
-    if state.action == _PrefAction.UPDATE:
-        await publish_profile_updated_event(db, outbox, profile, user_skills=user_skills)
-    else:
-        await publish_profile_created_event(db, outbox, profile, user_skills=user_skills)
+
+    persisted_profile = await persist_query_enrichment(
+        db,
+        profile,
+        success,
+        expected_generation=saga.semantic_generation,
+        expected_hash=saga.semantic_hash,
+    )
+    if persisted_profile is None:
+        logger.info("Ignoring superseded embedding callback", saga_id=str(saga.id))
+        return
+    await saga_service.record_success(db, saga, "embedding")
+    await saga_service.complete_enrichment(db, context.require_outbox(), profile, saga)
     logger.info(
-        "Enrichment complete -- lifecycle event published",
-        pref_id=str(pref_id),
-        action=state.action,
-        skill_count=len(user_skills),
+        "Preference enrichment completed",
+        saga_id=str(saga.id),
+        pref_id=str(saga.pref_id),
+        retrieval_types=[
+            embedding.embedding_type.name
+            for embedding in success.embeddings
+            if embedding.embedding_type != EmbeddingType.DENSE
+        ],
     )
