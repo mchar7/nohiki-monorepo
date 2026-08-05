@@ -854,6 +854,30 @@ def test_route_auth_selectors_authorize_only_the_declared_client_matrix(
             assert auth.get("location") == {"header": {"name": "x-api-key"}}
 
 
+def test_local_proxy_endpoint_uses_its_owner_credential(
+    rendered: tuple[Manifest, ...],
+    managed_rendered: tuple[Manifest, ...],
+) -> None:
+    local = _named(rendered, "ExternalSecret", "nohiki-model-egress-openai")
+    assert local["spec"]["data"] == [
+        {
+            "secretKey": "Authorization",
+            "remoteRef": {
+                "key": "nohiki-llm-proxy-source",
+                "property": "LLM_PROXY_SERVER_API_KEY",
+            },
+        }
+    ]
+
+    managed = _named(managed_rendered, "ExternalSecret", "nohiki-model-egress-openai")
+    assert managed["spec"]["data"] == [
+        {
+            "secretKey": "Authorization",
+            "remoteRef": {"key": "model-egress-openai-authorization"},
+        }
+    ]
+
+
 def test_api_key_auth_prefixes_include_the_header_separator(
     rendered: tuple[Manifest, ...],
     managed_rendered: tuple[Manifest, ...],
