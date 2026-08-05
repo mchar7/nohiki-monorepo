@@ -28,3 +28,8 @@ omit = [
     "src/nohiki/*",
     "src/nohiki_proto_google/*",
 ]
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+[tool.deptry.per_rule_ignores]
+DEP003 = ["dateutil", "pydantic_core"]

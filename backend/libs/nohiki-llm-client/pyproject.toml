@@ -42,3 +42,10 @@ filterwarnings = [
 markers = [
     "integration: marks tests requiring live external services (deselect with '-m not integration')",
 ]
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP002: runtime-selected adapters or deployment extras, installed but not imported here.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+[tool.deptry.per_rule_ignores]
+DEP002 = ["nohiki-core-settings"]
+DEP003 = ["google", "httpx", "nohiki_common_exceptions", "openai"]

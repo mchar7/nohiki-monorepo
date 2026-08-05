@@ -36,3 +36,8 @@ filterwarnings = ["error"]
 
 [tool.uv]
 override-dependencies = ["multiprocess>=0.70.19"]
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP002: runtime-selected adapters or deployment extras, installed but not imported here.
+[tool.deptry.per_rule_ignores]
+DEP002 = ["accelerate"]

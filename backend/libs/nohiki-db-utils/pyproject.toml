@@ -46,3 +46,12 @@ nohiki-db-migrate = "nohiki_db_utils.migrations.cli:migrate_cli"
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12"]
 build-backend = "uv_build"
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP002: runtime-selected adapters or deployment extras, installed but not imported here.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+# DEP004: modules imported by test helpers that this package ships from src/.
+[tool.deptry.per_rule_ignores]
+DEP002 = ["asyncpg", "nohiki-db-utils", "protobuf", "psycopg"]
+DEP003 = ["nohiki", "nohiki_test_utils"]
+DEP004 = ["pytest", "pytest_unused_fixtures", "testcontainers"]
