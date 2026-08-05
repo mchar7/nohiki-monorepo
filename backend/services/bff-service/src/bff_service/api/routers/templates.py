@@ -39,7 +39,12 @@ router = APIRouter()
 # Template Validation Models
 
 
-SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[\w.]+)?(?:\+[\w.]+)?$")
+SEMVER_PATTERN = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$"
+)
 NAMESPACE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 TEMPLATE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,126}$")
 _TEMPLATE_CONTENT_MAX_BYTES = 102400
@@ -477,7 +482,7 @@ class TemplateCreateRequest(BaseModel):
 class TemplateVersionAddRequest(BaseModel):
     """Request to add a new version to a template family."""
 
-    version: str = Field(..., pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")
+    version: str = Field(..., pattern=SEMVER_PATTERN)
     template_content: _TemplateContent = Field(..., min_length=10)
     description: str | None = Field(default=None, max_length=1000)
     schema_compatibility: list[str] | None = Field(default=None, max_length=20)

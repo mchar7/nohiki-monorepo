@@ -136,7 +136,9 @@ class DocumentRenderRequested(betterproto2.Message):
 
     template_id: "str" = betterproto2.field(2, betterproto2.TYPE_STRING)
 
-    template_version: "str" = betterproto2.field(3, betterproto2.TYPE_STRING)
+    template_version: "str | None" = betterproto2.field(
+        3, betterproto2.TYPE_STRING, optional=True
+    )
 
     template_name: "str | None" = betterproto2.field(
         10, betterproto2.TYPE_STRING, optional=True

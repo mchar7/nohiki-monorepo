@@ -332,6 +332,30 @@ class TestTemplateContentSize:
             build_request()
 
 
+class TestTemplateVersionSemver:
+    """Tests for full ASCII semantic versions."""
+
+    def test_version_add_accepts_prerelease_and_build_metadata(self) -> None:
+        from bff_service.api.routers.templates import TemplateVersionAddRequest
+
+        request = TemplateVersionAddRequest(
+            version="1.2.3-rc.1+build.7",
+            template_content="<html>valid content</html>",
+        )
+
+        assert request.version == "1.2.3-rc.1+build.7"
+
+    @pytest.mark.parametrize("version", ["\u0661.\u0662.\u0663", "1.2.3-01", "1.2.3-alpha..1"])
+    def test_version_add_rejects_invalid_semver(self, version: str) -> None:
+        from bff_service.api.routers.templates import TemplateVersionAddRequest
+
+        with pytest.raises(PydanticValidationError):
+            TemplateVersionAddRequest(
+                version=version,
+                template_content="<html>valid content</html>",
+            )
+
+
 # Template Handler Tests
 
 
