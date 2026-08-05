@@ -10,6 +10,8 @@ __all__ = (
     "PrefDeleteRequested",
     "PrefDeleted",
     "PrefDetachUploadRequested",
+    "PrefEnrichmentFailed",
+    "PrefEnrichmentFailedFailureReason",
     "PrefFeatureImportanceUpdateRequested",
     "PrefUpdateRequested",
     "PrefUpdated",
@@ -32,6 +34,38 @@ from message_pool import default_message_pool
 
 _COMPILER_VERSION = "0.10.0"
 betterproto2.check_compiler_version(_COMPILER_VERSION)
+
+
+class PrefEnrichmentFailedFailureReason(betterproto2.Enum):
+    UNSPECIFIED = 0
+
+    SKILL_NORMALIZATION_FAILED = 1
+
+    EMBEDDING_FAILED = 2
+
+    EXPIRED = 3
+
+    CANCELLED = 4
+
+    @classmethod
+    def betterproto_value_to_renamed_proto_names(cls) -> dict[int, str]:
+        return {
+            0: "FAILURE_REASON_UNSPECIFIED",
+            1: "FAILURE_REASON_SKILL_NORMALIZATION_FAILED",
+            2: "FAILURE_REASON_EMBEDDING_FAILED",
+            3: "FAILURE_REASON_EXPIRED",
+            4: "FAILURE_REASON_CANCELLED",
+        }
+
+    @classmethod
+    def betterproto_renamed_proto_names_to_value(cls) -> dict[str, int]:
+        return {
+            "FAILURE_REASON_UNSPECIFIED": 0,
+            "FAILURE_REASON_SKILL_NORMALIZATION_FAILED": 1,
+            "FAILURE_REASON_EMBEDDING_FAILED": 2,
+            "FAILURE_REASON_EXPIRED": 3,
+            "FAILURE_REASON_CANCELLED": 4,
+        }
 
 
 @dataclass(eq=False, repr=False)
@@ -284,6 +318,41 @@ class PrefDetachUploadRequested(betterproto2.Message):
 
 default_message_pool.register_message(
     "nohiki.user.pref.v1", "PrefDetachUploadRequested", PrefDetachUploadRequested
+)
+
+
+@dataclass(eq=False, repr=False)
+class PrefEnrichmentFailed(betterproto2.Message):
+    """
+    PrefEnrichmentFailed is an operational event indicating that a
+    pref-enrichment saga terminated without emitting a CDC lifecycle event.
+    Consumers use this to propagate user-facing failure signals (e.g. BFF
+    CommandRequest projection) without polluting the ECST lifecycle stream.
+    """
+
+    metadata: "___common__v1__.EventMetadata | None" = betterproto2.field(
+        1, betterproto2.TYPE_MESSAGE, optional=True
+    )
+
+    pref_id: "str" = betterproto2.field(2, betterproto2.TYPE_STRING)
+
+    user_id: "str" = betterproto2.field(3, betterproto2.TYPE_STRING)
+
+    reason: "PrefEnrichmentFailedFailureReason" = betterproto2.field(
+        4,
+        betterproto2.TYPE_ENUM,
+        default_factory=lambda: PrefEnrichmentFailedFailureReason(0),
+    )
+
+    error_message: "str" = betterproto2.field(5, betterproto2.TYPE_STRING)
+
+    saga_id: "str" = betterproto2.field(6, betterproto2.TYPE_STRING)
+
+    request_id: "str" = betterproto2.field(7, betterproto2.TYPE_STRING)
+
+
+default_message_pool.register_message(
+    "nohiki.user.pref.v1", "PrefEnrichmentFailed", PrefEnrichmentFailed
 )
 
 

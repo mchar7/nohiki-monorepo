@@ -125,3 +125,29 @@ message UserPrefSettingsUpdated {
   ];
   UserPrefSettings settings = 10 [(buf.validate.field).required = true];
 }
+
+// PrefEnrichmentFailed is an operational event indicating that a
+// pref-enrichment saga terminated without emitting a CDC lifecycle event.
+// Consumers use this to propagate user-facing failure signals (e.g. BFF
+// CommandRequest projection) without polluting the ECST lifecycle stream.
+message PrefEnrichmentFailed {
+  nohiki.common.v1.EventMetadata metadata = 1;
+  string pref_id = 2;
+  string user_id = 3;
+
+  enum FailureReason {
+    FAILURE_REASON_UNSPECIFIED = 0;
+    FAILURE_REASON_SKILL_NORMALIZATION_FAILED = 1;
+    FAILURE_REASON_EMBEDDING_FAILED = 2;
+    FAILURE_REASON_EXPIRED = 3;
+    FAILURE_REASON_CANCELLED = 4;
+  }
+  FailureReason reason = 4;
+
+  string error_message = 5;
+  string saga_id = 6;
+  string request_id = 7 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+}

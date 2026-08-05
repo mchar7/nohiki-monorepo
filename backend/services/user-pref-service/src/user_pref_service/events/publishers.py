@@ -9,6 +9,8 @@ from uuid import UUID
 from nohiki.user.pref.v1 import (
     PrefCreated,
     PrefDeleted,
+    PrefEnrichmentFailed,
+    PrefEnrichmentFailedFailureReason,
     PrefUpdated,
     UserPrefSettingsCreated,
     UserPrefSettingsUpdated,
@@ -28,7 +30,7 @@ if TYPE_CHECKING:
     from nohiki_db_utils import OutboxWriter
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from user_pref_service.db.models import SearchPref
+    from user_pref_service.db.models import PrefEnrichmentSaga, SearchPref
     from user_pref_service.db.models import UserPrefSettings as UserPrefSettingsModel
 
 logger = get_logger(__name__)
@@ -156,6 +158,41 @@ async def publish_profile_deleted_event(
         event=event,
     )
     logger.info("Published profile deleted event", pref_id=str(pref_id))
+
+
+async def publish_pref_enrichment_failed(
+    db: AsyncSession,
+    outbox: OutboxWriter,
+    saga: PrefEnrichmentSaga,
+    *,
+    reason: PrefEnrichmentFailedFailureReason,
+    error_message: str,
+) -> None:
+    """Write a request-correlated terminal enrichment fact to the outbox."""
+    event = PrefEnrichmentFailed(
+        metadata=create_event_metadata(settings.service_name, saga.correlation_id),
+        pref_id=str(saga.pref_id),
+        user_id=str(saga.user_id),
+        reason=reason,
+        error_message=error_message,
+        saga_id=str(saga.id),
+        request_id=str(saga.request_id),
+    )
+    await outbox.write_event(
+        db=db,
+        params=OutboxEventParams(
+            aggregate_type=AGGREGATE_TYPE,
+            aggregate_id=str(saga.pref_id),
+            event_type=Topics.USER_PREF_ENRICHMENT_FAILED,
+        ),
+        event=event,
+    )
+    logger.warning(
+        "Published terminal preference enrichment fact",
+        saga_id=str(saga.id),
+        request_id=str(saga.request_id),
+        reason=reason.name,
+    )
 
 
 async def publish_settings_created_event(

@@ -5,6 +5,7 @@ Importing this module registers all Kafka handlers via decorator side effects.
 Handler modules:
 - commands.py: CRUD command handlers (create, update, delete profiles)
 - callbacks.py: Async callback handlers (skill normalization, query encoding)
+- qdrant_handlers.py: Committed preference lifecycle projection
 - upstream_cdc.py: CDC events from upstream services (user-auth, user-upload)
 """
 
@@ -12,9 +13,9 @@ from nohiki_observability import get_logger
 
 from user_pref_service.core.config import get_settings
 from user_pref_service.core.kafka import kafka_client
-from user_pref_service.events import callbacks, commands, upstream_cdc
+from user_pref_service.events import callbacks, commands, qdrant_handlers, upstream_cdc
 
-__all__ = ["callbacks", "commands", "start_event_consumer", "upstream_cdc"]
+__all__ = ["callbacks", "commands", "qdrant_handlers", "start_event_consumer", "upstream_cdc"]
 
 logger = get_logger(__name__)
 settings = get_settings()

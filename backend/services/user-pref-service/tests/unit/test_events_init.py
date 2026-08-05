@@ -58,6 +58,14 @@ class TestModuleExports:
 
         assert commands is not None
 
+    def test_exports_qdrant_handlers_module(self) -> None:
+        """Importing events registers committed Qdrant projection handlers."""
+        from user_pref_service.events import qdrant_handlers
+
+        assert callable(qdrant_handlers.handle_pref_created)
+        assert callable(qdrant_handlers.handle_pref_updated)
+        assert callable(qdrant_handlers.handle_pref_deleted)
+
     def test_exports_upstream_cdc_module(self) -> None:
         """Test that upstream_cdc module is exported."""
         from user_pref_service.events import upstream_cdc
@@ -74,7 +82,7 @@ class TestModuleExports:
         """Test that __all__ contains all expected exports."""
         from user_pref_service.events import __all__
 
-        expected = ["callbacks", "commands", "start_event_consumer", "upstream_cdc"]
+        expected = ["callbacks", "commands", "qdrant_handlers", "start_event_consumer", "upstream_cdc"]
 
         for export in expected:
             assert export in __all__, f"{export} missing from __all__"

@@ -30,6 +30,7 @@ from bff_service.events.projections.user_auth import (
     handle_account_updated,
 )
 from bff_service.events.projections.user_pref import (
+    handle_pref_enrichment_failed,
     handle_profile_created,
     handle_profile_deleted,
     handle_profile_updated,
@@ -508,6 +509,66 @@ async def test_handle_profile_updated(experience_years: int) -> None:
         "experience_years": experience_years,
         "seniority_levels": [],
     } in statement.compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_pref_enrichment_failure_updates_only_active_command_and_emits_status() -> None:
+    """A matched failure becomes terminal and is visible on the existing SSE channel."""
+    request_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    event = MagicMock(
+        request_id=str(request_id),
+        user_id=str(user_id),
+        error_message="Embedding service unavailable",
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = user_id
+    session = create_mock_session()
+    session.execute.return_value = result
+    bridge = MagicMock()
+    bridge.publish = AsyncMock()
+
+    with patch("bff_service.events.projections.user_pref.get_sse_bridge", return_value=bridge):
+        await handle_pref_enrichment_failed(event, _make_context(db_session=session))
+
+    statement = session.execute.await_args.args[0]
+    params = statement.compile().params.values()
+    assert request_id in params
+    assert user_id in params
+    assert ["pending", "in_progress"] in params
+    assert "failed" in params
+    assert "Embedding service unavailable" in params
+    assert any(isinstance(value, datetime) for value in params)
+    session.commit.assert_awaited_once()
+    bridge.publish.assert_awaited_once()
+    published_user_id, payload = bridge.publish.await_args.args
+    assert published_user_id == user_id
+    assert payload.request_id == str(request_id)
+    assert payload.type == "document_status"
+    assert payload.status == "failed"
+    assert payload.error_message == "Embedding service unavailable"
+
+
+@pytest.mark.asyncio
+async def test_pref_enrichment_failure_without_active_command_emits_no_status() -> None:
+    """Completed, failed, missing, and mismatched rows do not produce a new status event."""
+    event = MagicMock(
+        request_id=str(uuid.uuid4()),
+        user_id=str(uuid.uuid4()),
+        error_message="Late failure",
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    session = create_mock_session()
+    session.execute.return_value = result
+    bridge = MagicMock()
+    bridge.publish = AsyncMock()
+
+    with patch("bff_service.events.projections.user_pref.get_sse_bridge", return_value=bridge):
+        await handle_pref_enrichment_failed(event, _make_context(db_session=session))
+
+    session.commit.assert_awaited_once()
+    bridge.publish.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

@@ -154,7 +154,16 @@ class TestProfileCommands:
     ) -> None:
         profile_service_cls = _import_profile_service(monkeypatch)
         service = profile_service_cls()
-        mock_publish = mocker.AsyncMock()
+        operations: list[str] = []
+        mock_publish = mocker.AsyncMock(
+            side_effect=lambda *_args, **_kwargs: operations.append("publish"),
+        )
+        mock_track = mocker.patch.object(
+            service,
+            "_track_command",
+            side_effect=lambda *_args, **_kwargs: operations.append("track"),
+        )
+        mock_db = create_mock_session()
         mock_kafka = mocker.MagicMock()
         mock_kafka.publish = mock_publish
         monkeypatch.setattr("bff_service.services.profile_service.kafka_client", mock_kafka)
@@ -167,10 +176,12 @@ class TestProfileCommands:
             "open_to_relocation": True,
         }
 
-        request_id = await service.create_profile_command(user_id, payload)
+        request_id = await service.create_profile_command(mock_db, user_id, payload)
 
         assert request_id == str(rid)
         mock_publish.assert_awaited_once()
+        mock_track.assert_awaited_once_with(mock_db, str(rid), user_id, "create_profile")
+        assert operations == ["track", "publish"]
         topic, event = mock_publish.call_args.args
         assert topic == "user-pref.cmd.create-requested.v1"
         assert mock_publish.call_args.kwargs.get("key") == str(rid)
@@ -196,7 +207,7 @@ class TestProfileCommands:
             "notification_threshold": 0.7,
         }
 
-        request_id = await service.create_profile_command(user_id, payload)
+        request_id = await service.create_profile_command(create_mock_session(), user_id, payload)
 
         assert request_id == str(rid)
         mock_publish.assert_awaited_once()
@@ -210,7 +221,16 @@ class TestProfileCommands:
     ) -> None:
         profile_service_cls = _import_profile_service(monkeypatch)
         service = profile_service_cls()
-        mock_publish = mocker.AsyncMock()
+        operations: list[str] = []
+        mock_publish = mocker.AsyncMock(
+            side_effect=lambda *_args, **_kwargs: operations.append("publish"),
+        )
+        mock_track = mocker.patch.object(
+            service,
+            "_track_command",
+            side_effect=lambda *_args, **_kwargs: operations.append("track"),
+        )
+        mock_db = create_mock_session()
         mock_kafka = mocker.MagicMock()
         mock_kafka.publish = mock_publish
         monkeypatch.setattr("bff_service.services.profile_service.kafka_client", mock_kafka)
@@ -224,9 +244,11 @@ class TestProfileCommands:
             "open_to_relocation": False,
         }
 
-        request_id = await service.update_profile_command(user_id, pref_id, payload)
+        request_id = await service.update_profile_command(mock_db, user_id, pref_id, payload)
 
         assert request_id == str(rid)
+        mock_track.assert_awaited_once_with(mock_db, str(rid), user_id, "update_profile")
+        assert operations == ["track", "publish"]
         topic, event = mock_publish.call_args.args
         assert topic == "user-pref.cmd.update-requested.v1"
         assert mock_publish.call_args.kwargs.get("key") == str(rid)
@@ -251,7 +273,7 @@ class TestProfileCommands:
             "notification_threshold": 0.7,
         }
 
-        request_id = await service.update_profile_command(user_id, pref_id, payload)
+        request_id = await service.update_profile_command(create_mock_session(), user_id, pref_id, payload)
 
         assert request_id == str(rid)
         _, event = mock_publish.call_args.args
@@ -271,7 +293,9 @@ class TestProfileCommands:
         rid = uuid.uuid4()
         monkeypatch.setattr("bff_service.services.profile_service.uuid7", lambda: rid)
 
-        request_id = await service.update_profile_command(user_id, pref_id, {"pref_name": "Renamed"})
+        request_id = await service.update_profile_command(
+            create_mock_session(), user_id, pref_id, {"pref_name": "Renamed"}
+        )
 
         assert request_id == str(rid)
         _, event = mock_publish.call_args.args
@@ -312,7 +336,7 @@ class TestProfileCommands:
         mock_publish = mocker.patch("bff_service.services.profile_service.kafka_client.publish")
 
         data = {"pref_name": "Minimal Profile"}
-        request_id = await service.create_profile_command(user_id, data)
+        request_id = await service.create_profile_command(create_mock_session(), user_id, data)
 
         assert request_id is not None
         _, event = mock_publish.call_args.args
@@ -339,7 +363,7 @@ class TestProfileCommands:
             "disallowed_keywords": ["java", "legacy"],
         }
 
-        request_id = await service.update_profile_command(user_id, pref_id, payload)
+        request_id = await service.update_profile_command(create_mock_session(), user_id, pref_id, payload)
 
         assert request_id == str(rid)
         _, event = mock_publish.call_args.args
@@ -507,6 +531,11 @@ class TestCommandStatus:
         await service._track_command(mock_db, request_id, user_id, "create_profile")
 
         mock_db.execute.assert_awaited_once()
+        params = mock_db.execute.await_args.args[0].compile().params.values()
+        assert uuid.UUID(request_id) in params
+        assert user_id in params
+        assert "create_profile" in params
+        assert "pending" in params
         mock_db.commit.assert_awaited_once()
 
 
@@ -605,7 +634,7 @@ class TestProfileCommandsComplexPayloads:
             },
         }
 
-        request_id = await service.create_profile_command(user_id, payload)
+        request_id = await service.create_profile_command(create_mock_session(), user_id, payload)
 
         assert request_id == str(rid)
         mock_publish.assert_awaited_once()
@@ -648,7 +677,7 @@ class TestProfileCommandsComplexPayloads:
             },
         }
 
-        request_id = await service.update_profile_command(user_id, pref_id, payload)
+        request_id = await service.update_profile_command(create_mock_session(), user_id, pref_id, payload)
 
         assert request_id == str(rid)
         _, event = mock_publish.call_args.args

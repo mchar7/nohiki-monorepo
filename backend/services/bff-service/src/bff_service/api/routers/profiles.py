@@ -93,10 +93,8 @@ class ProfileCreate(BaseModel):
     notification_threshold: float = Field(default=0.7, ge=0, le=1)
     auto_tailor_threshold: float | None = Field(default=None, ge=0, le=1)
     open_to_relocation: bool = Field(default=False)
-    salary_preference: SalaryPreferenceRequest = Field(..., description="Salary preference required for ML scoring")
-    experience_preference: ExperiencePreferenceRequest = Field(
-        ..., description="Experience preference required for ML scoring"
-    )
+    salary_preference: SalaryPreferenceRequest | None = None
+    experience_preference: ExperiencePreferenceRequest | None = None
 
 
 class ProfileUpdate(BaseModel):
@@ -223,13 +221,14 @@ async def list_profiles(
 async def create_profile(
     data: ProfileCreate,
     user_id: Annotated[UUID, Depends(get_current_user_id_from_cookie)],
+    db: Annotated[AsyncSession, Depends(get_async_db)],
     service: Annotated[ProfileService, Depends(get_profile_service)],
 ) -> CommandAcceptedResponse:
     """Create a new job target profile.
 
     Returns 202 Accepted with request_id for async completion tracking.
     """
-    request_id = await service.create_profile_command(user_id, data.model_dump())
+    request_id = await service.create_profile_command(db, user_id, data.model_dump())
     return CommandAcceptedResponse(request_id=request_id)
 
 
@@ -254,6 +253,7 @@ async def update_profile(
     pref_id: UUID,
     data: ProfileUpdate,
     user_id: Annotated[UUID, Depends(get_current_user_id_from_cookie)],
+    db: Annotated[AsyncSession, Depends(get_async_db)],
     service: Annotated[ProfileService, Depends(get_profile_service)],
 ) -> CommandAcceptedResponse:
     """Update a job target profile.
@@ -261,6 +261,7 @@ async def update_profile(
     Returns 202 Accepted with request_id for async completion tracking.
     """
     request_id = await service.update_profile_command(
+        db,
         user_id,
         pref_id,
         data.model_dump(exclude_unset=True, exclude_none=True),

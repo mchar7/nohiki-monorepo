@@ -140,6 +140,7 @@ async def test_create_profile_publishes_command(mocker: MockerFixture) -> None:
     request_id = str(uuid.uuid4())
     mock_service = mocker.Mock()
     mock_service.create_profile_command = mocker.AsyncMock(return_value=request_id)
+    mock_db = create_mock_session()
 
     from bff_service.api.routers.profiles import (
         ExperiencePreferenceRequest,
@@ -164,11 +165,25 @@ async def test_create_profile_publishes_command(mocker: MockerFixture) -> None:
         ),
     )
 
-    result = await create_profile(data, user_id, mock_service)
+    result = await create_profile(data, user_id, mock_db, mock_service)
 
     assert result.request_id == request_id
     assert result.status == "accepted"
     mock_service.create_profile_command.assert_awaited_once()
+    assert mock_service.create_profile_command.call_args.args[:2] == (mock_db, user_id)
+
+
+def test_profile_create_accepts_omitted_salary_and_experience() -> None:
+    from bff_service.api.routers.profiles import ProfileCreate
+
+    payload = _valid_profile_create_payload()
+    payload.pop("salary_preference")
+    payload.pop("experience_preference")
+
+    profile = ProfileCreate.model_validate(payload)
+
+    assert profile.salary_preference is None
+    assert profile.experience_preference is None
 
 
 @pytest.mark.parametrize("experience_years", [0, 5, 50])
@@ -310,16 +325,18 @@ async def test_update_profile_publishes_command(mocker: MockerFixture) -> None:
     request_id = str(uuid.uuid4())
     mock_service = mocker.Mock()
     mock_service.update_profile_command = mocker.AsyncMock(return_value=request_id)
+    mock_db = create_mock_session()
 
     data = ProfileUpdate(pref_name="Updated Name", notification_threshold=0.8)
 
-    result = await update_profile(pref_id, data, user_id, mock_service)
+    result = await update_profile(pref_id, data, user_id, mock_db, mock_service)
 
     assert result.request_id == request_id
     mock_service.update_profile_command.assert_awaited_once()
     call_args = mock_service.update_profile_command.call_args
-    assert call_args[0][0] == user_id
-    assert call_args[0][1] == pref_id
+    assert call_args[0][0] is mock_db
+    assert call_args[0][1] == user_id
+    assert call_args[0][2] == pref_id
 
 
 def test_patch_profile_rejects_empty_work_arrangements(mocker: MockerFixture) -> None:
@@ -348,7 +365,7 @@ def test_patch_profile_drops_explicit_null_work_arrangements(mocker: MockerFixtu
     assert response.status_code == 202
     assert response.json()["request_id"] == request_id
     mock_service.update_profile_command.assert_awaited_once()
-    assert mock_service.update_profile_command.call_args.args == (user_id, pref_id, {})
+    assert mock_service.update_profile_command.call_args.args[1:] == (user_id, pref_id, {})
 
 
 @pytest.mark.parametrize("method", ["post", "patch"])

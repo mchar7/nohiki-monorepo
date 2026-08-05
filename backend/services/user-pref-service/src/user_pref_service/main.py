@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
@@ -26,7 +27,9 @@ from user_pref_service.core.config import (
     get_settings,
 )
 from user_pref_service.core.kafka import kafka_client
+from user_pref_service.core.saga_policy import SWEEP_INTERVAL_SECONDS
 from user_pref_service.events import start_event_consumer
+from user_pref_service.events.saga_sweeper import sweep_pref_enrichment_sagas
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -35,6 +38,39 @@ settings = get_settings()
 obs = Observability.from_settings(settings)
 obs.init()
 logger = obs.get_logger(__name__)
+
+
+async def _pref_enrichment_saga_loop(shutdown_event: asyncio.Event) -> None:
+    """Retry or expire durable preference sagas until shutdown."""
+    sessionmaker = get_async_sessionmaker(settings.database)
+    while not shutdown_event.is_set():
+        with suppress(TimeoutError):
+            await asyncio.wait_for(shutdown_event.wait(), timeout=SWEEP_INTERVAL_SECONDS)
+        if shutdown_event.is_set():
+            return
+        try:
+            async with sessionmaker() as db:
+                await sweep_pref_enrichment_sagas(db)
+                await db.commit()
+        except Exception:
+            logger.exception("Preference enrichment saga sweep failed; will retry")
+
+
+@asynccontextmanager
+async def _run_saga_sweeper() -> AsyncGenerator[None]:
+    """Start and stop the local durable-saga scheduler."""
+    shutdown_event = asyncio.Event()
+    saga_task = asyncio.create_task(
+        _pref_enrichment_saga_loop(shutdown_event),
+        name="user-pref-enrichment-saga-sweep",
+    )
+    try:
+        yield
+    finally:
+        shutdown_event.set()
+        saga_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await saga_task
 
 
 @asynccontextmanager
@@ -56,7 +92,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         start_event_consumer()
         consumers_started = True
 
-        async with kafka_client.supervise_consumer_failures():
+        async with kafka_client.supervise_consumer_failures(), _run_saga_sweeper():
             logger.info("Application startup complete")
             yield
     finally:

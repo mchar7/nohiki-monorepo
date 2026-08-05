@@ -9,6 +9,7 @@ from betterproto2 import Casing
 from nohiki.user.pref.v1 import (
     PrefCreated,
     PrefDeleted,
+    PrefEnrichmentFailed,
     PrefUpdated,
     UserPrefSettingsCreated,
     UserPrefSettingsUpdated,
@@ -16,16 +17,22 @@ from nohiki.user.pref.v1 import (
 from nohiki_common_exceptions import ValidationError
 from nohiki_kafka_client import MessageContext, Topics
 from nohiki_observability import get_logger
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.dialects.postgresql import insert
 
 from bff_service.core.kafka import kafka_client
-from bff_service.db.models import ProfileProjection, UserPrefSettingsProjection
+from bff_service.db.models import (
+    CommandRequest,
+    ProfileProjection,
+    UserPrefSettingsProjection,
+)
 from bff_service.events.projections._constants import projection_priority_group_id
 from bff_service.events.projections._helpers import (
     get_notification_threshold,
     percent_to_ratio,
 )
+from bff_service.sse import get_sse_bridge
+from bff_service.sse.events import SSE_EVENT_DOCUMENT_STATUS, DocumentStatusPayload
 
 logger = get_logger(__name__)
 
@@ -201,6 +208,59 @@ async def handle_profile_updated(message: PrefUpdated, context: MessageContext) 
     )
     await session.execute(stmt)
     logger.info("Profile projection updated", pref_id=snapshot.id)
+
+
+@kafka_client.message_handler(
+    Topics.USER_PREF_ENRICHMENT_FAILED,
+    PrefEnrichmentFailed,
+    group_id=projection_priority_group_id,
+    preserve_partition_order=False,
+)
+@kafka_client.with_db_session(auto_commit=False)
+async def handle_pref_enrichment_failed(
+    message: PrefEnrichmentFailed,
+    context: MessageContext,
+) -> None:
+    """Project preference enrichment failure onto its tracked command."""
+    try:
+        request_id = UUID(message.request_id)
+        user_id = UUID(message.user_id)
+    except ValueError:
+        logger.warning(
+            "Preference enrichment failure has invalid identifiers",
+            request_id=message.request_id,
+            user_id=message.user_id,
+        )
+        return
+
+    error_message = message.error_message or "Preference enrichment failed"
+    session = context.require_db_session()
+    result = await session.execute(
+        update(CommandRequest)
+        .where(
+            CommandRequest.request_id == request_id,
+            CommandRequest.user_id == user_id,
+            CommandRequest.status.in_(("pending", "in_progress")),
+        )
+        .values(
+            status="failed",
+            error_message=error_message,
+            completed_at=datetime.now(UTC),
+        )
+        .returning(CommandRequest.user_id)
+    )
+    owning_user_id = result.scalar_one_or_none()
+    await session.commit()
+    if owning_user_id is not None:
+        await get_sse_bridge().publish(
+            owning_user_id,
+            DocumentStatusPayload(
+                type=SSE_EVENT_DOCUMENT_STATUS,
+                request_id=str(request_id),
+                status="failed",
+                error_message=error_message,
+            ),
+        )
 
 
 @kafka_client.message_handler(

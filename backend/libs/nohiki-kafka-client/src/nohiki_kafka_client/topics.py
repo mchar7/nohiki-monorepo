@@ -61,6 +61,9 @@ class Topics:
     USER_PREF_SETTINGS_UPDATE_REQUESTED: Final[str] = "user-pref.cmd.settings-update-requested.v1"
     USER_PREF_FEATURE_IMPORTANCE_UPDATE_REQUESTED: Final[str] = "user-pref.cmd.pref-importance-update-requested.v1"
 
+    # Preferences (user-pref-service) - System topics
+    USER_PREF_ENRICHMENT_FAILED: Final[str] = "user-pref.sys.pref-enrichment-failed.v1"
+
     # User Pref Settings (user-pref-service) - CDC topics
     USER_PREF_SETTINGS_CREATED: Final[str] = "user-pref.cdc.settings-created.v1"
     USER_PREF_SETTINGS_UPDATED: Final[str] = "user-pref.cdc.settings-updated.v1"
