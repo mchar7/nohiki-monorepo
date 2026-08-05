@@ -138,7 +138,6 @@ delete the rows it has read.
 ### Events Published via Outbox
 
 - `job-listing.fct.accepted.v1` -- New or content-changed listing accepted for enrichment
-- `job-listing.fct.duplicate-detected.v1` -- Publisher exists but has no in-tree caller today
 - `job-listing.cdc.listing-created.v1` -- Enriched listing banked (new or updated)
 - `job-listing.cdc.listing-updated.v1` -- Enriched listing overwrote an existing record, or a
   snapshot refresh was requested

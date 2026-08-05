@@ -47,7 +47,6 @@ job-ingest.fct.enrichment-completed.v1
 job-ingest.sys.embedding-callback.v1
 job-ingest.sys.skill-callback.v1
 job-listing.fct.accepted.v1
-job-listing.fct.duplicate-detected.v1
 job-listing.cdc.listing-created.v1
 job-listing.cdc.listing-updated.v1
 job-listing.cdc.listing-deleted.v1

@@ -24,35 +24,6 @@ logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class ListingFeedbackAggregate:
-    """Aggregate feedback statistics for a listing across all users."""
-
-    listing_id: UUID
-    good_count: int
-    too_high_count: int
-    too_low_count: int
-
-    @property
-    def total_count(self) -> int:
-        """Total feedback count for this listing."""
-        return self.good_count + self.too_high_count + self.too_low_count
-
-    @property
-    def quality_signal(self) -> float:
-        """Compute a quality signal from feedback.
-
-        Returns a value between -1.0 (all TOO_HIGH) and 1.0 (all TOO_LOW).
-        0.0 indicates balanced feedback or all GOOD.
-
-        TOO_HIGH feedback suggests listing is oversold (low quality).
-        TOO_LOW feedback suggests listing is undervalued (high quality).
-        """
-        if self.total_count == 0:
-            return 0.0
-        return (self.too_low_count - self.too_high_count) / self.total_count
-
-
-@dataclass(frozen=True, slots=True)
 class ManualAdjustmentCreate:
     """Validated fields for a manual score adjustment."""
 

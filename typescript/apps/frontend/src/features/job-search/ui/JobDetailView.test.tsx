@@ -1,7 +1,19 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { JSX } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { describe, expect, vi } from 'vitest';
+import type * as SharedLib from '@/shared/lib';
+
+const mockCopy = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>());
+
+vi.mock('@/shared/lib', async (importOriginal) => {
+  const actual = await importOriginal<typeof SharedLib>();
+  return {
+    ...actual,
+    useCopyToClipboard: () => [mockCopy, false] as const,
+  };
+});
 
 // Mock router: Link renders as a plain anchor to avoid RouterProvider requirement
 vi.mock('@tanstack/react-router', () => ({
@@ -199,6 +211,17 @@ describe('JobActions', () => {
     expect(link).toHaveAttribute('href', 'https://example.com/job/1');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+  test('copies the job description instead of the listing URL', async () => {
+    const user = userEvent.setup();
+    mockCopy.mockResolvedValue(undefined);
+    renderDetail();
+
+    await user.click(screen.getByRole('button', { name: /copy job description/iu }));
+
+    expect(mockCopy).toHaveBeenCalledOnce();
+    expect(mockCopy).toHaveBeenCalledWith(MOCK_LISTING.description);
+    expect(mockCopy).not.toHaveBeenCalledWith(MOCK_LISTING.listing_url);
   });
 
   test.each(['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'not a URL'])(

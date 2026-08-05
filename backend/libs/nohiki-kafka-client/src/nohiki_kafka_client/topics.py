@@ -88,7 +88,6 @@ class Topics:
     JOB_INGEST_ENRICHMENT_COMPLETED: Final[str] = "job-ingest.fct.enrichment-completed.v1"
 
     JOB_LISTING_ACCEPTED: Final[str] = "job-listing.fct.accepted.v1"
-    JOB_LISTING_DUPLICATE_DETECTED: Final[str] = "job-listing.fct.duplicate-detected.v1"
     JOB_LISTING_CREATED: Final[str] = "job-listing.cdc.listing-created.v1"
     JOB_LISTING_UPDATED: Final[str] = "job-listing.cdc.listing-updated.v1"
     JOB_LISTING_DELETED: Final[str] = "job-listing.cdc.listing-deleted.v1"

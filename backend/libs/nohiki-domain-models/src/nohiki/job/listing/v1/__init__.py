@@ -7,7 +7,6 @@ __all__ = (
     "BackfillCallback",
     "BackfillRequested",
     "BackfillResult",
-    "DuplicateDetected",
     "Listing",
     "ListingAccepted",
     "ListingCreated",
@@ -133,45 +132,6 @@ class BackfillResult(betterproto2.Message):
 
 default_message_pool.register_message(
     "nohiki.job.listing.v1", "BackfillResult", BackfillResult
-)
-
-
-@dataclass(eq=False, repr=False)
-class DuplicateDetected(betterproto2.Message):
-    """
-    ════════════════════════════════════════════════════════════════════
-    DUPLICATE DETECTED: Published when a raw listing is identified as duplicate
-    Topic: listings.fct.duplicate-detected.v1
-    NOTE: Profile-agnostic - no ProfileReference
-    ════════════════════════════════════════════════════════════════════
-    """
-
-    metadata: "___common__v1__.EventMetadata" = betterproto2.field(
-        1, betterproto2.TYPE_MESSAGE
-    )
-
-    listing: "___common__v1__.ListingReference" = betterproto2.field(
-        2, betterproto2.TYPE_MESSAGE
-    )
-
-    existing_listing_id: "str" = betterproto2.field(3, betterproto2.TYPE_STRING)
-
-    first_seen_at: "datetime.datetime" = betterproto2.field(
-        4,
-        betterproto2.TYPE_MESSAGE,
-        unwrap=lambda: ____google__protobuf__.Timestamp,
-    )
-
-    existing_listing_snapshot: "ListingSnapshot" = betterproto2.field(
-        10, betterproto2.TYPE_MESSAGE
-    )
-    """
-    ECST: Embedded snapshot of the existing listing for downstream consumers
-    """
-
-
-default_message_pool.register_message(
-    "nohiki.job.listing.v1", "DuplicateDetected", DuplicateDetected
 )
 
 

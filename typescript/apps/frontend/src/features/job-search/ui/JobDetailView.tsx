@@ -58,7 +58,7 @@ function JobDetailView({ listing }: JobDetailViewProps): JSX.Element {
         </div>
         <div className="space-y-6">
           <JobMetaSidebar listing={listing} />
-          <JobActions listingUrl={listing.listing_url} />
+          <JobActions description={listing.description} listingUrl={listing.listing_url} />
         </div>
       </div>
     </div>
@@ -241,14 +241,20 @@ function MetaRow({
   );
 }
 
-function JobActions({ listingUrl }: { readonly listingUrl: string }): JSX.Element {
+function JobActions({
+  description,
+  listingUrl,
+}: {
+  readonly description: string | null;
+  readonly listingUrl: string;
+}): JSX.Element {
   const { t } = useTranslation(['jobs']);
   const [copy, isCopied] = useCopyToClipboard();
   const safeListingUrl = getSafeExternalUrl(listingUrl);
 
   const handleCopyJd = async (): Promise<void> => {
-    if (safeListingUrl) {
-      await copy(safeListingUrl);
+    if (description) {
+      await copy(description);
     }
   };
 
@@ -278,7 +284,7 @@ function JobActions({ listingUrl }: { readonly listingUrl: string }): JSX.Elemen
               variant="ghost"
               size="icon"
               onClick={handleCopyJd}
-              disabled={!safeListingUrl}
+              disabled={!description}
               aria-label={t('actions.copyJobDescription')}
             >
               {isCopied ? (

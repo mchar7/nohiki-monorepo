@@ -29,9 +29,6 @@ from job_correlation_evaluation_service.services.scoring.features.groups import 
     WorkArrangementFeatureGroup,
 )
 from job_correlation_evaluation_service.services.scoring.features.role_relevance import role_relevance
-from job_correlation_evaluation_service.services.scoring.listing_quality import (
-    ListingQualityPredictor,
-)
 
 if TYPE_CHECKING:
     from nohiki.job.listing.v1 import ListingSnapshot
@@ -42,9 +39,6 @@ if TYPE_CHECKING:
     )
     from job_correlation_evaluation_service.services.scoring.features.skill_match_quality import (
         SkillMatchQualityCalculator,
-    )
-    from job_correlation_evaluation_service.services.scoring.listing_quality import (
-        ListingFeedbackAggregate,
     )
     from job_correlation_evaluation_service.services.scoring.skill_relationship_cache import (
         SkillRelationshipCache,
@@ -70,7 +64,9 @@ class FeatureComposer:
         11-13: Salary features (user_min, user_target, job_salary)
         14-19: Skill features (match_count, missing_count, total_required, avg_prof, avg_prov, relationship_count)
         20: Semantic similarity (skills_cosine_sim)
-        21-24: Job metadata (age_hours, feedback_count, quality_score, work_arrangement_match)
+        21: Job age (age_hours)
+        22-23: Reserved listing-quality slots (feedback_count=0, quality_score=NaN)
+        24: Work arrangement match
         25-29: Validity flags
         30-31: Taxonomy features (skill_graph_min_distance, skill_graph_mean_distance)
 
@@ -98,7 +94,6 @@ class FeatureComposer:
         cls,
         location_scorer: LocationScorer | None = None,
         skill_quality_calculator: SkillMatchQualityCalculator | None = None,
-        listing_quality_predictor: ListingQualityPredictor | None = None,
         relationship_cache: SkillRelationshipCache | None = None,
     ) -> FeatureComposer:
         """Create composer with default feature groups.
@@ -106,7 +101,6 @@ class FeatureComposer:
         Args:
             location_scorer: Optional LocationScorer instance for location features.
             skill_quality_calculator: Optional calculator for skill features.
-            listing_quality_predictor: Optional predictor for listing quality scores.
             relationship_cache: Optional SkillRelationshipCache for taxonomy features.
 
         Returns:
@@ -121,7 +115,7 @@ class FeatureComposer:
                 SalaryFeatureGroup(),
                 SkillFeatureGroup(skill_quality_calculator=skill_quality_calculator),
                 SemanticFeatureGroup(),
-                JobMetadataFeatureGroup(listing_quality_predictor=listing_quality_predictor),
+                JobMetadataFeatureGroup(),
                 WorkArrangementFeatureGroup(),
                 TaxonomyFeatureGroup(relationship_cache=relationship_cache),
                 ValidityFlagsFeatureGroup(),
@@ -133,7 +127,6 @@ class FeatureComposer:
         job: ListingSnapshot,
         profile: SearchPrefSnapshot,
         pipeline_scores: PipelineScores,
-        feedback_aggregate: ListingFeedbackAggregate | None = None,
     ) -> FeatureComposition:
         """Extract complete feature vector.
 
@@ -141,7 +134,6 @@ class FeatureComposer:
             job: Job listing snapshot (ECST from event)
             profile: User search preferences (from ledger or event)
             pipeline_scores: Scores from pipeline (MaxSim, Rerank)
-            feedback_aggregate: Optional aggregate feedback for the listing
 
         Returns:
             Raw 32-value training vector and available deterministic factors.
@@ -153,7 +145,6 @@ class FeatureComposer:
             job=job,
             profile=profile,
             pipeline_scores=pipeline_scores,
-            feedback_aggregate=feedback_aggregate,
         )
 
         try:

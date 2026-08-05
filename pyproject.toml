@@ -645,9 +645,6 @@ whitelist = ["initiate_uploa[d]"]
 [tool.skylos.overrides."scripts/ci/src/ci_checks/core/change_rules.py"]
 whitelist = ["matche[s]"]
 
-# The scoring protocol invokes predictor implementations through structural typing.
-[tool.skylos.overrides."backend/services/job-correlation-evaluation-service/src/job_correlation_evaluation_service/services/scoring/listing_quality.py"]
-whitelist = ["predic[t]"]
 
 # Metrics adapters are invoked through injected protocol-shaped objects.
 [tool.skylos.overrides."backend/services/doc-process-service/src/doc_process_service/metrics.py"]

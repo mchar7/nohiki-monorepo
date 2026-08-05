@@ -8,105 +8,10 @@ from uuid import uuid4
 import pytest
 from job_correlation_evaluation_service.repositories.feedback_repository import (
     FeedbackRepository,
-    ListingFeedbackAggregate,
     ManualAdjustmentCreate,
 )
 from nohiki.feedback.v1 import ScoreFeedbackType
 from nohiki_db_utils.testing import create_mock_session
-
-
-class TestListingFeedbackAggregate:
-    """Tests for ListingFeedbackAggregate dataclass."""
-
-    def test_total_count(self) -> None:
-        """Test total_count property sums all feedback types."""
-        agg = ListingFeedbackAggregate(
-            listing_id=uuid4(),
-            good_count=5,
-            too_high_count=3,
-            too_low_count=2,
-        )
-        assert agg.total_count == 10
-
-    def test_total_count_zeros(self) -> None:
-        """Test total_count with all zeros."""
-        agg = ListingFeedbackAggregate(
-            listing_id=uuid4(),
-            good_count=0,
-            too_high_count=0,
-            too_low_count=0,
-        )
-        assert agg.total_count == 0
-
-    def test_quality_signal_all_good(self) -> None:
-        """Test quality_signal when all feedback is GOOD."""
-        agg = ListingFeedbackAggregate(
-            listing_id=uuid4(),
-            good_count=10,
-            too_high_count=0,
-            too_low_count=0,
-        )
-        assert agg.quality_signal == pytest.approx(0.0)
-
-    def test_quality_signal_all_too_high(self) -> None:
-        """Test quality_signal when all feedback is TOO_HIGH (low quality)."""
-        agg = ListingFeedbackAggregate(
-            listing_id=uuid4(),
-            good_count=0,
-            too_high_count=10,
-            too_low_count=0,
-        )
-        assert agg.quality_signal == pytest.approx(-1.0)
-
-    def test_quality_signal_all_too_low(self) -> None:
-        """Test quality_signal when all feedback is TOO_LOW (high quality)."""
-        agg = ListingFeedbackAggregate(
-            listing_id=uuid4(),
-            good_count=0,
-            too_high_count=0,
-            too_low_count=10,
-        )
-        assert agg.quality_signal == pytest.approx(1.0)
-
-    def test_quality_signal_balanced(self) -> None:
-        """Test quality_signal with balanced TOO_HIGH and TOO_LOW."""
-        agg = ListingFeedbackAggregate(
-            listing_id=uuid4(),
-            good_count=0,
-            too_high_count=5,
-            too_low_count=5,
-        )
-        assert agg.quality_signal == pytest.approx(0.0)
-
-    def test_quality_signal_empty(self) -> None:
-        """Test quality_signal with no feedback returns 0."""
-        agg = ListingFeedbackAggregate(
-            listing_id=uuid4(),
-            good_count=0,
-            too_high_count=0,
-            too_low_count=0,
-        )
-        assert agg.quality_signal == pytest.approx(0.0)
-
-    def test_quality_signal_mixed(self) -> None:
-        """Test quality_signal with mixed feedback."""
-        agg = ListingFeedbackAggregate(
-            listing_id=uuid4(),
-            good_count=2,
-            too_high_count=3,
-            too_low_count=5,
-        )
-        # Expected: (too_low - too_high) / total = (5-3)/10 = 0.2
-        assert agg.quality_signal == pytest.approx(0.2)
-
-    def test_is_frozen_dataclass(self) -> None:
-        """Test that ListingFeedbackAggregate is a frozen dataclass."""
-        import dataclasses
-
-        assert dataclasses.is_dataclass(ListingFeedbackAggregate)
-        params = getattr(ListingFeedbackAggregate, "__dataclass_params__", None)
-        assert params is not None
-        assert params.frozen is True
 
 
 class TestFeedbackRepository:
