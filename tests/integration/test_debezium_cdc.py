@@ -20,15 +20,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
-import socket
-import subprocess
-import sys
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 import pytest
 import pytest_asyncio
@@ -36,24 +34,26 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Generator
 
     from aiokafka import AIOKafkaConsumer
-pytest_plugins = ("nohiki_db_utils.testing",)
+    from testcontainers.core.network import Network
 
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.requires_docker,
     pytest.mark.asyncio,
+    pytest.mark.timeout(180),
 ]
 
 
 # Test configuration
-KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
-KAFKA_CONNECT_URL = os.environ.get("KAFKA_CONNECT_URL", "http://localhost:8083")
 TEST_TOPIC_PREFIX = "test.cdc"
 OUTBOX_CONNECTOR_SUFFIX = "-outbox"
+DEBEZIUM_CONNECT_IMAGE = (
+    "quay.io/debezium/connect:3.6.0.Final@sha256:698f0559e667a242f962221079e75917b2b7a3ad4de62661e977628da0e33b45"
+)
 
 
 def _is_canonical_outbox_connector_name(name: str) -> bool:
@@ -61,10 +61,46 @@ def _is_canonical_outbox_connector_name(name: str) -> bool:
     return name.endswith(OUTBOX_CONNECTOR_SUFFIX) and name != OUTBOX_CONNECTOR_SUFFIX
 
 
+@dataclass(frozen=True, slots=True)
+class ContainerEnvironment:
+    """Host and container-network access to the CDC dependencies."""
+
+    kafka_bootstrap_servers: str
+    postgres_url: str
+    network: Network
+
+
+@dataclass(frozen=True, slots=True)
+class CdcEnvironment:
+    """Endpoints for one self-provisioned CDC stack."""
+
+    kafka_bootstrap_servers: str
+    connect_url: str
+
+
+@pytest.fixture(scope="module")
+def container_environment() -> Generator[ContainerEnvironment]:
+    """Provision Kafka and logical-replication PostgreSQL on one network."""
+    from nohiki_db_utils.testing import POSTGRES_CONTAINER_COMMAND, POSTGRES_CONTAINER_IMAGE
+    from nohiki_kafka_client.testing import KAFKA_CONTAINER_IMAGE
+    from testcontainers.core.network import Network
+    from testcontainers.kafka import KafkaContainer
+    from testcontainers.postgres import PostgresContainer
+
+    with Network() as network:
+        postgres = PostgresContainer(POSTGRES_CONTAINER_IMAGE).with_network(network).with_network_aliases("postgres")
+        postgres.with_command(POSTGRES_CONTAINER_COMMAND)
+        kafka = KafkaContainer(KAFKA_CONTAINER_IMAGE).with_kraft().with_network(network).with_network_aliases("kafka")
+        kafka.with_env("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "true")
+        with postgres, kafka:
+            postgres_url = postgres.get_connection_url().replace("postgresql+psycopg2://", "postgresql+asyncpg://")
+            yield ContainerEnvironment(kafka.get_bootstrap_server(), postgres_url, network)
+
+
 @pytest_asyncio.fixture
-async def async_engine(postgres_container: str) -> AsyncGenerator[AsyncEngine]:
-    """Create async SQLAlchemy engine for the isolated logical-replication database."""
-    engine = create_async_engine(postgres_container, echo=False)
+async def async_engine(container_environment: ContainerEnvironment) -> AsyncGenerator[AsyncEngine]:
+    """Create an async engine for the isolated logical-replication database."""
+    engine = create_async_engine(container_environment.postgres_url, echo=False)
     yield engine
     await engine.dispose()
 
@@ -346,164 +382,155 @@ async def _poll_for_message(
     return False
 
 
-def _bootstrap_endpoints() -> list[tuple[str, int]]:
-    """Parse Kafka bootstrap servers into host/port pairs."""
-    endpoints: list[tuple[str, int]] = []
-    for server in KAFKA_BOOTSTRAP_SERVERS.split(","):
-        endpoint = server.strip()
-        if not endpoint:
-            continue
-
-        host, separator, port = endpoint.rpartition(":")
-        if not separator:
-            host, port = endpoint, "9092"
-
-        endpoints.append((host.strip("[]"), int(port)))
-    return endpoints
-
-
-def _tcp_reachable(host: str, port: int, *, timeout_seconds: float = 1.0) -> bool:
-    """Return True when a TCP endpoint accepts connections."""
+def _connect_api_is_ready(connect_url: str) -> bool:
+    """Probe Kafka Connect without leaking HTTP response resources."""
     try:
-        with socket.create_connection((host, port), timeout=timeout_seconds):
+        with urlopen(connect_url, timeout=1.0):  # noqa: S310
             return True
-    except OSError:
+    except HTTPError as exc:
+        exc.close()
+        return False
+    except OSError, URLError:
         return False
 
 
-def _fetch_connectors() -> list[str]:
-    """Fetch registered Kafka Connect connector names."""
-    with urlopen(f"{KAFKA_CONNECT_URL.rstrip('/')}/connectors", timeout=3.0) as response:  # noqa: S310  # trusted local Kafka Connect endpoint
-        if response.status != 200:
-            msg = f"Kafka Connect returned HTTP {response.status}"
-            raise URLError(msg)
-        payload = json.load(response)
-
-    if not isinstance(payload, list):
-        return []
-    return [str(name) for name in payload]
+async def _wait_for_connect_api(connect_url: str) -> bool:
+    """Wait for the self-provisioned Kafka Connect REST API."""
+    for _ in range(120):
+        if await asyncio.to_thread(_connect_api_is_ready, connect_url):
+            return True
+        await asyncio.sleep(0.5)
+    return False
 
 
-def _connector_is_running(name: str) -> bool:
-    """Return True when a Kafka Connect connector is RUNNING."""
-    with urlopen(f"{KAFKA_CONNECT_URL.rstrip('/')}/connectors/{name}/status", timeout=3.0) as response:  # noqa: S310  # trusted local endpoint
-        if response.status != 200:
-            return False
-        payload = json.load(response)
-
-    connector = payload.get("connector", {}) if isinstance(payload, dict) else {}
-    return connector.get("state") == "RUNNING"
-
-
-def _summarize_probe_failure(stdout: str, stderr: str, returncode: int) -> str:
-    """Collapse noisy probe output into a single skip reason line."""
-    lines = [line.strip() for line in (stderr or stdout).splitlines() if line.strip()]
-    interesting = (
-        "KafkaError:",
-        "Unable connect to node",
-        "Unable to update metadata",
-        "Unable to get cluster metadata",
-        "Connect call failed",
-        "ImportError:",
+def _register_test_connector(connect_url: str, postgres_container: str) -> str:
+    """Register the isolated outbox connector used by the CDC contract."""
+    database = urlparse(postgres_container)
+    connector_name = f"nohiki-test{OUTBOX_CONNECTOR_SUFFIX}"
+    connector = {
+        "name": connector_name,
+        "config": {
+            "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+            "tasks.max": "1",
+            "database.hostname": "postgres",
+            "database.port": "5432",
+            "database.user": database.username,
+            "database.password": database.password,
+            "database.dbname": database.path.removeprefix("/"),
+            "topic.prefix": "nohiki_test",
+            "plugin.name": "pgoutput",
+            "slot.name": "nohiki_test_outbox_slot",
+            "publication.name": "nohiki_test_outbox_pub",
+            "publication.autocreate.mode": "filtered",
+            "schema.include.list": "outbox_schema",
+            "table.include.list": "outbox_schema.outbox",
+            "tombstones.on.delete": "false",
+            "snapshot.mode": "when_needed",
+            "transforms": "outbox",
+            "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+            "transforms.outbox.table.field.event.id": "id",
+            "transforms.outbox.table.field.event.key": "aggregateid",
+            "transforms.outbox.table.field.event.type": "type",
+            "transforms.outbox.table.field.event.payload": "payload",
+            "transforms.outbox.route.by.field": "type",
+            "transforms.outbox.route.topic.replacement": "${routedByValue}",
+            "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+            "value.converter": "io.debezium.converters.BinaryDataConverter",
+            "value.converter.delegate.converter.type": "org.apache.kafka.connect.json.JsonConverter",
+            "value.converter.delegate.converter.type.schemas.enable": "false",
+            "topic.creation.enable": "true",
+            "topic.creation.default.replication.factor": "1",
+            "topic.creation.default.partitions": "1",
+        },
+    }
+    request = Request(  # noqa: S310 -- fixed local testcontainer endpoint
+        f"{connect_url}/connectors",
+        data=json.dumps(connector).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
-
-    for line in reversed(lines):
-        if line.startswith(("Traceback (most recent call last):", "File ", "Unclosed AIOKafkaConsumer")):
-            continue
-        if any(token in line for token in interesting):
-            return line
-
-    if lines:
-        return lines[-1]
-    return f"probe exited with code {returncode}"
-
-
-def _run_broker_probe() -> str | None:
-    """Probe Kafka broker via subprocess. Returns skip reason on failure."""
     try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import asyncio, os, uuid\n"
-                "from aiokafka import AIOKafkaConsumer\n"
-                "async def main() -> None:\n"
-                "    servers = [s.strip() for s in os.environ['KAFKA_BOOTSTRAP_SERVERS'].split(',') if s.strip()]\n"
-                "    consumer = AIOKafkaConsumer(\n"
-                "        bootstrap_servers=servers,\n"
-                "        group_id=f'debezium-cdc-precheck-{uuid.uuid4()}',\n"
-                "        request_timeout_ms=5000,\n"
-                "        metadata_max_age_ms=5000,\n"
-                "        retry_backoff_ms=1000,\n"
-                "    )\n"
-                "    await consumer.start()\n"
-                "    await consumer._client.fetch_all_metadata()\n"
-                "    await consumer.stop()\n"
-                "asyncio.run(main())\n",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=12,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return f"Kafka broker probe timed out at {KAFKA_BOOTSTRAP_SERVERS}"
-
-    if result.returncode != 0:
-        reason = _summarize_probe_failure(result.stdout, result.stderr, result.returncode)
-        return f"Kafka broker unavailable at {KAFKA_BOOTSTRAP_SERVERS}: {reason}"
-
-    return None
+        with urlopen(request, timeout=5.0) as response:  # noqa: S310
+            if response.status != 201:
+                msg = f"Kafka Connect registration returned HTTP {response.status}"
+                raise RuntimeError(msg)
+    except HTTPError as exc:
+        with exc:
+            diagnostics = exc.read().decode(errors="replace")
+        msg = f"Kafka Connect rejected the connector: {diagnostics}"
+        raise RuntimeError(msg) from exc
+    return connector_name
 
 
-async def _check_connect_connectors() -> str | None:
-    """Verify Kafka Connect has running Helm-named outbox connectors."""
+def _connector_is_running(connect_url: str, name: str) -> bool:
+    """Return True when the self-provisioned connector is running."""
     try:
-        connectors = await asyncio.to_thread(_fetch_connectors)
-    except Exception as exc:
-        return f"Kafka Connect unavailable at {KAFKA_CONNECT_URL}: {exc.__class__.__name__}"
-
-    outbox_connectors = [name for name in connectors if _is_canonical_outbox_connector_name(name)]
-    if not outbox_connectors:
-        return f"No Debezium outbox connector registered at {KAFKA_CONNECT_URL}"
-
-    async with asyncio.TaskGroup() as tg:
-        tasks = {name: tg.create_task(asyncio.to_thread(_connector_is_running, name)) for name in outbox_connectors}
-
-    not_running = [name for name, task in tasks.items() if not task.result()]
-    assert not not_running, f"Debezium outbox connector not RUNNING: {', '.join(not_running)}"
-
-    return None
-
-
-async def _debezium_cdc_precheck() -> str | None:
-    """Return a skip reason if Kafka or Kafka Connect are unavailable."""
-    endpoints = _bootstrap_endpoints()
-    if not endpoints:
-        return "KAFKA_BOOTSTRAP_SERVERS is empty"
-
-    if not any(_tcp_reachable(host, port) for host, port in endpoints):
-        return f"Kafka broker unavailable at {KAFKA_BOOTSTRAP_SERVERS}"
-
-    if reason := await asyncio.to_thread(_run_broker_probe):
-        return reason
-
-    return await _check_connect_connectors()
+        with urlopen(f"{connect_url}/connectors/{name}/status", timeout=3.0) as response:  # noqa: S310
+            payload = json.load(response)
+    except HTTPError as exc:
+        exc.close()
+        return False
+    connector = payload.get("connector", {}) if isinstance(payload, dict) else {}
+    tasks = payload.get("tasks", []) if isinstance(payload, dict) else []
+    return connector.get("state") == "RUNNING" and all(task.get("state") == "RUNNING" for task in tasks)
 
 
 @pytest.fixture
-async def debezium_cdc_available() -> None:
-    """Skip CDC tests when Kafka or Kafka Connect are unavailable."""
-    if reason := await _debezium_cdc_precheck():
-        pytest.skip(reason)
+async def debezium_cdc_environment(
+    ensure_outbox_schema: None,
+    container_environment: ContainerEnvironment,
+) -> AsyncGenerator[CdcEnvironment]:
+    """Provision Kafka Connect and a running outbox connector for the CDC test."""
+    from testcontainers.core.container import DockerContainer
+
+    _ = ensure_outbox_schema
+    kafka_bootstrap_servers = container_environment.kafka_bootstrap_servers
+    suffix = uuid.uuid4().hex
+    container = (
+        DockerContainer(DEBEZIUM_CONNECT_IMAGE, command="start")
+        .with_exposed_ports(8083)
+        .with_network(container_environment.network)
+        .with_network_aliases("connect")
+    )
+    container.with_envs(
+        BOOTSTRAP_SERVERS="kafka:9092",
+        GROUP_ID=f"nohiki-test-connect-{suffix}",
+        CONFIG_STORAGE_TOPIC=f"_nohiki_test_connect_configs_{suffix}",
+        OFFSET_STORAGE_TOPIC=f"_nohiki_test_connect_offsets_{suffix}",
+        STATUS_STORAGE_TOPIC=f"_nohiki_test_connect_status_{suffix}",
+        CONFIG_STORAGE_REPLICATION_FACTOR="1",
+        OFFSET_STORAGE_REPLICATION_FACTOR="1",
+        STATUS_STORAGE_REPLICATION_FACTOR="1",
+        KEY_CONVERTER="org.apache.kafka.connect.storage.StringConverter",
+        VALUE_CONVERTER="org.apache.kafka.connect.storage.StringConverter",
+        REST_ADVERTISED_HOST_NAME="127.0.0.1",
+    )
+    try:
+        await asyncio.to_thread(container.start)
+        connect_url = f"http://{container.get_container_host_ip()}:{container.get_exposed_port(8083)}"
+        if not await _wait_for_connect_api(connect_url):
+            stdout, stderr = await asyncio.to_thread(container.get_logs)
+            diagnostics = (stdout + stderr).decode(errors="replace")[-8000:]
+            pytest.fail(f"Kafka Connect did not become ready at {connect_url}:\n{diagnostics}")
+        connector_name = await asyncio.to_thread(
+            _register_test_connector, connect_url, container_environment.postgres_url
+        )
+        for _ in range(120):
+            try:
+                if await asyncio.to_thread(_connector_is_running, connect_url, connector_name):
+                    break
+            except OSError, URLError:
+                pass
+            await asyncio.sleep(0.5)
+        else:
+            pytest.fail(f"Debezium connector {connector_name} did not reach RUNNING")
+        yield CdcEnvironment(kafka_bootstrap_servers, connect_url)
+    finally:
+        await asyncio.to_thread(container.stop)
 
 
 class TestDebeziumConnector:
-    """Tests for Debezium connector functionality.
-
-    These tests require Kafka Connect with Debezium to be running.
-    They are marked as slow and may be skipped in CI.
-    """
+    """Tests for the self-provisioned Debezium connector."""
 
     @pytest.mark.integration
     @pytest.mark.slow
@@ -511,11 +538,10 @@ class TestDebeziumConnector:
         self,
         db_session: AsyncSession,
         ensure_outbox_schema: None,
-        debezium_cdc_available: None,
+        debezium_cdc_environment: CdcEnvironment,
     ) -> None:
         """Verify Debezium captures outbox inserts and publishes to Kafka."""
         _ = ensure_outbox_schema  # Fixture dependency
-        _ = debezium_cdc_available  # Fixture dependency
         from aiokafka import AIOKafkaConsumer
 
         test_id = uuid.uuid4()
@@ -540,21 +566,17 @@ class TestDebeziumConnector:
         )
         await db_session.commit()
 
-        await asyncio.sleep(5)
-
         consumer = AIOKafkaConsumer(
             test_topic,
-            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            bootstrap_servers=debezium_cdc_environment.kafka_bootstrap_servers,
             group_id=f"test-cdc-{test_id}",
             auto_offset_reset="earliest",
             enable_auto_commit=False,
         )
         try:
             await consumer.start()
-            message_found = await _poll_for_message(consumer, test_payload, timeout_seconds=30)
-
-            assert message_found, (
-                "CDC_DELIVERY_TIMEOUT: Debezium was present but did not deliver the inserted outbox row within 30s"
+            assert await _poll_for_message(consumer, test_payload, timeout_seconds=30), (
+                f"Debezium did not publish outbox event {test_id} to {test_topic}"
             )
         finally:
             with contextlib.suppress(Exception):
