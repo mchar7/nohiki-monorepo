@@ -88,7 +88,7 @@ pre-commit:
     # Markdown: markdownlint with auto-fix
     # Rules and ignores configured in .markdownlint-cli2.jsonc
     # IMPORTANT: .markdownlint-cli2.jsonc must NOT contain "globs" (see
-    # comment in that file). File discovery is solely via {staged_files}.
+    # comment in that file). File discovery is solely via the staged Git inventory.
     markdown-lint:
       glob:
         - "*.md"
@@ -98,7 +98,19 @@ pre-commit:
       exclude:
         - "**/node_modules/**"
       run: |
-        scripts/dev/env-lock.sh shared node_modules -- pnpm exec markdownlint-cli2 --fix {staged_files}
+        set -euo pipefail
+        paths=$(mktemp "${TMPDIR:-/tmp}/nohiki-markdown-staged.XXXXXX")
+        cleanup() {
+          rm -f -- "$paths"
+        }
+        trap cleanup EXIT
+        git diff --cached --name-only --diff-filter=ACMR -z -- \
+          ':(glob)*.md' \
+          ':(glob)**/*.md' \
+          '.markdownlint-cli2.jsonc' \
+          '.markdownlintignore' \
+          '.markdownlint.json' > "$paths"
+        xargs -0 -r scripts/dev/env-lock.sh shared node_modules -- pnpm exec markdownlint-cli2 --fix -- < "$paths"
       stage_fixed: true
 
     # i18n: Validate translation keys (only on frontend src/locale changes)

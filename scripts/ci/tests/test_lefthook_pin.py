@@ -77,36 +77,51 @@ def test_lefthook_serializes_scalable_staged_python_mutator() -> None:
     assert run.index(check) < run.index(format_command)
 
 
-def test_lefthook_non_python_staged_mutators_delegate_empty_sets_to_the_scheduler() -> None:
-    """Biome and markdownlint take the staged template bare; lefthook skips an empty set pre-spawn."""
+def test_lefthook_frontend_mutator_delegates_empty_sets_to_biome() -> None:
+    """Biome tolerates an empty staged template after Lefthook expansion."""
     commands = _load_yaml(_LEFTHOOK)["pre-commit"]["commands"]
-    expected = {
-        "frontend-lint": (
-            [
-                "*.{ts,tsx,js,jsx,mjs,css}",
-                "typescript/apps/frontend/e2e/*.json",
-                "typescript/apps/frontend/e2e/**/*.json",
-            ],
-            "pnpm exec biome check --write --no-errors-on-unmatched {staged_files}",
-        ),
-        "markdown-lint": (
-            ["*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore", ".markdownlint.json"],
-            "pnpm exec markdownlint-cli2 --fix {staged_files}",
-        ),
-    }
+    frontend = commands["frontend-lint"]
+
+    assert frontend["glob"] == [
+        "*.{ts,tsx,js,jsx,mjs,css}",
+        "typescript/apps/frontend/e2e/*.json",
+        "typescript/apps/frontend/e2e/**/*.json",
+    ]
+    run = frontend["run"]
+    assert isinstance(run, str)
+    assert run.count("pnpm exec biome check --write --no-errors-on-unmatched {staged_files}") == 1
+    assert "if [ -n" not in run
 
     stage_fixed = sorted(
         name for name, command in commands.items() if isinstance(command, dict) and command.get("stage_fixed") is True
     )
-    assert stage_fixed == sorted([*expected, "python-check-format"])
+    assert stage_fixed == ["frontend-lint", "markdown-lint", "python-check-format"]
 
-    for name, (globs, tool_fragment) in expected.items():
-        command = commands[name]
-        assert command["glob"] == globs, name
-        run = command["run"]
-        assert isinstance(run, str)
-        assert run.count(tool_fragment) == 1, name
-        assert "if [ -n" not in run, f"{name} must leave the empty-set skip to the scheduler"
+
+def test_lefthook_serializes_empty_safe_staged_markdown_mutator() -> None:
+    command = _load_yaml(_LEFTHOOK)["pre-commit"]["commands"]["markdown-lint"]
+
+    assert command["glob"] == ["*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore", ".markdownlint.json"]
+    assert command["stage_fixed"] is True
+    run = command["run"]
+    assert isinstance(run, str)
+    assert "{staged_files}" not in run
+    assert re.search(r"git\s+diff\s+--cached\b", run)
+    assert "--name-only" in run
+    assert re.search(r"(?:^|\s)-z(?:\s|$)", run)
+    assert "--diff-filter=ACMR" in run
+    assert "mktemp" in run
+    assert "trap" in run
+    for pathspec in (
+        "':(glob)*.md'",
+        "':(glob)**/*.md'",
+        "'.markdownlint-cli2.jsonc'",
+        "'.markdownlintignore'",
+        "'.markdownlint.json'",
+    ):
+        assert pathspec in run
+    assert run.count("xargs -0 -r") == 1
+    assert "pnpm exec markdownlint-cli2 --fix --" in run
 
 
 def _write_fake_uv(bin_dir: Path) -> None:
