@@ -110,6 +110,120 @@ class TestBuildProfileSnapshot:
 
         assert snapshot.user_skills_embedding is None
 
+    def test_snapshot_copies_notification_config_from_profile(self) -> None:
+        """Snapshot carries notification_config when profile stores a real JSONB dict.
+
+        Red proof: without notification_config= in SearchPrefSnapshot(...), this
+        assertion fails (field stays None). Comment out that kwarg and re-run to
+        reproduce; with the builder assignment it passes.
+        """
+        profile = MagicMock(spec=SearchPref)
+        profile.id = uuid.uuid4()
+        profile.user_id = uuid.uuid4()
+        profile.pref_name = "Notify Profile"
+        profile.search_keywords = []
+        profile.disallowed_keywords = []
+        profile.physical_locations = None
+        profile.remote_locations = None
+        profile.work_arrangements = []
+        profile.open_to_relocation = False
+        profile.commute_preferences = None
+        profile.salary_preference = None
+        profile.feature_importance = None
+        profile.excluded_scrape_sources = []
+        profile.min_fit_score_disqualify = None
+        profile.auto_tailor_threshold = None
+        profile.tailoring_schema_id = None
+        profile.tailoring_preferences = {}
+        profile.is_active = True
+        profile.attachments = []
+        profile.created_at = datetime.now(UTC)
+        profile.updated_at = datetime.now(UTC)
+        profile.experience_years = None
+        profile.seniority_levels = []
+        profile.user_skills_data = None
+        profile.user_skills_embedding = None
+        profile.query_embedding = None
+        profile.query_artifacts_data = None
+        profile.semantic_content_generation = 1
+        profile.semantic_content_hash = ""
+        profile.collection_version = ""
+        profile.notification_config = {
+            "threshold": 75,
+            "frequency": "NOTIFICATION_FREQUENCY_DAILY",
+            "methods": [{"enabled": True, "channel": "NOTIFICATION_CHANNEL_EMAIL"}],
+            "quiet_hours_start": "22:00",
+            "quiet_hours_end": "07:00",
+            "timezone": "America/New_York",
+        }
+
+        snapshot = build_profile_snapshot(profile)
+
+        assert snapshot.notification_config is not None
+        assert snapshot.notification_config.threshold == 75
+        assert snapshot.notification_config.timezone == "America/New_York"
+        assert snapshot.notification_config.quiet_hours_start == "22:00"
+        assert snapshot.notification_config.quiet_hours_end == "07:00"
+        assert len(snapshot.notification_config.methods) == 1
+        assert snapshot.notification_config.methods[0].enabled is True
+
+    def test_snapshot_copies_feature_importance_from_profile(self) -> None:
+        """Snapshot carries feature_importance when profile stores a real JSONB dict.
+
+        Red proof: without feature_importance= in SearchPrefSnapshot(...), this
+        assertion fails (field stays None). Comment out that kwarg and re-run to
+        reproduce; with the builder assignment it passes.
+        """
+        profile = MagicMock(spec=SearchPref)
+        profile.id = uuid.uuid4()
+        profile.user_id = uuid.uuid4()
+        profile.pref_name = "Importance Profile"
+        profile.search_keywords = []
+        profile.disallowed_keywords = []
+        profile.physical_locations = None
+        profile.remote_locations = None
+        profile.work_arrangements = []
+        profile.open_to_relocation = False
+        profile.commute_preferences = None
+        profile.salary_preference = None
+        profile.notification_config = None
+        profile.excluded_scrape_sources = []
+        profile.min_fit_score_disqualify = None
+        profile.auto_tailor_threshold = None
+        profile.tailoring_schema_id = None
+        profile.tailoring_preferences = {}
+        profile.is_active = True
+        profile.attachments = []
+        profile.created_at = datetime.now(UTC)
+        profile.updated_at = datetime.now(UTC)
+        profile.experience_years = None
+        profile.seniority_levels = []
+        profile.user_skills_data = None
+        profile.user_skills_embedding = None
+        profile.query_embedding = None
+        profile.query_artifacts_data = None
+        profile.semantic_content_generation = 1
+        profile.semantic_content_hash = ""
+        profile.collection_version = ""
+        profile.feature_importance = {
+            "skill_match_importance": 80,
+            "location_importance": 60,
+            "work_arrangement_importance": 70,
+            "experience_importance": 50,
+            "salary_importance": 40,
+            "recency_importance": 30,
+        }
+
+        snapshot = build_profile_snapshot(profile)
+
+        assert snapshot.feature_importance is not None
+        assert snapshot.feature_importance.skill_match_importance == 80
+        assert snapshot.feature_importance.location_importance == 60
+        assert snapshot.feature_importance.work_arrangement_importance == 70
+        assert snapshot.feature_importance.experience_importance == 50
+        assert snapshot.feature_importance.salary_importance == 40
+        assert snapshot.feature_importance.recency_importance == 30
+
 
 class TestGetProfileById:
     """Tests for get_profile_by_id function."""

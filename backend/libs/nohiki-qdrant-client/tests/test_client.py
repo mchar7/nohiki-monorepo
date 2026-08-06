@@ -904,6 +904,90 @@ class TestQdrantVectorClient:
         assert "skill-1_label" in result
         assert len(result["skill-1_label"]) == 768
 
+    @pytest.mark.asyncio
+    async def test_retrieve_embedding_vectors_empty_returns_empty(self) -> None:
+        """Empty point_ids short-circuits without calling Qdrant."""
+        client = _make_client(_make_schema(with_colbert=True))
+        result = await client.retrieve_embedding_vectors("jobs_v1", [])
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_retrieve_embedding_vectors_reverses_named_vectors(self) -> None:
+        """Named MUVERA/SPARSE/COLBERT vectors reverse into EmbeddingVector list with payload."""
+        from nohiki_qdrant_client import RetrievedPointEmbeddings
+        from qdrant_client.http import models as qmodels
+
+        schema = _make_schema(with_sparse=True, with_colbert=True)
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
+            mock_instance = AsyncMock()
+            mock_point = MagicMock()
+            mock_point.id = "listing-1"
+            mock_point.payload = {"entity_id": "listing-1", "content_hash": "abc"}
+            mock_point.vector = {
+                "muvera": [0.1, 0.2, 0.3],
+                "sparse": qmodels.SparseVector(indices=[1, 2], values=[0.5, 0.6]),
+                "colbert": [[0.1, 0.2], [0.3, 0.4]],
+            }
+            mock_instance.retrieve.return_value = [mock_point]
+            mock_qdrant.return_value = mock_instance
+            client = QdrantVectorClient(QdrantSettings(), schema)
+
+            result = await client.retrieve_embedding_vectors("jobs_v1", ["listing-1"])
+
+        assert "listing-1" in result
+        point = result["listing-1"]
+        assert isinstance(point, RetrievedPointEmbeddings)
+        assert point.payload["entity_id"] == "listing-1"
+        assert point.payload["content_hash"] == "abc"
+        types = [emb.embedding_type for emb in point.embeddings]
+        assert EmbeddingType.MUVERA in types
+        assert EmbeddingType.SPARSE in types
+        assert EmbeddingType.COLBERT in types
+        sparse = next(emb for emb in point.embeddings if emb.embedding_type == EmbeddingType.SPARSE)
+        assert sparse.sparse is not None
+        assert list(sparse.sparse.indices) == [1, 2]
+        colbert = next(emb for emb in point.embeddings if emb.embedding_type == EmbeddingType.COLBERT)
+        assert colbert.multi_vector is not None
+        assert colbert.multi_vector.num_tokens == 2
+        assert colbert.multi_vector.token_dim == 2
+        mock_instance.retrieve.assert_called_once()
+        call_kwargs = mock_instance.retrieve.await_args.kwargs
+        assert call_kwargs["with_vectors"] is True
+        assert call_kwargs["with_payload"] is True
+
+    @pytest.mark.asyncio
+    async def test_retrieve_embedding_vectors_rejects_wrong_shaped_dense(self) -> None:
+        """Known dense slots reject wrong-shaped payloads at the boundary."""
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
+            mock_instance = AsyncMock()
+            mock_point = MagicMock()
+            mock_point.id = "listing-1"
+            mock_point.payload = {"entity_id": "listing-1", "content_hash": "abc"}
+            mock_point.vector = {"muvera": ["not", "floats"]}
+            mock_instance.retrieve.return_value = [mock_point]
+            mock_qdrant.return_value = mock_instance
+            client = QdrantVectorClient(QdrantSettings(), _make_schema())
+
+            with pytest.raises(TypeError, match="wrong-shaped dense vector"):
+                await client.retrieve_embedding_vectors("jobs_v1", ["listing-1"])
+
+    @pytest.mark.asyncio
+    async def test_retrieve_embedding_vectors_rejects_wrong_shaped_colbert(self) -> None:
+        """Known ColBERT slots reject ragged/non-numeric matrices loudly."""
+        schema = _make_schema(with_colbert=True)
+        with patch("nohiki_qdrant_client.client.create_async_qdrant_client") as mock_qdrant:
+            mock_instance = AsyncMock()
+            mock_point = MagicMock()
+            mock_point.id = "listing-1"
+            mock_point.payload = {"entity_id": "listing-1", "content_hash": "abc"}
+            mock_point.vector = {"muvera": [0.1, 0.2], "colbert": [[0.1], [0.2, 0.3]]}
+            mock_instance.retrieve.return_value = [mock_point]
+            mock_qdrant.return_value = mock_instance
+            client = QdrantVectorClient(QdrantSettings(), schema)
+
+            with pytest.raises(TypeError, match="wrong-shaped colbert vector"):
+                await client.retrieve_embedding_vectors("jobs_v1", ["listing-1"])
+
 
 class TestExtractVector:
     """Tests for QdrantVectorClient._extract_vector static method."""

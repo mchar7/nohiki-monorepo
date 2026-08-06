@@ -24,6 +24,7 @@ def _build_entitlement_snapshot(entitlements: Entitlement) -> EntitlementSnapsho
         user_id=str(entitlements.user_id),
         tier=entitlements.tier,
         subscription_status=entitlements.subscription_status,
+        billing_provider=entitlements.billing_provider,
         discovery_frequency_limit=entitlements.discovery_frequency_limit,
         max_prefs=entitlements.max_prefs,
         max_uploads_per_pref=entitlements.max_uploads_per_pref,

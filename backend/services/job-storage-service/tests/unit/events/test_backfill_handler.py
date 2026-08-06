@@ -88,6 +88,11 @@ class TestHandleBackfillRequested:
         with (
             patch("job_storage_service.events.backfill_handler.JobStoreService") as mock_service_class,
             patch("job_storage_service.events.backfill_handler.kafka_client") as mock_get_kafka,
+            patch(
+                "job_storage_service.events.backfill_handler.load_verified_retrieval_embeddings",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
             patch("job_storage_service.events.backfill_handler.build_listing_snapshot") as mock_build_snapshot,
         ):
             mock_service = AsyncMock()
@@ -144,6 +149,11 @@ class TestHandleBackfillRequested:
             patch("job_storage_service.events.backfill_handler.settings") as mock_settings,
             patch("job_storage_service.events.backfill_handler.JobStoreService") as mock_service_class,
             patch("job_storage_service.events.backfill_handler.kafka_client") as mock_get_kafka,
+            patch(
+                "job_storage_service.events.backfill_handler.load_verified_retrieval_embeddings",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
             patch("job_storage_service.events.backfill_handler.build_listing_snapshot") as mock_build_snapshot,
         ):
             mock_settings.backfill.default_max_listings = 500
@@ -209,6 +219,11 @@ class TestHandleBackfillRequested:
             patch("job_storage_service.events.backfill_handler.settings") as mock_settings,
             patch("job_storage_service.events.backfill_handler.JobStoreService") as mock_service_class,
             patch("job_storage_service.events.backfill_handler.kafka_client") as mock_get_kafka,
+            patch(
+                "job_storage_service.events.backfill_handler.load_verified_retrieval_embeddings",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
             patch("job_storage_service.events.backfill_handler.build_listing_snapshot") as mock_build_snapshot,
         ):
             mock_settings.backfill.default_max_listings = 500

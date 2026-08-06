@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
-from nohiki.ml.v1 import EmbeddingType, EmbeddingVector
+from nohiki.ml.v1 import DenseData, EmbeddingType, EmbeddingVector, MultiVectorData, SparseData
 from nohiki_ml_manifest import QdrantCollectionSchema
 from nohiki_observability import get_logger
 
@@ -166,6 +166,14 @@ class VectorPoint:
     point_id: str
     embeddings: list[EmbeddingVector]
     payload: UpsertPayload
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedPointEmbeddings:
+    """Typed embeddings retrieved from a Qdrant point, with identity payload."""
+
+    embeddings: list[EmbeddingVector]
+    payload: dict[str, Any]
 
 
 class QdrantVectorClient:
@@ -750,6 +758,162 @@ class QdrantVectorClient:
             for point in points
             if (vec := self._extract_vector(point.vector, effective_name)) is not None
         }
+
+    async def retrieve_embedding_vectors(
+        self,
+        collection_name: str,
+        point_ids: list[str],
+    ) -> dict[str, RetrievedPointEmbeddings]:
+        """Batch retrieve typed EmbeddingVectors by reversing named-vector slots.
+
+        Uses ``with_vectors=True`` and ``with_payload=True`` so callers can
+        verify point identity (entity_id / content_hash) before attaching
+        embeddings to domain snapshots.
+
+        Args:
+            collection_name: Qdrant collection name.
+            point_ids: Point IDs to retrieve.
+
+        Returns:
+            Mapping of point_id to embeddings+payload. Missing points omitted.
+
+        """
+        if not point_ids:
+            return {}
+
+        points = await self._client.retrieve(
+            collection_name=collection_name,
+            ids=cast("_PointIds", point_ids),
+            with_vectors=True,
+            with_payload=True,
+        )
+
+        return {
+            str(point.id): RetrievedPointEmbeddings(
+                embeddings=self._named_vectors_to_embeddings(point.vector),
+                payload=dict(point.payload) if point.payload else {},
+            )
+            for point in points
+        }
+
+    def _named_vectors_to_embeddings(self, raw: object) -> list[EmbeddingVector]:
+        """Reverse schema named-vector mapping into EmbeddingVector instances."""
+        if raw is None:
+            return []
+
+        if not isinstance(raw, dict):
+            # Legacy single-vector collections store a bare dense list.
+            return [self._dense_values_to_embedding(raw, slot=self._primary_dense)]
+
+        embeddings: list[EmbeddingVector] = []
+        for name, vector in raw.items():
+            embedding = self._vector_entry_to_embedding(str(name), vector)
+            if embedding is not None:
+                embeddings.append(embedding)
+        return embeddings
+
+    @staticmethod
+    def _require_float_list(vector: object, *, slot: str) -> list[float]:
+        """Boundary-narrow a dense vector payload; reject wrong shapes loudly."""
+        if not isinstance(vector, list) or not vector:
+            msg = f"wrong-shaped dense vector for slot {slot!r}: expected non-empty list"
+            raise TypeError(msg)
+        values: list[float] = []
+        for value in vector:
+            if not isinstance(value, int | float):
+                msg = f"wrong-shaped dense vector for slot {slot!r}: non-numeric element {type(value).__name__}"
+                raise TypeError(msg)
+            values.append(float(value))
+        return values
+
+    @staticmethod
+    def _require_sparse_components(vector: object, *, slot: str) -> tuple[list[int], list[float]]:
+        """Boundary-narrow a sparse vector payload; reject wrong shapes loudly."""
+        indices = getattr(vector, "indices", None)
+        values = getattr(vector, "values", None)
+        if not isinstance(indices, list) or not isinstance(values, list):
+            msg = f"wrong-shaped sparse vector for slot {slot!r}: expected indices/values lists"
+            raise TypeError(msg)
+        if len(indices) != len(values):
+            msg = f"wrong-shaped sparse vector for slot {slot!r}: {len(indices)} indices vs {len(values)} values"
+            raise TypeError(msg)
+        typed_indices: list[int] = []
+        typed_values: list[float] = []
+        for index, value in zip(indices, values, strict=True):
+            if not isinstance(index, int) or not isinstance(value, int | float):
+                msg = f"wrong-shaped sparse vector for slot {slot!r}: non-numeric component"
+                raise TypeError(msg)
+            typed_indices.append(index)
+            typed_values.append(float(value))
+        return typed_indices, typed_values
+
+    @staticmethod
+    def _require_token_matrix(vector: object, *, slot: str) -> list[list[float]]:
+        """Boundary-narrow a ColBERT multi-vector payload; reject wrong shapes loudly."""
+        if not isinstance(vector, list) or not vector:
+            msg = f"wrong-shaped colbert vector for slot {slot!r}: expected non-empty token matrix"
+            raise TypeError(msg)
+        token_vectors: list[list[float]] = []
+        for token in vector:
+            if not isinstance(token, list) or not token:
+                msg = f"wrong-shaped colbert vector for slot {slot!r}: empty or non-list token"
+                raise TypeError(msg)
+            converted: list[float] = []
+            for value in token:
+                if not isinstance(value, int | float):
+                    msg = f"wrong-shaped colbert vector for slot {slot!r}: non-numeric token value"
+                    raise TypeError(msg)
+                converted.append(float(value))
+            token_vectors.append(converted)
+        token_dim = len(token_vectors[0])
+        if token_dim <= 0 or any(len(token) != token_dim for token in token_vectors):
+            msg = f"wrong-shaped colbert vector for slot {slot!r}: ragged token dimensions"
+            raise TypeError(msg)
+        return token_vectors
+
+    def _sparse_vector_to_embedding(self, vector: object, *, slot: str) -> EmbeddingVector:
+        """Convert a boundary-validated sparse vector into EmbeddingVector."""
+        typed_indices, typed_values = self._require_sparse_components(vector, slot=slot)
+        return EmbeddingVector(
+            embedding_type=EmbeddingType.SPARSE,
+            sparse=SparseData(indices=typed_indices, values=typed_values),
+        )
+
+    def _colbert_vector_to_embedding(self, vector: object, *, slot: str) -> EmbeddingVector:
+        """Convert a boundary-validated ColBERT matrix into EmbeddingVector."""
+        token_vectors = self._require_token_matrix(vector, slot=slot)
+        flat = [value for token in token_vectors for value in token]
+        return EmbeddingVector(
+            embedding_type=EmbeddingType.COLBERT,
+            multi_vector=MultiVectorData(
+                values=flat,
+                num_tokens=len(token_vectors),
+                token_dim=len(token_vectors[0]),
+            ),
+        )
+
+    def _dense_values_to_embedding(self, vector: object, *, slot: str) -> EmbeddingVector:
+        """Convert a boundary-validated dense list into MUVERA or DENSE EmbeddingVector."""
+        values = self._require_float_list(vector, slot=slot)
+        embedding_type = EmbeddingType.MUVERA if "muvera" in self._primary_dense.lower() else EmbeddingType.DENSE
+        return EmbeddingVector(
+            embedding_type=embedding_type,
+            dense=DenseData(values=values),
+        )
+
+    def _vector_entry_to_embedding(self, name: str, vector: object) -> EmbeddingVector | None:
+        """Map one named Qdrant vector slot back to an EmbeddingVector.
+
+        Known schema slots are narrowed once at the boundary and reject
+        wrong-shaped payloads with TypeError. Unknown names are ignored.
+        """
+        if name == self._primary_dense:
+            return self._dense_values_to_embedding(vector, slot=name)
+        if self._sparse_name is not None and name == self._sparse_name:
+            return self._sparse_vector_to_embedding(vector, slot=name)
+        if self._colbert_name is not None and name == self._colbert_name:
+            return self._colbert_vector_to_embedding(vector, slot=name)
+        return None
 
     @staticmethod
     def _extract_vector(raw: object, vector_name: str | None) -> list[float] | None:

@@ -21,11 +21,12 @@ from nohiki.job.listing.v1 import (
     ListingUpdated,
 )
 from nohiki.ml.v1 import DenseData, EmbeddingType, EmbeddingVector
+from nohiki.skill.v1 import JobSkillRequirement, SkillProficiencyLevel
 from nohiki_db_utils import OutboxEventParams
 from nohiki_kafka_client import Topics, create_event_metadata
 from nohiki_observability import get_logger
 
-from job_storage_service.core.config import get_settings
+from job_storage_service.core.config import get_jobs_collection_name, get_qdrant_client, get_settings
 from job_storage_service.db.models import Listing
 
 if TYPE_CHECKING:
@@ -120,7 +121,51 @@ def _build_dense_embedding_vector(
     )
 
 
-def build_listing_snapshot(job: Listing) -> ListingSnapshot:
+def _apply_skill_requirements(snapshot: ListingSnapshot, job: Listing) -> None:
+    """Rebuild skill_requirements from atomically paired id/name arrays."""
+    skill_ids = list(job.canonical_skill_ids or [])
+    skill_names = list(job.required_skills or [])
+    if not skill_ids and not skill_names:
+        return
+    try:
+        paired = list(zip(skill_ids, skill_names, strict=True))
+    except ValueError as exc:
+        msg = (
+            f"Listing {job.id} skill array length mismatch: "
+            f"{len(skill_ids)} canonical_skill_ids vs {len(skill_names)} required_skills"
+        )
+        raise ValueError(msg) from exc
+    snapshot.required_skills.extend(skill_names)
+    snapshot.skill_requirements.extend(
+        JobSkillRequirement(
+            skill_id=skill_id,
+            skill_name=skill_name,
+            proficiency_level=SkillProficiencyLevel.UNSPECIFIED,
+        )
+        for skill_id, skill_name in paired
+    )
+
+
+def _apply_required_embeddings(snapshot: ListingSnapshot, job: Listing) -> None:
+    """Attach required dense embeddings or raise on ECST contract violations."""
+    skills_emb = _build_dense_embedding_vector(job.skills_embedding, job.collection_version)
+    if skills_emb is None:
+        msg = f"Listing {job.id} missing required skills_embedding (ECST contract violation)"
+        raise ValueError(msg)
+    snapshot.skills_embedding = skills_emb
+
+    title_emb = _build_dense_embedding_vector(job.title_embedding, job.collection_version)
+    if title_emb is None:
+        msg = f"Listing {job.id} missing required title_embedding (ECST contract violation)"
+        raise ValueError(msg)
+    snapshot.title_embedding = title_emb
+
+
+def build_listing_snapshot(
+    job: Listing,
+    *,
+    retrieval_embeddings: list[EmbeddingVector] | None = None,
+) -> ListingSnapshot:
     """Build ListingSnapshot from database model for ECST."""
     snapshot = ListingSnapshot(
         id=str(job.id),
@@ -137,8 +182,8 @@ def build_listing_snapshot(job: Listing) -> ListingSnapshot:
         collection_version=job.collection_version or "",
     )
 
-    if job.required_skills:
-        snapshot.required_skills.extend(job.required_skills)
+    _apply_skill_requirements(snapshot, job)
+
     if job.min_experience_years is not None:
         snapshot.experience_years_min = job.min_experience_years
     if job.max_experience_years is not None:
@@ -154,20 +199,53 @@ def build_listing_snapshot(job: Listing) -> ListingSnapshot:
     if loc:
         snapshot.location = loc
 
-    skills_emb = _build_dense_embedding_vector(job.skills_embedding, job.collection_version)
-    if skills_emb is None:
-        msg = f"Listing {job.id} missing required skills_embedding (ECST contract violation)"
-        raise ValueError(msg)
-    snapshot.skills_embedding = skills_emb
+    _apply_required_embeddings(snapshot, job)
 
-    title_emb = _build_dense_embedding_vector(job.title_embedding, job.collection_version)
-    if title_emb is None:
-        msg = f"Listing {job.id} missing required title_embedding (ECST contract violation)"
-        raise ValueError(msg)
-    snapshot.title_embedding = title_emb
+    if retrieval_embeddings is not None:
+        snapshot.retrieval_embeddings.extend(retrieval_embeddings)
 
     _set_snapshot_timestamps(snapshot, job)
     return snapshot
+
+
+async def load_verified_retrieval_embeddings(
+    listings: list[Listing],
+) -> dict[str, list[EmbeddingVector]]:
+    """Reload retrieval embeddings from Qdrant with entity/content identity guards."""
+    if not listings:
+        return {}
+
+    point_ids = [str(listing.id) for listing in listings]
+    retrieved = await get_qdrant_client().retrieve_embedding_vectors(
+        get_jobs_collection_name(),
+        point_ids,
+    )
+
+    verified: dict[str, list[EmbeddingVector]] = {}
+    for listing in listings:
+        listing_id = str(listing.id)
+        point = retrieved.get(listing_id)
+        if point is None:
+            logger.warning(
+                "Missing Qdrant vectors for listing snapshot; omitting retrieval_embeddings",
+                listing_id=listing_id,
+            )
+            continue
+
+        payload = point.payload
+        if payload.get("entity_id") != listing_id or payload.get("content_hash") != listing.raw_content_hash:
+            logger.warning(
+                "Qdrant vector identity mismatch; omitting retrieval_embeddings",
+                listing_id=listing_id,
+                payload_entity_id=payload.get("entity_id"),
+                payload_content_hash=payload.get("content_hash"),
+                listing_content_hash=listing.raw_content_hash,
+            )
+            continue
+
+        verified[listing_id] = point.embeddings
+
+    return verified
 
 
 async def publish_listing_accepted_event(
@@ -216,8 +294,7 @@ async def publish_listing_created_event(
     retrieval_embeddings: list[EmbeddingVector],
 ) -> None:
     """Publish listing created event via outbox pattern."""
-    listing_snapshot = build_listing_snapshot(job)
-    listing_snapshot.retrieval_embeddings = retrieval_embeddings
+    listing_snapshot = build_listing_snapshot(job, retrieval_embeddings=retrieval_embeddings)
 
     event = ListingCreated(
         metadata=create_event_metadata(settings.service_name, ctx.correlation_id),
@@ -248,9 +325,11 @@ async def publish_listing_created_event(
 async def publish_listing_updated_event(
     ctx: OutboxContext,
     job: Listing,
+    *,
+    retrieval_embeddings: list[EmbeddingVector] | None = None,
 ) -> None:
     """Publish listing updated event via outbox pattern."""
-    listing_snapshot = build_listing_snapshot(job)
+    listing_snapshot = build_listing_snapshot(job, retrieval_embeddings=retrieval_embeddings)
 
     event = ListingUpdated(
         metadata=create_event_metadata(settings.service_name, ctx.correlation_id),

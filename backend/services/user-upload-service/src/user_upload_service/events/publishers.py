@@ -62,6 +62,7 @@ def _build_upload_snapshot(attachment: Upload) -> UploadSnapshot:
         file_size=attachment.file_size,
         content_hash=attachment.content_hash,
         storage_key=attachment.storage_key,
+        document_category=attachment.category,
         timestamps=timestamps,
     )
 
