@@ -388,7 +388,7 @@ proto-lint:
     nix develop .#ci {{ nix_flags }} --command bash -euc 'cd proto && buf lint'
 
 # Check proto breaking changes
-proto-breaking base_ref="main":
+proto-breaking base_ref="origin/main":
     #!/usr/bin/env bash
     set -euo pipefail
     if git cat-file -e '{{ base_ref }}^{commit}' && git ls-tree --name-only '{{ base_ref }}' proto/ | grep -q .; then
