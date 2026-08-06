@@ -41,3 +41,10 @@ markers = [
     "integration: marks tests as integration tests (requires Docker/testcontainers)",
 ]
 filterwarnings = ["error"]
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP002: runtime-selected adapters or deployment extras, installed but not imported here.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+[tool.deptry.per_rule_ignores]
+DEP002 = ["joblib", "nohiki-embedding-client", "nohiki-llm-client", "nohiki-ml-core"]
+DEP003 = ["fastapi", "httpx", "opentelemetry", "pydantic", "pydantic_settings", "sqlalchemy", "uvicorn"]

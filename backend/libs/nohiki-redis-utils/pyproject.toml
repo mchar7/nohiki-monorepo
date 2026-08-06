@@ -24,3 +24,10 @@ testing = [
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12"]
 build-backend = "uv_build"
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+# DEP004: modules imported by test helpers that this package ships from src/.
+[tool.deptry.per_rule_ignores]
+DEP003 = ["nohiki_common_exceptions", "nohiki_test_utils", "opentelemetry"]
+DEP004 = ["pytest", "testcontainers"]

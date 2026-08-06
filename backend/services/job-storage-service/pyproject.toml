@@ -25,3 +25,8 @@ test = [
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12"]
 build-backend = "uv_build"
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+[tool.deptry.per_rule_ignores]
+DEP003 = ["fastapi", "pydantic", "pydantic_settings", "sqlalchemy", "uvicorn"]

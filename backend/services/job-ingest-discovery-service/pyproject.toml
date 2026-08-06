@@ -46,3 +46,8 @@ markers = [
     "unit: mark unit tests (default)",
 ]
 filterwarnings = ["error"]
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+[tool.deptry.per_rule_ignores]
+DEP003 = ["fastapi", "opentelemetry", "pydantic", "pydantic_settings", "uvicorn"]
