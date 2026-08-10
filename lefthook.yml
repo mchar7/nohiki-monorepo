@@ -11,8 +11,6 @@
 min_version: 2.1.10
 # Repo-carried: do not regenerate hooks from config alone. Publishing checkouts
 # must not depend on the gitignored lefthook-local.yml overlay for this.
-no_auto_install: true
-
 # A bare `lefthook run` reinstalls hooks from Lefthook's own template before
 # running them. This repository's hooks are a hardened wrapper that pins and
 # digest-verifies every binary it invokes, so that regeneration silently
