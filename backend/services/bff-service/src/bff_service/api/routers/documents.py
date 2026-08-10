@@ -8,7 +8,6 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from nohiki.common.v1 import AccessScope, RenderOutputFormat, UploadReference
 from nohiki.doc.content.v1 import (
@@ -23,6 +22,7 @@ from nohiki.doc.template.v1 import (
 from nohiki.job.listing.v1 import ListingSnapshot
 from nohiki.user.pref.v1 import SearchPrefSnapshot
 from nohiki_db_utils import get_async_sessionmaker, paginate_query
+from nohiki_domain_utils.json_schema import get_json_schema_validator
 from nohiki_fastapi_utils import JWTClaims, PaginatedResponse, PaginationParams
 from nohiki_kafka_client import Topics, create_event_metadata
 from nohiki_observability import get_logger
@@ -125,8 +125,7 @@ def _validate_content_schema(data: dict[str, object], schema: Mapping[str, objec
         return
 
     try:
-        Draft202012Validator.check_schema(schema)
-        validator = Draft202012Validator(schema)
+        validator = get_json_schema_validator(dict(schema))
     except SchemaError:
         logger.exception("Stored template has an invalid content schema")
         raise HTTPException(
@@ -141,7 +140,11 @@ def _validate_content_schema(data: dict[str, object], schema: Mapping[str, objec
     )
     for error in errors:
         path = list(error.absolute_path)
-        if error.validator == "required" and isinstance(error.validator_value, list):
+        if (
+            error.validator == "required"
+            and isinstance(error.validator_value, list)
+            and isinstance(error.instance, Mapping)
+        ):
             missing = (name for name in error.validator_value if name not in error.instance)
             for name in missing:
                 details.append(_schema_error_detail(error, [*path, name]))

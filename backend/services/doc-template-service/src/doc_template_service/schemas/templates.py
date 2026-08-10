@@ -9,8 +9,10 @@ import json
 from datetime import datetime
 from uuid import UUID
 
+from jsonschema.exceptions import SchemaError
 from nohiki.common.v1 import AccessScope
 from nohiki.doc.template.v1 import TemplateAudience
+from nohiki_domain_utils.json_schema import get_json_schema_validator
 from pydantic import BaseModel, Field, field_validator
 
 DESC_TEMPLATE_CONTENT = "Template content (Jinja2)"
@@ -23,6 +25,17 @@ DESC_TEMPLATE_NAMESPACE = "Template namespace"
 DESC_TEMPLATE_DESC = "Template description"
 MAX_TEMPLATE_SIZE_BYTES = 100 * 1024
 MAX_SCHEMA_SIZE_BYTES = 100 * 1024
+
+
+def _contains_non_local_ref(value: object) -> bool:
+    if isinstance(value, dict):
+        reference = value.get("$ref")
+        if isinstance(reference, str) and reference != "" and not reference.startswith("#"):
+            return True
+        return any(_contains_non_local_ref(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_contains_non_local_ref(child) for child in value)
+    return False
 
 
 class TemplateCreateRequest(BaseModel):
@@ -49,10 +62,20 @@ class TemplateCreateRequest(BaseModel):
 
     @field_validator("content_schema")
     @classmethod
-    def validate_schema_size(cls, value: dict[str, object] | None) -> dict[str, object] | None:
-        """Reject serialized schemas above the UTF-8 byte limit."""
-        if value is not None and len(json.dumps(value, separators=(",", ":")).encode("utf-8")) > MAX_SCHEMA_SIZE_BYTES:
+    def validate_schema(cls, value: dict[str, object] | None) -> dict[str, object] | None:
+        """Reject oversized or invalid JSON schemas."""
+        if value is None:
+            return value
+        if len(json.dumps(value, separators=(",", ":")).encode("utf-8")) > MAX_SCHEMA_SIZE_BYTES:
             message = f"content_schema exceeds {MAX_SCHEMA_SIZE_BYTES} bytes"
+            raise ValueError(message)
+        try:
+            get_json_schema_validator(value)
+        except SchemaError as exc:
+            message = f"content_schema is not a valid JSON Schema: {exc}"
+            raise ValueError(message) from exc
+        if _contains_non_local_ref(value):
+            message = "content_schema contains a non-local $ref"
             raise ValueError(message)
         return value
 
