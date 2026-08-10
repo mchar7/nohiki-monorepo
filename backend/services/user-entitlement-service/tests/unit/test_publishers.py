@@ -48,6 +48,7 @@ class TestBuildEntitlementSnapshot:
         assert snapshot.user_id == str(user_id)
         assert snapshot.tier.value == SubscriptionTier.PRO.value
         assert snapshot.subscription_status.value == SubscriptionStatus.ACTIVE.value
+        assert snapshot.billing_provider == BillingProvider.STRIPE
         assert snapshot.discovery_frequency_limit == 60
         assert snapshot.max_prefs == 10
         assert snapshot.max_uploads_per_pref == 5
