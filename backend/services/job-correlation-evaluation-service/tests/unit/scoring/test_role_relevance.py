@@ -61,7 +61,7 @@ def test_role_relevance_normalizes_role_intent(
 
 def _importance_profile() -> SearchPrefSnapshot:
     return cast(
-        SearchPrefSnapshot,
+        "SearchPrefSnapshot",
         SimpleNamespace(
             feature_importance=SimpleNamespace(
                 skill_match_importance=100,
@@ -74,7 +74,7 @@ def _importance_profile() -> SearchPrefSnapshot:
 def _composition(*, role: float | None, **factors: float) -> FeatureComposition:
     return FeatureComposition(
         raw_features=np.array([0.25, math.nan], dtype=np.float32),
-        factor_scores=cast(dict[FactorName, float], factors),
+        factor_scores=cast("dict[FactorName, float]", factors),
         role_relevance=role,
     )
 

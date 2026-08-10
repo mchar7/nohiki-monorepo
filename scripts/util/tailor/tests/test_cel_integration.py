@@ -292,7 +292,7 @@ class TestLintEngineWithRuntimeContext:
             )
         )
 
-        data = cast(dict[str, object], {"items": [], "metadata": {"version": 1}})
+        data = cast("dict[str, object]", {"items": [], "metadata": {"version": 1}})
         runtime = LintRuntimeContext(active_tags=frozenset(("check",)))
 
         result = engine.evaluate(data, config, runtime)

@@ -408,7 +408,7 @@ def export_service_spec(config: ServiceConfig) -> OpenAPISpec:
         if not isinstance(value, dict):
             msg = f"Invalid OpenAPI document returned by {config.name}"
             raise TypeError(msg)
-        return cast(OpenAPISpec, value)
+        return cast("OpenAPISpec", value)
 
 
 cli = typer.Typer(

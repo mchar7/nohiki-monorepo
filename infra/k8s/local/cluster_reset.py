@@ -373,13 +373,13 @@ def tool_versions() -> dict[str, CommandResult]:
 def _json_mapping(value: object, description: str) -> JsonObject:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         refuse(f"{description} is malformed")
-    return cast(JsonObject, value)
+    return cast("JsonObject", value)
 
 
 def _json_list(value: object, description: str) -> list[object]:
     if not isinstance(value, list):
         refuse(f"{description} is malformed")
-    return cast(list[object], value)
+    return cast("list[object]", value)
 
 
 def _parse_json_output(result: CommandResult, description: str) -> JsonObject:
@@ -767,7 +767,7 @@ def _fail_transaction(path: Path, document: JsonObject, message: str) -> NoRetur
 
 
 def _adapter_phase(path: Path, document: JsonObject, name: str, argv: Sequence[str], timeout: float) -> None:
-    phases = cast(list[object], document["phases"])
+    phases = cast("list[object]", document["phases"])
     record = _phase(name, argv=argv)
     phases.append(record)
     _persist(path, document)
@@ -986,7 +986,7 @@ def factory_reset(args: argparse.Namespace) -> int:  # noqa: PLR0915  # Preserve
             "absence": [],
             "status": "failed",
         }
-        phases = cast(list[object], document["phases"])
+        phases = cast("list[object]", document["phases"])
         authorized = _phase("authorized")
         phases.append(authorized)
         _complete_phase(args.evidence_output, document, authorized)
@@ -1022,7 +1022,7 @@ def factory_reset(args: argparse.Namespace) -> int:  # noqa: PLR0915  # Preserve
         try:
             require_context(args.expected_context)
             observed_identity = capture_cluster_identity_record(args.expected_context)
-            identity = cast(JsonObject, document["identity"])
+            identity = cast("JsonObject", document["identity"])
             identity["observed"] = observed_identity
             _persist(args.evidence_output, document)
             new = validate_identity(observed_identity, "new cluster identity")
@@ -1037,7 +1037,7 @@ def factory_reset(args: argparse.Namespace) -> int:  # noqa: PLR0915  # Preserve
         _persist(args.evidence_output, document)
 
         def record_absence(check: JsonObject) -> None:
-            cast(list[object], document["absence"]).append(check)
+            cast("list[object]", document["absence"]).append(check)
             _persist(args.evidence_output, document)
 
         try:
@@ -1144,7 +1144,7 @@ def _validate_transaction_phase(value: object, expected_phase: str, previous: dt
     if (
         not argv
         or not all(isinstance(part, str) for part in argv)
-        or not Path(cast(str, argv[0])).is_absolute()
+        or not Path(cast("str", argv[0])).is_absolute()
         or type(record.get("exitCode")) is not int
         or record["exitCode"] != 0
     ):
@@ -1320,7 +1320,7 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     """Run the CLI and preserve refusal exit semantics."""
     args = parser().parse_args()
-    handler = cast(Callable[[argparse.Namespace], int], args.handler)
+    handler = cast("Callable[[argparse.Namespace], int]", args.handler)
     try:
         return handler(args)
     except RefusalError as error:

@@ -49,7 +49,7 @@ def test_fresh_upgrade_enforces_canonical_location_shape_and_uniqueness(
     assert canonical_index["unique"] is True
     assert canonical_index["column_names"] == ["search_keywords", "locations"]
 
-    table = cast(sa.Table, DBIngestionQuery.__table__)
+    table = cast("sa.Table", DBIngestionQuery.__table__)
     model_check = next(
         constraint
         for constraint in table.constraints

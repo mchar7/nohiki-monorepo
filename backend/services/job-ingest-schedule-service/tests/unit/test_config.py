@@ -103,7 +103,7 @@ def test_initial_migration_keeps_schema_constraints_without_outbox() -> None:
     assert 'name="ck_schedule_hours_old_range"' in migration
     assert "results_wanted BETWEEN 1 AND 100" in migration
     assert 'name="ck_schedule_results_wanted_range"' in migration
-    table = cast(sa.Table, IngestionSchedule.__table__)
+    table = cast("sa.Table", IngestionSchedule.__table__)
 
     model_checks = {
         constraint.name: str(constraint.sqltext)

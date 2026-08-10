@@ -103,7 +103,7 @@ class CachingOpenRouterModel(RobustOpenRouterModel):
         result: list[chat.ChatCompletionMessageParam] = []
 
         for msg in messages:
-            msg_dict = cast(dict[str, Any], msg)
+            msg_dict = cast("dict[str, Any]", msg)
             if msg_dict.get("role") == "system":
                 content = msg_dict.get("content")
                 if isinstance(content, str) and content:

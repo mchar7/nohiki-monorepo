@@ -227,7 +227,7 @@ class TestRecordFeedback:
                     raise CorrelationNotFoundError(correlation_id)
                 return MagicMock()
 
-        service = CorrelationFeedbackService(cast(CorrelationRepository, OwnershipAwareRepository()))
+        service = CorrelationFeedbackService(cast("CorrelationRepository", OwnershipAwareRepository()))
 
         with pytest.raises(CorrelationNotFoundError):
             await service.record_feedback(

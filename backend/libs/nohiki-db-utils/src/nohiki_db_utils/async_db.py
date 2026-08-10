@@ -77,7 +77,7 @@ def _is_tuple_of_pairs(obj: object) -> bool:
 def _from_hashable(obj: object) -> dict[str, object] | object:
     """Convert hashable tuple back to dict structure."""
     if _is_tuple_of_pairs(obj):
-        pairs = cast(_PairsTuple, obj)
+        pairs = cast("_PairsTuple", obj)
         return {str(_from_hashable(k)): _from_hashable(v) for k, v in pairs}
     return obj
 
@@ -99,7 +99,7 @@ def _get_async_engine_cached(
     if connect_args_hashable is not None:
         result = _from_hashable(connect_args_hashable)
         if isinstance(result, dict):
-            connect_args = cast(dict[str, Any], result)
+            connect_args = cast("dict[str, Any]", result)
 
     merged_connect_args: dict[str, Any] = _DEFAULT_CONNECT_ARGS | connect_args
 

@@ -17,7 +17,7 @@ class TestSiblingPathResolution:
 
     def test_resolve_sibling_with_subpath(self) -> None:
         """resolve_glob_path resolves sibling.<name>.<subpath> correctly."""
-        sibling_data = cast(dict[str, object], {"experience": [{"title": "Engineer", "years": 5}]})
+        sibling_data = cast("dict[str, object]", {"experience": [{"title": "Engineer", "years": 5}]})
         runtime = LintRuntimeContext(sibling_documents={"reference": sibling_data})
 
         result = resolve_glob_path({}, "sibling.reference.experience", runtime)
@@ -29,7 +29,7 @@ class TestSiblingPathResolution:
 
     def test_resolve_sibling_bare_name_without_subpath(self) -> None:
         """resolve_glob_path resolves bare sibling.<name> to sibling root."""
-        sibling_data = cast(dict[str, object], {"name": "Alice", "skills": ["Python", "Go"]})
+        sibling_data = cast("dict[str, object]", {"name": "Alice", "skills": ["Python", "Go"]})
         runtime = LintRuntimeContext(sibling_documents={"reference": sibling_data})
 
         result = resolve_glob_path({}, "sibling.reference", runtime)
@@ -42,7 +42,7 @@ class TestSiblingPathResolution:
     def test_resolve_sibling_with_wildcard_expansion(self) -> None:
         """resolve_glob_path resolves sibling.<name>.<path[*]> with wildcard."""
         sibling_data = cast(
-            dict[str, object],
+            "dict[str, object]",
             {
                 "experience": {
                     "entries": [
@@ -76,7 +76,7 @@ class TestSiblingPathResolution:
 
     def test_resolve_sibling_path_with_index_notation(self) -> None:
         """resolve_glob_path exposes an indexed sibling element as a singleton scope."""
-        sibling_data = cast(dict[str, object], {"items": [{"name": "A"}, {"name": "B"}, {"name": "C"}]})
+        sibling_data = cast("dict[str, object]", {"items": [{"name": "A"}, {"name": "B"}, {"name": "C"}]})
         runtime = LintRuntimeContext(sibling_documents={"data": sibling_data})
 
         # An indexed access (items[1]) surfaces the second element as a one-item scope,
@@ -91,8 +91,8 @@ class TestSiblingPathResolution:
 
     def test_primary_document_paths_still_work(self) -> None:
         """resolve_glob_path still works for primary document paths without sibling prefix."""
-        data = cast(dict[str, object], {"items": [1, 2, 3]})
-        runtime = LintRuntimeContext(sibling_documents={"reference": cast(dict[str, object], {"other": "data"})})
+        data = cast("dict[str, object]", {"items": [1, 2, 3]})
+        runtime = LintRuntimeContext(sibling_documents={"reference": cast("dict[str, object]", {"other": "data"})})
 
         result = resolve_glob_path(data, "items", runtime)
 
@@ -103,12 +103,12 @@ class TestSiblingPathResolution:
 
     def test_multiple_siblings_loaded(self) -> None:
         """resolve_glob_path works when multiple siblings are loaded."""
-        primary_data = cast(dict[str, object], {})
+        primary_data = cast("dict[str, object]", {})
         runtime = LintRuntimeContext(
             sibling_documents={
-                "reference": cast(dict[str, object], {"experience": [{"role": "Engineer"}]}),
-                "primary": cast(dict[str, object], {"body": "Dear hiring manager..."}),
-                "references": cast(dict[str, object], {"contacts": [{"name": "John"}]}),
+                "reference": cast("dict[str, object]", {"experience": [{"role": "Engineer"}]}),
+                "primary": cast("dict[str, object]", {"body": "Dear hiring manager..."}),
+                "references": cast("dict[str, object]", {"contacts": [{"name": "John"}]}),
             }
         )
 
@@ -125,7 +125,7 @@ class TestSiblingPathResolution:
     def test_sibling_path_with_nested_objects(self) -> None:
         """resolve_glob_path resolves deeply nested sibling paths."""
         sibling_data = cast(
-            dict[str, object],
+            "dict[str, object]",
             {
                 "profile": {
                     "contact": {
@@ -145,12 +145,12 @@ class TestSiblingPathResolution:
         concrete_path, items = result[0]
         assert concrete_path == "sibling.reference.profile.contact.emails"
         assert len(items) == 2
-        item_obj = cast(dict[str, object], items[0])
+        item_obj = cast("dict[str, object]", items[0])
         assert item_obj["type"] == "work"
 
     def test_sibling_missing_subpath_returns_empty(self) -> None:
         """resolve_glob_path returns empty when sibling subpath doesn't exist."""
-        sibling_data = cast(dict[str, object], {"name": "Alice"})
+        sibling_data = cast("dict[str, object]", {"name": "Alice"})
         runtime = LintRuntimeContext(sibling_documents={"reference": sibling_data})
 
         result = resolve_glob_path({}, "sibling.reference.nonexistent", runtime)
@@ -159,7 +159,7 @@ class TestSiblingPathResolution:
 
     def test_sibling_nonlist_value_wraps_in_singleton(self) -> None:
         """resolve_glob_path exposes a sibling primitive as a one-item scope."""
-        sibling_data = cast(dict[str, object], {"name": "Alice"})  # scalar, not a list
+        sibling_data = cast("dict[str, object]", {"name": "Alice"})  # scalar, not a list
         runtime = LintRuntimeContext(sibling_documents={"reference": sibling_data})
 
         result = resolve_glob_path({}, "sibling.reference.name", runtime)
@@ -168,7 +168,7 @@ class TestSiblingPathResolution:
 
     def test_sibling_root_resolves_to_one_item_list(self) -> None:
         """resolve_glob_path resolves bare sibling.<name> to one-item list containing sibling root."""
-        sibling_data = cast(dict[str, object], {"key1": "value1", "key2": "value2"})
+        sibling_data = cast("dict[str, object]", {"key1": "value1", "key2": "value2"})
         runtime = LintRuntimeContext(sibling_documents={"data": sibling_data})
 
         result = resolve_glob_path({}, "sibling.data", runtime)
@@ -182,7 +182,7 @@ class TestSiblingPathResolution:
     def test_sibling_with_wildcard_then_missing_child(self) -> None:
         """resolve_glob_path handles missing child keys in wildcard expansion over siblings."""
         sibling_data = cast(
-            dict[str, object],
+            "dict[str, object]",
             {
                 "entries": [
                     {"id": "1", "tags": ["a", "b"]},

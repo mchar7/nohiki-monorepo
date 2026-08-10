@@ -52,7 +52,7 @@ def _load_inventory(path: Path) -> tuple[Entry, ...]:
         if not isinstance(raw, dict) or set(raw) != {"service", "schema", "head"}:
             message = f"invalid migration inventory entry {index}"
             raise ValueError(message)
-        entry = cast(dict[str, object], raw)
+        entry = cast("dict[str, object]", raw)
         service, schema, head = entry["service"], entry["schema"], entry["head"]
         if not isinstance(service, str) or not _SERVICE.fullmatch(service):
             message = f"invalid migration service at entry {index}"

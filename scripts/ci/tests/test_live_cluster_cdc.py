@@ -182,7 +182,7 @@ def test_distinct_identity_control_records_accepted_inherited_owner_limitation(t
     adapter = _load_adapter()
     document = _write_valid_evidence(adapter, tmp_path / "live-cdc.json")
     raw = json.dumps(document)
-    control = cast(dict[str, object], document["database_identity_control"])
+    control = cast("dict[str, object]", document["database_identity_control"])
 
     assert control["kind"] == "distinct-identity"
     assert control["supports"] == ["attribution", "independent-revocation"]
@@ -441,7 +441,7 @@ def test_run_updates_one_registered_account_and_writes_valid_redacted_evidence(
     assert requests[1][1] == "/api/v1/account"
     update_body = requests[1][2]
     assert isinstance(update_body, dict)
-    update_document = cast(dict[str, object], update_body)
+    update_document = cast("dict[str, object]", update_body)
     assert str(update_document["display_name"]).startswith("CDC after-restart ")
     assert groups[0] == groups[1]
     assert document["observed"][0]["partition"] == document["observed"][1]["partition"]
@@ -463,14 +463,14 @@ def test_evidence_validator_rejects_noop_restart_replay_and_missing_registered_g
     assert adapter.evidence_is_valid(advanced_schema)
 
     no_op = deepcopy(document)
-    no_op_restart = cast(dict[str, object], no_op["restart"])
-    no_op_after = cast(dict[str, object], no_op_restart["after"])
-    no_op_before = cast(dict[str, object], no_op_restart["before"])
+    no_op_restart = cast("dict[str, object]", no_op["restart"])
+    no_op_after = cast("dict[str, object]", no_op_restart["after"])
+    no_op_before = cast("dict[str, object]", no_op_restart["before"])
     no_op_after["uid"] = no_op_before["uid"]
     assert not adapter.evidence_is_valid(no_op)
 
     replay = deepcopy(document)
-    replay_observed = cast(list[dict[str, object]], replay["observed"])
+    replay_observed = cast("list[dict[str, object]]", replay["observed"])
     replay_observed[1]["offset"] = replay_observed[0]["offset"]
     assert not adapter.evidence_is_valid(replay)
 

@@ -241,7 +241,7 @@ class TestGetFeedbackStats:
         assert "feedback_by_type" in stats
         assert "training_samples_available" in stats
         assert stats["total_feedback_count"] == 10
-        feedback_by_type = cast(dict[str, int], stats["feedback_by_type"])
+        feedback_by_type = cast("dict[str, int]", stats["feedback_by_type"])
         assert feedback_by_type["viewed"] == 5
         assert stats["training_samples_available"] == 8
 
@@ -269,7 +269,7 @@ class TestGetFeedbackStats:
 
         assert stats["total_feedback_count"] == 0
         assert stats["training_samples_available"] == 0
-        feedback_by_type = cast(dict[str, int], stats["feedback_by_type"])
+        feedback_by_type = cast("dict[str, int]", stats["feedback_by_type"])
         assert feedback_by_type["viewed"] == 0
 
 

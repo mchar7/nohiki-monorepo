@@ -34,19 +34,19 @@ from nohiki_db_utils.testing import (
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 _raw_postgres_container = cast(
-    Callable[[], Generator[str]],
+    "Callable[[], Generator[str]]",
     inspect.unwrap(testing_postgres_container),
 )
 _raw_async_engine = cast(
-    Callable[[str], AsyncGenerator[AsyncEngine]],
+    "Callable[[str], AsyncGenerator[AsyncEngine]]",
     inspect.unwrap(testing_async_engine),
 )
 _raw_async_session_factory = cast(
-    Callable[[AsyncEngine], async_sessionmaker[AsyncSession]],
+    "Callable[[AsyncEngine], async_sessionmaker[AsyncSession]]",
     inspect.unwrap(testing_async_session_factory),
 )
 _raw_async_session = cast(
-    Callable[[async_sessionmaker[AsyncSession]], AsyncGenerator[AsyncSession]],
+    "Callable[[async_sessionmaker[AsyncSession]], AsyncGenerator[AsyncSession]]",
     inspect.unwrap(testing_async_session),
 )
 

@@ -400,12 +400,12 @@ class LLMClient:
             output_type = config.output_type
         else:
             output_type = cast(
-                PromptedOutput[TOutput],
+                "PromptedOutput[TOutput]",
                 PromptedOutput(config.output_type, template=False),
             )
 
         return cast(
-            Agent[TDeps, TOutput],
+            "Agent[TDeps, TOutput]",
             Agent(
                 model=model,
                 output_type=output_type,
@@ -443,7 +443,7 @@ class LLMClient:
         output = structured_dict if config.inject_schema_prompt else PromptedOutput(structured_dict, template=False)
 
         agent = cast(
-            Agent[TDeps, dict[str, Any]],
+            "Agent[TDeps, dict[str, Any]]",
             Agent(
                 model=model,
                 output_type=output,

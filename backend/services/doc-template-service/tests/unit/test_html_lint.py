@@ -662,7 +662,7 @@ class TestLintHtmlErrorCases:
         from doc_template_service.core.html._html_lint import lint_html
 
         # This might trigger the ValueError path
-        result = lint_html(cast(str, None))
+        result = lint_html(cast("str", None))
         assert isinstance(result, list)
 
     def test_lint_html_type_error(self) -> None:

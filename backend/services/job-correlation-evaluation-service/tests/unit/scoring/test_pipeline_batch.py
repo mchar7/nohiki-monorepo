@@ -162,13 +162,13 @@ class TestScoringPipelineScoreListingsByIds:
             payload={"title": "Engineer"},
         )
 
-        native_mock = cast(AsyncMock, pipeline._native.score_by_entity_ids)
+        native_mock = cast("AsyncMock", pipeline._native.score_by_entity_ids)
         native_mock.return_value = [mock_maxsim_result]
 
         mock_scored = MagicMock()
         mock_scored.entity_id = "job-1"
         mock_scored.final_score = 85
-        l2r_mock = cast(MagicMock, pipeline._l2r.score_batch)
+        l2r_mock = cast("MagicMock", pipeline._l2r.score_batch)
         l2r_mock.return_value = [mock_scored]
 
         result = await pipeline.score_listings_by_ids(
@@ -191,7 +191,7 @@ class TestScoringPipelineScoreListingsByIds:
         mock_listings: dict[str, ListingSnapshot],
     ) -> None:
         """Test TypeError is re-raised after logging."""
-        native_mock = cast(AsyncMock, pipeline._native.score_by_entity_ids)
+        native_mock = cast("AsyncMock", pipeline._native.score_by_entity_ids)
         native_mock.side_effect = TypeError("Invalid type")
 
         with pytest.raises(TypeError, match="Invalid type"):

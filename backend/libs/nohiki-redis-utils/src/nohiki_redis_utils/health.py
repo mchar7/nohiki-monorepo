@@ -88,7 +88,7 @@ class RedisHealthProbe:
     def _get_client(self) -> Redis[bytes]:
         """Get or create Redis client."""
         if self._client is None:
-            redis_from_url = cast(Any, redis_async.from_url)
+            redis_from_url = cast("Any", redis_async.from_url)
             self._client = redis_from_url(
                 self._redis_url,
                 socket_connect_timeout=self._timeout_ms / 1000,

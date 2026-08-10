@@ -114,11 +114,11 @@ class ColBERTRetrieverProtocol(Protocol):
 
 
 def _load_plaid_index_class(module: ModuleType) -> type[PLAIDIndexProtocol]:
-    return cast(type[PLAIDIndexProtocol], module.PLAID)
+    return cast("type[PLAIDIndexProtocol]", module.PLAID)
 
 
 def _load_colbert_retriever_class(module: ModuleType) -> type[ColBERTRetrieverProtocol]:
-    return cast(type[ColBERTRetrieverProtocol], module.ColBERT)
+    return cast("type[ColBERTRetrieverProtocol]", module.ColBERT)
 
 
 @dataclass(frozen=True, slots=True)

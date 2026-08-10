@@ -76,7 +76,7 @@ def _as_mapping(value: object) -> dict[str, object] | None:
     if not all(isinstance(key, str) for key in value):
         message = "Helm values image mappings must use string keys"
         raise TypeError(message)
-    return cast(dict[str, object], value)
+    return cast("dict[str, object]", value)
 
 
 def _values_files() -> tuple[Path, ...]:
@@ -116,7 +116,7 @@ def _walk_image_sites(path: Path, node: object, location: _Location = ()) -> Ite
         return
 
     if isinstance(node, list):
-        for index, value in enumerate(cast(list[object], node)):
+        for index, value in enumerate(cast("list[object]", node)):
             yield from _walk_image_sites(path, value, (*location, index))
         return
 
@@ -183,7 +183,7 @@ def _renovate_excluded_packages() -> frozenset[str]:
     rules = config.get("packageRules")
     assert isinstance(rules, list), "Renovate packageRules must be a list"
     candidates = []
-    for value in cast(list[object], rules):
+    for value in cast("list[object]", rules):
         rule = _as_mapping(value)
         if (
             rule is not None
@@ -196,7 +196,7 @@ def _renovate_excluded_packages() -> frozenset[str]:
     package_names = candidates[0].get("matchPackageNames")
     assert isinstance(package_names, list), "helm-values exclusion must match package names"
     assert all(isinstance(name, str) for name in package_names), "excluded package names must be strings"
-    return frozenset(cast(list[str], package_names))
+    return frozenset(cast("list[str]", package_names))
 
 
 def test_every_helm_image_site_has_exactly_one_owner() -> None:
@@ -208,7 +208,7 @@ def test_every_helm_image_site_has_exactly_one_owner() -> None:
 
 def test_local_init_container_images_inherit_the_canonical_readiness_pin() -> None:
     main_values = load_mapping(_ROOT / _MAIN_VALUES)
-    readiness_image = cast(dict[str, str], mapping_at(main_values, "global", "s3", "readinessImage"))
+    readiness_image = cast("dict[str, str]", mapping_at(main_values, "global", "s3", "readinessImage"))
     expected = f"{readiness_image['repository']}:{readiness_image['tag']}"
     inherited_sites = [
         site
@@ -244,7 +244,7 @@ def test_manual_pairs_are_exactly_the_helm_values_dependencies_renovate_excludes
 
 def test_vendored_raw_sha_fields_never_gain_a_sha256_prefix() -> None:
     manual_by_key = {site.key: site for site in _image_sites() if "manual-pair" in _owners(site)}
-    sha_sites = {key: site for key, site in manual_by_key.items() if "sha" in cast(dict[str, object], site.value)}
+    sha_sites = {key: site for key, site in manual_by_key.items() if "sha" in cast("dict[str, object]", site.value)}
     declared_sha_sites = _RAW_SHA_SITES | _CANONICAL_SHA_SITES
     assert sha_sites.keys() == declared_sha_sites, (
         "every sibling sha field must declare whether its chart expects raw or canonical form: "
@@ -254,12 +254,12 @@ def test_vendored_raw_sha_fields_never_gain_a_sha256_prefix() -> None:
     failures: list[str] = []
     for key in _RAW_SHA_SITES:
         site = sha_sites[key]
-        value = cast(dict[str, object], site.value)["sha"]
+        value = cast("dict[str, object]", site.value)["sha"]
         if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
             failures.append(f"{_description(site)}.sha must be raw 64-character hex, got {value!r}")
     for key in _CANONICAL_SHA_SITES:
         site = sha_sites[key]
-        value = cast(dict[str, object], site.value)["sha"]
+        value = cast("dict[str, object]", site.value)["sha"]
         if not isinstance(value, str) or _CANONICAL_SHA256.fullmatch(value) is None:
             failures.append(f"{_description(site)}.sha must be sha256:<64-character hex>, got {value!r}")
     assert not failures, "\n".join(failures)

@@ -1086,7 +1086,7 @@ def test_fan_in_consumes_the_worker_cache_signals() -> None:
     assert report["env"]["WORKER_DEADCODE_CACHE_HIT"] == "${{ needs.worker.outputs.deadcode_cache_hit }}"
     assert "worker" in _jobs()["checks"]["needs"]
 
-    action_outputs = cast(dict[str, object], load_mapping(_SETUP_CI)["outputs"])
+    action_outputs = cast("dict[str, object]", load_mapping(_SETUP_CI)["outputs"])
     assert {"ready-cache-hit", "skylos-cache-hit"} <= action_outputs.keys()
     setup = next(step for step in _steps(_jobs()["worker"]) if step.get("uses") == "./.github/actions/setup-ci")
     assert setup["id"] == "setup-ci"
@@ -1496,7 +1496,7 @@ def test_label_sync_is_an_advisory_job_off_the_required_router_path() -> None:
         "REPO": "${{ github.repository }}",
         "LABELS": "${{ needs.changes.outputs.labels }}",
     }
-    assert cast(dict[str, object], sync)["shell"] == "bash"
+    assert cast("dict[str, object]", sync)["shell"] == "bash"
     command = str(sync["run"])
     for operation in (
         'gh api --paginate --slurp "repos/${REPO}/issues/${PR}/labels?per_page=100"',

@@ -84,7 +84,7 @@ class JWKSVerifier:
         if cls._instance is None:
             msg = "JWKSVerifier not initialized. Call JWKSVerifier(config) first."
             raise RuntimeError(msg)
-        return cast(Self, cls._instance)  # ty: ignore[redundant-cast]  # removing cast causes invalid-return-type; ty bug with Self class variables
+        return cast("Self", cls._instance)  # ty: ignore[redundant-cast]  # removing cast causes invalid-return-type; ty bug with Self class variables
 
     def verify_token(self, token: str) -> JWTClaims:
         """Verify a JWT and return its claims.

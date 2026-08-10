@@ -344,7 +344,7 @@ class TestLLMClientRun:
         model = TestModel()
         # Using cast to avoid constructor inference issues in tests.
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -374,7 +374,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -402,7 +402,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -431,7 +431,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -451,7 +451,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -478,7 +478,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -494,7 +494,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -518,7 +518,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -552,7 +552,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -575,7 +575,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -594,7 +594,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -613,7 +613,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -645,7 +645,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -673,7 +673,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -696,7 +696,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -717,7 +717,7 @@ class TestLLMClientRun:
         client = LLMClient(llm_settings)
         model = TestModel()
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
@@ -778,7 +778,7 @@ class TestLLMClientRun:
 
         client = LLMClient(llm_settings, retry_wait=wait_none())
         agent = cast(
-            Agent[SampleContext, SampleOutput],
+            "Agent[SampleContext, SampleOutput]",
             Agent(TestModel(), deps_type=SampleContext, output_type=SampleOutput),
         )
         with (

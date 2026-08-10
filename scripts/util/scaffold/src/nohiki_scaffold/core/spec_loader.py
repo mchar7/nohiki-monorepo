@@ -179,7 +179,7 @@ def _load_database_options(data: object) -> DatabaseOptions:
     """Parse [database] section."""
     if not isinstance(data, dict):
         data = {}
-    data = cast(dict[str, object], data)
+    data = cast("dict[str, object]", data)
 
     enabled = _get_bool(data, "enabled", default=False)
     schema = _get_str(data, "schema_name") or (schema_name("") if enabled else "")
@@ -204,7 +204,7 @@ def _load_redis_options(data: object) -> RedisOptions:
     """Parse [redis] section."""
     if not isinstance(data, dict):
         data = {}
-    data = cast(dict, data)
+    data = cast("dict", data)
 
     enabled = _get_bool(data, "enabled", default=False)
     lock = _get_bool(data, "bootstrap_distributed_lock", default=False)
@@ -221,7 +221,7 @@ def _load_kafka_options(data: object) -> KafkaOptions:
     """Parse [kafka] section."""
     if not isinstance(data, dict):
         data = {}
-    data = cast(dict, data)
+    data = cast("dict", data)
 
     role_str = _get_str(data, "role", default=KafkaRole.NONE.value)
     try:
@@ -265,7 +265,7 @@ def _load_s3_options(data: object) -> S3Options:
     """Parse [s3] section."""
     if not isinstance(data, dict):
         data = {}
-    data = cast(dict, data)
+    data = cast("dict", data)
 
     enabled = _get_bool(data, "enabled", default=False)
     bucket = _get_str(data, "bucket_name")
@@ -282,7 +282,7 @@ def _load_ml_options(data: object) -> MLOptions:
     """Parse [ml] section."""
     if not isinstance(data, dict):
         data = {}
-    data = cast(dict, data)
+    data = cast("dict", data)
 
     llm = _load_llm_options(data.get("llm", {}))
     qdrant = _load_qdrant_options(data.get("qdrant", {}))
@@ -304,7 +304,7 @@ def _load_llm_options(data: object) -> LLMOptions:
     """Parse [ml.llm] section."""
     if not isinstance(data, dict):
         data = {}
-    data = cast(dict, data)
+    data = cast("dict", data)
 
     enabled = _get_bool(data, "enabled", default=False)
     provider = _get_str(data, "provider")
@@ -323,7 +323,7 @@ def _load_qdrant_options(data: object) -> QdrantOptions:
     """Parse [ml.qdrant] section."""
     if not isinstance(data, dict):
         data = {}
-    data = cast(dict, data)
+    data = cast("dict", data)
 
     enabled = _get_bool(data, "enabled", default=False)
     entity = _get_str(data, "collection_entity")

@@ -132,7 +132,7 @@ async def publish_profile_updated_batch(
         return
 
     await db.flush()
-    await cast(_BatchOutboxWriter, outbox).write_events(
+    await cast("_BatchOutboxWriter", outbox).write_events(
         db=db,
         entries=[_build_profile_updated_request(profile, user_skills=user_skills) for profile in profiles],
     )

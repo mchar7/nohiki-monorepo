@@ -751,7 +751,7 @@ class JobStoreService:
         # SQLAlchemy returns CursorResult for UPDATE but the public Result
         # type widens; cast keeps ty strict-mode happy without changing
         # runtime semantics.
-        if cast(CursorResult[Any], result).rowcount == 0:
+        if cast("CursorResult[Any]", result).rowcount == 0:
             msg = (
                 f"Saga {saga_id} version conflict: expected version {prior_version} "
                 "but row was modified concurrently (likely EXPIRED by stale-saga sweep)"

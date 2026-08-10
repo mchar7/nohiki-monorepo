@@ -56,7 +56,7 @@ def _make_test_settings(**kwargs: object) -> PipelineSettings:
         "sparse_boost_weight": 0.15,
     }
     defaults |= kwargs
-    return PipelineSettings(**cast(dict[str, Any], defaults))
+    return PipelineSettings(**cast("dict[str, Any]", defaults))
 
 
 @pytest.mark.integration
