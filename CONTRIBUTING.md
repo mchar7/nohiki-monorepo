@@ -342,12 +342,45 @@ Before invoking Lefthook, the wrapper unsets `LEFTHOOK`, `LEFTHOOK_BIN`, `LEFTHO
 `LEFTHOOK_EXCLUDE`. Those variables therefore cannot disable a push that reaches the wrapper. There is no
 `SKIP_PREPUSH` override or branch-name skip.
 
+The gate is a *machine* lock, not a per-checkout one: `scripts/dev/test-run.sh` sizes the gate body to the whole
+machine (worker count from `nproc`, Nix `max-jobs` x `cores` up to the same) and runs it in a transient
+`systemd --user` scope weighted `CPUWeight=50 IOWeight=50 MemoryHigh=50%`. Every worktree on this machine therefore
+shares one gate, held in `$XDG_RUNTIME_DIR/nohiki-gates/`.
+
+`scripts/dev/env-lock.sh gate` admits **two** concurrent gates, not one. The scope is created per invocation, so
+`MemoryHigh=50%` is per gate rather than an aggregate cap: two gates soft-cap at 100% of RAM, which is the ceiling,
+and three would be 150% and thrash. Override with `NOHIKI_GATE_SLOTS` only if you have changed one of those facts.
+
+Slot 1 uses the pre-semaphore file name `pre-push.lock`, and only the extra slots are `pre-push.slotN.lock`. That
+is deliberate: worktrees on this machine sit on many different commits, and renaming the file would leave older
+single-mutex checkouts and this semaphore contending on nothing at all. Sharing slot 1 makes the two interlock, so
+the bound holds even while the change is still spreading.
+
+On entry the gate always says what it did. It reports the slot it took and how many are busy; if every slot is busy
+it reports the queue depth, an estimated wait of `ceil(depth / slots)` gate runs, the current holders, and the
+deadline, then re-reports every `NOHIKI_GATE_LOCK_NOTICE_INTERVAL` (60s). Waiting is bounded by
+`NOHIKI_GATE_LOCK_TIMEOUT`, default **1800 seconds**: a push that has queued for half an hour is treated as broken
+rather than busy and fails with exit 75. The queue also fails, with exit 70, rather than proceeding unserialised if
+its lock directory is removed underneath it.
+
+A holder that dies mid-gate releases its slot immediately, including under `SIGKILL`. The body runs with the lock
+descriptor closed (`9>&-`), so the kernel drops the `flock` with the holder's shell and no orphaned descendant can
+inherit it; the only residue is a stale holder metadata file, which the next arrival reclaims by PID liveness. There
+is no stale lock to clear by hand. The deliberate trade is the reverse case: killing a holder frees its slot while
+its orphaned body may still be running, so the machine can briefly carry one gate more than the bound.
+
 Hooks remain client-side. `git push --no-verify` bypasses the pre-push hook completely, before the wrapper can run;
 no client-side wrapper can prevent that. Use it only as a deliberate exception, knowing that it skips all local
 pre-push checks and leaves the hosted checks to catch failures.
 
 Pre-push is not a 30 to 60 second check. Measured full runs took about 180 seconds with warm caches and 420 seconds
 with cold caches. Strict dead-code analysis accounted for about 270 seconds of the cold run.
+
+Those figures predate the gate semaphore and were measured under the single mutex it replaced. From 2026-08-05 a
+gate may legitimately share this machine with a second one, so a warm-cache timing taken after that date is not
+comparable with the numbers above and will read as a regression when it is the bound working. For a comparable
+figure, benchmark with `NOHIKI_GATE_SLOTS=1`, which restores single-mutex behaviour. The slot count, timeout and
+reporting described under **Git hooks (Lefthook)** are all implemented in `scripts/dev/env-lock.sh`.
 
 GitHub Actions uses `.github/workflows/checks.yml` for lint, commitlint, and pre-push parity; its `changes` job
 change-gates every lane through `ci-checks gate` (dependency-graph package scoping, fail-closed on unmapped files)
