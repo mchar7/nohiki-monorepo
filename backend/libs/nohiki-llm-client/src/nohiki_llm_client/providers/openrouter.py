@@ -100,11 +100,21 @@ def _maybe_raise_embedded_error(raw: dict[str, object], *, model_name: str) -> N
 
 
 class _EmbeddedRateLimitError(ModelHTTPError):
-    """Model error for a rate limit embedded in an HTTP-200 response."""
+    """Model error for a rate limit embedded in an HTTP-200 response.
+
+    PydanticAI owns ``retry_after`` as a read-only property that parses the ``Retry-After``
+    response header. An HTTP-200 body carries no such header, so the hint recovered from the
+    body is injected as one and read back through the library's own property rather than
+    shadowed by an attribute.
+    """
 
     def __init__(self, *, model_name: str, message: str, retry_after: int | None) -> None:
-        super().__init__(status_code=HTTP_STATUS_RATE_LIMIT, model_name=model_name, body=message)
-        self.retry_after = retry_after
+        super().__init__(
+            status_code=HTTP_STATUS_RATE_LIMIT,
+            model_name=model_name,
+            body=message,
+            headers=None if retry_after is None else {"retry-after": str(retry_after)},
+        )
 
 
 def _extract_retry_after(error_data: dict[str, object], raw: dict[str, object]) -> int | None:
