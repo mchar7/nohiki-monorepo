@@ -105,7 +105,6 @@ pre-commit:
         - "*.md"
         - ".markdownlint-cli2.jsonc"
         - ".markdownlintignore"
-        - ".markdownlint.json"
       exclude:
         - "**/node_modules/**"
       run: |
@@ -120,7 +119,6 @@ pre-commit:
           ':(glob)**/*.md' \
           '.markdownlint-cli2.jsonc' \
           '.markdownlintignore' \
-          '.markdownlint.json' > "$paths"
         xargs -0 -r scripts/dev/env-lock.sh shared node_modules -- pnpm exec markdownlint-cli2 --fix -- < "$paths"
       stage_fixed: true
 
