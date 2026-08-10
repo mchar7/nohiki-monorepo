@@ -646,6 +646,71 @@ def test_complete_environment_uses_class_specific_cache_profiles() -> None:
     assert "Cache lint virtual environment" not in names
 
 
+def test_complete_environment_cache_scopes_are_derived_per_runner_class() -> None:
+    by_name = {step.get("name"): step for step in _setup_steps()}
+    hosted_key = str(by_name["Look up hosted complete CI environment"]["with"]["primary-key"])
+    persistent_key = str(by_name["Look up persistent CI virtual environment"]["with"]["key"])
+    assert hosted_key == persistent_key
+
+    scope_template, hash_separator, _ = hosted_key.partition("${{ hashFiles(")
+    assert hash_separator
+    runner_class_expression = "${{ inputs.runner-class }}"
+    assert scope_template.count(runner_class_expression) == 1
+
+    runner_classes = ("nohiki-t1", "nohiki-t2", "nohiki-t3", "hosted")
+    scopes = {
+        runner_class: scope_template.replace(runner_class_expression, runner_class) for runner_class in runner_classes
+    }
+    scope_suffix = "${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-"
+    assert scopes == {runner_class: f"ci-ready-v2-{runner_class}-{scope_suffix}" for runner_class in runner_classes}
+
+    unknown_scope = scope_template.replace(runner_class_expression, "UNKNOWN")
+    assert unknown_scope == f"ci-ready-v2-UNKNOWN-{scope_suffix}"
+    assert unknown_scope not in scopes.values()
+    assert len({*scopes.values(), unknown_scope}) == len(runner_classes) + 1
+
+
+def test_complete_environment_cache_profiles_route_each_runner_class() -> None:
+    by_name = {step.get("name"): step for step in _setup_steps()}
+    step_names_by_profile = {
+        "hosted": (
+            "Look up hosted complete CI environment",
+            "Restore hosted complete CI environment",
+            "Save hosted complete CI environment",
+        ),
+        "persistent": (
+            "Look up persistent CI virtual environment",
+            "Restore persistent CI virtual environment",
+            "Save persistent CI virtual environment",
+        ),
+    }
+    comparison_pattern = re.compile(r"inputs\.runner-class (?P<operator>==|!=) '(?P<value>[^']+)'")
+    selectors: dict[str, tuple[str, str]] = {}
+    for profile, step_names in step_names_by_profile.items():
+        comparisons = {
+            (match["operator"], match["value"])
+            for step_name in step_names
+            if (match := comparison_pattern.search(str(by_name[step_name]["if"]))) is not None
+        }
+        assert len(comparisons) == 1
+        selectors[profile] = comparisons.pop()
+
+    runner_classes = ("nohiki-t1", "nohiki-t2", "nohiki-t3", "hosted", "UNKNOWN")
+    selected_by_class = {
+        runner_class: tuple(
+            profile for profile, (operator, value) in selectors.items() if (runner_class == value) == (operator == "==")
+        )
+        for runner_class in runner_classes
+    }
+    assert selected_by_class == {
+        "nohiki-t1": ("persistent",),
+        "nohiki-t2": ("persistent",),
+        "nohiki-t3": ("persistent",),
+        "hosted": ("hosted",),
+        "UNKNOWN": ("persistent",),
+    }
+
+
 def test_complete_environment_cache_result_normalizes_both_profiles(tmp_path: Path) -> None:
     step = next(step for step in _setup_steps() if step.get("name") == "Resolve complete CI cache result")
     defaults = {
@@ -840,6 +905,7 @@ def test_checks_jobs_have_bounded_guards() -> None:
         "playwright-image": "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}",
         "title-policy": "${{ fromJSON(needs.changes.outputs.title_timeout_minutes) }}",
         "checks": "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}",
+        "label-sync": 1,
     }
 
 
