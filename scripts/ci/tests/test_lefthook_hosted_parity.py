@@ -1081,7 +1081,7 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
     ("changes", "Compute change gate"): _support("emits the lane flags, runs no check"),
     ("changes", "Upload affected image record"): _ARTIFACT,
     ("changes", "Look up a reusable Checks proof"): _support("proof cache lookup, runs no check"),
-    ("changes", "Derive worker guard"): _support("computes a timeout, runs no check"),
+    ("changes", "Select runner route"): _support("selects the payload runner class, runs no check"),
     ("changes", "Write Checks attestation"): _support("writes the proof document, runs no check"),
     ("changes", "Upload Checks attestation"): _ARTIFACT,
     ("changes", "Report router cost"): _TIMING,
@@ -1300,6 +1300,15 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
         scope=_WHOLE_PROJECT,
         gates=(_LocalGate("pre-push", "semgrep", _WHOLE_PROJECT),),
     ),
+    ("worker", "Check import boundaries"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gap=(
+            "runs `just hygiene-imports`, the import-linter boundary contracts over the whole "
+            "backend import graph. It is hosted-only because local pre-push checks are "
+            "change-selected, while these contracts certify the whole backend graph."
+        ),
+    ),
     ("worker", "Check build backends"): _HostedStep(
         verifies=True,
         scope=_AFFECTED_PACKAGES,
@@ -1397,6 +1406,7 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
 _KNOWN_OPEN_GAPS = frozenset(
     {
         ("worker", "Scan repository for secrets"),
+        ("worker", "Check import boundaries"),
     }
 )
 

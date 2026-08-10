@@ -12,13 +12,10 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm"
 _PROD_IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
 _PROD_NETWORK = Path(__file__).parent / "fixtures" / "values.prod.network.yaml"
-_FIRST_PARTY_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 
 
 def _digest_overlay(tmp_path: Path) -> Path:
-    digests = {
-        f"{_FIRST_PARTY_PREFIX}{name}": f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)
-    }
+    digests = {name: f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)}
     path = tmp_path / "values.prod.digests.yaml"
     path.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
     return path

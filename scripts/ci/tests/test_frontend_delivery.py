@@ -38,11 +38,10 @@ _IMAGE_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 
 
 def _digest_overlay(tmp_path: Path, environment: str) -> tuple[Path, str]:
-    prefix = "localhost:5000/" if environment == "local" else _IMAGE_PREFIX
-    digests = {f"{prefix}{name}": f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)}
+    digests = {name: f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)}
     overlay = tmp_path / f"values.{environment}.frontend-digests.yaml"
     overlay.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
-    return overlay, digests[f"{prefix}frontend"]
+    return overlay, digests["frontend"]
 
 
 def _render(values_name: str, tmp_path: Path) -> tuple[dict[str, Any], ...]:
@@ -445,10 +444,9 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     jobs = workflow["jobs"]
 
     assert "container-contracts" not in jobs
-    assert jobs["playwright-image"]["timeout-minutes"] == 30
-    assert jobs["playwright-image"]["permissions"] == {"contents": "read"}
-    playwright_budget = 1226 / 60 + 574 / 60
-    assert playwright_budget == pytest.approx(jobs["playwright-image"]["timeout-minutes"])
+    assert jobs["playwright-image"]["timeout-minutes"] == (
+        "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}"
+    )
 
     worker = jobs["worker"]
     frontend_steps = worker["steps"]

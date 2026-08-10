@@ -44,6 +44,7 @@ _CHECKSUM_PIN_RE = re.compile(
 
 _URL_TIMEOUT_SECONDS = 30
 _PRODUCTION_DIGEST_OVERLAY = "infra/k8s/helm/values.prod.digests.yaml"
+_PRODUCTION_IMAGE_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
@@ -103,11 +104,11 @@ def collect_pins(dockerfiles: list[str]) -> dict[str, list[str]]:
             if not isinstance(digests, dict):
                 msg = "global.imageDigests must be a mapping"
                 raise RuntimeError(msg)
-            for repository, digest in digests.items():
-                if not isinstance(repository, str) or not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
-                    msg = f"invalid production image digest: {repository!r}: {digest!r}"
+            for image_name, digest in digests.items():
+                if not isinstance(image_name, str) or not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
+                    msg = f"invalid production image digest: {image_name!r}: {digest!r}"
                     raise RuntimeError(msg)
-                pins.setdefault(f"{repository}@{digest}", []).append(path)
+                pins.setdefault(f"{_PRODUCTION_IMAGE_PREFIX}{image_name}@{digest}", []).append(path)
             continue
         for pattern in (_REGISTRY_PIN_RE, _CHECKSUM_PIN_RE):
             for match in pattern.finditer(text):

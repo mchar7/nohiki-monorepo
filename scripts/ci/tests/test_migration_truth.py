@@ -82,7 +82,7 @@ def _render_environment(values_file: str) -> tuple[Manifest, ...]:
                 *runtime_eso_args("prod"),
             ]
         )
-    image_digests = {f"ghcr.io/mchar7/nohiki-monorepo/{name}": _MIGRATION_DIGEST for name in load_inventory().names}
+    image_digests = dict.fromkeys(load_inventory().names, _MIGRATION_DIGEST)
     command.extend(["--set-json", f"global.imageDigests={json.dumps(image_digests)}"])
     result = subprocess.run(
         command,

@@ -799,6 +799,7 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
     setup_inputs = setup_steps[0].get("with", {})
     assert isinstance(setup_inputs, dict)
     assert setup_inputs.get("ready-cache") == "${{ env.NIX_SETUP_SELECTED }}"
+    assert setup_inputs.get("runner-class") == "${{ needs.changes.outputs.runner_class }}"
     assert setup_inputs.get("lookup-only") != "true"
     direct_environment_commands = "\n".join(str(step.get("run", "")) for step in unit_steps)
     assert "sync-ci-environment.sh" not in direct_environment_commands
@@ -810,15 +811,19 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
     environment_restores = [
         step
         for step in action_steps
-        if str(step.get("uses", "")).startswith("nix-community/cache-nix-action/restore@")
+        if str(step.get("uses", "")).startswith(("nix-community/cache-nix-action/restore@", "actions/cache/restore@"))
         and "inputs.lookup-only != 'true'" in str(step.get("if", ""))
+        and "ready-cache" in str(step.get("id", ""))
     ]
     environment_syncs = [
         step for step in action_steps if "scripts/dev/sync-ci-environment.sh" in str(step.get("run", ""))
     ]
-    assert len(environment_restores) == 1
+    assert {step["id"] for step in environment_restores} == {
+        "hosted-ready-cache",
+        "persistent-ready-cache",
+    }
     assert len(environment_syncs) == 1
-    assert "steps.ready-cache.outputs.hit-primary-key != 'true'" in str(environment_syncs[0]["if"])
+    assert "steps.ready-cache-result.outputs.restore-exact != 'true'" in str(environment_syncs[0]["if"])
 
     test_steps = [step for step in unit_steps if "ci-checks tests all --scope all" in str(step.get("run", ""))]
     assert len(test_steps) == 1
