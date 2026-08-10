@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
-from _documents import load_mapping
+from _documents import load_mapping, load_workflow
 from ci_checks.app import app
 from ci_checks.checks import deadcode as deadcode_check
 from ci_checks.checks import deptry as deptry_check
@@ -37,6 +37,9 @@ _ROOT_PROJECT = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf
 _LEFTHOOK_CONFIG = load_mapping(_ROOT / "lefthook.yml")
 _SEMGREP_OVERRIDES = (_ROOT / "semgrep-overrides.txt").read_text(encoding="utf-8").splitlines()
 _DEADCODE_SWEEP = _ROOT / ".github" / "workflows" / "deadcode-sweep.yml"
+_CHECKS = _ROOT / ".github" / "workflows" / "checks.yml"
+_JUSTFILE = _ROOT / "Justfile"
+_IMPORT_LINTER = _ROOT_PROJECT["tool"]["importlinter"]
 
 
 def _run_git(repo: Path, *args: str) -> None:
@@ -886,3 +889,100 @@ def test_semgrep_uses_pinned_sovereign_host_runtime() -> None:
     assert set(override_by_name) == {"semgrep", "ruamel-yaml-clib"}
     assert re.fullmatch(r"semgrep==\d+\.\d+\.\d+", override_by_name["semgrep"])
     assert re.fullmatch(r"ruamel-yaml-clib>=\d+\.\d+\.\d+", override_by_name["ruamel-yaml-clib"])
+
+
+def _backend_import_roots(kind: str) -> set[str]:
+    """Collect the importable top-level packages every backend `kind` tree publishes.
+
+    `py.typed` and other non-identifier entries under `src/` are packaging artefacts,
+    not import roots.
+
+    Args:
+        kind: The `backend/` subdirectory to scan (`services`, `libs`, or `jobs`).
+
+    Returns:
+        Every distinct top-level module name published from that subdirectory.
+    """
+    return {
+        module.name
+        for module in (_ROOT / "backend" / kind).glob("*/src/*")
+        if module.is_dir() and module.name.isidentifier()
+    }
+
+
+def test_import_linter_root_packages_cover_the_whole_backend_import_surface() -> None:
+    """A renamed or added backend package cannot silently drop out of the graph.
+
+    import-linter reports a contract over an absent module set as kept, so an
+    unnoticed root omission degrades a contract to a vacuous pass rather than a
+    failure. `scripts/` is deliberately outside the perimeter.
+    """
+    roots = _IMPORT_LINTER["root_packages"]
+    assert sorted(roots) == sorted(set(roots)), "root_packages must not repeat a module"
+    assert set(roots) == (
+        _backend_import_roots("services") | _backend_import_roots("libs") | _backend_import_roots("jobs")
+    )
+    assert not {root for root in roots if root.startswith(("ci_checks", "health_check", "tailor"))}
+
+
+def test_import_linter_contracts_mechanise_every_claimed_boundary() -> None:
+    """Each written architectural claim keeps a contract that cannot be quietly deleted."""
+    services = _backend_import_roots("services")
+    jobs = _backend_import_roots("jobs")
+    libs = _backend_import_roots("libs")
+    # nohiki-domain-models publishes four roots; the generated layer and the money
+    # primitives are constrained by the pure-leaf contract instead of the direction one.
+    leaves = {"nohiki", "nohiki_proto_google", "nohiki_domain_utils", "message_pool", "nohiki_finance"}
+
+    contracts = {contract["name"]: contract for contract in _IMPORT_LINTER["contracts"]}
+    assert len(contracts) == len(_IMPORT_LINTER["contracts"])
+
+    # CONTRIBUTING.md marks the "No Lookup" Rule MANDATORY; this is its import half.
+    no_lookup = contracts["Services are mutually independent (No Lookup Rule)"]
+    assert no_lookup["type"] == "independence"
+    assert set(no_lookup["modules"]) == services
+
+    # Services depend on libraries, never the reverse.
+    direction = contracts["Shared libraries never depend on services or jobs"]
+    assert direction["type"] == "forbidden"
+    assert set(direction["source_modules"]) == libs - leaves
+    assert set(direction["forbidden_modules"]) == services | jobs
+
+    # Generated protobuf output and nohiki_finance import no first-party module.
+    pure = contracts["Generated proto layer and finance primitives are pure leaves"]
+    assert pure["type"] == "forbidden"
+    assert set(pure["source_modules"]) == leaves
+    assert set(pure["forbidden_modules"]) == services | jobs | (libs - leaves)
+
+    # bff_service/events/projections/_helpers.py duplicates a helper to avoid this import.
+    duplicated = contracts["bff-service never depends on the test-utils library"]
+    assert duplicated["type"] == "forbidden"
+    assert duplicated["source_modules"] == ["bff_service"]
+    assert duplicated["forbidden_modules"] == ["nohiki_test_utils"]
+
+    # No contract may carry an exception: every one of them is green on the current tree.
+    for contract in _IMPORT_LINTER["contracts"]:
+        assert "ignore_imports" not in contract, contract["name"]
+
+
+def test_import_linter_runs_in_hygiene_and_behind_the_hosted_hygiene_flag() -> None:
+    """The boundary gate must be reachable locally and blocking on the hosted lane."""
+    justfile = _JUSTFILE.read_text(encoding="utf-8")
+    assert "\nhygiene-imports:\n" in justfile
+    # The cache would leave an untracked directory in each of the developer's worktrees.
+    assert "uv run --no-sync lint-imports --no-cache" in justfile
+    aggregate = next(line for line in justfile.splitlines() if line.startswith("hygiene:"))
+    assert "hygiene-imports" in aggregate.split()
+    # `verify` reaches the architecture gates only through `hygiene`, exactly as hygiene-arch does.
+    verify = next(line for line in justfile.splitlines() if line.startswith("verify:"))
+    assert "hygiene" in verify.split()
+    assert "hygiene-imports" not in verify.split()
+
+    workflow = load_workflow(_CHECKS)
+    steps = [step for raw in workflow["jobs"]["worker"].get("steps", []) for step in raw.get("parallel", [raw])]
+    by_name = {step.get("name"): step for step in steps}
+    boundary = by_name["Check import boundaries"]
+    assert boundary["run"] == "nix develop .#ci --command just hygiene-imports"
+    # Same change flag as the semgrep architecture scan it sits beside: no new CI job.
+    assert boundary["if"] == by_name["Scan architecture"]["if"]
+    assert "needs.changes.outputs.hygiene == 'true'" in str(boundary["if"])

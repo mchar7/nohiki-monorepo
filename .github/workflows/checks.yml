@@ -579,6 +579,10 @@ jobs:
               AFFECTED_PACKAGES: ${{ needs.changes.outputs.affected_packages }}
             run: nix develop .#ci --command just hygiene-build-backend-strict "$AFFECTED_PACKAGES"
 
+      - name: Check import boundaries
+        if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
+        run: nix develop .#ci --command just hygiene-imports
+
       - parallel:
           - name: Check API schema freshness
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.api_schema_freshness == 'true')
