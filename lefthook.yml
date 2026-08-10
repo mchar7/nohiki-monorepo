@@ -9,6 +9,9 @@
 # unrelated issue as part of the same branch before merging.
 
 min_version: 2.1.10
+# Repo-carried: do not regenerate hooks from config alone. Publishing checkouts
+# must not depend on the gitignored lefthook-local.yml overlay for this.
+no_auto_install: true
 
 # A bare `lefthook run` reinstalls hooks from Lefthook's own template before
 # running them. This repository's hooks are a hardened wrapper that pins and
@@ -495,6 +498,7 @@ pre-push:
         - "proto/**/*.proto"
         - "proto/buf.yaml"
         - "proto/buf.lock"
+        - "proto/.breaking-allowlist.json"
         - "scripts/proto_gen/*.py"
         - "scripts/proto_gen/**/*.py"
         - "scripts/proto_gen/pyproject.toml"

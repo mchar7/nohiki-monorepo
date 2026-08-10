@@ -1,0 +1,9 @@
+[
+  {
+    "path": "nohiki/job/listing/v1/events.proto",
+    "type": "MESSAGE_NO_DELETE",
+    "name": "DuplicateDetected",
+    "expires": "2027-08-05",
+    "reason": "owner-authorized one-time deletion; landed as 60862cf3 / narrowed by 27868a03"
+  }
+]

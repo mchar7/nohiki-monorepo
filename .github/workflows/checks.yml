@@ -521,8 +521,12 @@ jobs:
 
       - name: Test frontend
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_tests == 'true')
-        # 50% resolves to ONE worker on the 2-vCPU runner, idling half the machine. Measured
-        # under `taskset -c 0-1`: 1 worker 294s, 2 workers 260s (2212 tests, identical result).
+        # Worker count is bounded in vitest.config.ts, which derives a share of the host from the
+        # container's own memory fence, so this lane declares nothing. This comment used to claim
+        # that `maxWorkers: '50%'` "resolves to ONE worker on the 2-vCPU runner", measured under
+        # `taskset -c 0-1` at 1 worker 294s against 2 workers 260s. That measurement was taken
+        # under CPU affinity and never described this lane, whose slots are fenced on memory but
+        # not on CPU, so each one saw every thread on the machine it shares.
         # Vitest appends its own `## Vitest Test Report` block, and the edge worker appends an
         # identical one below. The label names which suite the block that follows belongs to.
         run: nix develop .#ci --command just fe-test

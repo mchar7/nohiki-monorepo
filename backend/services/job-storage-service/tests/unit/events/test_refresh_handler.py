@@ -170,6 +170,11 @@ class TestPublishRefreshedSnapshots:
         with (
             patch("job_storage_service.events.refresh_handler.OutboxWriter") as mock_outbox_class,
             patch(
+                "job_storage_service.events.refresh_handler.load_verified_retrieval_embeddings",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
                 "job_storage_service.events.refresh_handler.publish_listing_updated_event",
                 new_callable=AsyncMock,
             ) as mock_publish_fn,
@@ -196,6 +201,11 @@ class TestPublishRefreshedSnapshots:
 
         with (
             patch("job_storage_service.events.refresh_handler.OutboxWriter") as mock_outbox_class,
+            patch(
+                "job_storage_service.events.refresh_handler.load_verified_retrieval_embeddings",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
             patch("job_storage_service.events.refresh_handler.publish_listing_updated_event") as mock_publish_fn,
         ):
             mock_outbox = MagicMock()
@@ -216,6 +226,11 @@ class TestPublishRefreshedSnapshots:
         with (
             patch("job_storage_service.events.refresh_handler.OutboxWriter") as mock_outbox_class,
             patch(
+                "job_storage_service.events.refresh_handler.load_verified_retrieval_embeddings",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
                 "job_storage_service.events.refresh_handler.publish_listing_updated_event",
                 new_callable=AsyncMock,
             ),
@@ -235,6 +250,11 @@ class TestPublishRefreshedSnapshots:
 
         with (
             patch("job_storage_service.events.refresh_handler.OutboxWriter") as mock_outbox_class,
+            patch(
+                "job_storage_service.events.refresh_handler.load_verified_retrieval_embeddings",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
             patch(
                 "job_storage_service.events.refresh_handler.publish_listing_updated_event",
                 new_callable=AsyncMock,
@@ -258,6 +278,11 @@ class TestPublishRefreshedSnapshots:
 
         with (
             patch("job_storage_service.events.refresh_handler.OutboxWriter") as mock_outbox_class,
+            patch(
+                "job_storage_service.events.refresh_handler.load_verified_retrieval_embeddings",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
             patch(
                 "job_storage_service.events.refresh_handler.publish_listing_updated_event",
                 new_callable=AsyncMock,

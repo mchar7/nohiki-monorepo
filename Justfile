@@ -388,7 +388,7 @@ proto-lint:
     nix develop .#ci {{ nix_flags }} --command bash -euc 'cd proto && buf lint'
 
 # Check proto breaking changes
-proto-breaking base_ref="main":
+proto-breaking base_ref="origin/main":
     #!/usr/bin/env bash
     set -euo pipefail
     if git cat-file -e '{{ base_ref }}^{commit}' && git ls-tree --name-only '{{ base_ref }}' proto/ | grep -q .; then
@@ -399,16 +399,21 @@ proto-breaking base_ref="main":
         if ((status == 0)); then
             exit 0
         fi
-        # Owner-authorized one-time deletion of nohiki.job.listing.v1.DuplicateDetected.
-        # Buf exceptions are file-scoped, so filter the exact diagnostic instead of
-        # weakening MESSAGE_NO_DELETE for the four live messages in events.proto.
-        if ((status == 100)) && nix develop .#ci {{ nix_flags }} --command jq -e -s '
-            length == 1
-            and .[0].path == "nohiki/job/listing/v1/events.proto"
-            and .[0].type == "MESSAGE_NO_DELETE"
-            and .[0].message == "Previously present message \"DuplicateDetected\" was deleted from file."
+        # Owner-authorized removals live in proto/.breaking-allowlist.json.
+        # Match by path|type|name set membership so N entries with staggered
+        # lifetimes stay order-independent; expired entries fail closed.
+        if ((status == 100)) && nix develop .#ci {{ nix_flags }} --command jq -e -s --slurpfile allowlist proto/.breaking-allowlist.json --arg today "$(date -u +%Y-%m-%d)" '
+            ($allowlist[0]
+              | map(select(.expires >= $today)
+                    | {key: "\(.path)|\(.type)|\(.name)", value: true})
+              | from_entries) as $ok
+            | length > 0
+            and all(.[];
+                (.message | capture("\"(?<n>[^\"]+)\"").n) as $name
+                | ($ok["\(.path)|\(.type)|\($name)"] // false)
+            )
         ' "$diagnostics" >/dev/null; then
-            echo "Accepted owner-authorized removal of nohiki.job.listing.v1.DuplicateDetected"
+            echo "Accepted owner-authorized proto removal(s) from proto/.breaking-allowlist.json"
             exit 0
         fi
         cat "$diagnostics" >&2
@@ -429,20 +434,19 @@ workflow-lint:
     ((status <= 1)) || exit "$status"
     ((status == 0)) || [[ -s "$diagnostics" ]] || exit "$status"
 
+    # actionlint does not understand the runner's native `parallel:` groups. Their source
+    # locations are read out of the file rather than pinned here, because pinned line numbers
+    # drift the moment anything above them is edited and then suppress nothing.
+    expected="$(grep -n '^      - parallel:$' .github/workflows/checks.yml | sed 's|^\([0-9]*\):.*|.github/workflows/checks.yml:\1:9: step must run script with "run" section or run action with "uses" section [syntax-check]|')"
+    [[ -n "$expected" ]] || { printf 'no parallel: groups found; drop this suppression\n' >&2; exit 1; }
+
     unexpected=0
     while IFS= read -r diagnostic; do
-        # actionlint does not understand the runner's four native `parallel:` groups; suppress only their exact source locations.
-        case "$diagnostic" in
-            '.github/workflows/checks.yml:344:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:422:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:567:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:578:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
-                ;;
-            *)
-                printf '%s\n' "$diagnostic" >&2
-                unexpected=1
-                ;;
-        esac
+        if printf '%s\n' "$expected" | grep -qxF -- "$diagnostic"; then
+            continue
+        fi
+        printf '%s\n' "$diagnostic" >&2
+        unexpected=1
     done <"$diagnostics"
     ((unexpected == 0)) || exit 1
 

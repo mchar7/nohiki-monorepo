@@ -107,6 +107,7 @@ class TestJobDataMapper:
         assert result["compensation"] == {"min": 100000, "max": 150000}
         assert result["required_skills"] == ["Python", "React"]
         assert result["canonical_skill_ids"] == ["skill-id-1", "skill-id-2"]
+        assert len(result["required_skills"]) == len(result["canonical_skill_ids"])
         assert result["min_experience_years"] == 3
         assert result["max_experience_years"] == 5
         assert result["skills_embedding"] == [0.1, 0.2, 0.3]
@@ -114,6 +115,47 @@ class TestJobDataMapper:
         assert result["collection_version"] == "v1"
         assert result["processing_correlation_id"] == "corr-789"
         assert result["language"] == "en"
+
+    def test_from_stored_pairs_skills_atomically_and_drops_incomplete(self, mapper: JobDataMapper) -> None:
+        """required_skills and canonical_skill_ids must stay index-aligned.
+
+        Incomplete requirements (missing skill_id or skill_name) are dropped so
+        both arrays are derived from the same filtered list.
+        """
+        stored = MagicMock()
+        stored.title = "Engineer"
+        stored.company_name = "Acme"
+        stored.description = "desc"
+        stored.work_arrangement = "REMOTE"
+        stored.employment_term = "FULL_TIME"
+        stored.seniority_level = "MID"
+        stored.language = "en"
+        stored.content_hash = "hash"
+        stored.posted_timestamp = None
+        stored.discovered_timestamp = datetime(2025, 1, 15, tzinfo=UTC)
+        stored.location = None
+        stored.compensation = None
+        stored.experience = None
+        stored.skills_embedding = MagicMock()
+        stored.skills_embedding.dense = MagicMock(values=[0.1])
+        stored.title_embedding = MagicMock()
+        stored.title_embedding.dense = MagicMock(values=[0.2])
+        stored.company_logo_url = None
+
+        complete = MagicMock(skill_id="id-python", skill_name="Python")
+        missing_id = MagicMock(skill_id="", skill_name="OrphanName")
+        missing_name = MagicMock(skill_id="id-orphan", skill_name="")
+        complete2 = MagicMock(skill_id="id-react", skill_name="React")
+        stored.skill_requirements = [complete, missing_id, missing_name, complete2]
+
+        result = mapper.from_stored(stored, correlation_id="corr", collection_version="v1")
+
+        assert result["required_skills"] == ["Python", "React"]
+        assert result["canonical_skill_ids"] == ["id-python", "id-react"]
+        assert list(zip(result["canonical_skill_ids"], result["required_skills"], strict=True)) == [
+            ("id-python", "Python"),
+            ("id-react", "React"),
+        ]
 
     def test_from_stored_handles_none_optional_fields(self, mapper: JobDataMapper) -> None:
         """Test mapping StoredListing with None optional fields (non-embedding)."""

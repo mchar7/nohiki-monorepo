@@ -37,14 +37,20 @@ _GATEWAY_IMAGE_REPOSITORIES = {
     "kgateway": "cr.kgateway.dev/kgateway-dev/kgateway",
     "agentgateway": "cr.agentgateway.dev/controller",
 }
-_OPERATOR_REPOSITORIES = {
-    "keda": "https://kedacore.github.io/charts",
-    "cloudnative-pg": "https://cloudnative-pg.github.io/charts",
-}
+# Completeness comes from the operators/ tree, not a hardcoded name map.
+# The archive digest ledger is the only owner-reviewed pin.
 _OPERATOR_ARCHIVE_SHA256 = {
     "keda-2.20.1.tgz": "584c42b33427151abc03d4dd0c8c24be6c9aec96fc988dcf1559711c4dbd0d79",
     "cloudnative-pg-0.29.0.tgz": "668e065ff53508d58238788fd35b355a925060843629a951df0e6a9362e6d32f",
 }
+
+
+def _operator_wrappers() -> tuple[str, ...]:
+    return tuple(
+        sorted(chart_path.parent.name for chart_path in (_FOUNDATION_CHART / "operators").glob("*/Chart.yaml"))
+    )
+
+
 # Bump procedure: rebuild every gateway archive, verify its OCI layer, then update each filename and SHA-256.
 _GATEWAY_ARCHIVE_SHA256 = {
     "kgateway-crds-v2.3.6.tgz": "d6b1d8bf0e2636bca6b8fb2b4a1525806fd1b4f9e84614c8a6a16eda585a119c",
@@ -153,7 +159,7 @@ def test_foundation_dependency_coordinates_lock_and_archives_are_exact() -> None
         assert (metadata["name"], metadata["version"]) == (name, dependency["version"])
 
 
-@pytest.mark.parametrize("wrapper_name", tuple(_OPERATOR_REPOSITORIES))
+@pytest.mark.parametrize("wrapper_name", _operator_wrappers())
 def test_operator_wrapper_coordinates_locks_and_archives_are_exact(wrapper_name: str) -> None:
     wrapper = _FOUNDATION_CHART / "operators" / wrapper_name
     chart = _load(wrapper / "Chart.yaml")
@@ -162,12 +168,15 @@ def test_operator_wrapper_coordinates_locks_and_archives_are_exact(wrapper_name:
     assert len(chart["dependencies"]) == 1
     dependency = chart["dependencies"][0]
     assert dependency["name"] == wrapper_name
-    assert dependency["repository"] == _OPERATOR_REPOSITORIES[wrapper_name]
+    repository = dependency["repository"]
+    assert isinstance(repository, str)
+    assert repository
     assert _coordinates(lock["dependencies"]) == _coordinates(chart["dependencies"])
 
+    wrappers = _operator_wrappers()
     expected_archives = {
         f"{operator_dependency['name']}-{operator_dependency['version']}.tgz"
-        for operator_name in _OPERATOR_REPOSITORIES
+        for operator_name in wrappers
         for operator_dependency in _load(_FOUNDATION_CHART / "operators" / operator_name / "Chart.yaml")["dependencies"]
     }
     assert set(_OPERATOR_ARCHIVE_SHA256) == expected_archives

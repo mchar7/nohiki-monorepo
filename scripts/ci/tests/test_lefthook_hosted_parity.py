@@ -247,6 +247,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         ),
         "proto-breaking": _PROTO_CONTRACT_SURFACE
         | {
+            "proto/.breaking-allowlist.json",
             "scripts/proto_gen/*.py",
             "scripts/proto_gen/**/*.py",
             "scripts/proto_gen/pyproject.toml",
@@ -333,6 +334,12 @@ _NOT_EXERCISED_LOCALLY: dict[tuple[str, str], str] = {
     ("i18n-check", "typescript/apps/frontend/scripts/generate-api*.mjs"): (
         "the schema generator is not imported by scripts/i18n-check.mjs"
     ),
+    # Named exactly rather than as `scripts/*.test.mjs`: fnmatch wildcards cross separators here,
+    # so that pattern would also exempt `scripts/i18n/*.test.mjs`, which tests the key checker
+    # itself and must keep reaching it.
+    ("i18n-check", "typescript/apps/frontend/scripts/worker-bound.test.mjs"): (
+        "the worker-bound test is not imported by scripts/i18n-check.mjs and carries no keys"
+    ),
     (
         "i18n-check",
         "typescript/apps/frontend/public/*",
@@ -381,6 +388,10 @@ _NOT_EXERCISED_LOCALLY: dict[tuple[str, str], str] = {
     ("python-typecheck", "proto/**/*"): (
         "a proto edit moves no Python source until `just proto-gen` regenerates the dataclasses"
     ),
+    (
+        "proto-lint",
+        "proto/.breaking-allowlist.json",
+    ): "buf lint does not consume the breaking-allowlist; only proto-breaking reads it",
 }
 
 

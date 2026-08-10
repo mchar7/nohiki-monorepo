@@ -597,14 +597,19 @@ class JobStoreService:
             correlation_id=correlation_id,
         )
 
+        retrieval_embeddings = list(stored.retrieval_embeddings)
         await publish_listing_created_event(
             pub_ctx,
             job,
             was_updated=was_updated,
-            retrieval_embeddings=list(stored.retrieval_embeddings),
+            retrieval_embeddings=retrieval_embeddings,
         )
         if was_updated:
-            await publish_listing_updated_event(pub_ctx, job)
+            await publish_listing_updated_event(
+                pub_ctx,
+                job,
+                retrieval_embeddings=retrieval_embeddings,
+            )
 
         await self._complete_saga_atomically(db, saga)
         await db.commit()

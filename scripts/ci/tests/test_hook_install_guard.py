@@ -155,3 +155,90 @@ def test_development_shell_installs_cannot_replace_hardened_hooks() -> None:
 
     assert len(install_lines) == 2
     assert all("env CI=true LEFTHOOK=0 corepack" in line for line in install_lines)
+
+
+def _commit_once(repository: Path) -> None:
+    (repository / "README").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README"], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "init",
+        ],
+        cwd=repository,
+        check=True,
+    )
+
+
+def _common_hooks_dir(cwd: Path) -> Path:
+    raw = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return Path(raw) / "hooks"
+
+
+def _configured_hooks_path(cwd: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "config", "--get", "core.hooksPath"],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def test_linked_worktree_inherits_common_hooks_path(tmp_path: Path) -> None:
+    """Common-config hooksPath must cover worktrees added after hooks-install."""
+    repository = _repository(tmp_path)
+    _commit_once(repository)
+    expected = str(_common_hooks_dir(repository))
+
+    result = _run(repository, _fake_installer(tmp_path), None)
+    assert result.returncode == 0, result.stderr
+    assert _configured_hooks_path(repository) == expected
+
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(linked), "-b", "linked-branch"],
+        cwd=repository,
+        check=True,
+    )
+    assert _configured_hooks_path(linked) == expected
+
+    # Negative control: without the installer, core.hooksPath stays unset.
+    control_root = tmp_path / "control"
+    control_root.mkdir()
+    control = _repository(control_root)
+    _commit_once(control)
+    control_linked = tmp_path / "control-linked"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(control_linked), "-b", "control-branch"],
+        cwd=control,
+        check=True,
+    )
+    assert _configured_hooks_path(control_linked) is None
+
+
+def test_verified_wrapper_path_still_wires_common_hooks_path(tmp_path: Path) -> None:
+    """Even when the hardened verifier owns install, linked worktrees need the shared path."""
+    repository = _repository(tmp_path)
+    _commit_once(repository)
+    _harden(repository, "pre-push")
+    expected = str(_common_hooks_dir(repository))
+
+    result = _run(repository, _fake_installer(tmp_path), _fake_guard(tmp_path, passes=True))
+    assert result.returncode == 0, result.stderr
+    assert _configured_hooks_path(repository) == expected
