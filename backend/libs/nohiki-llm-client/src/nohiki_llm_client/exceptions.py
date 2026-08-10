@@ -6,16 +6,31 @@ system. Transient errors trigger Kafka retries; non-transient errors go to DLQ.
 
 from __future__ import annotations
 
+from typing import ClassVar
 
-class LLMError(Exception):
+from nohiki_common_exceptions import NohikiError, RetryStrategy
+
+
+class LLMError(NohikiError):
     """Base exception for LLM operations."""
+
+    _retry_strategy: ClassVar[RetryStrategy] = RetryStrategy.NO_RETRY
+
+    def __init__(self, message: str) -> None:
+        """Initialize an LLM failure with its Kafka retry strategy."""
+        super().__init__(message=message, retry_strategy=self._retry_strategy)
 
 
 class LLMTransientError(LLMError):
-    """Transient error that can be retried.
+    """Transient error eligible for retry.
 
-    Subclasses of this exception will trigger retry logic in the LLMClient.
+    ``LLMClient`` retries non-rate-limit subclasses at the application layer.
+    HTTP rate limits are left to the transport and Kafka retry layers; embedded
+    rate limits use ``LLMApplicationRateLimitError`` when an application retry
+    is safe.
     """
+
+    _retry_strategy = RetryStrategy.RETRY_EXPONENTIAL
 
 
 class LLMRateLimitError(LLMTransientError):
@@ -95,6 +110,35 @@ class LLMValidationError(LLMError):
     model never produced a conforming output. NOT retryable...this indicates a
     prompt engineering or model capability issue, not a transient provider failure.
     Routes to DLQ in Kafka consumers.
+    """
+
+
+class LLMContentFilterError(LLMError):
+    """Provider blocked the request or response on content policy.
+
+    Permanent for the prompt as sent: the same prompt draws the same refusal, so
+    retrying only multiplies spend and delays the terminal result. Routes to DLQ.
+    """
+
+
+class LLMConfigurationError(LLMError):
+    """The agent or provider was configured in a way the library refuses.
+
+    PydanticAI's ``UserError``: a mistake by us, not by the model or the provider.
+    An output mode a model cannot support, a malformed tool definition, an empty
+    ``fallback_on``. Permanent by construction, and deliberately its own class so it
+    surfaces loudly instead of hiding inside a generic provider error. Retrying a
+    misconfiguration only burns spend. Routes to DLQ.
+    """
+
+
+class LLMUsageLimitError(LLMError):
+    """A configured usage limit refused the run before it could complete.
+
+    PydanticAI's ``UsageLimitExceeded``. This is policy working as intended, not a
+    provider fault: nothing is wrong upstream and nothing about retrying changes the
+    answer. Kept out of the transient family so no layer re-runs it, and kept separate
+    from the provider-failure classes so a budget refusal is never read as an outage.
     """
 
 

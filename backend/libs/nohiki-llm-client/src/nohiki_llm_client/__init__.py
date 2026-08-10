@@ -127,6 +127,8 @@ from .exceptions import (
     LLMApplicationRateLimitError,
     LLMAuthenticationError,
     LLMCircuitOpenError,
+    LLMConfigurationError,
+    LLMContentFilterError,
     LLMContextTooLongError,
     LLMError,
     LLMInvalidSchemaError,
@@ -134,6 +136,7 @@ from .exceptions import (
     LLMRateLimitError,
     LLMTimeoutError,
     LLMTransientError,
+    LLMUsageLimitError,
     LLMValidationError,
 )
 
@@ -150,6 +153,8 @@ __all__ = [
     "LLMCachingSettings",
     "LLMCircuitOpenError",
     "LLMClient",
+    "LLMConfigurationError",
+    "LLMContentFilterError",
     "LLMContextTooLongError",
     "LLMError",
     "LLMEvaluator",
@@ -166,6 +171,7 @@ __all__ = [
     "LLMSettings",
     "LLMTimeoutError",
     "LLMTransientError",
+    "LLMUsageLimitError",
     "LLMValidationError",
     "ListLengthEvaluator",
     "ModelSettings",

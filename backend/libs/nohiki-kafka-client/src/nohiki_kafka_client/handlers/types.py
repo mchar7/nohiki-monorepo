@@ -10,6 +10,16 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
 import betterproto2
+from nohiki_common_exceptions import (
+    DataNotAvailableError,
+    DataNotFoundError,
+    ExternalServiceError,
+    NohikiError,
+    RateLimitedError,
+    SchemaVersionMismatchError,
+    StaleDataError,
+    ValidationError,
+)
 
 from nohiki_kafka_client.exceptions import SerializationError
 from nohiki_kafka_client.middleware.protocol import Middleware
@@ -73,31 +83,17 @@ def classify_error_action(error: Exception) -> ErrorAction:
             return _classify_domain_error(error)
 
 
-try:
-    from nohiki_common_exceptions import (
-        DataNotAvailableError,
-        DataNotFoundError,
-        ExternalServiceError,
-        RateLimitedError,
-        SchemaVersionMismatchError,
-        StaleDataError,
-        ValidationError,
-    )
-
-    _DOMAIN_RETRY_TYPES: tuple[type[Exception], ...] = (
-        DataNotAvailableError,
-        ExternalServiceError,
-        RateLimitedError,
-        StaleDataError,
-    )
-    _DOMAIN_DLQ_TYPES: tuple[type[Exception], ...] = (
-        DataNotFoundError,
-        ValidationError,
-        SchemaVersionMismatchError,
-    )
-except ImportError:
-    _DOMAIN_RETRY_TYPES = ()
-    _DOMAIN_DLQ_TYPES = ()
+_DOMAIN_RETRY_TYPES: tuple[type[Exception], ...] = (
+    DataNotAvailableError,
+    ExternalServiceError,
+    RateLimitedError,
+    StaleDataError,
+)
+_DOMAIN_DLQ_TYPES: tuple[type[Exception], ...] = (
+    DataNotFoundError,
+    ValidationError,
+    SchemaVersionMismatchError,
+)
 
 
 def _classify_domain_error(error: Exception) -> ErrorAction:
@@ -114,6 +110,8 @@ def _classify_domain_error(error: Exception) -> ErrorAction:
         return ErrorAction.RETRY
     if _DOMAIN_DLQ_TYPES and isinstance(error, _DOMAIN_DLQ_TYPES):
         return ErrorAction.SEND_TO_DLQ
+    if isinstance(error, NohikiError):
+        return ErrorAction.RETRY if error.is_retryable else ErrorAction.SEND_TO_DLQ
     return ErrorAction.RETRY
 
 

@@ -97,9 +97,6 @@ INSTRUMENTATION_SPAN_QUEUE_MAX_SIZE: Final[int] = 512
 INSTRUMENTATION_SPAN_EXPORT_BATCH_SIZE: Final[int] = 32
 INSTRUMENTATION_SPAN_EXPORT_DELAY_MS: Final[int] = 500
 
-# PydanticAI internal message prefix emitted when agent output-validation retries are exhausted
-VALIDATION_RETRY_EXHAUSTED_PREFIX: Final[str] = "Exceeded maximum retries"
-
 # PydanticAI OpenRouter message prefix when the provider returns a response that fails
 # ChatCompletion validation (all null fields): indicates model not found or permanent
 # provider routing failure. NOT retryable.

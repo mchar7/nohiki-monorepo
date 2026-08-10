@@ -15,15 +15,20 @@ from nohiki_llm_client.client.core import (
     _model_supports_cache_point,
     _strip_cache_points,
 )
+from nohiki_llm_client.config.constants import MAX_RETRY_ATTEMPTS
 from nohiki_llm_client.config.settings import (
     ApiKeyRegistry,
     LLMModelConfig,
     LLMProviderSettings,
     LLMSettings,
 )
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, SecretStr, ValidationError
 from pydantic_ai import Agent
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models import Model
+from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from tenacity import wait_none
@@ -41,6 +46,23 @@ class SampleOutput(BaseModel):
 
     result: str
 
+
+def _malformed_openai_hop(requests: list[str]) -> Model:
+    """Return an OpenAI model whose endpoint sends a malformed chat completion."""
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        requests.append("openai")
+        return httpx.Response(200, json={"id": None, "choices": None, "model": None, "object": None})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    openai_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://openai.test/v1",
+        http_client=http_client,
+    )
+    return OpenAIChatModel("gpt-test", provider=OpenAIProvider(openai_client=openai_client))
 
 class TestLLMClientBuildModelChain:
     """Tests for _build_model_chain with fallback configuration."""
@@ -665,35 +687,90 @@ class TestLLMClientRun:
         assert mock_run.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_validation_exhaustion_raises_llm_validation_error(self, llm_settings: LLMSettings) -> None:
-        """UnexpectedModelBehavior with 'Exceeded maximum retries' prefix raises LLMValidationError."""
+    async def test_real_validation_exhaustion_classifies_permanent(self, llm_settings: LLMSettings) -> None:
+        """A genuine output-schema exhaustion is permanent and reaches the model once."""
         from nohiki_llm_client.exceptions import LLMValidationError
-        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from pydantic_ai.exceptions import ToolRetryError
 
-        client = LLMClient(llm_settings)
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        requests = 0
+
+        def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            nonlocal requests
+            requests += 1
+            return ModelResponse(parts=[TextPart('{"result": null}')])
+
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(
+                FunctionModel(_respond),
+                deps_type=SampleContext,
+                output_type=SampleOutput,
+                retries=0,
+            ),
+        )
+
+        with pytest.raises(LLMValidationError) as caught:
+            await client.run(agent, "test", deps=SampleContext(data="test"))
+
+        assert requests == 1
+        assert isinstance(caught.value.__cause__, UnexpectedModelBehavior)
+        assert str(caught.value.__cause__) == "Exceeded maximum output retries (0)"
+        assert isinstance(caught.value.__cause__.__cause__, ToolRetryError)
+        assert isinstance(caught.value.__cause__.__cause__.__cause__, ValidationError)
+
+    @pytest.mark.asyncio
+    async def test_malformed_openai_payload_stays_transient(self, llm_settings: LLMSettings) -> None:
+        """Provider payload validation is not model output validation."""
+        from nohiki_llm_client.exceptions import LLMTransientError
+
+        requests: list[str] = []
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(
+                _malformed_openai_hop(requests),
+                deps_type=SampleContext,
+                output_type=SampleOutput,
+            ),
+        )
+
+        with pytest.raises(LLMTransientError) as caught:
+            await client.run(agent, "test", deps=SampleContext(data="test"))
+
+        assert len(requests) == MAX_RETRY_ATTEMPTS
+        assert isinstance(caught.value.__cause__, UnexpectedModelBehavior)
+        assert isinstance(caught.value.__cause__.__cause__, ValidationError)
+
+    @pytest.mark.asyncio
+    async def test_unexpected_model_behavior_with_unrelated_cause_stays_transient(
+        self, llm_settings: LLMSettings
+    ) -> None:
+        """The cause check discriminates on type: an unrelated cause is still transient."""
+        from nohiki_llm_client.exceptions import LLMTransientError
+
+        client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
             "Agent[SampleContext, SampleOutput]",
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
-        with (
-            patch.object(
-                agent,
-                "run",
-                side_effect=UnexpectedModelBehavior("Exceeded maximum retries (3) for output validation"),
-            ),
-            pytest.raises(LLMValidationError, match="Exceeded maximum retries"),
-        ):
-            await client.run(agent, "test", deps=SampleContext(data="test"))
+        flaky = UnexpectedModelBehavior("Streamed response ended without content or tool calls")
+        flaky.__cause__ = RuntimeError("socket closed")
+
+        with patch.object(agent, "run", side_effect=flaky) as mock_run:
+            with pytest.raises(LLMTransientError):
+                await client.run(agent, "test", deps=SampleContext(data="test"))
+            assert mock_run.call_count == MAX_RETRY_ATTEMPTS
 
     @pytest.mark.asyncio
-    async def test_validation_exhaustion_is_not_retried_by_tenacity(self, llm_settings: LLMSettings) -> None:
-        """Validation exhaustion is NOT retried by Tenacity: agent.run called exactly once."""
-        from nohiki_llm_client.exceptions import LLMValidationError
-        from pydantic_ai.exceptions import UnexpectedModelBehavior
+    async def test_content_filter_is_permanent_and_not_retried(self, llm_settings: LLMSettings) -> None:
+        """A content-policy block classifies permanent and costs exactly one attempt."""
+        from nohiki_llm_client.exceptions import LLMContentFilterError, LLMTransientError
+        from pydantic_ai.exceptions import ContentFilterError
 
-        client = LLMClient(llm_settings)
+        client = LLMClient(llm_settings, retry_wait=wait_none())
         model = TestModel()
         agent = cast(
             "Agent[SampleContext, SampleOutput]",
@@ -703,11 +780,205 @@ class TestLLMClientRun:
         with patch.object(
             agent,
             "run",
-            side_effect=UnexpectedModelBehavior("Exceeded maximum retries (3) for output validation"),
+            side_effect=ContentFilterError("content filtering triggered"),
         ) as mock_run:
-            with pytest.raises(LLMValidationError):
+            with pytest.raises(LLMContentFilterError) as caught:
                 await client.run(agent, "test", deps=SampleContext(data="test"))
             assert mock_run.call_count == 1
+        assert not isinstance(caught.value, LLMTransientError)
+
+    @pytest.mark.asyncio
+    async def test_user_error_is_permanent_configuration_error(self, llm_settings: LLMSettings) -> None:
+        """A library ``UserError`` is our misconfiguration: permanent, loud, never retried.
+
+        Not folded into LLMProviderResponseError, because a misconfiguration read as a
+        provider fault sends an operator looking at the wrong system.
+        """
+        from nohiki_llm_client.exceptions import LLMConfigurationError, LLMTransientError
+        from pydantic_ai.exceptions import UserError
+
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(TestModel(), deps_type=SampleContext, output_type=SampleOutput),
+        )
+
+        # A hop that cannot do native structured output.
+        misconfiguration = UserError("Native structured output is not supported by the model")
+        with patch.object(agent, "run", side_effect=misconfiguration) as mock_run:
+            with pytest.raises(LLMConfigurationError) as caught:
+                await client.run(agent, "test", deps=SampleContext(data="test"))
+            assert mock_run.call_count == 1
+        assert not isinstance(caught.value, LLMTransientError)
+
+    @pytest.mark.asyncio
+    async def test_usage_limit_exceeded_is_a_budget_refusal_not_a_provider_failure(
+        self, llm_settings: LLMSettings
+    ) -> None:
+        """A usage-limit refusal is policy, so it is permanent and not a provider error class."""
+        from nohiki_llm_client.exceptions import (
+            LLMProviderResponseError,
+            LLMTransientError,
+            LLMUsageLimitError,
+        )
+        from pydantic_ai.exceptions import UsageLimitExceeded
+
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(TestModel(), deps_type=SampleContext, output_type=SampleOutput),
+        )
+
+        refusal = UsageLimitExceeded("The next request would exceed the request_tokens_limit of 100")
+        with patch.object(agent, "run", side_effect=refusal) as mock_run:
+            with pytest.raises(LLMUsageLimitError) as caught:
+                await client.run(agent, "test", deps=SampleContext(data="test"))
+            assert mock_run.call_count == 1
+        assert not isinstance(caught.value, LLMTransientError)
+        assert not isinstance(caught.value, LLMProviderResponseError)
+
+    @pytest.mark.asyncio
+    async def test_fallback_group_is_classified_member_wise_permanent(self, llm_settings: LLMSettings) -> None:
+        """Every hop permanent means the group is permanent and is not retried."""
+        from nohiki_llm_client.exceptions import LLMProviderResponseError
+        from pydantic_ai.exceptions import FallbackExceptionGroup, ModelHTTPError
+
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(TestModel(), deps_type=SampleContext, output_type=SampleOutput),
+        )
+
+        group = FallbackExceptionGroup(
+            "All models from FallbackModel failed",
+            [
+                ModelHTTPError(status_code=404, model_name="a/model", body="not found"),
+                ModelHTTPError(status_code=400, model_name="b/model", body="bad request"),
+            ],
+        )
+        with patch.object(agent, "run", side_effect=group) as mock_run:
+            with pytest.raises(LLMProviderResponseError):
+                await client.run(agent, "test", deps=SampleContext(data="test"))
+            assert mock_run.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_fallback_group_with_one_transient_hop_is_retried(self, llm_settings: LLMSettings) -> None:
+        """One retryable hop makes the group retryable: that hop may succeed next attempt."""
+        from nohiki_llm_client.exceptions import LLMTransientError
+        from pydantic_ai.exceptions import FallbackExceptionGroup, ModelHTTPError
+
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(TestModel(), deps_type=SampleContext, output_type=SampleOutput),
+        )
+
+        group = FallbackExceptionGroup(
+            "All models from FallbackModel failed",
+            [
+                ModelHTTPError(status_code=404, model_name="a/model", body="not found"),
+                ModelHTTPError(status_code=503, model_name="b/model", body="unavailable"),
+            ],
+        )
+        with patch.object(agent, "run", side_effect=group) as mock_run:
+            with pytest.raises(LLMTransientError):
+                await client.run(agent, "test", deps=SampleContext(data="test"))
+            assert mock_run.call_count == MAX_RETRY_ATTEMPTS
+
+    @pytest.mark.parametrize("status_codes", [(429, 503), (503, 429)])
+    @pytest.mark.asyncio
+    async def test_fallback_retry_classification_is_hop_order_independent(
+        self,
+        llm_settings: LLMSettings,
+        status_codes: tuple[int, int],
+    ) -> None:
+        """A retryable 503 wins over a transport-owned 429 in either hop order."""
+        from nohiki_llm_client.exceptions import LLMTransientError
+        from pydantic_ai.exceptions import FallbackExceptionGroup, ModelHTTPError
+
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(TestModel(), deps_type=SampleContext, output_type=SampleOutput),
+        )
+        group = FallbackExceptionGroup(
+            "All models from FallbackModel failed",
+            [
+                ModelHTTPError(status_code=status, model_name=f"hop-{index}", body="failed")
+                for index, status in enumerate(status_codes)
+            ],
+        )
+
+        with patch.object(agent, "run", side_effect=group) as mock_run, pytest.raises(LLMTransientError):
+            await client.run(agent, "test", deps=SampleContext(data="test"))
+
+        assert mock_run.call_count == MAX_RETRY_ATTEMPTS
+
+    @pytest.mark.parametrize(
+        "member_kinds",
+        [
+            ("rate-limit", "not-found"),
+            ("not-found", "rate-limit"),
+            ("rate-limit", "content-filter"),
+            ("content-filter", "rate-limit"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_fallback_rate_limit_wins_over_terminal_in_either_hop_order(
+        self,
+        llm_settings: LLMSettings,
+        member_kinds: tuple[str, str],
+    ) -> None:
+        """A Kafka-retryable 429 wins over terminal failures in either hop order."""
+        from nohiki_llm_client.exceptions import LLMRateLimitError
+        from pydantic_ai.exceptions import ContentFilterError, FallbackExceptionGroup, ModelHTTPError
+
+        members = [
+            (
+                ContentFilterError("blocked")
+                if kind == "content-filter"
+                else ModelHTTPError(
+                    status_code=429 if kind == "rate-limit" else 404,
+                    model_name=f"hop-{index}",
+                    body="failed",
+                )
+            )
+            for index, kind in enumerate(member_kinds)
+        ]
+        group = FallbackExceptionGroup("All models from FallbackModel failed", members)
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(TestModel(), deps_type=SampleContext, output_type=SampleOutput),
+        )
+
+        with (
+            patch.object(agent, "run", side_effect=group) as mock_run,
+            pytest.raises(LLMRateLimitError),
+        ):
+            await client.run(agent, "test", deps=SampleContext(data="test"))
+
+        assert mock_run.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_fallback_group_of_unmapped_members_propagates_unchanged(self, llm_settings: LLMSettings) -> None:
+        """A group carrying no provider verdict is re-raised rather than mislabelled."""
+        from pydantic_ai.exceptions import FallbackExceptionGroup
+
+        client = LLMClient(llm_settings, retry_wait=wait_none())
+        agent = cast(
+            "Agent[SampleContext, SampleOutput]",
+            Agent(TestModel(), deps_type=SampleContext, output_type=SampleOutput),
+        )
+
+        # `ResponseRejected` is the real member type for this case: fallback_on rejected
+        # every response without any model raising.
+        group = FallbackExceptionGroup(
+            "All models from FallbackModel failed",
+            [ResponseRejected(2)],
+        )
+        with patch.object(agent, "run", side_effect=group), pytest.raises(FallbackExceptionGroup):
+            await client.run(agent, "test", deps=SampleContext(data="test"))
 
     @pytest.mark.asyncio
     async def test_run_falls_back_to_genai_prices_when_no_provider_cost(self, llm_settings: LLMSettings) -> None:

@@ -16,6 +16,7 @@ from nohiki_llm_client import (
     LLMAuthenticationError,
     LLMModelConfig,
     LLMProviderResponseError,
+    LLMRateLimitError,
     LLMSettings,
     LLMTransientError,
     LLMValidationError,
@@ -613,6 +614,24 @@ class TestExecutePointwiseTask:
             self._noop_callback,
         )
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_logs_rate_limit_without_retry_exhaustion_wording(self) -> None:
+        mock_client = MagicMock()
+        mock_client.run = AsyncMock(side_effect=LLMRateLimitError("rate limited"))
+        semaphore = asyncio.Semaphore(1)
+
+        with patch("llm_benchmark.engine.judge.logger") as logger:
+            _, _, _, result = await _execute_pointwise_task(
+                mock_client,
+                MagicMock(),
+                self._make_task(),
+                semaphore,
+                self._noop_callback,
+            )
+
+        assert result is None
+        assert logger.warning.call_args.args[0] == "Pointwise judge evaluation rate limited"
 
     @pytest.mark.asyncio
     async def test_cancel_event_skips_before_semaphore(self) -> None:

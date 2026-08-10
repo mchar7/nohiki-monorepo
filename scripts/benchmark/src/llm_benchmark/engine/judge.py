@@ -20,12 +20,16 @@ from job_ingest_enrichment_service.extraction_contract import DEFAULT_EXTRACTION
 from nohiki_llm_client import (
     ApiKeyRegistry,
     CachePoint,
+    LLMConfigurationError,
+    LLMContentFilterError,
     LLMContextTooLongError,
     LLMModelConfig,
     LLMProviderResponseError,
     LLMProviderSettings,
+    LLMRateLimitError,
     LLMSettings,
     LLMTransientError,
+    LLMUsageLimitError,
     LLMValidationError,
     ReasoningEffort,
     StructuredAgentConfig,
@@ -337,10 +341,23 @@ async def _execute_pointwise_task(
         except (
             LLMProviderResponseError,
             LLMValidationError,
+            LLMContentFilterError,
             LLMContextTooLongError,
+            LLMConfigurationError,
+            LLMUsageLimitError,
         ) as e:
             logger.warning(
                 "Pointwise judge evaluation failed (non-retryable)",
+                model=task.model_name,
+                fixture_id=task.fixture_id,
+                run_number=task.run_number,
+                error_type=type(e).__name__,
+                error=str(e),
+            )
+            charged_cost = maximum_cost
+        except LLMRateLimitError as e:
+            logger.warning(
+                "Pointwise judge evaluation rate limited",
                 model=task.model_name,
                 fixture_id=task.fixture_id,
                 run_number=task.run_number,
