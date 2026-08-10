@@ -29,9 +29,7 @@ _MANAGED_PORTS = {443, 5432, 6334, 6380, 9093}
 
 
 def _digest_overlay(tmp_path: Path) -> Path:
-    digests = {
-        f"{_FIRST_PARTY_PREFIX}{name}": f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)
-    }
+    digests = {name: f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)}
     path = tmp_path / "values.prod.digests.yaml"
     path.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
     return path

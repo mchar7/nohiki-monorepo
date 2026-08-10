@@ -61,12 +61,9 @@ def _helm(values_file: str, tmp_path: Path) -> list[dict[str, Any]]:
         "nohiki-prod",
     ]
     if values_file == "values.prod.yaml":
-        repository = "ghcr.io/mchar7/nohiki-monorepo"
         digest_values = tmp_path / "digests.yaml"
         digest_values.write_text(
-            yaml.safe_dump(
-                {"global": {"imageDigests": {f"{repository}/{name}": "sha256:" + "a" * 64 for name in _IMAGE_NAMES}}}
-            ),
+            yaml.safe_dump({"global": {"imageDigests": dict.fromkeys(_IMAGE_NAMES, "sha256:" + "a" * 64)}}),
             encoding="utf-8",
         )
         args.extend(("--values", str(digest_values)))
