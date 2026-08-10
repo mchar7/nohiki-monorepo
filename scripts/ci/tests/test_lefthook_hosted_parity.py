@@ -329,6 +329,12 @@ _NOT_EXERCISED_LOCALLY: dict[tuple[str, str], str] = {
     ("i18n-check", "typescript/apps/frontend/scripts/generate-api*.mjs"): (
         "the schema generator is not imported by scripts/i18n-check.mjs"
     ),
+    # Named exactly rather than as `scripts/*.test.mjs`: fnmatch wildcards cross separators here,
+    # so that pattern would also exempt `scripts/i18n/*.test.mjs`, which tests the key checker
+    # itself and must keep reaching it.
+    ("i18n-check", "typescript/apps/frontend/scripts/worker-bound.test.mjs"): (
+        "the worker-bound test is not imported by scripts/i18n-check.mjs and carries no keys"
+    ),
     (
         "i18n-check",
         "typescript/apps/frontend/public/*",
