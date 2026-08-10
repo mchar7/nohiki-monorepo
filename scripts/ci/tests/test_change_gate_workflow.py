@@ -1339,7 +1339,7 @@ def test_lint_diagnostics_are_uploaded_and_summarized_with_least_privilege() -> 
     assert "code-scanning/alerts?per_page=1" in detection["run"]
     assert "available=$available" in detection["run"]
     upload = steps["Upload lint diagnostics"]
-    assert upload["uses"] == ("github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3")
+    assert upload["uses"] == ("github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81")
     assert "steps.code-scanning.outputs.available == 'true'" in upload["if"]
     assert "head.repo.full_name == github.repository" in upload["if"]
     assert upload["with"] == {
