@@ -63,6 +63,7 @@ workspace = [
     "azure-identity>=1.25.3",
     # Code hygiene tools
     "deptry>=0.24.0",
+    "import-linter>=2.11,<3",
     # CLI tools
     "typer>=0.26.8",
     "rich>=14.3.0",
@@ -682,3 +683,218 @@ whitelist = ["_validate_topic_nam[e]"]
 
 [tool.skylos.overrides."backend/libs/nohiki-kafka-client/src/nohiki_kafka_client/handlers/types.py"]
 whitelist = ["_validate_topic_namin[g]"]
+
+
+# IMPORT-LINTER - Architectural boundaries (just hygiene-imports)
+#
+# Scoped to backend services, shared libraries, generated proto modules, and jobs.
+# `scripts/` is absent because local authoring tools are outside the deployed
+# service/library architecture and may legitimately import service modules.
+#
+# `include_external_packages` is off because these contracts describe first-party
+# module boundaries only.
+[tool.importlinter]
+root_packages = [
+    # Services (backend/services/*)
+    "bff_service",
+    "doc_content_service",
+    "doc_process_service",
+    "doc_template_service",
+    "job_correlation_evaluation_service",
+    "job_ingest_discovery_service",
+    "job_ingest_enrichment_service",
+    "job_ingest_schedule_service",
+    "job_query_composition_service",
+    "job_storage_service",
+    "ml_compute_service",
+    "ml_gateway_service",
+    "notification_service",
+    "skill_graph_service",
+    "user_auth_service",
+    "user_entitlement_service",
+    "user_pref_service",
+    "user_upload_service",
+    # Shared libraries (backend/libs/*)
+    "nohiki_common_exceptions",
+    "nohiki_core_settings",
+    "nohiki_db_utils",
+    "nohiki_embedding_client",
+    "nohiki_fastapi_utils",
+    "nohiki_finance",
+    "nohiki_geo_utils",
+    "nohiki_kafka_client",
+    "nohiki_llm_client",
+    "nohiki_ml_core",
+    "nohiki_ml_manifest",
+    "nohiki_observability",
+    "nohiki_qdrant_client",
+    "nohiki_redis_utils",
+    "nohiki_s3_client",
+    "nohiki_test_utils",
+    # Generated proto layer (nohiki-domain-models, four roots, `nohiki` is PEP 420)
+    "nohiki",
+    "nohiki_proto_google",
+    "nohiki_domain_utils",
+    "message_pool",
+    # One-shot jobs (backend/jobs/*)
+    "snapshot_refresh_job",
+    "sys_tick_job",
+]
+
+# Enforces the "No Lookup" Rule under the "Event-Driven Communication (MANDATORY)" heading
+# of CONTRIBUTING.md (:480-485 at the time of writing), stated there as MANDATORY:
+# "Services MUST NOT make HTTP/gRPC calls to other internal services."
+#
+# This contract is the enforceable half of that rule and not the whole of it. It catches
+# one service *importing* another, which is the strictest and most durable form of the
+# coupling; it cannot see a service issuing an HTTP or gRPC call to a peer's URL, because
+# that coupling leaves no import behind. Nothing mechanical checked either half before.
+[[tool.importlinter.contracts]]
+name = "Services are mutually independent (No Lookup Rule)"
+type = "independence"
+modules = [
+    "bff_service",
+    "doc_content_service",
+    "doc_process_service",
+    "doc_template_service",
+    "job_correlation_evaluation_service",
+    "job_ingest_discovery_service",
+    "job_ingest_enrichment_service",
+    "job_ingest_schedule_service",
+    "job_query_composition_service",
+    "job_storage_service",
+    "ml_compute_service",
+    "ml_gateway_service",
+    "notification_service",
+    "skill_graph_service",
+    "user_auth_service",
+    "user_entitlement_service",
+    "user_pref_service",
+    "user_upload_service",
+]
+
+# Enforces the dependency direction stated under the "Shared Libraries" heading of
+# CONTRIBUTING.md (:710-711 at the time of writing): shared libraries live in
+# backend/libs/ and "Services depend on them via workspace references". The
+# direction is one-way, so a library must never reach back into a service or a job.
+#
+# Library-to-library imports remain permitted because shared libraries may build on one
+# another. This contract enforces only the one-way boundary that prevents libraries from
+# depending on services or jobs.
+#
+# The pure-leaf contract covers nohiki_finance and the generated proto roots.
+[[tool.importlinter.contracts]]
+name = "Shared libraries never depend on services or jobs"
+type = "forbidden"
+source_modules = [
+    "nohiki_common_exceptions",
+    "nohiki_core_settings",
+    "nohiki_db_utils",
+    "nohiki_embedding_client",
+    "nohiki_fastapi_utils",
+    "nohiki_geo_utils",
+    "nohiki_kafka_client",
+    "nohiki_llm_client",
+    "nohiki_ml_core",
+    "nohiki_ml_manifest",
+    "nohiki_observability",
+    "nohiki_qdrant_client",
+    "nohiki_redis_utils",
+    "nohiki_s3_client",
+    "nohiki_test_utils",
+]
+forbidden_modules = [
+    "bff_service",
+    "doc_content_service",
+    "doc_process_service",
+    "doc_template_service",
+    "job_correlation_evaluation_service",
+    "job_ingest_discovery_service",
+    "job_ingest_enrichment_service",
+    "job_ingest_schedule_service",
+    "job_query_composition_service",
+    "job_storage_service",
+    "ml_compute_service",
+    "ml_gateway_service",
+    "notification_service",
+    "skill_graph_service",
+    "user_auth_service",
+    "user_entitlement_service",
+    "user_pref_service",
+    "user_upload_service",
+    "snapshot_refresh_job",
+    "sys_tick_job",
+]
+
+# Keeps the generated proto layer and the money primitives pure leaves. nohiki-domain-models
+# is generated output (betterproto2, regenerated by `just proto-gen`) and nohiki_finance is a
+# self-contained decimal/currency layer; neither has any business importing first-party code.
+#
+# Import-linter covers this boundary without requiring generated code to participate in
+# Ruff or ty analysis.
+#
+# The four generated roots import each other freely, which is why they are all sources rather
+# than each other's forbidden targets.
+[[tool.importlinter.contracts]]
+name = "Generated proto layer and finance primitives are pure leaves"
+type = "forbidden"
+source_modules = [
+    "nohiki",
+    "nohiki_proto_google",
+    "nohiki_domain_utils",
+    "message_pool",
+    "nohiki_finance",
+]
+forbidden_modules = [
+    "bff_service",
+    "doc_content_service",
+    "doc_process_service",
+    "doc_template_service",
+    "job_correlation_evaluation_service",
+    "job_ingest_discovery_service",
+    "job_ingest_enrichment_service",
+    "job_ingest_schedule_service",
+    "job_query_composition_service",
+    "job_storage_service",
+    "ml_compute_service",
+    "ml_gateway_service",
+    "notification_service",
+    "skill_graph_service",
+    "user_auth_service",
+    "user_entitlement_service",
+    "user_pref_service",
+    "user_upload_service",
+    "snapshot_refresh_job",
+    "sys_tick_job",
+    "nohiki_common_exceptions",
+    "nohiki_core_settings",
+    "nohiki_db_utils",
+    "nohiki_embedding_client",
+    "nohiki_fastapi_utils",
+    "nohiki_geo_utils",
+    "nohiki_kafka_client",
+    "nohiki_llm_client",
+    "nohiki_ml_core",
+    "nohiki_ml_manifest",
+    "nohiki_observability",
+    "nohiki_qdrant_client",
+    "nohiki_redis_utils",
+    "nohiki_s3_client",
+    "nohiki_test_utils",
+]
+
+# Enforces the written claim at
+# backend/services/bff-service/src/bff_service/events/projections/_helpers.py:84-88:
+# format_location_display is "intentionally duplicated with
+# nohiki_test_utils.sample_data.format_location_raw" because "bff-service must not depend
+# on the test-utils library at runtime". That claim had an owner and a rationale but no
+# enforcement; the whole point of duplicating the helper is defeated the moment someone
+# deletes it in favour of the import.
+#
+# Scoped to bff-service because its documented runtime separation from test-utils is the
+# boundary enforced here.
+[[tool.importlinter.contracts]]
+name = "bff-service never depends on the test-utils library"
+type = "forbidden"
+source_modules = ["bff_service"]
+forbidden_modules = ["nohiki_test_utils"]

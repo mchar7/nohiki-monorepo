@@ -168,10 +168,7 @@ def _render_environment(values_name: str, tmp_path: Path) -> tuple[Manifest, ...
         str(_CHART / values_name),
     ]
     if environment == "prod":
-        digests = {
-            f"ghcr.io/mchar7/nohiki-monorepo/{name}": f"sha256:{index + 1:064x}"
-            for index, name in enumerate(load_inventory().names)
-        }
+        digests = {name: f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)}
         digest_values = tmp_path / "values.prod.digests.yaml"
         digest_values.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
         command.extend(

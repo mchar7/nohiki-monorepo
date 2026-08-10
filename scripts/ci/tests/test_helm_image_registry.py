@@ -143,7 +143,7 @@ def test_first_party_service_and_job_helpers_still_resolve_digests(tmp_path: Pat
     )
     digest_values = tmp_path / "digests.yaml"
     digest_values.write_text(
-        yaml.safe_dump({"global": {"imageDigests": dict.fromkeys(repositories, _DIGEST)}}),
+        yaml.safe_dump({"global": {"imageDigests": dict.fromkeys(("user-auth-service", "sys-tick-job"), _DIGEST)}}),
         encoding="utf-8",
     )
 
