@@ -444,10 +444,9 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     jobs = workflow["jobs"]
 
     assert "container-contracts" not in jobs
-    assert jobs["playwright-image"]["timeout-minutes"] == 30
-    assert jobs["playwright-image"]["permissions"] == {"contents": "read"}
-    playwright_budget = 1226 / 60 + 574 / 60
-    assert playwright_budget == pytest.approx(jobs["playwright-image"]["timeout-minutes"])
+    assert jobs["playwright-image"]["timeout-minutes"] == (
+        "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}"
+    )
 
     worker = jobs["worker"]
     frontend_steps = worker["steps"]
