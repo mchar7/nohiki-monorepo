@@ -341,6 +341,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
         },
         "python": {
             "Typecheck backend",
+            "Check import boundaries",
             "Run selected Python tests",
         },
     }
@@ -1389,6 +1390,7 @@ def test_native_overlap_is_memory_bounded_to_measured_low_rss_pairs() -> None:
         "Run Skylos cache contract tests",
         "Test frontend",
         "Check dependencies",
+        "Check import boundaries",
     }
     assert standalone.isdisjoint(set().union(*names))
     assert all("background" not in step and "cancel" not in step for step in worker["steps"])
