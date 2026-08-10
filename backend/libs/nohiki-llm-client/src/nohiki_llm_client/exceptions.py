@@ -24,12 +24,13 @@ class LLMRateLimitError(LLMTransientError):
     The LLM provider has rate-limited the request. Retry after backoff.
     """
 
-    def __init__(self, message: str, *, retry_after: int | None = None) -> None:
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
         """Initialize rate limit error.
 
         Args:
             message: Error message.
-            retry_after: Optional seconds to wait before retrying.
+            retry_after: Optional seconds to wait before retrying. Fractional because
+                PydanticAI's ``ModelHTTPError.retry_after`` yields ``float | None``.
 
         """
         super().__init__(message)

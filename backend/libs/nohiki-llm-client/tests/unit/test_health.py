@@ -1072,7 +1072,10 @@ class TestExactModelReadiness:
     @pytest.mark.parametrize(
         ("model_name", "reasoning_effort", "expected_reasoning"),
         [
-            ("gpt-5.6", "high", {"effort": "none"}),
+            # PydanticAI 2.24 sets `openai_responses_supports_reasoning_context` for the
+            # gpt-5.6 family (`profiles/openai.py`), so the Responses payload now carries
+            # `context` alongside `effort`. Library behaviour, not a weakened assertion.
+            ("gpt-5.6", "high", {"effort": "none", "context": "all_turns"}),
             ("gpt-5.2-pro", "low", {"effort": "low"}),
             ("gpt-5.2-pro", "medium", {"effort": "medium"}),
             ("gpt-5.2-pro", "high", {"effort": "high"}),

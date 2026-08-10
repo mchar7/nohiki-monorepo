@@ -1300,6 +1300,15 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
         scope=_WHOLE_PROJECT,
         gates=(_LocalGate("pre-push", "semgrep", _WHOLE_PROJECT),),
     ),
+    ("worker", "Check import boundaries"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gap=(
+            "runs `just hygiene-imports`, the import-linter boundary contracts over the whole "
+            "backend import graph. It is hosted-only because local pre-push checks are "
+            "change-selected, while these contracts certify the whole backend graph."
+        ),
+    ),
     ("worker", "Check build backends"): _HostedStep(
         verifies=True,
         scope=_AFFECTED_PACKAGES,
@@ -1397,6 +1406,7 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
 _KNOWN_OPEN_GAPS = frozenset(
     {
         ("worker", "Scan repository for secrets"),
+        ("worker", "Check import boundaries"),
     }
 )
 

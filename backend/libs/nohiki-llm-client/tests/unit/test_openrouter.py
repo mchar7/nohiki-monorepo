@@ -7,10 +7,10 @@ from unittest.mock import MagicMock
 import pytest
 from nohiki_llm_client.providers.openrouter import (
     RobustOpenRouterModel,
+    _EmbeddedRateLimitError,
     _maybe_raise_embedded_error,
 )
-from pydantic import ValidationError
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 
 
 class TestMaybeRaiseEmbeddedError:
@@ -81,6 +81,34 @@ class TestMaybeRaiseEmbeddedError:
         raw_str: dict[str, object] = {"error": "some error string"}
         _maybe_raise_embedded_error(raw_str, model_name="test/model")
 
+    @pytest.mark.parametrize(
+        ("raw", "expected", "why"),
+        [
+            pytest.param({"error": {"code": 429, "message": "slow down", "retry_after": 12}}, 12.0, "error field"),
+            pytest.param(
+                {"error": {"code": 429, "message": "slow down", "metadata": {"headers": {"Retry-After": "34"}}}},
+                34.0,
+                "nested metadata headers",
+            ),
+            pytest.param({"error": {"code": 429, "message": "slow down"}, "retry_after": "56"}, 56.0, "top level"),
+            pytest.param({"error": {"code": 429, "message": "slow down"}}, None, "no hint anywhere"),
+        ],
+    )
+    def test_body_embedded_retry_hint_reaches_the_library_property(
+        self, raw: dict[str, object], expected: float | None, why: str
+    ) -> None:
+        """A retry hint found in an HTTP-200 body is readable via ``ModelHTTPError.retry_after``.
+
+        PydanticAI owns ``retry_after`` as a read-only property over the ``Retry-After``
+        response header, which an HTTP-200 body does not have. Nohiki recovers the hint from
+        the JSON body, which the library does not do, and must inject it as a header for the
+        property to return it. Without that injection the hint is silently lost and
+        ``LLMClient`` falls back to blind exponential backoff.
+        """
+        with pytest.raises(_EmbeddedRateLimitError) as exc_info:
+            _maybe_raise_embedded_error(raw, model_name="test/model")
+        assert exc_info.value.retry_after == expected, why
+
 
 class TestRobustOpenRouterModelValidateCompletion:
     """Tests for RobustOpenRouterModel._validate_completion."""
@@ -106,8 +134,13 @@ class TestRobustOpenRouterModelValidateCompletion:
             model._validate_completion(mock_response)
         assert exc_info.value.status_code == 404
 
-    def test_null_field_response_without_error_falls_through_to_super(self) -> None:
-        """Null-field response without embedded error falls through to super validation."""
+    def test_null_field_response_without_error_delegates_to_super(self) -> None:
+        """Without an embedded error, classification is the library's.
+
+        PydanticAI recognises a body with null ``choices`` and no error envelope and raises
+        ``ModelAPIError`` for it, so the wrapper must delegate rather than pre-empt. This
+        pins delegation, not the library's choice of message.
+        """
         model = self._make_model()
         mock_response = MagicMock()
         mock_response.model_dump.return_value = {
@@ -116,5 +149,6 @@ class TestRobustOpenRouterModelValidateCompletion:
             "model": None,
             "object": None,
         }
-        with pytest.raises(ValidationError):
+        with pytest.raises(ModelAPIError) as exc_info:
             model._validate_completion(mock_response)
+        assert not isinstance(exc_info.value, ModelHTTPError)
