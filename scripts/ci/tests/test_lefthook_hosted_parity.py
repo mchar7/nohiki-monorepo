@@ -242,6 +242,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         ),
         "proto-breaking": _PROTO_CONTRACT_SURFACE
         | {
+            "proto/.breaking-allowlist.json",
             "scripts/proto_gen/*.py",
             "scripts/proto_gen/**/*.py",
             "scripts/proto_gen/pyproject.toml",
@@ -382,6 +383,10 @@ _NOT_EXERCISED_LOCALLY: dict[tuple[str, str], str] = {
     ("python-typecheck", "proto/**/*"): (
         "a proto edit moves no Python source until `just proto-gen` regenerates the dataclasses"
     ),
+    (
+        "proto-lint",
+        "proto/.breaking-allowlist.json",
+    ): "buf lint does not consume the breaking-allowlist; only proto-breaking reads it",
 }
 
 
