@@ -62,7 +62,7 @@ LANE_RUNNERS: dict[str, str] = {
     "lint_markdown": "frontend",
     "lint_workflows": "frontend",
     "lint_docker": "frontend",
-    "container_contracts": "Container contracts",
+    "container_contracts": "frontend",
     "typecheck_backend": "python",
     "build_backend": "frontend",
     "typecheck_frontend": "frontend",
