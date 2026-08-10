@@ -152,7 +152,7 @@ function readOrUndefined(path: string): string | undefined {
  * Deliberately not a walk up the chain, which is what `scripts/dev/test-run.sh` does for
  * `cpu.max` and what this first did. A quota anywhere above you throttles you, so walking is
  * right for `cpu.max`; a memory fence on an enclosing slice is somebody else's runaway guard
- * and says nothing about this process's share of the machine. Measured 2026-08-05: walking the
+ * and says nothing about this process's share of the machine. Measured in practice: walking the
  * chain found a `memory.max` on an enclosing systemd slice that had nothing to do with this
  * process's share, and cut a local run from 19 workers to 6 for no reason a developer could see.
  *
