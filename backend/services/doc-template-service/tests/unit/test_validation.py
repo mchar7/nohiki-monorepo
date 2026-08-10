@@ -111,6 +111,7 @@ from doc_template_service.core.validation.template import (
     validate_template_syntax,
 )
 from doc_template_service.schemas.models import ValidationReport
+from jsonschema import Draft202012Validator
 
 
 @pytest.fixture(autouse=True)
@@ -194,16 +195,36 @@ class TestExtractJsRequirementsFromTemplate:
 class TestGetSchemaValidator:
     """Tests for get_schema_validator function in schema.py."""
 
-    def test_returns_draft7_validator(self) -> None:
-        """Returns a Draft7Validator instance."""
+    def test_schema_without_declaration_defaults_to_draft_2020_12(self) -> None:
+        """Schemas without ``$schema`` preserve the Draft 2020-12 contract."""
+        validator = get_schema_validator({"type": "object"})
+
+        assert isinstance(validator, Draft202012Validator)
+
+    def test_declared_draft_7_uses_draft_7_semantics(self) -> None:
+        """A Draft 7 schema ignores keywords introduced in later drafts."""
         schema: dict[str, object] = {
+            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
-            "properties": {"name": {"type": "string"}},
+            "dependentRequired": {"credit_card": ["billing_address"]},
         }
-        validator = get_schema_validator(schema)
-        assert validator is not None
-        errors = list(validator.iter_errors({"name": "test"}))
-        assert len(errors) == 0
+
+        report = validate_data({"credit_card": "1234"}, schema)
+
+        assert report.valid is True
+
+    def test_declared_draft_2020_12_enforces_dependent_required(self) -> None:
+        """A declared Draft 2020-12 keyword violation is rejected."""
+        schema: dict[str, object] = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "dependentRequired": {"credit_card": ["billing_address"]},
+        }
+
+        report = validate_data({"credit_card": "1234"}, schema)
+
+        assert report.valid is False
+        assert any(issue.keyword == "dependentRequired" for issue in report.issues)
 
     def test_caches_validator_by_content(self) -> None:
         """Same schema content returns cached validator."""
@@ -259,6 +280,29 @@ class TestValidateDataAgainstSchema:
 
         assert result.valid is False
         assert any("name" in issue.message for issue in result.issues)
+
+    def test_reports_only_five_issues_and_a_truncation_sentinel(self) -> None:
+        """Validation work is bounded while callers are told more errors exist."""
+        result = ValidationResult()
+        schema: dict[str, object] = {"allOf": [{"required": [f"field_{index}"]} for index in range(7)]}
+
+        validate_data_against_schema({}, schema, result)
+
+        assert result.valid is False
+        assert len(result.issues) == 6
+        assert result.issues[-1].keyword == "truncated"
+        assert result.issues[-1].message == "Additional schema violations omitted"
+
+    def test_unresolvable_reference_is_a_schema_error(self) -> None:
+        """Missing remote resources are reported instead of escaping validation."""
+        result = ValidationResult()
+        schema: dict[str, object] = {"$ref": "https://schemas.example.invalid/missing.json"}
+
+        validate_data_against_schema({}, schema, result)
+
+        assert result.valid is False
+        assert len(result.issues) == 1
+        assert result.issues[0].keyword == "schema_error"
 
 
 class TestValidationContext:

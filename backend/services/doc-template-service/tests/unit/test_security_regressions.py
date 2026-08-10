@@ -196,7 +196,7 @@ async def test_oversized_render_data_is_rejected_before_generation_or_upload() -
         patch("doc_template_service.events.render_handler.store_rendered_document", store),
         pytest.raises(ValidationError, match="render data exceeds"),
     ):
-        await _render_and_store(message, "correlation", "template")
+        await _render_and_store(AsyncMock(), message, "correlation", "template")
 
     generate.assert_not_awaited()
     store.assert_not_awaited()
