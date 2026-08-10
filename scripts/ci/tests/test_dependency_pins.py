@@ -23,7 +23,6 @@ _DIGEST_FRESHNESS = _WORKFLOWS / "digest-freshness.yml"
 _AKS_DEPLOY = _WORKFLOWS / "cd_deploy-to-aks_nohiki.yml"
 _WEEKLY_SWEEP = _WORKFLOWS / "weekly-sweep.yml"
 _FLAKE = _ROOT / "flake.nix"
-_UV_CONFIG = _ROOT / "toolchain" / "uv.toml"
 _JUSTFILE = _ROOT / "Justfile"
 _ROOT_PROJECT = _ROOT / "pyproject.toml"
 _CI_PROJECT = _ROOT / "scripts" / "ci" / "pyproject.toml"
@@ -964,7 +963,7 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
             mismatches.append(f"{dockerfile.relative_to(_ROOT)}: uv images do not match scaffold")
     assert not mismatches, "\n".join(mismatches)
 
-    assert "env" not in load_workflow(_CHECKS), "checks.yml must not re-pin toolchain versions beside uv.toml"
+    assert "env" not in load_workflow(_CHECKS), "checks.yml must not re-pin toolchain versions beside pyproject.toml"
     python_version = expected_python[0].removesuffix("-slim")
 
     root_project = tomllib.loads(_read_text(_ROOT_PROJECT))
@@ -972,16 +971,15 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
     assert root_project["project"]["requires-python"] == f">={python_minor}"
     assert tomllib.loads(_read_text(_ROOT / "uv.lock"))["requires-python"] == f">={python_minor}"
 
-    uv_config = tomllib.loads(_read_text(_UV_CONFIG))
-    uv_version = uv_config.get("required-version")
+    uv_version = root_project["tool"]["uv"].get("required-version")
     assert isinstance(uv_version, str)
     assert re.fullmatch(r"\d+\.\d+\.\d+", uv_version)
-    assert uv_config == {"required-version": uv_version}
     assert expected_uv[0] == uv_version
+    assert not (_ROOT / "toolchain").exists()
 
     flake = _read_text(_FLAKE)
-    assert "uvConfig = builtins.fromTOML (builtins.readFile ./toolchain/uv.toml);" in flake
-    assert "value = uvConfig.required-version;" in flake
+    assert "pyproject = builtins.fromTOML (builtins.readFile ./pyproject.toml);" in flake
+    assert "value = pyproject.tool.uv.required-version;" in flake
     assert 'uvVersion = "' not in flake
     expected_uv_url = (
         'url = "https://github.com/astral-sh/uv/releases/download/${uvVersion}/uv-${uvRelease.target}.tar.gz";'
@@ -1044,7 +1042,7 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     assert worker_setup["uses"] == "./.github/actions/setup-ci"
     assert worker_setup["with"]["node"] == "${{ env.NODE_SETUP_SELECTED }}"
     assert worker_setup["with"]["runner-class"] == "${{ needs.changes.outputs.runner_class }}"
-    uv_version_file = "toolchain/uv.toml"
+    uv_version_file = "pyproject.toml"
     python_version = _images(_SCAFFOLD_DOCKERFILE, "public.ecr.aws/docker/library/python")[0]["version"]
     assert setup_uv["with"] == {
         "version-file": uv_version_file,

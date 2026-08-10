@@ -26,15 +26,15 @@
           hash = "sha256-nA9/ruswbLFOQnmj4ITKa1lolAiaBjjmigfJRaMsnhQ=";
           defaultJava = jdk;
         };
-        uvConfig = builtins.fromTOML (builtins.readFile ./toolchain/uv.toml);
+        pyproject = builtins.fromTOML (builtins.readFile ./pyproject.toml);
         uvVersion =
           let
-            value = uvConfig.required-version;
+            value = pyproject.tool.uv.required-version;
           in
           if builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+" value != null then
             value
           else
-            throw "toolchain/uv.toml required-version must be an exact semantic version";
+            throw "pyproject.toml [tool.uv] required-version must be an exact semantic version";
         uvRelease = {
           x86_64-linux = {
             target = "x86_64-unknown-linux-gnu";
