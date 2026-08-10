@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import numpy as np
-
-if TYPE_CHECKING:
-    from nohiki.job.listing.v1 import ListingSnapshot
-    from nohiki.user.pref.v1 import SearchPrefSnapshot
-    from numpy.typing import NDArray
-
+from nohiki.job.listing.v1 import ListingSnapshot
+from nohiki.user.pref.v1 import SearchPrefSnapshot
+from numpy.typing import NDArray
 
 type FactorName = Literal["skills", "location", "work_arrangement", "experience", "salary", "recency"]
 

@@ -22,17 +22,16 @@ from nohiki.job.listing.v1 import (
 )
 from nohiki.ml.v1 import DenseData, EmbeddingType, EmbeddingVector
 from nohiki.skill.v1 import JobSkillRequirement, SkillProficiencyLevel
-from nohiki_db_utils import OutboxEventParams
+from nohiki_db_utils import OutboxEventParams, OutboxWriter
 from nohiki_kafka_client import Topics, create_event_metadata
 from nohiki_observability import get_logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from job_storage_service.core.config import get_jobs_collection_name, get_qdrant_client, get_settings
 from job_storage_service.db.models import Listing
 
 if TYPE_CHECKING:
     from nohiki.job.ingest.v1 import DiscoveredListing
-    from nohiki_db_utils import OutboxWriter
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
 settings = get_settings()

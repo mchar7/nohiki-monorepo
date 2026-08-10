@@ -4,12 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from ast_explorer.discovery.packages import Package, PackageType
-
-if TYPE_CHECKING:
-    from ast_explorer.models.nodes import SymbolNode
+from ast_explorer.models.nodes import SymbolNode
 
 __all__ = [
     "DependencyGraph",

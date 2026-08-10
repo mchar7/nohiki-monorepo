@@ -12,8 +12,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from calibrate_skill_thresholds.data import TestPair
+
 if TYPE_CHECKING:
-    from calibrate_skill_thresholds.data import CalibrationDataset, TestPair
+    from calibrate_skill_thresholds.data import CalibrationDataset
 
 NGRAM_SIZE = 3
 

@@ -13,6 +13,8 @@ from nohiki.user.pref.v1 import SearchPrefSnapshot
 from nohiki_common_exceptions import ExternalServiceError
 from nohiki_observability import get_logger
 
+from job_correlation_evaluation_service.services.scoring.stages.deterministic_final import FactorAttribution
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -20,7 +22,6 @@ if TYPE_CHECKING:
         QueryEncoding,
         ScoringPipeline,
     )
-    from job_correlation_evaluation_service.services.scoring.stages.deterministic_final import FactorAttribution
 
 logger = get_logger(__name__)
 

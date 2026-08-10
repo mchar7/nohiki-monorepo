@@ -299,8 +299,23 @@ ban-relative-imports = "parents"
 "google.protobuf".msg = "CONTRIBUTING.md, `Domain Model Imports`, and backend/libs/nohiki-domain-models/README.md, `API Reference` > `Import Pattern`: import domain messages from the generated `nohiki` package instead."
 "nohiki_grpc_stubs".msg = "backend/libs/nohiki-domain-models/README.md, `API Reference` > `Import Pattern`: the gRPC stubs package was deleted; import generated domain messages from `nohiki` instead."
 
-# flake8-type-checking runtime-evaluated settings also drive TC004, so they must land with the
-# corresponding runtime import placements.
+[tool.ruff.lint.flake8-type-checking]
+# These settings prevent FastAPI, Pydantic, and SQLAlchemy runtime-evaluated declarations from being
+# mistaken for annotation-only imports. They also make TC004 enforce runtime imports that annotations
+# genuinely need while allowing guarded imports that are deliberately kept lazy.
+#
+# scripts/benchmark and tests/ use separate Ruff configurations, so they do not inherit this section,
+# the banned APIs, or the parent-relative import ban.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+    "sqlalchemy.orm.DeclarativeBase",
+    "sqlalchemy.orm.MappedAsDataclass",
+]
+runtime-evaluated-decorators = [
+    "dataclasses.dataclass",
+    "pydantic.validate_call",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**/*.py" = [

@@ -5,16 +5,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from nohiki.common.v1 import CorrelationStatus
+from nohiki.job.listing.v1 import ListingSnapshot
+from nohiki.user.pref.v1 import SearchPrefSnapshot
 from uuid_utils.compat import uuid7
 
-if TYPE_CHECKING:
-    from nohiki.job.listing.v1 import ListingSnapshot
-    from nohiki.user.pref.v1 import SearchPrefSnapshot
-
-    from job_correlation_evaluation_service.services.scoring.stages.deterministic_final import FactorAttribution
+from job_correlation_evaluation_service.services.scoring.stages.deterministic_final import FactorAttribution
 
 
 @dataclass(frozen=True, slots=True)

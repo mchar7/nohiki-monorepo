@@ -15,8 +15,10 @@ from nohiki_kafka_client.exceptions import SerializationError
 from nohiki_kafka_client.middleware.protocol import Middleware
 
 if TYPE_CHECKING:
-    from nohiki_db_utils import OutboxWriter
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    # nohiki-db-utils and its SQLAlchemy dependency require the optional `db` extra; eager imports
+    # would break base installs.
+    from nohiki_db_utils import OutboxWriter  # noqa: TC004
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: TC004
 
     from nohiki_kafka_client.producer import MessageMetadata
 
