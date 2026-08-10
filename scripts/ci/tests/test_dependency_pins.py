@@ -497,8 +497,8 @@ def test_root_lint_group_is_the_minimal_ruff_environment() -> None:
 
 def test_complete_environment_uses_class_specific_cache_profiles() -> None:
     action = load_mapping(_SETUP_CI)
-    inputs = cast(dict[str, object], action["inputs"])
-    runner_class = cast(dict[str, object], inputs["runner-class"])
+    inputs = cast("dict[str, object]", action["inputs"])
+    runner_class = cast("dict[str, object]", inputs["runner-class"])
     assert runner_class["required"] is True
     steps = _setup_steps()
     by_name = {step.get("name"): step for step in steps}
