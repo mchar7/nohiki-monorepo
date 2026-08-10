@@ -32,7 +32,7 @@ Args (passed as a dict):
 {{- $repository = printf "%s/%s" $registry $imageName }}
 {{- end }}
 {{- $digests := $glob.imageDigests | default dict }}
-{{- $digest := index $digests $repository | default "" }}
+{{- $digest := index $digests $imageName | default "" }}
 {{- if $digest }}
 {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) }}
 {{- fail (printf "invalid digest for image %s: %s" $imageName $digest) }}

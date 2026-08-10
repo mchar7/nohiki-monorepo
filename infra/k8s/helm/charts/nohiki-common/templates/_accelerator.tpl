@@ -80,9 +80,9 @@ intent. Call before nohiki-common.deployment / nohiki-common.nvidiaDevicePlugin.
 {{/* Fail render when the pinned GPU image digest is absent. */}}
 {{- $glob := .Values.global | default dict -}}
 {{- $digests := $glob.imageDigests | default dict -}}
-{{- $repo := include "nohiki-common.imageRepository" . | trim -}}
-{{- if not (index $digests $repo) -}}
-{{- fail (printf "%s: accelerator.mode=cuda requires a pinned GPU image digest for %q in global.imageDigests" (include "nohiki-common.name" .) $repo) -}}
+{{- $imageName := .Values.image.name | default .Chart.Name -}}
+{{- if not (index $digests $imageName) -}}
+{{- fail (printf "%s: accelerator.mode=cuda requires a pinned GPU image digest for %q in global.imageDigests" (include "nohiki-common.name" .) $imageName) -}}
 {{- end -}}
 {{- $_ := set .Values.resources "gpu" (int ($acc.gpuCount | default 1)) -}}
 {{- $_ := set .Values "nodeSelector" (dict "workload" "nohiki-ml-gpu") -}}
