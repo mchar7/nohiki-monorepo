@@ -12,14 +12,47 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 
 WARM_WALL_BUDGET_SECONDS = 8040
 COLD_WALL_BUDGET_SECONDS = 8040
 
+
+class RunnerClass(StrEnum):
+    """Supported workflow runner classes."""
+
+    TIER_1 = "nohiki-t1"
+    TIER_2 = "nohiki-t2"
+    TIER_3 = "nohiki-t3"
+    HOSTED = "hosted"
+
+
+class TierState(StrEnum):
+    """Runner tier availability states."""
+
+    ABSENT = "absent"
+    BUSY = "busy"
+    DRAINING = "draining"
+    ELIGIBLE = "eligible"
+    OFFLINE = "offline"
+    UNAVAILABLE = "unavailable"
+    UNTRUSTED = "untrusted"
+
+
+class FallbackReason(StrEnum):
+    """Reasons routing selected a hosted runner."""
+
+    NONE = ""
+    INVENTORY_UNAVAILABLE = "RUNNER_INVENTORY_TOKEN is unavailable"
+    INVENTORY_UNTRUSTED = "runner inventory is untrusted"
+    INVENTORY_REQUEST_FAILED = "runner inventory request failed"
+    NO_ELIGIBLE_TIER = "no self-hosted tier is eligible"
+
+
 _AUTOMATIC_LABELS = frozenset({"self-hosted", "Linux", "X64"})
 _TIER_NAMES = {
-    "nohiki-t1": frozenset(
+    RunnerClass.TIER_1: frozenset(
         {
             "nohiki-runner-02",
             "nohiki-runner-03",
@@ -27,17 +60,17 @@ _TIER_NAMES = {
             "nohiki-runner-05",
         }
     ),
-    "nohiki-t2": frozenset({"nohiki-runner-06"}),
-    "nohiki-t3": frozenset({"nohiki-runner-01"}),
+    RunnerClass.TIER_2: frozenset({"nohiki-runner-06"}),
+    RunnerClass.TIER_3: frozenset({"nohiki-runner-01"}),
 }
 _TIER_ORDER = tuple(_TIER_NAMES)
 _MANAGED_LABELS = _AUTOMATIC_LABELS | frozenset({"nohiki", *_TIER_ORDER})
 _RUNNER_NAME = re.compile(r"nohiki-runner-[0-9]{2}\Z")
 _TIMEOUTS = {
-    "nohiki-t1": (52, 30, 20, 5),
-    "nohiki-t2": (52, 30, 20, 5),
-    "nohiki-t3": (52, 30, 20, 5),
-    "hosted": (30, 30, 10, 5),
+    RunnerClass.TIER_1: (52, 30, 20, 5),
+    RunnerClass.TIER_2: (52, 30, 20, 5),
+    RunnerClass.TIER_3: (52, 30, 20, 5),
+    RunnerClass.HOSTED: (30, 30, 10, 5),
 }
 _RUNNER_INVENTORY_ERRORS = (OSError, subprocess.CalledProcessError, ValueError)
 
@@ -116,12 +149,12 @@ class RouteSelection:
     """One fail-closed runner decision shared by every payload job."""
 
     runner_target: str
-    runner_class: str
-    tier_1_state: str
-    tier_2_state: str
-    tier_3_state: str
+    runner_class: RunnerClass
+    tier_1_state: TierState
+    tier_2_state: TierState
+    tier_3_state: TierState
     selected_name: str
-    fallback_reason: str
+    fallback_reason: FallbackReason
 
 
 def route_outputs(selection: RouteSelection) -> dict[str, str]:
@@ -149,8 +182,8 @@ def _append(path: str | Path, text: str) -> None:
         handle.write(text)
 
 
-def _hosted_selection(reason: str, *, state: str = "unavailable") -> RouteSelection:
-    return RouteSelection(json.dumps("ubuntu-24.04"), "hosted", state, state, state, "", reason)
+def _hosted_selection(reason: FallbackReason, *, state: TierState = TierState.UNAVAILABLE) -> RouteSelection:
+    return RouteSelection(json.dumps("ubuntu-24.04"), RunnerClass.HOSTED, state, state, state, "", reason)
 
 
 def _runner_record(raw: object) -> RunnerRecord:
@@ -219,8 +252,8 @@ def _complete_inventory(raw_pages: object) -> tuple[RunnerRecord, ...]:
     return tuple(records)
 
 
-def _trusted_tiers(records: Sequence[RunnerRecord]) -> dict[str, tuple[RunnerRecord, ...]]:
-    tiers: dict[str, tuple[RunnerRecord, ...]] = {}
+def _trusted_tiers(records: Sequence[RunnerRecord]) -> dict[RunnerClass, tuple[RunnerRecord, ...]]:
+    tiers: dict[RunnerClass, tuple[RunnerRecord, ...]] = {}
     for tier in _TIER_ORDER:
         members = tuple(record for record in records if tier in record.labels)
         names = frozenset(record.name for record in members)
@@ -242,65 +275,82 @@ def _trusted_tiers(records: Sequence[RunnerRecord]) -> dict[str, tuple[RunnerRec
     return tiers
 
 
+def _tier_states(
+    tiers: Mapping[RunnerClass, tuple[RunnerRecord, ...]], tier_2_drain: str
+) -> dict[RunnerClass, TierState]:
+    states: dict[RunnerClass, TierState] = {}
+    tier_1 = tiers[RunnerClass.TIER_1]
+    if any(runner.status == "online" and not runner.busy for runner in tier_1):
+        states[RunnerClass.TIER_1] = TierState.ELIGIBLE
+    elif any(runner.status == "online" for runner in tier_1):
+        states[RunnerClass.TIER_1] = TierState.BUSY
+    else:
+        states[RunnerClass.TIER_1] = TierState.OFFLINE if tier_1 else TierState.ABSENT
+
+    tier_2 = tiers[RunnerClass.TIER_2]
+    if not tier_2:
+        states[RunnerClass.TIER_2] = TierState.ABSENT
+    elif tier_2_drain.casefold() == "true":
+        states[RunnerClass.TIER_2] = TierState.DRAINING
+    elif any(runner.status == "online" and not runner.busy for runner in tier_2):
+        states[RunnerClass.TIER_2] = TierState.ELIGIBLE
+    elif any(runner.status == "online" for runner in tier_2):
+        states[RunnerClass.TIER_2] = TierState.BUSY
+    else:
+        states[RunnerClass.TIER_2] = TierState.OFFLINE
+
+    tier_3 = tiers[RunnerClass.TIER_3]
+    states[RunnerClass.TIER_3] = (
+        TierState.ELIGIBLE
+        if any(runner.status == "online" for runner in tier_3)
+        else TierState.OFFLINE
+        if tier_3
+        else TierState.ABSENT
+    )
+    return states
+
+
+def _pick_runner(
+    tiers: Mapping[RunnerClass, tuple[RunnerRecord, ...]], states: Mapping[RunnerClass, TierState]
+) -> tuple[RunnerClass, RunnerRecord] | None:
+    for runner_class in (RunnerClass.TIER_1, RunnerClass.TIER_2):
+        if states[runner_class] == TierState.ELIGIBLE:
+            return runner_class, next(
+                runner for runner in tiers[runner_class] if runner.status == "online" and not runner.busy
+            )
+    if states[RunnerClass.TIER_3] == TierState.ELIGIBLE:
+        return RunnerClass.TIER_3, next(runner for runner in tiers[RunnerClass.TIER_3] if runner.status == "online")
+    return None
+
+
 def select_runner(raw_pages: object, tier_2_drain: str = "") -> RouteSelection:
     """Choose one neutral runner tier from a complete repository inventory."""
     try:
         tiers = _trusted_tiers(_complete_inventory(raw_pages))
-    except (TypeError, ValueError) as exc:
-        return _hosted_selection(str(exc), state="untrusted")
-    states: dict[str, str] = {}
-    tier_1 = tiers["nohiki-t1"]
-    idle_tier_1 = next((runner for runner in tier_1 if runner.status == "online" and not runner.busy), None)
-    if idle_tier_1 is not None:
-        states["nohiki-t1"] = "eligible"
-    elif any(runner.status == "online" for runner in tier_1):
-        states["nohiki-t1"] = "busy"
-    else:
-        states["nohiki-t1"] = "offline" if tier_1 else "absent"
-    tier_2 = tiers["nohiki-t2"]
-    drained = tier_2_drain.casefold() == "true"
-    idle_tier_2 = next((runner for runner in tier_2 if runner.status == "online" and not runner.busy), None)
-    if not tier_2:
-        states["nohiki-t2"] = "absent"
-    elif drained:
-        states["nohiki-t2"] = "draining"
-    elif idle_tier_2 is not None:
-        states["nohiki-t2"] = "eligible"
-    elif any(runner.status == "online" for runner in tier_2):
-        states["nohiki-t2"] = "busy"
-    else:
-        states["nohiki-t2"] = "offline"
-    tier_3 = tiers["nohiki-t3"]
-    online_tier_3 = next((runner for runner in tier_3 if runner.status == "online"), None)
-    states["nohiki-t3"] = "eligible" if online_tier_3 is not None else ("offline" if tier_3 else "absent")
-    if idle_tier_1 is not None:
-        selected = ("nohiki-t1", idle_tier_1)
-    elif idle_tier_2 is not None and not drained:
-        selected = ("nohiki-t2", idle_tier_2)
-    elif online_tier_3 is not None:
-        selected = ("nohiki-t3", online_tier_3)
-    else:
-        selected = None
+    except (TypeError, ValueError) as _error:
+        return _hosted_selection(FallbackReason.INVENTORY_UNTRUSTED, state=TierState.UNTRUSTED)
+    states = _tier_states(tiers, tier_2_drain)
+    selected = _pick_runner(tiers, states)
     if selected is None:
         return RouteSelection(
             json.dumps("ubuntu-24.04"),
-            "hosted",
-            states["nohiki-t1"],
-            states["nohiki-t2"],
-            states["nohiki-t3"],
+            RunnerClass.HOSTED,
+            states[RunnerClass.TIER_1],
+            states[RunnerClass.TIER_2],
+            states[RunnerClass.TIER_3],
             "",
-            "no self-hosted tier is eligible",
+            FallbackReason.NO_ELIGIBLE_TIER,
         )
     runner_class, runner = selected
     target = json.dumps(["self-hosted", "Linux", "X64", "nohiki", runner_class], separators=(",", ":"))
     return RouteSelection(
         target,
         runner_class,
-        states["nohiki-t1"],
-        states["nohiki-t2"],
-        states["nohiki-t3"],
+        states[RunnerClass.TIER_1],
+        states[RunnerClass.TIER_2],
+        states[RunnerClass.TIER_3],
         runner.name,
-        "",
+        FallbackReason.NONE,
     )
 
 
@@ -780,7 +830,7 @@ def route_cmd(repository: str, github_output: Path, summary: Path, tier_2_drain:
     """Read complete runner inventory and emit one atomic fail-closed route."""
     selection: RouteSelection | None = None
     if not os.environ.get("GH_TOKEN"):
-        selection = _hosted_selection("RUNNER_INVENTORY_TOKEN is unavailable")
+        selection = _hosted_selection(FallbackReason.INVENTORY_UNAVAILABLE)
     else:
         endpoint = f"repos/{repository}/actions/runners?per_page=100"
         for _attempt in range(2):
@@ -790,7 +840,7 @@ def route_cmd(repository: str, github_output: Path, summary: Path, tier_2_drain:
             except _RUNNER_INVENTORY_ERRORS:
                 continue
     if selection is None:
-        selection = _hosted_selection("runner inventory request failed")
+        selection = _hosted_selection(FallbackReason.INVENTORY_REQUEST_FAILED)
     output_text = "".join(f"{name}={value}\n" for name, value in route_outputs(selection).items())
     _append(github_output, output_text)
     _append(summary, _route_summary(selection, tier_2_drain))
