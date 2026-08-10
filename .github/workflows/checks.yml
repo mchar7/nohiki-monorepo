@@ -580,7 +580,7 @@ jobs:
             run: nix develop .#ci --command just hygiene-build-backend-strict "$AFFECTED_PACKAGES"
 
       - name: Check import boundaries
-        if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
+        if: matrix.unit == 'python' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
         run: nix develop .#ci --command just hygiene-imports
 
       - parallel:

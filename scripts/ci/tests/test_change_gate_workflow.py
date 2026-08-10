@@ -318,7 +318,6 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Check selected dead code",
             "Check dependencies",
             "Scan architecture",
-            "Check import boundaries",
             "Check build backends",
             "Check API schema freshness",
             "Check image matrix parity",
@@ -342,6 +341,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
         },
         "python": {
             "Typecheck backend",
+            "Check import boundaries",
             "Run selected Python tests",
         },
     }

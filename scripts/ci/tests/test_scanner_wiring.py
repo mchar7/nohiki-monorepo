@@ -983,6 +983,6 @@ def test_import_linter_runs_in_hygiene_and_behind_the_hosted_hygiene_flag() -> N
     by_name = {step.get("name"): step for step in steps}
     boundary = by_name["Check import boundaries"]
     assert boundary["run"] == "nix develop .#ci --command just hygiene-imports"
-    # Same change flag as the semgrep architecture scan it sits beside: no new CI job.
-    assert boundary["if"] == by_name["Scan architecture"]["if"]
-    assert "needs.changes.outputs.hygiene == 'true'" in str(boundary["if"])
+    # Keep the architecture selection, but use the only payload that installs every package.
+    architecture_condition = str(by_name["Scan architecture"]["if"])
+    assert str(boundary["if"]) == architecture_condition.replace("matrix.unit == 'frontend'", "matrix.unit == 'python'")
