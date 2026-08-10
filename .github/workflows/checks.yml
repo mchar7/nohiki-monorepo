@@ -272,6 +272,7 @@ jobs:
       # every leg carries it. Fork pull requests get a read-only token regardless.
       actions: write
       contents: read
+      security-events: write
     env:
       NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.jvm_tests == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.otel_collector == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' }}
       NODE_SETUP_SELECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true') }}
@@ -372,13 +373,16 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
+          mkdir -p lint-results
           export UV_PROJECT_ENVIRONMENT=.venv
           if [[ "$RUFF_SCOPE" == ALL ]]; then
-            nix develop .#ci --command just lint
+            nix develop .#ci --command uv run --no-sync ruff check . \
+              --output-format=sarif --output-file="$GITHUB_WORKSPACE/lint-results/ruff-lint.sarif"
           else
             mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.py')
-            ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
-              ruff check --output-format=github --force-exclude "${files[@]}"
+            ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync ruff check \
+              --output-format=sarif --output-file="$GITHUB_WORKSPACE/lint-results/ruff-lint.sarif" \
+              --force-exclude "${files[@]}"
           fi
 
       - name: Check Python formatting
@@ -389,14 +393,26 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
+          mkdir -p lint-results
           export UV_PROJECT_ENVIRONMENT=.venv
+          # Ruff's formatter SARIF is preview-only in the pinned release. Keep configured
+          # formatting semantics and retain its concise failure output in the job summary.
+          set +e
           if [[ "$RUFF_SCOPE" == ALL ]]; then
-            nix develop .#ci --command just format-check
+            nix develop .#ci --command just format-check 2>&1 | tee lint-results/ruff-format.log
+            status=${PIPESTATUS[0]}
           else
             mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.py')
-            ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
-              ruff format --check --force-exclude "${files[@]}"
+            if ((${#files[@]} == 0)); then
+              status=0
+            else
+              nix develop .#ci --command uv run --no-sync ruff format --check --force-exclude \
+                "${files[@]}" 2>&1 | tee lint-results/ruff-format.log
+              status=${PIPESTATUS[0]}
+            fi
           fi
+          ((status == 0)) && rm -f lint-results/ruff-format.log
+          exit "$status"
 
       - name: Lint Markdown
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_markdown == 'true')
@@ -404,33 +420,92 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
+          mkdir -p lint-results
           mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.md')
-          ((${#files[@]} == 0)) || pnpm exec markdownlint-cli2 "${files[@]}"
+          ((${#files[@]} == 0)) && exit 0
+          # SARIF requires an extra formatter package absent from the lockfile. Do not add
+          # a dependency only for transport; retain failure-only output for the compact summary.
+          set +e
+          pnpm exec markdownlint-cli2 "${files[@]}" 2>&1 | tee lint-results/markdownlint.log
+          status=${PIPESTATUS[0]}
+          ((status == 0)) && rm lint-results/markdownlint.log
+          exit "$status"
 
       - name: Lint protos
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_proto == 'true')
-        run: nix develop .#ci --command just proto-lint
+        run: |
+          mkdir -p lint-results
+          # Buf has JSON and platform annotation formats but no SARIF emitter.
+          set +e
+          nix develop .#ci --command bash -euc 'cd proto && buf lint --error-format=github-actions' \
+            2>&1 | tee lint-results/buf.log
+          status=${PIPESTATUS[0]}
+          ((status == 0)) && rm lint-results/buf.log
+          exit "$status"
 
       - name: Lint workflows
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_workflows == 'true')
-        run: nix develop .#ci --command just workflow-lint
+        run: |
+          mkdir -p lint-results
+          set +e
+          nix develop .#ci --command actionlint -oneline -format '{{json .}}' \
+            > "$RUNNER_TEMP/actionlint.json"
+          status=$?
+          set -e
+          ((status <= 1)) || exit "$status"
+          # actionlint does not model the runner's native `parallel:` step. The converter
+          # suppresses only diagnostics whose source node is structurally that extension.
+          nix develop .#ci --command uv run --no-sync ci-checks actionlint-report \
+            --input "$RUNNER_TEMP/actionlint.json" --output lint-results/actionlint.sarif
+          set +e
+          # check-jsonschema has no SARIF emitter; its failure-only output feeds the summary.
+          nix develop .#ci --command check-jsonschema --builtin-schema vendor.github-workflows \
+            .github/workflows/*.yml 2>&1 | tee lint-results/check-jsonschema.log
+          status=${PIPESTATUS[0]}
+          ((status == 0)) && rm lint-results/check-jsonschema.log
+          exit "$status"
 
       - name: Lint frontend
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_frontend == 'true')
-        run: nix develop .#ci --command just fe-lint
+        run: |
+          mkdir -p lint-results
+          pnpm --filter nohiki-frontend exec biome check --reporter=sarif . \
+            > "$GITHUB_WORKSPACE/lint-results/biome-frontend.sarif"
 
       - parallel:
           - name: Lint frontend architecture (Steiger)
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_steiger == 'true')
-            run: nix develop .#ci --command just fe-fsd
+            run: |
+              mkdir -p lint-results
+              # Steiger supports pretty or JSON output, not SARIF.
+              set +e
+              nix develop .#ci --command just fe-fsd 2>&1 | tee lint-results/steiger.log
+              status=${PIPESTATUS[0]}
+              ((status == 0)) && rm lint-results/steiger.log
+              exit "$status"
 
           - name: Check i18n keys
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_frontend == 'true')
-            run: nix develop .#ci --command just fe-i18n
+            run: |
+              mkdir -p lint-results
+              # The repository's i18n checker is plain text, so retain only failure output.
+              set +e
+              nix develop .#ci --command just fe-i18n 2>&1 | tee lint-results/i18n.log
+              status=${PIPESTATUS[0]}
+              ((status == 0)) && rm lint-results/i18n.log
+              exit "$status"
 
       - name: Lint Dockerfiles (hadolint)
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_docker == 'true')
-        run: nix develop .#ci --command just docker-lint
+        run: |
+          mkdir -p lint-results
+          # Hadolint 2.14.0 advertises SARIF, but that formatter hangs on this repository's
+          # tracked Dockerfile set. Keep the canonical blocking check and summarize only failures.
+          set +e
+          nix develop .#ci --command just docker-lint 2>&1 | tee lint-results/hadolint.log
+          status=${PIPESTATUS[0]}
+          ((status == 0)) && rm lint-results/hadolint.log
+          exit "$status"
 
       - name: Scan changed content for secrets
         if: env.DOCS_ONLY == 'true'
@@ -533,8 +608,10 @@ jobs:
 
       - name: Lint edge worker
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.edge_worker == 'true')
-        run: >
-          pnpm --filter @nohiki/auth-listings-worker exec biome ci --reporter=github src/
+        run: |
+          mkdir -p lint-results
+          pnpm --filter @nohiki/auth-listings-worker exec biome ci --reporter=sarif src/ \
+            > "$GITHUB_WORKSPACE/lint-results/biome-edge-worker.sarif"
 
       - name: Typecheck edge worker
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.edge_worker == 'true')
@@ -644,6 +721,34 @@ jobs:
         run: >
           python3 scripts/ci/src/ci_checks/checks/workflow.py
           verdict container "$GITHUB_OUTPUT"
+
+      - name: Detect code scanning availability
+        id: code-scanning
+        if: always() && matrix.unit == 'frontend' && hashFiles('lint-results/*.sarif') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_PUBLIC: ${{ github.event.repository && github.event.repository.private == false }}
+        run: |
+          available=false
+          if [[ "$REPOSITORY_PUBLIC" == true ]] ||
+            gh api "repos/$GITHUB_REPOSITORY/code-scanning/alerts?per_page=1" >/dev/null 2>&1; then
+            available=true
+          fi
+          echo "available=$available" >> "$GITHUB_OUTPUT"
+
+      - name: Upload lint diagnostics
+        if: always() && steps.code-scanning.outputs.available == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        with:
+          sarif_file: lint-results
+          category: lint/${{ matrix.unit }}
+          wait-for-processing: false
+
+      - name: Summarize lint diagnostics
+        if: always() && matrix.unit == 'frontend'
+        run: >
+          nix develop .#ci --command uv run --no-sync ci-checks lint-report
+          --directory lint-results --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Report worker cost
         if: always()
