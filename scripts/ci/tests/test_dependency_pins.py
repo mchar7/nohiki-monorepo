@@ -752,6 +752,7 @@ def test_checks_jobs_have_bounded_guards() -> None:
     timeouts = {job_name: job.get("timeout-minutes") for job_name, job in _workflow_jobs(_CHECKS).items()}
     assert timeouts == {
         "changes": 5,
+        "label-sync": 1,
         "worker": "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}",
         "playwright-image": "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}",
         "title-policy": "${{ fromJSON(needs.changes.outputs.title_timeout_minutes) }}",
