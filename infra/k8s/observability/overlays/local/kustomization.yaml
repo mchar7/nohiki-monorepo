@@ -62,7 +62,7 @@ patches:
     patch: |
       - op: replace
         path: /spec/datasource/url
-        value: "http://nohiki-tempo-query-frontend.nohiki.svc:3100"
+        value: "http://nohiki-tempo.nohiki.svc:3200"
       - op: replace
         path: /spec/datasource/jsonData/tlsSkipVerify
         value: true
@@ -105,7 +105,7 @@ patches:
         value: true
       - op: replace
         path: /spec/config/exporters/otlp~1tempo/endpoint
-        value: "nohiki-tempo-distributor.nohiki.svc:4317"
+        value: "nohiki-tempo.nohiki.svc:4317"
       - op: replace
         path: /spec/config/exporters/otlp~1tempo/tls/insecure
         value: true

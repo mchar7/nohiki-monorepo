@@ -63,6 +63,11 @@ class JobDataMapper:
         company_name = stored.company_name or ""
         posted_at = stored.posted_timestamp
 
+        # Keep required_skills and canonical_skill_ids index-aligned by filtering once.
+        paired_skills = [
+            (sr.skill_id, sr.skill_name) for sr in stored.skill_requirements if sr.skill_id and sr.skill_name
+        ]
+
         return {
             "title": title,
             "company_name": company_name,
@@ -72,8 +77,8 @@ class JobDataMapper:
             "employment_term": stored.employment_term,
             "seniority_level": stored.seniority_level,
             "language": stored.language,
-            "required_skills": [sr.skill_name for sr in stored.skill_requirements if sr.skill_name],
-            "canonical_skill_ids": [sr.skill_id for sr in stored.skill_requirements],
+            "required_skills": [name for _, name in paired_skills],
+            "canonical_skill_ids": [skill_id for skill_id, _ in paired_skills],
             "min_experience_years": min_exp,
             "max_experience_years": max_exp,
             "compensation": stored.compensation.to_dict() if stored.compensation else None,

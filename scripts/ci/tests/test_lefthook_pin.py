@@ -269,6 +269,11 @@ def _nix_eval(*args: str) -> str:
     return result.stdout.strip()
 
 
+def test_lefthook_disables_auto_install_without_local_overlay() -> None:
+    """Publishing checkouts must not need lefthook-local.yml to stop hook regen."""
+    assert _load_yaml(_LEFTHOOK)["no_auto_install"] is True
+
+
 def test_lefthook_version_is_exact_across_project_metadata() -> None:
     package_version = json.loads(_PACKAGE.read_text(encoding="utf-8"))["devDependencies"]["lefthook"]
     lock = _load_yaml(_PNPM_LOCK)
