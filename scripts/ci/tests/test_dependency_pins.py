@@ -750,16 +750,13 @@ def test_periodic_hygiene_workflows_are_absent() -> None:
 
 def test_checks_jobs_have_bounded_guards() -> None:
     timeouts = {job_name: job.get("timeout-minutes") for job_name, job in _workflow_jobs(_CHECKS).items()}
-    derived = "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
-    for job_name in ("worker",):
-        assert timeouts[job_name] == derived
-
-    invalid = {
-        job_name: timeout
-        for job_name, timeout in timeouts.items()
-        if timeout != derived and (not isinstance(timeout, int) or not 0 < timeout <= 30)
+    assert timeouts == {
+        "changes": 5,
+        "worker": "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}",
+        "playwright-image": "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}",
+        "title-policy": "${{ fromJSON(needs.changes.outputs.title_timeout_minutes) }}",
+        "checks": "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}",
     }
-    assert not invalid, f"checks jobs must have bounded timeout-minutes: {invalid}"
 
 
 def test_codeql_private_phase_trigger_contract() -> None:
