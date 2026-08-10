@@ -36,7 +36,6 @@ _IAC = _ROOT / "infra" / "terraform"
 _IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
 _NETWORK = Path(__file__).parent / "fixtures" / "values.prod.network.yaml"
 
-_FIRST_PARTY_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 _ML_COMPUTE = "nohiki-ml-compute-service"
 _DEVICE_PLUGIN_REPO = "nvcr.io/nvidia/k8s-device-plugin"
 _GPU_RESOURCE = "nvidia.com/gpu"
@@ -57,9 +56,7 @@ def _gpu_image_overlay(tmp_path: Path) -> Path:
     """Explicit digest for the first-party CUDA ml-compute image (build-matrix row)."""
     path = tmp_path / "values.prod.gpu-image.yaml"
     path.write_text(
-        yaml.safe_dump(
-            {"global": {"imageDigests": {f"{_FIRST_PARTY_PREFIX}ml-compute-service-gpu": "sha256:" + "b" * 64}}}
-        ),
+        yaml.safe_dump({"global": {"imageDigests": {"ml-compute-service-gpu": "sha256:" + "b" * 64}}}),
         encoding="utf-8",
     )
     return path
