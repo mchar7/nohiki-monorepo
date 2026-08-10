@@ -129,6 +129,9 @@ affected service or library (`feat(correlation): ...`, `chore(ml-manifest): ...`
 One logical behaviour per commit. Tests live with the implementation they
 exercise.
 
+Early repository history used a placeholder Git identity from a bootstrap
+environment. The root `.mailmap` maps that identity to the author.
+
 ## Merging
 
 Merge pull requests through GitHub's **Create a merge commit** option. Required
