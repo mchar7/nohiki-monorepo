@@ -156,6 +156,34 @@ def test_runner_priority_prefers_idle_tier_1_then_idle_undrained_tier_2_then_onl
     assert (selected.runner_class, selected.selected_name) == ("nohiki-t3", "nohiki-runner-01")
 
 
+def test_runner_routing_handles_all_up_one_down_and_all_down() -> None:
+    fleet = (
+        ("nohiki-runner-01", "nohiki-t3"),
+        ("nohiki-runner-02", "nohiki-t1"),
+        ("nohiki-runner-03", "nohiki-t1"),
+        ("nohiki-runner-04", "nohiki-t1"),
+        ("nohiki-runner-05", "nohiki-t1"),
+        ("nohiki-runner-06", "nohiki-t2"),
+    )
+    all_up = select_runner(_inventory(*(_runner(name, tier) for name, tier in fleet)))
+    assert (all_up.runner_class, all_up.selected_name) == ("nohiki-t1", "nohiki-runner-02")
+
+    one_down = select_runner(
+        _inventory(
+            *(_runner(name, tier, status="offline" if name == "nohiki-runner-02" else "online") for name, tier in fleet)
+        )
+    )
+    assert (one_down.runner_class, one_down.selected_name) == ("nohiki-t1", "nohiki-runner-03")
+
+    all_down = select_runner(_inventory(*(_runner(name, tier, status="offline") for name, tier in fleet)))
+    assert all_down.runner_class == "hosted"
+    assert (all_down.tier_1_state, all_down.tier_2_state, all_down.tier_3_state) == (
+        "offline",
+        "offline",
+        "offline",
+    )
+
+
 def test_powered_off_tier_1_falls_through_without_waiting_and_rerun_takes_a_fresh_snapshot() -> None:
     powered_off = select_runner(
         _inventory(
