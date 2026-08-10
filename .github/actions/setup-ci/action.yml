@@ -265,11 +265,13 @@ runs:
     # whole store, i.e. free everything Nix is willing to free. What survives is exactly what is
     # rooted: the out-link closure and the flake inputs rooted above. Collection runs only on this
     # writer job, and only on an exact-key miss (src/saveImpl.ts:83-102).
+    # Reuse the key captured before workspace installation. Re-evaluating hashFiles here would
+    # include installed package metadata under .venv and produce a key no clean checkout requests.
     - name: Save hosted complete CI environment
       if: inputs.ready-cache == 'true' && inputs.payload != 'node' && inputs.runner-class == 'hosted' && inputs.save-ready-cache == 'true' && (inputs.lookup-only != 'true' || steps.ready-cache-result.outputs.lookup-exact != 'true') && steps.ready-cache-result.outputs.restore-exact != 'true' && steps.workspace-sync.outcome == 'success' && steps.hosted-ready-cache.outputs.primary-key != ''
       uses: nix-community/cache-nix-action/save@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
       with:
-        primary-key: ci-ready-v2-${{ inputs.runner-class }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-${{ hashFiles('.github/actions/setup-ci/action.yml', 'flake.nix', 'flake.lock', 'uv.lock', '**/pyproject.toml', '.python-version', 'scripts/dev/sync-ci-environment.sh') }}
+        primary-key: ${{ steps.hosted-ready-cache.outputs.primary-key }}
         nix: true
         paths: .venv
         gc-max-store-size-linux: "0"

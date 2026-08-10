@@ -541,7 +541,7 @@ def test_complete_environment_uses_class_specific_cache_profiles() -> None:
     hosted_key = str(hosted_restore["with"]["primary-key"])
     persistent_key = str(persistent_restore["with"]["key"])
     assert hosted_key == persistent_key
-    assert hosted_save["with"]["primary-key"] == hosted_key
+    assert hosted_save["with"]["primary-key"] == "${{ steps.hosted-ready-cache.outputs.primary-key }}"
     assert persistent_save["with"]["key"] == "${{ steps.persistent-ready-cache.outputs.cache-primary-key }}"
     assert hosted_key.startswith(
         "ci-ready-v2-${{ inputs.runner-class }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-"
