@@ -85,8 +85,10 @@ This is purely within PydanticAI. When all retries are exhausted, PydanticAI rai
 
 **Tenacity application-level retries** (3 attempts, exponential backoff 2s-30s): `LLMClient.run()`
 wraps the PydanticAI call in a Tenacity `AsyncRetrying` loop. It retries only on
-`LLMTransientError` (HTTP 5xx, momentary null-field responses from the provider). It does NOT
-retry on `LLMValidationError` (schema exhaustion), `LLMProviderResponseError` (permanent routing
+`LLMTransientError` (HTTP 5xx, momentary null-field responses from the provider, and any bare
+PydanticAI `ModelAPIError` that is not a `ModelHTTPError` -- notably the OpenRouter body with
+null `choices` and no error envelope, which PydanticAI classifies as a transient hiccup). It does
+NOT retry on `LLMValidationError` (schema exhaustion), `LLMProviderResponseError` (permanent routing
 failure), or `LLMRateLimitError` (rate limiting). Rate-limit errors propagate up to the Kafka
 consumer, which has its own backoff strategy.
 

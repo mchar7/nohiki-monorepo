@@ -432,14 +432,14 @@ def test_digest_values_reject_mutable_tag_drift(tmp_path: Path, tag: str) -> Non
         _IMAGE_FOUNDATION.cmd_render_values(argparse.Namespace(digests=str(digests)))
 
 
-def test_rendered_values_are_digest_only_and_cover_local_inventory(
+def test_rendered_values_use_bare_digest_keys_and_cover_local_inventory(
     tmp_path: Path,
 ) -> None:
     result = _run("render-values", "--digests", str(_write_digests(tmp_path / "digests.json")))
     assert result.returncode == 0, result.stderr
     values = _mapping(yaml.safe_load(result.stdout))
     digest_map = _mapping_at(_mapping_at(values, "global"), "imageDigests")
-    assert set(digest_map) == {f"{_REGISTRY_NAME}/{name}" for name in _local_names()}
+    assert set(digest_map) == set(_local_names())
     assert set(_strings(list(digest_map.values()))) == {_DIGEST}
     foundation = _mapping_at(values, "imageFoundation")
     assert foundation["schemaVersion"] == 1
@@ -585,7 +585,7 @@ def test_local_helmrelease_consumes_stable_committed_digest_values() -> None:
     digest_map = _mapping_at(global_values, "imageDigests")
     if digest_map:
         assert global_values["imageTag"] == "immutable"
-        assert set(digest_map) == {f"{_REGISTRY_NAME}/{name}" for name in _local_names()}
+        assert set(digest_map) == set(_local_names())
         assert all(re.fullmatch(r"sha256:[0-9a-f]{64}", _string(digest)) for digest in digest_map.values())
         foundation = _mapping_at(values, "imageFoundation")
         assert foundation["schemaVersion"] == 1

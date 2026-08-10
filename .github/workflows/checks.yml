@@ -19,7 +19,7 @@ jobs:
   changes:
     name: Router
     runs-on: ubuntu-24.04
-    timeout-minutes: 3
+    timeout-minutes: 5
     permissions:
       actions: read
       contents: read
@@ -30,7 +30,15 @@ jobs:
       broad: ${{ steps.gate.outputs.broad }}
       worker_units: ${{ steps.gate.outputs.worker_units }}
       broad_unbounded: ${{ steps.gate.outputs.broad_unbounded }}
-      worker_timeout_minutes: ${{ steps.guards.outputs.worker_timeout_minutes }}
+      runner_target: ${{ steps.route.outputs.runner_target }}
+      runner_class: ${{ steps.route.outputs.runner_class }}
+      tier_1_state: ${{ steps.route.outputs.tier_1_state }}
+      tier_2_state: ${{ steps.route.outputs.tier_2_state }}
+      tier_3_state: ${{ steps.route.outputs.tier_3_state }}
+      worker_timeout_minutes: ${{ steps.route.outputs.worker_timeout_minutes }}
+      playwright_timeout_minutes: ${{ steps.route.outputs.playwright_timeout_minutes }}
+      title_timeout_minutes: ${{ steps.route.outputs.title_timeout_minutes }}
+      checks_timeout_minutes: ${{ steps.route.outputs.checks_timeout_minutes }}
       protected_main_smoke: ${{ steps.gate.outputs.protected_main_smoke }}
       full: ${{ steps.gate.outputs.full }}
       nix: ${{ steps.gate.outputs.nix }}
@@ -148,13 +156,15 @@ jobs:
             --base-sha "$PR_BASE_SHA" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Derive worker guard
-        id: guards
+      # RUNNER_INVENTORY_TOKEN is a fine-grained PAT with repository Administration: read.
+      - name: Select runner route
+        id: route
         env:
-          COMMIT_CLASS: ${{ steps.gate.outputs.commit_class }}
+          GH_TOKEN: ${{ secrets.RUNNER_INVENTORY_TOKEN }}
+          TIER_2_DRAIN: ${{ vars.NOHIKI_T2_DRAIN }}
         run: >
           python3 scripts/ci/src/ci_checks/checks/workflow.py
-          guard "$COMMIT_CLASS" "$GITHUB_OUTPUT"
+          route "$GITHUB_REPOSITORY" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY" "$TIER_2_DRAIN"
       - name: Write Checks attestation
         if: github.event_name == 'pull_request' && github.event.action != 'edited'
         env:
@@ -256,7 +266,7 @@ jobs:
     name: Scoped worker (${{ matrix.unit }})
     needs: [changes]
     if: (needs.changes.outputs.standard == 'true' || needs.changes.outputs.broad == 'true') && needs.changes.outputs.title_only != 'true'
-    runs-on: [self-hosted, linux, x64, nohiki]
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_target) }}
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     strategy:
       # A failing unit must not cancel its siblings: each one is an independent verdict the
@@ -323,6 +333,7 @@ jobs:
           # Python and frontend select different cache payloads, so each is its payload's stable
           # writer while the broad-or-push trust boundary remains unchanged.
           payload: ${{ matrix.unit == 'python' && 'python' || 'full' }}
+          runner-class: ${{ needs.changes.outputs.runner_class }}
           save-ready-cache: ${{ (matrix.unit == 'python' || matrix.unit == 'frontend') && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}
           node: ${{ env.NODE_SETUP_SELECTED }}
           full-node-workspace: ${{ needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true' }}
@@ -656,6 +667,10 @@ jobs:
               AFFECTED_PACKAGES: ${{ needs.changes.outputs.affected_packages }}
             run: nix develop .#ci --command just hygiene-build-backend-strict "$AFFECTED_PACKAGES"
 
+      - name: Check import boundaries
+        if: matrix.unit == 'python' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
+        run: nix develop .#ci --command just hygiene-imports
+
       - parallel:
           - name: Check API schema freshness
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.api_schema_freshness == 'true')
@@ -791,8 +806,8 @@ jobs:
     name: Playwright runner image
     needs: [changes]
     if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true')
-    runs-on: [self-hosted, linux, x64, nohiki]
-    timeout-minutes: 30
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_target) }}
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}
     permissions:
       contents: read
     steps:
@@ -852,8 +867,8 @@ jobs:
     name: Title policy
     needs: [changes]
     if: needs.changes.outputs.title_only == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_target) }}
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.title_timeout_minutes) }}
     permissions:
       contents: read
     steps:
@@ -879,6 +894,7 @@ jobs:
           node: "true"
           ready-cache: "true"
           payload: node
+          runner-class: ${{ needs.changes.outputs.runner_class }}
 
       - name: Mark unique work start
         id: unique
@@ -907,8 +923,8 @@ jobs:
       - worker
       - playwright-image
       - title-policy
-    runs-on: ubuntu-24.04
-    timeout-minutes: 3
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_target || '"ubuntu-24.04"') }}
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}
     permissions:
       actions: read
       contents: read

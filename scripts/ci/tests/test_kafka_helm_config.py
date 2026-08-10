@@ -20,7 +20,6 @@ from ci_checks.core.image_inventory import load_inventory
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm"
 _SECRET_NAME = "kafka-sasl-credentials"
-_FIRST_PARTY_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 _TLS_ENV_SUFFIXES = (
     "KAFKA__SECURITY__TLS__CA_LOCATION",
     "KAFKA__SECURITY__TLS__CERTIFICATE_LOCATION",
@@ -63,9 +62,7 @@ _WAL_CONFIG = {
 
 
 def _digest_values(tmp_path: Path) -> Path:
-    digests = {
-        f"{_FIRST_PARTY_PREFIX}{name}": f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)
-    }
+    digests = {name: f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)}
     path = tmp_path / "values.prod.digests.yaml"
     path.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
     return path

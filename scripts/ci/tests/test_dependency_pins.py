@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -494,32 +495,58 @@ def test_root_lint_group_is_the_minimal_ruff_environment() -> None:
     assert lint_requirements == workspace_ruff
 
 
-def test_complete_environment_uses_one_reconciled_cache_entry_per_payload() -> None:
+def test_complete_environment_uses_class_specific_cache_profiles() -> None:
+    action = load_mapping(_SETUP_CI)
+    inputs = cast(dict[str, object], action["inputs"])
+    runner_class = cast(dict[str, object], inputs["runner-class"])
+    assert runner_class["required"] is True
     steps = _setup_steps()
     by_name = {step.get("name"): step for step in steps}
-    restore = by_name["Restore complete CI environment"]
+    hosted_lookup = by_name["Look up hosted complete CI environment"]
+    persistent_lookup = by_name["Look up persistent CI virtual environment"]
+    hosted_restore = by_name["Restore hosted complete CI environment"]
+    persistent_restore = by_name["Restore persistent CI virtual environment"]
+    cache_result = by_name["Resolve complete CI cache result"]
     sync = by_name["Install workspace (CI closure)"]
     node_install = by_name["Install Node dependencies"]
-    save = by_name["Save complete CI environment"]
+    hosted_save = by_name["Save hosted complete CI environment"]
+    persistent_save = by_name["Save persistent CI virtual environment"]
 
-    restore_action, restore_separator, restore_ref = str(restore["uses"]).partition("@")
-    save_action, save_separator, save_ref = str(save["uses"]).partition("@")
-    assert (restore_action, save_action) == (
+    hosted_restore_action, hosted_separator, hosted_restore_ref = str(hosted_restore["uses"]).partition("@")
+    hosted_save_action, hosted_save_separator, hosted_save_ref = str(hosted_save["uses"]).partition("@")
+    assert (hosted_restore_action, hosted_save_action) == (
         "nix-community/cache-nix-action/restore",
         "nix-community/cache-nix-action/save",
     )
-    assert restore_separator == save_separator == "@"
-    assert restore_ref == save_ref
-    # Two cache families, with the Python family split by payload. Python entries turn over on
-    # flake/uv inputs and Node entries on pnpm inputs, so lanes restore only what they can invalidate.
-    # Every input must still key exactly one entry: an input in neither goes stale unnoticed,
-    # and one in both reinstates the coupling the split exists to remove.
-    node_restore = by_name["Restore Node modules"]
-    key = str(restore["with"]["primary-key"])
-    node_key = str(node_restore["with"]["key"])
-    payload_key_component = "${{ inputs.payload }}"
-    assert payload_key_component in key
-    assert payload_key_component in str(save["with"]["primary-key"])
+    assert hosted_separator == hosted_save_separator == "@"
+    assert hosted_restore_ref == hosted_save_ref
+    assert hosted_restore["with"]["nix"] is True
+    assert hosted_save["with"]["nix"] is True
+    assert hosted_restore["with"]["paths"] == hosted_save["with"]["paths"] == ".venv"
+
+    persistent_restore_action, persistent_separator, persistent_restore_ref = str(persistent_restore["uses"]).partition(
+        "@"
+    )
+    persistent_save_action, persistent_save_separator, persistent_save_ref = str(persistent_save["uses"]).partition("@")
+    assert (persistent_restore_action, persistent_save_action) == (
+        "actions/cache/restore",
+        "actions/cache/save",
+    )
+    assert persistent_separator == persistent_save_separator == "@"
+    assert persistent_restore_ref == persistent_save_ref
+    assert persistent_restore["with"]["path"] == persistent_save["with"]["path"] == ".venv"
+    assert "nix" not in persistent_restore["with"]
+    assert "nix" not in persistent_save["with"]
+
+    hosted_key = str(hosted_restore["with"]["primary-key"])
+    persistent_key = str(persistent_restore["with"]["key"])
+    assert hosted_key == persistent_key
+    assert hosted_save["with"]["primary-key"] == "${{ steps.hosted-ready-cache.outputs.primary-key }}"
+    assert persistent_save["with"]["key"] == "${{ steps.persistent-ready-cache.outputs.cache-primary-key }}"
+    assert hosted_key.startswith(
+        "ci-ready-v2-${{ inputs.runner-class }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-"
+    )
+    assert "${{ inputs.payload }}" in hosted_key
     python_identity = (
         "flake.nix",
         "flake.lock",
@@ -528,90 +555,88 @@ def test_complete_environment_uses_one_reconciled_cache_entry_per_payload() -> N
         ".python-version",
         "scripts/dev/sync-ci-environment.sh",
     )
-    node_identity = (
+    node_restore = by_name["Restore Node modules"]
+    node_key = str(node_restore["with"]["key"])
+    for identity_input in python_identity:
+        assert identity_input in hosted_key, identity_input
+        assert identity_input not in node_key, identity_input
+    for identity_input in (
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
         "package.json",
         "typescript/**/package.json",
-    )
-    for identity_input in python_identity:
-        assert identity_input in key, identity_input
-        assert identity_input not in node_key, identity_input
-    for identity_input in node_identity:
+    ):
         assert identity_input in node_key, identity_input
-        assert identity_input not in key, identity_input
-    # The composite's own text keys both: a change to either restore invalidates what it restores.
-    assert ".github/actions/setup-ci/action.yml" in key
+        assert identity_input not in hosted_key, identity_input
+    assert ".github/actions/setup-ci/action.yml" in hosted_key
     assert ".github/actions/setup-ci/action.yml" in node_key
-    assert "github.sha" not in key
+    assert "github.sha" not in hosted_key
     assert "github.sha" not in node_key
-    lookup = by_name["Look up complete CI environment"]
-    payload_prefix = "ci-ready-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-"
-    assert restore["with"]["restore-prefixes-first-match"] == payload_prefix
-    assert save["with"]["purge-prefixes"] == payload_prefix
-    assert lookup["uses"] == restore["uses"]
-    assert lookup["with"]["primary-key"] == restore["with"]["primary-key"]
-    assert lookup["with"]["paths"] == restore["with"]["paths"]
-    assert lookup["with"]["lookup-only"] is True
 
-    # Each provisioning step is gated on the miss of the entry that would have supplied it, so
-    # a hit on one entry never suppresses work the other entry failed to deliver.
-    python_miss = "steps.ready-cache.outputs.hit-primary-key != 'true'"
+    payload_prefix = "ci-ready-v2-${{ inputs.runner-class }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-"
+    assert hosted_restore["with"]["restore-prefixes-first-match"] == payload_prefix
+    assert hosted_save["with"]["purge-prefixes"] == payload_prefix
+    assert str(persistent_restore["with"]["restore-keys"]).strip() == payload_prefix
+    assert hosted_lookup["uses"] == hosted_restore["uses"]
+    assert hosted_lookup["with"]["primary-key"] == hosted_key
+    assert hosted_lookup["with"]["lookup-only"] is True
+    assert persistent_lookup["uses"] == persistent_restore["uses"]
+    assert persistent_lookup["with"]["key"] == persistent_key
+    assert persistent_lookup["with"]["lookup-only"] is True
+
+    for step in (hosted_lookup, hosted_restore, hosted_save):
+        assert "inputs.runner-class == 'hosted'" in str(step["if"])
+    for step in (persistent_lookup, persistent_restore, persistent_save):
+        assert "inputs.runner-class != 'hosted'" in str(step["if"])
+    install_nix = by_name["Install Nix"]
+    assert "inputs.runner-class == 'hosted'" in str(install_nix["if"])
+    rooting = by_name["Root the CI shell against store collection"]
+    assert "inputs.runner-class == 'hosted'" in str(rooting["if"])
+
+    profile_miss = "steps.ready-cache-result.outputs.restore-exact != 'true'"
     node_miss = "steps.node-modules-cache.outputs.cache-hit != 'true'"
-    assert python_miss in str(sync["if"])
-    assert python_miss in str(save["if"])
+    assert profile_miss in str(sync["if"])
+    assert profile_miss in str(hosted_save["if"])
+    assert profile_miss in str(persistent_save["if"])
     assert node_miss in str(node_install["if"])
     assert node_miss in str(by_name["Save Node modules"]["if"])
+    assert cache_result["env"]["PERSISTENT_KEY"] == ("${{ steps.persistent-ready-cache.outputs.cache-matched-key }}")
 
-    # A restored store still needs its bin directories on PATH: the consumers call the shell's
-    # tools bare, and no cache entry carries a PATH. So the export runs on a hit as well.
     path_export = [step for step in steps if "PATH=%s" in str(step.get("run", ""))]
     assert len(path_export) == 1
-    assert python_miss not in str(path_export[0]["if"])
+    assert profile_miss not in str(path_export[0]["if"])
     assert '"$(nix develop .#ci --command printenv PATH)" >> "$GITHUB_ENV"' in str(path_export[0]["run"])
 
-    # The devShell out-link is what store collection is allowed to keep, so only the writer
-    # needs it, and only when it is about to build and save a store.
-    rooting = [step for step in steps if "--out-link" in str(step.get("run", ""))]
-    assert len(rooting) == 1
-    assert 'nix build .#devShells.x86_64-linux.ci --out-link "$RUNNER_TEMP/ci-shell"' in str(rooting[0]["run"])
-    assert "inputs.save-ready-cache == 'true'" in str(rooting[0]["if"])
-    assert python_miss in str(rooting[0]["if"])
+    rooting_steps = [step for step in steps if "--out-link" in str(step.get("run", ""))]
+    assert rooting_steps == [rooting]
+    assert 'nix build .#devShells.x86_64-linux.ci --out-link "$RUNNER_TEMP/ci-shell"' in str(rooting["run"])
+    assert "inputs.save-ready-cache == 'true'" in str(rooting["if"])
+    assert profile_miss in str(rooting["if"])
     sync_command = str(sync["run"])
     assert "nix develop .#ci --command scripts/dev/sync-ci-environment.sh" in sync_command
-    # The shared entry is restorable by any pull request from its base branch and no credential
-    # is needed for that, so the closure it stores must hold no private source and the step that
-    # builds it must hold no credential. Only `skylos` is private; its 32 public dependencies stay
-    # in the shared closure so the private step has nothing left to fetch but the fork itself.
     assert "GIT_SSH_COMMAND" not in sync_command
     assert "SKYLOS" not in str(sync.get("env", {}))
     assert "--no-install-package skylos" in _read_text(_SYNC_CI_ENVIRONMENT)
     assert "--no-install-package" not in _read_text(_SYNC_CI_DEADCODE)
     skylos_install = by_name["Install Skylos from the pinned private fork"]
-    assert steps.index(skylos_install) > steps.index(save)
+    assert steps.index(skylos_install) > max(steps.index(hosted_save), steps.index(persistent_save))
     assert skylos_install["if"] == "inputs.skylos-cache == 'true'"
     skylos_command = str(skylos_install["run"])
     assert "nix develop .#ci --command scripts/dev/sync-ci-deadcode.sh" in skylos_command
     assert "trap 'rm -f" in skylos_command
     assert "GIT_SSH_COMMAND=" in skylos_command
     assert "GITHUB_ENV" not in skylos_command
-    # A lane selected for the scan with no key configured must fail here, not at scanner spawn.
     assert 'test -n "$SKYLOS_DEPLOY_KEY"' in skylos_command
     secret_steps = [step for step in steps if "SKYLOS_DEPLOY_KEY" in str(step.get("env", {}))]
     assert secret_steps == [skylos_install]
     assert skylos_install["env"] == {"SKYLOS_DEPLOY_KEY": "${{ inputs.skylos-deploy-key }}"}
-    assert all(
-        "$RUNNER_TEMP/skylos_key" not in str(step.get("run", "")) for step in steps if step is not skylos_install
-    )
+
     node_save = by_name["Save Node modules"]
-    # Each entry is saved on its own producer succeeding. Coupling them would let a failed pnpm
-    # install withhold a perfectly good store, which is what the split exists to stop.
-    assert save["with"]["primary-key"] == restore["with"]["primary-key"]
-    assert "steps.workspace-sync.outcome == 'success'" in str(save["if"])
-    assert "steps.node-install.outcome == 'success'" not in str(save["if"])
+    for save in (hosted_save, persistent_save):
+        assert "steps.workspace-sync.outcome == 'success'" in str(save["if"])
+        assert "steps.node-install.outcome == 'success'" not in str(save["if"])
     assert "steps.node-install.outcome == 'success'" in str(node_save["if"])
     assert "steps.workspace-sync.outcome == 'success'" not in str(node_save["if"])
-    assert save["with"]["paths"] == restore["with"]["paths"]
     assert node_save["with"]["key"] == "${{ steps.node-modules-cache.outputs.cache-primary-key }}"
     assert node_save["with"]["path"] == node_restore["with"]["path"]
 
@@ -619,6 +644,129 @@ def test_complete_environment_uses_one_reconciled_cache_entry_per_payload() -> N
     assert "Cache uv downloads" not in names
     assert "Restore workspace virtual environment" not in names
     assert "Cache lint virtual environment" not in names
+
+
+def test_complete_environment_cache_scopes_are_derived_per_runner_class() -> None:
+    by_name = {step.get("name"): step for step in _setup_steps()}
+    hosted_key = str(by_name["Look up hosted complete CI environment"]["with"]["primary-key"])
+    persistent_key = str(by_name["Look up persistent CI virtual environment"]["with"]["key"])
+    assert hosted_key == persistent_key
+
+    scope_template, hash_separator, _ = hosted_key.partition("${{ hashFiles(")
+    assert hash_separator
+    runner_class_expression = "${{ inputs.runner-class }}"
+    assert scope_template.count(runner_class_expression) == 1
+
+    runner_classes = ("nohiki-t1", "nohiki-t2", "nohiki-t3", "hosted")
+    scopes = {
+        runner_class: scope_template.replace(runner_class_expression, runner_class) for runner_class in runner_classes
+    }
+    scope_suffix = "${{ runner.os }}-${{ runner.arch }}-${{ inputs.payload }}-"
+    assert scopes == {runner_class: f"ci-ready-v2-{runner_class}-{scope_suffix}" for runner_class in runner_classes}
+
+    unknown_scope = scope_template.replace(runner_class_expression, "UNKNOWN")
+    assert unknown_scope == f"ci-ready-v2-UNKNOWN-{scope_suffix}"
+    assert unknown_scope not in scopes.values()
+    assert len({*scopes.values(), unknown_scope}) == len(runner_classes) + 1
+
+
+def test_complete_environment_cache_profiles_route_each_runner_class() -> None:
+    by_name = {step.get("name"): step for step in _setup_steps()}
+    step_names_by_profile = {
+        "hosted": (
+            "Look up hosted complete CI environment",
+            "Restore hosted complete CI environment",
+            "Save hosted complete CI environment",
+        ),
+        "persistent": (
+            "Look up persistent CI virtual environment",
+            "Restore persistent CI virtual environment",
+            "Save persistent CI virtual environment",
+        ),
+    }
+    comparison_pattern = re.compile(r"inputs\.runner-class (?P<operator>==|!=) '(?P<value>[^']+)'")
+    selectors: dict[str, tuple[str, str]] = {}
+    for profile, step_names in step_names_by_profile.items():
+        comparisons = {
+            (match["operator"], match["value"])
+            for step_name in step_names
+            if (match := comparison_pattern.search(str(by_name[step_name]["if"]))) is not None
+        }
+        assert len(comparisons) == 1
+        selectors[profile] = comparisons.pop()
+
+    runner_classes = ("nohiki-t1", "nohiki-t2", "nohiki-t3", "hosted", "UNKNOWN")
+    selected_by_class = {
+        runner_class: tuple(
+            profile for profile, (operator, value) in selectors.items() if (runner_class == value) == (operator == "==")
+        )
+        for runner_class in runner_classes
+    }
+    assert selected_by_class == {
+        "nohiki-t1": ("persistent",),
+        "nohiki-t2": ("persistent",),
+        "nohiki-t3": ("persistent",),
+        "hosted": ("hosted",),
+        "UNKNOWN": ("persistent",),
+    }
+
+
+def test_complete_environment_cache_result_normalizes_both_profiles(tmp_path: Path) -> None:
+    step = next(step for step in _setup_steps() if step.get("name") == "Resolve complete CI cache result")
+    defaults = {
+        "LOOKUP_EXACT": "false",
+        "RESTORE_EXACT": "false",
+        "HOSTED_PARTIAL": "",
+        "PERSISTENT_KEY": "",
+        "LOOKUP_KEY": "",
+        "RESTORED_KEY": "",
+    }
+    cases = (
+        (
+            {"LOOKUP_EXACT": "true", "LOOKUP_KEY": "hosted-exact"},
+            {
+                "lookup-exact": "true",
+                "restore-exact": "false",
+                "exact": "true",
+                "partial": "false",
+                "key": "hosted-exact",
+            },
+        ),
+        (
+            {"PERSISTENT_KEY": "persistent-prefix", "RESTORED_KEY": "persistent-prefix"},
+            {
+                "lookup-exact": "false",
+                "restore-exact": "false",
+                "exact": "false",
+                "partial": "true",
+                "key": "persistent-prefix",
+            },
+        ),
+        (
+            {"RESTORE_EXACT": "true", "PERSISTENT_KEY": "persistent-exact", "RESTORED_KEY": "persistent-exact"},
+            {
+                "lookup-exact": "false",
+                "restore-exact": "true",
+                "exact": "true",
+                "partial": "false",
+                "key": "persistent-exact",
+            },
+        ),
+        (
+            {},
+            {"lookup-exact": "false", "restore-exact": "false", "exact": "false", "partial": "false", "key": ""},
+        ),
+    )
+    for index, (overrides, expected) in enumerate(cases):
+        output = tmp_path / f"cache-result-{index}"
+        subprocess.run(
+            ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", str(step["run"])],
+            cwd=_ROOT,
+            env=os.environ | defaults | overrides | {"GITHUB_OUTPUT": str(output)},
+            check=True,
+        )
+        actual = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+        assert actual == expected
 
 
 def test_setup_cache_telemetry_uses_restore_outputs_and_matched_keys() -> None:
@@ -638,8 +786,9 @@ def test_setup_cache_telemetry_uses_restore_outputs_and_matched_keys() -> None:
     assert pnpm_save["with"]["key"] == "${{ steps.pnpm-cache.outputs.cache-primary-key }}"
 
     env = telemetry["env"]
-    assert env["READY_PARTIAL"] == "${{ steps.ready-cache.outputs.hit-first-match }}"
-    assert "outputs.restored-key" in str(env["READY_KEY"])
+    assert env["READY_EXACT"] == "${{ steps.ready-cache-result.outputs.exact }}"
+    assert env["READY_PARTIAL"] == "${{ steps.ready-cache-result.outputs.partial }}"
+    assert env["READY_KEY"] == "${{ steps.ready-cache-result.outputs.key }}"
     assert env["PNPM_KEY"] == "${{ steps.pnpm-cache.outputs.cache-matched-key }}"
     assert env["SKYLOS_KEY"] == "${{ steps.skylos-cache.outputs.cache-matched-key }}"
     command = str(telemetry["run"])
@@ -750,16 +899,14 @@ def test_periodic_hygiene_workflows_are_absent() -> None:
 
 def test_checks_jobs_have_bounded_guards() -> None:
     timeouts = {job_name: job.get("timeout-minutes") for job_name, job in _workflow_jobs(_CHECKS).items()}
-    derived = "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
-    for job_name in ("worker",):
-        assert timeouts[job_name] == derived
-
-    invalid = {
-        job_name: timeout
-        for job_name, timeout in timeouts.items()
-        if timeout != derived and (not isinstance(timeout, int) or not 0 < timeout <= 30)
+    assert timeouts == {
+        "changes": 5,
+        "worker": "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}",
+        "playwright-image": "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}",
+        "title-policy": "${{ fromJSON(needs.changes.outputs.title_timeout_minutes) }}",
+        "checks": "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}",
+        "label-sync": 1,
     }
-    assert not invalid, f"checks jobs must have bounded timeout-minutes: {invalid}"
 
 
 def test_codeql_private_phase_trigger_contract() -> None:
@@ -896,6 +1043,7 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     worker_setup = next(step for step in _steps(jobs["worker"]) if step.get("name") == "Set up selected environments")
     assert worker_setup["uses"] == "./.github/actions/setup-ci"
     assert worker_setup["with"]["node"] == "${{ env.NODE_SETUP_SELECTED }}"
+    assert worker_setup["with"]["runner-class"] == "${{ needs.changes.outputs.runner_class }}"
     uv_version_file = "toolchain/uv.toml"
     python_version = _images(_SCAFFOLD_DOCKERFILE, "public.ecr.aws/docker/library/python")[0]["version"]
     assert setup_uv["with"] == {

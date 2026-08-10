@@ -34,7 +34,7 @@ Command: `qdrant-init init --manifest ... --qdrant-url ... --wait`
 {{- if and $imgRegistry $imgOwner $imgRepoName }}
   {{- $repository = printf "%s/%s/%s/%s" $imgRegistry $imgOwner $imgRepoName $imgName }}
 {{- end }}
-{{- $digest := index ($glob.imageDigests | default dict) $repository | default "" }}
+{{- $digest := index ($glob.imageDigests | default dict) $imgName | default "" }}
 {{- $imageRef := printf "%s:%s" $repository $imgTag }}
 {{- if $digest }}
   {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) }}

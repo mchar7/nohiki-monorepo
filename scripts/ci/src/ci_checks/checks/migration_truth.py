@@ -313,7 +313,7 @@ def _canonical_image(values: dict[str, object], service: str) -> tuple[str, str]
     if not isinstance(digests, dict):
         msg = "global.imageDigests must be a mapping"
         raise MigrationTruthError(msg)
-    digest = digests.get(repository)
+    digest = digests.get(name)
     if digest:
         if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
             msg = f"invalid digest for image {repository}"
@@ -331,28 +331,14 @@ def _canonical_image(values: dict[str, object], service: str) -> tuple[str, str]
 
 def _validation_digests(values: dict[str, object], inventory: MigrationInventory, repo_root: Path) -> dict[str, str]:
     nonproduction = _merge_values(values, {"global": {"environment": "validation"}})
-    repositories = {_canonical_image(nonproduction, entry.service)[0] for entry in inventory.entries}
+    names = {_canonical_image(nonproduction, entry.service)[0].rsplit("/", 1)[-1] for entry in inventory.entries}
     try:
         image_names = load_inventory(repo_root / "scripts/ci/image_inventory.json", repo_root).names
     except InventoryError as exc:
         msg = f"canonical image inventory is unusable: {exc}"
         raise MigrationTruthError(msg) from exc
-    global_values = nonproduction.get("global", {})
-    global_image = global_values.get("nohikiImage", {}) if isinstance(global_values, dict) else {}
-    if not isinstance(global_image, dict):
-        msg = "invalid canonical image registry values"
-        raise MigrationTruthError(msg)
-    registry = global_image.get("registry", "")
-    owner = global_image.get("owner", "")
-    repository_name = global_image.get("repositoryName", "")
-    for name in image_names:
-        repository = name
-        if registry and owner and repository_name:
-            repository = f"{registry}/{owner}/{repository_name}/{name}"
-        elif registry:
-            repository = f"{registry}/{name}"
-        repositories.add(repository)
-    return {repository: f"sha256:{index:064x}" for index, repository in enumerate(sorted(repositories), start=1)}
+    names.update(image_names)
+    return {name: f"sha256:{index:064x}" for index, name in enumerate(sorted(names), start=1)}
 
 
 def _render_environment_jobs(

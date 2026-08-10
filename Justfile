@@ -131,7 +131,7 @@ typecheck-job job:
 # Code hygiene
 
 # Run all strict hygiene checks
-hygiene: hygiene-deps hygiene-arch hygiene-deadcode-strict hygiene-fixtures-strict hygiene-build-backend-strict
+hygiene: hygiene-deps hygiene-arch hygiene-imports hygiene-deadcode-strict hygiene-fixtures-strict hygiene-build-backend-strict
 
 hygiene-deps packages="ALL":
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope all --packages '{{ packages }}' --ci
@@ -147,6 +147,12 @@ hygiene-arch:
 
 hygiene-arch-report:
     uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --no-git-ignore backend/
+
+# Enforce the import-linter boundary contracts declared in [tool.importlinter].
+# --no-cache keeps worktrees clean: the backend graph builds in ~0.1s, so the on-disk
+# cache buys nothing and would leave an untracked .import_linter_cache behind.
+hygiene-imports:
+    {{ env_lock }} shared venv -- uv run --no-sync lint-imports --no-cache
 
 hygiene-deadcode:
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks --group deadcode ci-checks deadcode --scope all --ci

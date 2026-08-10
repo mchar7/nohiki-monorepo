@@ -23,7 +23,7 @@ from pydantic_ai import (
     StructuredDict,
     UsageLimits,
 )
-from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
@@ -603,6 +603,14 @@ class LLMClient:
         - All other ``UnexpectedModelBehavior`` → ``LLMTransientError`` so Tenacity
           can retry genuine transient provider failures (e.g., momentary null fields).
 
+        A bare ``ModelAPIError`` needs its own branch: it is the PARENT of
+        ``ModelHTTPError`` and a sibling of ``UnexpectedModelBehavior``, so neither of
+        those clauses catches it. PydanticAI raises it for a provider body that carries
+        no completion and no error envelope, which it documents as a transient hiccup
+        (``models/openrouter.py`` ``_raise_for_no_completion``); a genuine
+        model-not-found still arrives through the error envelope as a 404
+        ``ModelHTTPError``.
+
         Args:
             agent: The PydanticAI agent to execute.
             prompt: User prompt string.
@@ -615,8 +623,8 @@ class LLMClient:
 
         Raises:
             LLMRateLimitError: On ``ModelHTTPError`` with status 429.
-            LLMTransientError: On ``ModelHTTPError`` with 5xx status, or other
-                transient ``UnexpectedModelBehavior``.
+            LLMTransientError: On ``ModelHTTPError`` with 5xx status, on a bare
+                ``ModelAPIError``, or on other transient ``UnexpectedModelBehavior``.
             LLMProviderResponseError: On ``ModelHTTPError`` with 4xx (non-429) status,
                 or ``UnexpectedModelBehavior`` matching the OpenRouter null-field pattern.
             LLMValidationError: When PydanticAI's validation retries are exhausted.
@@ -633,9 +641,11 @@ class LLMClient:
         except ModelHTTPError as exc:
             if exc.status_code in HTTP_RETRYABLE_STATUS_CODES:
                 if exc.status_code == HTTP_STATUS_RATE_LIMIT:
-                    raise LLMRateLimitError(str(exc)) from exc
+                    raise LLMRateLimitError(str(exc), retry_after=exc.retry_after) from exc
                 raise LLMTransientError(str(exc)) from exc
             raise LLMProviderResponseError(str(exc)) from exc
+        except ModelAPIError as exc:
+            raise LLMTransientError(str(exc)) from exc
         except UnexpectedModelBehavior as exc:
             exc_str = str(exc)
             if VALIDATION_RETRY_EXHAUSTED_PREFIX in exc_str:
