@@ -128,6 +128,13 @@ def test_docker_marker_selects_only_packages_that_contain_matching_tests() -> No
     assert all(package.requires_docker_tests for package in packages)
 
 
+def test_longest_prefix_owner_prefers_most_specific_collection_root() -> None:
+    owners = {"tests": "root", "tests.integration": "integration"}
+
+    assert test_checks._longest_prefix_owner("tests.integration.test_cdc", owners, ".") == "integration"
+    assert test_checks._longest_prefix_owner("tests.unit.test_model", owners, ".") == "root"
+
+
 def test_unconventional_collection_roots_are_selected_and_attributed(tmp_path: Path) -> None:
     """The repo-root integration package must reach the unit lane under its own testpaths.
 
