@@ -34,6 +34,7 @@ def test_smoke_production_frontend_container_uses_complete_ci_environment() -> N
     assert setup["uses"] == "./.github/actions/setup-ci"
     assert setup["with"]["ready-cache"] == "${{ env.NIX_SETUP_SELECTED }}"
     assert setup["with"]["payload"] == "${{ matrix.unit == 'python' && 'python' || 'full' }}"
+    assert setup["with"]["runner-class"] == "${{ needs.changes.outputs.runner_class }}"
     commands = [step["run"] for step in worker_steps if isinstance(step, dict) and isinstance(step.get("run"), str)]
     assert all("uv sync" not in command for command in commands)
 

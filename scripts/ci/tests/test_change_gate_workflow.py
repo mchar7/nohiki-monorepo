@@ -642,12 +642,15 @@ def test_no_job_carries_an_expression_for_a_class_it_cannot_run_under() -> None:
         assert not _unreachable_class_expressions(job), job_id
 
 
-def test_ready_cache_save_runs_on_every_event_behind_a_key_guard() -> None:
+def test_ready_cache_saves_run_on_every_event_behind_profile_key_guards() -> None:
     steps = mapping_sequence_at(load_mapping(_SETUP_CI), "runs", "steps")
-    save = next(step for step in steps if step.get("name") == "Save complete CI environment")
-    condition = str(save["if"])
-    assert "github.event_name" not in condition
-    assert "steps.ready-cache.outputs.primary-key != ''" in condition
+    by_name = {step.get("name"): step for step in steps}
+    hosted = by_name["Save hosted complete CI environment"]
+    persistent = by_name["Save persistent CI virtual environment"]
+    for save in (hosted, persistent):
+        assert "github.event_name" not in str(save["if"])
+    assert "steps.hosted-ready-cache.outputs.primary-key != ''" in str(hosted["if"])
+    assert "steps.persistent-ready-cache.outputs.cache-primary-key != ''" in str(persistent["if"])
 
 
 def test_python_test_lane_uses_gate_scope_once_per_class() -> None:
@@ -919,7 +922,12 @@ def test_title_edits_have_independent_concurrency_and_check_identities() -> None
     title_setup = next(
         step for step in _steps(jobs["title-policy"]) if step.get("name") == "Set up commit policy environment"
     )
-    assert title_setup["with"] == {"node": "true", "ready-cache": "true", "payload": "node"}
+    assert title_setup["with"] == {
+        "node": "true",
+        "ready-cache": "true",
+        "payload": "node",
+        "runner-class": "${{ needs.changes.outputs.runner_class }}",
+    }
     assert substantive["name"] == "Checks"
     # Checks is a required context on protected main, so suppressing it on an edited event would
     # leave the head without its required conclusion and let a title-only pass stand for validation.
