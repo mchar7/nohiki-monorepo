@@ -6,13 +6,10 @@ These tests verify that:
 3. Events are routed to the correct topic based on the `type` field
 4. Payload is correctly extracted and preserved
 
-Prerequisites:
-- PostgreSQL with wal_level=logical
-- Kafka Connect with Debezium connector running
-- Outbox schema and table created
+Prerequisite: a running container runtime that Testcontainers can access.
 
 Run with:
-    pytest tests/integration/test_debezium_cdc.py -v
+    pytest -m requires_docker tests/integration/test_debezium_cdc.py -v
 """
 
 from __future__ import annotations
