@@ -624,9 +624,21 @@ class TestLLMClientRun:
         ):
             await client.run(agent, "test", deps=SampleContext(data="test"))
 
+    @pytest.mark.parametrize(
+        ("headers", "expected_retry_after"),
+        [
+            pytest.param({"retry-after": "12"}, 12.0, id="with-retry-after"),
+            pytest.param(None, None, id="without-retry-after"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_model_http_error_429_raises_rate_limit_error(self, llm_settings: LLMSettings) -> None:
-        """A classified 429 surfaces after one application attempt; transport owns retries."""
+    async def test_model_http_error_429_raises_rate_limit_error(
+        self,
+        llm_settings: LLMSettings,
+        headers: dict[str, str] | None,
+        expected_retry_after: float | None,
+    ) -> None:
+        """A classified 429 surfaces its Retry-After hint without an application retry."""
         from nohiki_llm_client.exceptions import LLMRateLimitError
         from pydantic_ai.exceptions import ModelHTTPError
 
@@ -637,13 +649,19 @@ class TestLLMClientRun:
             Agent(model, deps_type=SampleContext, output_type=SampleOutput),
         )
 
-        http_err = ModelHTTPError(status_code=429, model_name="test/model", body="Rate limit exceeded")
+        http_err = ModelHTTPError(
+            status_code=429,
+            model_name="test/model",
+            body="Rate limit exceeded",
+            headers=headers,
+        )
         with (
             patch.object(agent, "run", side_effect=http_err) as mock_run,
-            pytest.raises(LLMRateLimitError),
+            pytest.raises(LLMRateLimitError) as exc_info,
         ):
             await client.run(agent, "test", deps=SampleContext(data="test"))
 
+        assert exc_info.value.retry_after == expected_retry_after
         assert mock_run.call_count == 1
 
     @pytest.mark.asyncio

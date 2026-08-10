@@ -641,7 +641,7 @@ class LLMClient:
         except ModelHTTPError as exc:
             if exc.status_code in HTTP_RETRYABLE_STATUS_CODES:
                 if exc.status_code == HTTP_STATUS_RATE_LIMIT:
-                    raise LLMRateLimitError(str(exc)) from exc
+                    raise LLMRateLimitError(str(exc), retry_after=exc.retry_after) from exc
                 raise LLMTransientError(str(exc)) from exc
             raise LLMProviderResponseError(str(exc)) from exc
         except ModelAPIError as exc:
