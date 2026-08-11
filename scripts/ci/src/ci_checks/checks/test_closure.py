@@ -86,21 +86,19 @@ def _workspace_module_map() -> dict[str, str]:
     return mapping
 
 
-def _local_module_names(pkg: Package) -> frozenset[str]:
-    """Top-level module names importable from within the package itself.
+def _local_module_names(pkg: Package, test_dir: Path) -> frozenset[str]:
+    """Top-level modules importable from one test directory.
 
-    Covers sibling test modules and local helpers (pytest inserts each test
-    directory on ``sys.path`` under rootdir-relative collection) plus the
-    package's own shipped modules under ``src/``.
+    Sibling modules and immediate child packages are local to this directory;
+    pytest's importlib mode does not make recursively nested helper stems
+    importable from their parents. The package's shipped modules remain local
+    throughout its test tree.
     """
-    names: set[str] = set()
-    if pkg.has_tests:
-        for path in pkg.tests_dir.rglob("*"):
-            if path.is_dir():
-                if (path / "__init__.py").is_file():
-                    names.add(path.name)
-            elif path.suffix == ".py":
-                names.add(path.parent.name if path.name == "__init__.py" else path.stem)
+    names = {
+        entry.name if entry.is_dir() else test_dir.name if entry.name == "__init__.py" else entry.stem
+        for entry in test_dir.iterdir()
+        if (entry.is_dir() and (entry / "__init__.py").is_file()) or entry.suffix == ".py"
+    }
     if pkg.has_src:
         names.update(_src_module_names(pkg.src_dir))
     return frozenset(names)
@@ -516,11 +514,15 @@ def scan_package(pkg: Package) -> ClosureResult:
         return result
 
     closure = declared_closure(pkg)
-    local = {_normalize(name) for name in _local_module_names(pkg)}
+    test_paths = sorted(pkg.tests_dir.rglob("*.py"))
+    local_by_dir = {
+        directory: {_normalize(name) for name in _local_module_names(pkg, directory)}
+        for directory in {path.parent for path in test_paths}
+    }
     module_dists = _module_distributions()
     workspace = _workspace_module_map()
 
-    for path in sorted(pkg.tests_dir.rglob("*.py")):
+    for path in test_paths:
         if "__pycache__" in path.parts:
             continue
         try:
@@ -529,6 +531,7 @@ def scan_package(pkg: Package) -> ClosureResult:
             result.parse_errors.append(f"{path}: {exc}")
             continue
         result.files_scanned += 1
+        local = local_by_dir[path.parent]
         for module, lineno in _executed_imports(tree.body):
             if module in sys.stdlib_module_names:
                 continue
