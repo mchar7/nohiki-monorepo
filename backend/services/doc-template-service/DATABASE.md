@@ -23,8 +23,10 @@ New versions are always inserted as new rows; existing rows are never mutated. `
 is the authoritative copy of the template; the render handler receives this value directly in
 `DOC_TEMPLATE_RENDER_REQUESTED` events via ECST, so this field is not queried at render time.
 
-`content_schema` is an optional JSON Schema object that describes the data payload accepted by the
-template. It is forwarded downstream in the version snapshot.
+`content_schema` is a JSON Schema object describing the data payload accepted by the template
+(`{}` when the template declares none). It is forwarded downstream in the version snapshot, and it
+is read at render time: the render handler loads this row by `template_id` and validates the event
+payload against this column before rendering, because no producer enforces the schema it was given.
 
 `owner_id` references `user_auth_schema.users.id` (no FK constraint, a cross-schema reference by
 UUID). It is set to the creating user's ID for `PRIVATE` templates and left unset otherwise.

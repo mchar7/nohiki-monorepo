@@ -659,6 +659,18 @@ def test_output_format_to_proto_converts_html() -> None:
     assert result == RenderOutputFormat.HTML
 
 
+def test_content_schema_uses_declared_draft_7_semantics() -> None:
+    from bff_service.api.routers.documents import _validate_content_schema
+
+    schema: dict[str, object] = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "dependentRequired": {"credit_card": ["billing_address"]},
+    }
+
+    _validate_content_schema({"credit_card": "1234"}, schema)
+
+
 def test_validate_data_field_accepts_valid_input() -> None:
     from bff_service.api.routers.documents import _validate_data_field
 
