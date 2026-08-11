@@ -656,6 +656,10 @@ jobs:
           PACKAGE_SCOPE: ${{ needs.changes.outputs.broad == 'true' && 'ALL' || needs.changes.outputs.affected_packages }}
         run: nix develop .#ci --command just hygiene-deps "$PACKAGE_SCOPE"
 
+      - name: Check test import closure
+        if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
+        run: nix develop .#ci --command just hygiene-test-closure
+
       - parallel:
           - name: Scan architecture
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')

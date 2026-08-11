@@ -27,6 +27,7 @@ from ci_checks.checks import freshness as _freshness
 from ci_checks.checks import gate as _gate
 from ci_checks.checks import migration_truth as _migration_truth
 from ci_checks.checks import reporting as _reporting
+from ci_checks.checks import test_closure as _test_closure
 from ci_checks.checks import workflow as _workflow
 from ci_checks.checks.tests import tests_app
 from ci_checks.core.display import console
@@ -326,6 +327,45 @@ def build_backend_cmd(
             console.print(f"[{status}] {result.name}{_build_backend.ci_suffix(result)}")
 
     if not _build_backend.render_results(results, strict=strict):
+        raise typer.Exit(1)
+
+
+# test-closure
+
+
+@app.command("test-closure")
+def closure_cmd(
+    scope: Annotated[Scope, typer.Option("--scope", "-s", help="Package scope")] = Scope.ALL,
+    ci: Annotated[bool, typer.Option("--ci", help="CI mode (plain-text output)")] = False,
+    packages: Annotated[
+        str,
+        typer.Option(
+            "--packages",
+            help="CSV package names; 'ENFORCED' selects the enforced allowlist, 'ALL' every package with tests",
+        ),
+    ] = "ENFORCED",
+) -> None:
+    """Check test trees import only from their package's declared closure at module level."""
+    available = load_packages(scope, require_tests=True)
+    if packages.strip() == "ENFORCED":
+        selected = [package for package in available if package.name in _test_closure.ENFORCED_PACKAGES]
+    else:
+        known = {package.name for package in load_packages(Scope.ALL)}
+        selected = _filter_packages(available, packages, known)
+    if not selected:
+        console.print("[yellow]No workspace packages selected[/yellow]")
+        return
+
+    console.print(f"[bold]Checking {len(selected)} test trees against their declared closures...[/bold]")
+
+    results = [_test_closure.scan_package(package) for package in selected]
+
+    if ci:
+        for result in results:
+            status = "FAIL" if result.issues_found else "PASS"
+            console.print(f"[{status}] {result.name}{_test_closure.ci_suffix(result)}")
+
+    if not _test_closure.render_results(results):
         raise typer.Exit(1)
 
 

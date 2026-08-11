@@ -1309,6 +1309,15 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
             "change-selected, while these contracts certify the whole backend graph."
         ),
     ),
+    ("worker", "Check test import closure"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        # No dedicated hook job: the invariant is asserted from inside the ci-checks
+        # suite by tests/test_test_closure.py, which scans the same tree and fails on
+        # the same violations, and `python-tests` selects ci-checks whenever its test
+        # tree moves. That is the surface the hosted step guards today.
+        gates=(_LocalGate("pre-push", "python-tests", _WHOLE_PROJECT),),
+    ),
     ("worker", "Check build backends"): _HostedStep(
         verifies=True,
         scope=_AFFECTED_PACKAGES,

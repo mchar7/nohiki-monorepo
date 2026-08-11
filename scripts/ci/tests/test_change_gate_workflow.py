@@ -1720,6 +1720,7 @@ def test_native_overlap_is_memory_bounded_to_measured_low_rss_pairs() -> None:
         "Test frontend",
         "Check dependencies",
         "Check import boundaries",
+        "Check test import closure",
     }
     assert standalone.isdisjoint(set().union(*names))
     assert all("background" not in step and "cancel" not in step for step in worker["steps"])
