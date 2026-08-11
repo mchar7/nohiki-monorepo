@@ -118,6 +118,14 @@ def test_local_render_emits_the_canonical_connect_stack() -> None:
     connect = next(document for document in documents if document["kind"] == "KafkaConnect")
     connect_spec = mapping_at(connect, "spec")
     assert connect_spec["image"] == "localhost:5000/kafka-connect:dev"
+    connect_config = mapping_at(connect_spec, "config")
+    assert connect_config["config.providers"] == "directory"
+    assert (
+        connect_config["config.providers.directory.class"]
+        == "org.apache.kafka.common.config.provider.DirectoryConfigProvider"
+    )
+    assert connect_config["config.providers.directory.param.allowed.paths"] == "/mnt/secrets"
+    assert "config.providers.file.class" not in connect_config
 
     connectors = {
         metadata_of(document)["name"]: document for document in documents if document["kind"] == "KafkaConnector"
@@ -131,8 +139,8 @@ def test_local_render_emits_the_canonical_connect_stack() -> None:
         assert config["publication.name"] == publication
         assert config["publication.autocreate.mode"] == "filtered"
         assert config["table.include.list"] == table
-        assert config["database.user"] == f"${{file:/mnt/secrets/{service}-debezium/username}}"
-        assert config["database.password"] == f"${{file:/mnt/secrets/{service}-debezium/password}}"
+        assert config["database.user"] == f"${{directory:/mnt/secrets/{service}-debezium:username}}"
+        assert config["database.password"] == f"${{directory:/mnt/secrets/{service}-debezium:password}}"
 
     qdrant = mapping_at(connectors["qdrant-embedding-sink"], "spec")
     assert qdrant["class"] == "io.qdrant.kafka.QdrantSinkConnector"
@@ -153,6 +161,20 @@ def test_local_render_emits_the_canonical_connect_stack() -> None:
     memberships = {name: role["inRoles"] for name, role in roles.items() if name.endswith("_debezium")}
     assert memberships == {name: [app_role] for name, app_role in _EXPECTED_ROLE_MEMBERSHIPS.items()}
     assert all(roles[name]["replication"] is True for name in _EXPECTED_ROLE_MEMBERSHIPS)
+
+
+def test_secret_backed_qdrant_connector_uses_directory_provider() -> None:
+    documents = _render(
+        "--values",
+        str(_CHART / "values.local.yaml"),
+        "--set",
+        "kafkaConnect.qdrant.apiKeyFromSecret=true",
+        "--show-only",
+        "templates/strimzi-kafka-connectors.yaml",
+    )
+    qdrant = next(document for document in documents if metadata_of(document)["name"] == "qdrant-embedding-sink")
+
+    assert mapping_at(qdrant, "spec", "config")["qdrant.api.key"] == ("${directory:/mnt/secrets/qdrant:api-key}")
 
 
 def test_non_local_render_keeps_connect_disabled() -> None:

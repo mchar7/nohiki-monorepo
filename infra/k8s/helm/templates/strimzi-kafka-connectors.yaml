@@ -41,8 +41,8 @@ spec:
     database.hostname: {{ $dbHost }}
     database.port: "{{ $dbPort }}"
     database.dbname: {{ $dbName }}
-    database.user: "${file:/mnt/secrets/{{ $svcName }}-debezium/username}"
-    database.password: "${file:/mnt/secrets/{{ $svcName }}-debezium/password}"
+    database.user: "${directory:/mnt/secrets/{{ $svcName }}-debezium:username}"
+    database.password: "${directory:/mnt/secrets/{{ $svcName }}-debezium:password}"
 
     topic.prefix: {{ if eq $connectorMode "wal" }}{{ $resourcePrefix }}_wal{{ else }}{{ $prefix }}{{ end }}
     schema.include.list: {{ $dbSchema }}
@@ -129,7 +129,7 @@ spec:
     qdrant.grpc.url: {{ $qdrant.grpcUrl }}
     qdrant.collection.field: collection_name
     {{- if $qdrant.apiKeyFromSecret }}
-    qdrant.api.key: "${file:/mnt/secrets/qdrant/api-key}"
+    qdrant.api.key: "${directory:/mnt/secrets/qdrant:api-key}"
     {{- end }}
 
     errors.tolerance: all
