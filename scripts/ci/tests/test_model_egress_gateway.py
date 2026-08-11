@@ -9,7 +9,6 @@ from functools import cache
 from pathlib import Path
 from typing import cast
 
-import jsonschema
 import pytest
 import yaml
 from _documents import Manifest, load_manifests, load_mapping, mapping_sequence_at
@@ -360,6 +359,8 @@ def test_rendered_gateway_resources_validate_against_vendored_schemas(
     rendered: tuple[Manifest, ...],
     managed_rendered: tuple[Manifest, ...],
 ) -> None:
+    import jsonschema
+
     archive_path, _ = _foundation_dependency_archive("agentgateway-crds")
     assert archive_path.is_file(), (
         f"run `helm dependency build infra/k8s/helm-foundation`; pinned {archive_path.name} schemas are required"
@@ -1217,6 +1218,8 @@ def test_environment_rate_limits_are_exact_schema_valid_and_bounded(
     rendered: tuple[Manifest, ...],
     managed_rendered: tuple[Manifest, ...],
 ) -> None:
+    import jsonschema
+
     policy_schema = _schema(_agentgateway_crds()["AgentgatewayPolicy"], "v1alpha1")
     local_traffic_policies: dict[str, Manifest] = {}
     for policy in rendered:
