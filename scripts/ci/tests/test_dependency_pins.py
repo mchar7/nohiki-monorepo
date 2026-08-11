@@ -264,8 +264,10 @@ def _workspace_member_names() -> set[str]:
     return names
 
 
-def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
-    rules = mapping_sequence_at(_renovate_config(), "packageRules")
+def test_renovate_disables_workspace_and_ignores_fixed_skylos_dependency() -> None:
+    config = _renovate_config()
+    assert config.get("ignoreDeps") == ["ssh://git@github.com/mchar7/skylos"]
+    rules = mapping_sequence_at(config, "packageRules")
 
     pypi_rules = [rule for rule in rules if rule.get("enabled") is False and rule.get("matchDatasources") == ["pypi"]]
     assert len(pypi_rules) == 1
@@ -278,13 +280,6 @@ def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
     assert configured_names == workspace_names, (
         f"workspace PyPI lookup rule is missing {sorted(workspace_names - configured_names)} "
         f"and has stale names {sorted(configured_names - workspace_names)}"
-    )
-
-    assert any(
-        rule.get("enabled") is False
-        and rule.get("matchDatasources") == ["git-refs"]
-        and rule.get("matchPackageNames") == ["ssh://git@github.com/mchar7/skylos"]
-        for rule in rules
     )
 
 

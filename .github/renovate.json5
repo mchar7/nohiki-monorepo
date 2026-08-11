@@ -13,6 +13,7 @@
   "internalChecksFilter": "strict",
   "minimumReleaseAge": "3 days",
   "prBodyColumns": ["Package", "Type", "Update", "Change", "Pending"],
+  "ignoreDeps": ["ssh://git@github.com/mchar7/skylos"],
   "ignorePaths": [
     "**/node_modules/**",
     "**/bower_components/**",
@@ -310,13 +311,6 @@
         "user-pref-service",
         "user-upload-service"
       ],
-      "enabled": false
-    },
-    {
-      // why: the Skylos pin must not be bumped, so its git-refs lookup is intentionally disabled.
-      "description": "Disable lookups for the fixed Skylos pin",
-      "matchDatasources": ["git-refs"],
-      "matchPackageNames": ["ssh://git@github.com/mchar7/skylos"],
       "enabled": false
     },
     {
