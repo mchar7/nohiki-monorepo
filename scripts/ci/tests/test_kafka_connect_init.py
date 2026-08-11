@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 import pytest
+from _documents import load_mapping, mapping_sequence_at, string_at
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _CONNECT_ROOT = _REPOSITORY_ROOT / "infra" / "k8s" / "kafka-connect"
@@ -100,11 +101,22 @@ def test_dsn_secret_is_not_exposed_in_python_process_arguments(tmp_path: Path) -
 
 def test_default_connect_image_is_strimzi_compatible_and_carries_every_plugin() -> None:
     final_stage = _DOCKERFILE.rsplit("\nFROM ", maxsplit=1)[1]
-
-    assert final_stage.startswith(
-        "quay.io/strimzi/kafka:1.1.0-kafka-4.3.0@sha256:"
-        "b6848a53c01eec98b37866450a1227c3a41707785ec65b37063d2733a105bf36 AS strimzi"
+    base_image = re.fullmatch(
+        r"quay\.io/strimzi/kafka:(?P<strimzi>\d+\.\d+\.\d+)-kafka-(?P<kafka>\d+\.\d+\.\d+)"
+        r"@sha256:[0-9a-f]{64} AS strimzi",
+        final_stage.splitlines()[0],
     )
+    assert base_image is not None
+
+    chart = load_mapping(_REPOSITORY_ROOT / "infra" / "k8s" / "helm" / "Chart.yaml")
+    strimzi = next(
+        dependency
+        for dependency in mapping_sequence_at(chart, "dependencies")
+        if dependency["name"] == "strimzi-kafka-operator"
+    )
+    values = load_mapping(_REPOSITORY_ROOT / "infra" / "k8s" / "helm" / "values.yaml")
+    assert base_image["strimzi"] == string_at(strimzi, "version")
+    assert base_image["kafka"] == string_at(values, "global", "kafka", "version")
     assert "/opt/kafka/plugins/debezium-postgres/" in final_stage
     assert "/opt/kafka/plugins/qdrant-kafka/" in final_stage
     assert "/opt/kafka/plugins/nohiki-wal-router/" in final_stage
