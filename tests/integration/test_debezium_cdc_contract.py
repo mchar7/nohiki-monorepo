@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from types import SimpleNamespace
+
 import pytest
 
 from . import test_debezium_cdc as cdc
@@ -17,36 +20,48 @@ def test_canonical_name_predicate_rejects_stale_prefix() -> None:
     assert not cdc._is_canonical_outbox_connector_name("nohiki-outbox-user-auth")
 
 
-async def test_running_canonical_connector_satisfies_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A running Helm-named connector must reach the live CDC test."""
-    checked: list[str] = []
+def test_self_provisioned_connector_uses_canonical_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The isolated connector must use the same name contract as Helm."""
+    monkeypatch.setattr(
+        cdc,
+        "urlopen",
+        lambda *_args, **_kwargs: nullcontext(SimpleNamespace(status=201)),
+    )
 
-    def record_running_connector(name: str) -> bool:
-        checked.append(name)
-        return True
+    name = cdc._register_test_connector(
+        "http://localhost:8083",
+        "postgresql://postgres:postgres@localhost:5432/test",
+    )
 
-    monkeypatch.setattr(cdc, "_fetch_connectors", lambda: ["user-auth-service-outbox"])
-    monkeypatch.setattr(cdc, "_connector_is_running", record_running_connector)
-
-    assert await cdc._check_connect_connectors() is None
-    assert checked == ["user-auth-service-outbox"]
-
-
-async def test_stale_prefix_alone_does_not_satisfy_connector_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A superseded connector name must be treated as canonical connector absence."""
-    monkeypatch.setattr(cdc, "_fetch_connectors", lambda: ["nohiki-outbox-user-auth"])
-    monkeypatch.setattr(cdc, "_connector_is_running", lambda _name: True)
-
-    reason = await cdc._check_connect_connectors()
-
-    assert reason is not None
-    assert reason.startswith("No Debezium outbox connector registered")
+    assert name == "nohiki-test-outbox"
+    assert cdc._is_canonical_outbox_connector_name(name)
 
 
-async def test_discovered_canonical_connector_must_be_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A discovered canonical connector is a failed prerequisite, never a skip."""
-    monkeypatch.setattr(cdc, "_fetch_connectors", lambda: ["user-auth-service-outbox"])
-    monkeypatch.setattr(cdc, "_connector_is_running", lambda _name: False)
+def test_running_connector_and_tasks_satisfy_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The isolated connector is ready only after its tasks are running."""
+    monkeypatch.setattr(cdc, "urlopen", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(
+        cdc.json,
+        "load",
+        lambda _response: {
+            "connector": {"state": "RUNNING"},
+            "tasks": [{"state": "RUNNING"}],
+        },
+    )
 
-    with pytest.raises(AssertionError, match="user-auth-service-outbox"):
-        await cdc._check_connect_connectors()
+    assert cdc._connector_is_running("http://localhost:8083", "nohiki-test-outbox")
+
+
+def test_failed_connector_task_does_not_satisfy_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed connector task must keep the CDC fixture from proceeding."""
+    monkeypatch.setattr(cdc, "urlopen", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(
+        cdc.json,
+        "load",
+        lambda _response: {
+            "connector": {"state": "RUNNING"},
+            "tasks": [{"state": "FAILED"}],
+        },
+    )
+
+    assert not cdc._connector_is_running("http://localhost:8083", "nohiki-test-outbox")

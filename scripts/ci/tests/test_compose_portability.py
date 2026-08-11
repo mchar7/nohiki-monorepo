@@ -742,7 +742,9 @@ def test_compose_probe_selects_pinned_podman_compose(tmp_path: Path, monkeypatch
     assert trace.read_text(encoding="utf-8").splitlines() == ["--version"]
 
 
-@pytest.mark.requires_docker
+# Self-hosted workers are unprivileged with no CAP_SYS_ADMIN. Their seccomp policy permits
+# unshare-only user namespaces, while rootless Podman's re-exec uses clone namespace flags.
+@pytest.mark.requires_podman
 def test_podman_status_reporter_template_matches_real_created_container(
     tmp_path: Path,
 ) -> None:

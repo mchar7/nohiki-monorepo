@@ -147,14 +147,38 @@ def _usable_sha(sha: str) -> bool:
 
 
 def _package_rel_paths(packages: dict[str, Package]) -> dict[str, str]:
-    return {name: pkg.path.relative_to(REPO_ROOT).as_posix() for name, pkg in packages.items()}
+    return {
+        name: "" if (relative := pkg.path.relative_to(REPO_ROOT).as_posix()) == "." else relative
+        for name, pkg in packages.items()
+    }
+
+
+def _container_test_inputs(
+    packages: dict[str, Package],
+    rel_paths: dict[str, str],
+) -> set[str]:
+    """Return marked tests and their package-local pytest configuration inputs."""
+    inputs: set[str] = set()
+    for name, package in packages.items():
+        if not package.requires_docker_tests:
+            continue
+        package_rel = rel_paths[name]
+        prefix = f"{package_rel}/" if package_rel else ""
+        inputs.add(f"{prefix}pyproject.toml")
+        inputs.add(f"{prefix}conftest.py")
+        for test_path in package.requires_docker_tests:
+            inputs.add(f"{prefix}{test_path}")
+            parents = test_path.split("/")[:-1]
+            for depth in range(1, len(parents) + 1):
+                inputs.add(f"{prefix}{'/'.join(parents[:depth])}/conftest.py")
+    return inputs
 
 
 def _owning_package(path: str, rel_paths: dict[str, str]) -> str | None:
-    for name, rel in rel_paths.items():
-        if path == rel or path.startswith(f"{rel}/"):
-            return name
-    return None
+    owners = [
+        (len(rel), name) for name, rel in rel_paths.items() if not rel or path == rel or path.startswith(f"{rel}/")
+    ]
+    return max(owners, default=(0, None))[1]
 
 
 def _apply_event_context(decision: GateDecision, context: EventContext) -> None:
@@ -206,6 +230,7 @@ def evaluate(
     """
     decision = GateDecision()
     rel_paths = _package_rel_paths(packages)
+    container_test_inputs = _container_test_inputs(packages, rel_paths)
     seeds: set[str] = set()
 
     for path in sorted(changed):
@@ -222,6 +247,10 @@ def evaluate(
                 matched = True
                 decision.flags.update(rule.flags)
                 seeds.update(rule.packages)
+
+        if path in container_test_inputs:
+            matched = True
+            decision.flags.add("container_contracts")
 
         if (owner := _owning_package(path, rel_paths)) is not None:
             matched = True

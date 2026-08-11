@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import jwt
 
-TEST_JWT_SECRET = "test-jwt-secret-for-testing"  # noqa: S105 - public test-only signing key
+TEST_JWT_SECRET = "test-jwt-secret-for-testing-only"  # noqa: S105 - public test-only signing key
 JWT_ALGORITHM = "HS256"
 TEST_USER_ID = "00000000-0000-0000-0000-000000000001"
 

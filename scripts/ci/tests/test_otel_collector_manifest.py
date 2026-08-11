@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import io
 import re
 import shutil
 import subprocess
-import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -118,17 +116,15 @@ def _validate_collector_config(image: str, config_path: Path) -> None:
         check=True,
     ).stdout.strip()
     try:
-        config = config_path.read_bytes()
-        archive = io.BytesIO()
-        with tarfile.open(fileobj=archive, mode="w") as stream:
-            member = tarfile.TarInfo("config.yaml")
-            member.mode = 0o444
-            member.size = len(config)
-            stream.addfile(member, io.BytesIO(config))
         subprocess.run(
-            ["docker", "cp", "-", f"{container}:/etc/otelcol-contrib"],
-            input=archive.getvalue(),
+            [
+                "docker",
+                "cp",
+                str(config_path.resolve()),
+                f"{container}:/etc/otelcol-contrib/config.yaml",
+            ],
             capture_output=True,
+            text=True,
             check=True,
         )
         subprocess.run(

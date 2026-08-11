@@ -3410,9 +3410,9 @@ source = { virtual = "tests" }
 dependencies = [
     { name = "health-check" },
     { name = "httpx" },
-    { name = "nohiki-db-utils", extra = ["async"] },
+    { name = "nohiki-db-utils", extra = ["async", "outbox", "testing"] },
     { name = "nohiki-domain-models" },
-    { name = "nohiki-kafka-client" },
+    { name = "nohiki-kafka-client", extra = ["testing"] },
     { name = "nohiki-test-utils" },
     { name = "pyjwt" },
     { name = "pytest" },
@@ -3426,9 +3426,9 @@ dependencies = [
 requires-dist = [
     { name = "health-check", editable = "scripts/util/health_check" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "nohiki-db-utils", extras = ["async"], editable = "backend/libs/nohiki-db-utils" },
+    { name = "nohiki-db-utils", extras = ["async", "outbox", "testing"], editable = "backend/libs/nohiki-db-utils" },
     { name = "nohiki-domain-models", editable = "backend/libs/nohiki-domain-models" },
-    { name = "nohiki-kafka-client", editable = "backend/libs/nohiki-kafka-client" },
+    { name = "nohiki-kafka-client", extras = ["testing"], editable = "backend/libs/nohiki-kafka-client" },
     { name = "nohiki-test-utils", editable = "backend/libs/nohiki-test-utils" },
     { name = "pyjwt", specifier = ">=2.10.1" },
     { name = "pytest", specifier = ">=9.0.1" },

@@ -65,7 +65,7 @@ class TestAuthenticationHelpers:
 
     def test_invalid_signature_rejection(self, jwt_handler: TestJWTHandler) -> None:
         """Test that tokens with invalid signatures are rejected."""
-        tampered_token = create_jwt(secret="wrong-secret", sub=TEST_USER_ID)
+        tampered_token = create_jwt(secret="wrong-secret-for-signature-testing", sub=TEST_USER_ID)
 
         with pytest.raises(jwt.InvalidSignatureError):
             jwt_handler.decode_jwt(tampered_token)
