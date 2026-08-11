@@ -46,6 +46,9 @@ def _prepush_repository(tmp_path: Path) -> tuple[Path, str]:
     dev_scripts = repository / "scripts/dev"
     dev_scripts.mkdir(parents=True)
     shutil.copy2(_ROOT / "scripts/dev/prepush-gate.sh", dev_scripts)
+    mirror = dev_scripts / "secrets-mirror.sh"
+    mirror.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    mirror.chmod(0o755)
     return repository, validated_sha
 
 
