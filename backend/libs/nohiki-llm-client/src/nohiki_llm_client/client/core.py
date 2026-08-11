@@ -10,11 +10,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Self, cast
+from typing import Any, Final, Self, cast
 
 from httpx import AsyncClient
 from nohiki_observability import get_logger
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic_ai import (
     Agent,
     AgentRunResult,
@@ -23,20 +23,24 @@ from pydantic_ai import (
     StructuredDict,
     UsageLimits,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    AgentRunError,
+    ContentFilterError,
+    FallbackExceptionGroup,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelRetry,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from tenacity import (
-    AsyncRetrying,
-    RetryCallState,
-    retry_if_exception_type,
-    retry_if_not_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from tenacity import AsyncRetrying, RetryCallState, retry_if_exception, stop_after_attempt, wait_exponential
 from tenacity.wait import WaitBaseT
 
 from nohiki_llm_client.config.constants import (
@@ -48,14 +52,17 @@ from nohiki_llm_client.config.constants import (
     RETRY_MAX_WAIT_SECONDS,
     RETRY_MIN_WAIT_SECONDS,
     RETRY_MULTIPLIER,
-    VALIDATION_RETRY_EXHAUSTED_PREFIX,
 )
 from nohiki_llm_client.config.settings import LLMSettings
 from nohiki_llm_client.exceptions import (
     LLMApplicationRateLimitError,
+    LLMConfigurationError,
+    LLMContentFilterError,
+    LLMError,
     LLMProviderResponseError,
     LLMRateLimitError,
     LLMTransientError,
+    LLMUsageLimitError,
     LLMValidationError,
 )
 from nohiki_llm_client.observability.instrumentation import create_instrumented_model
@@ -77,6 +84,14 @@ type SystemPromptFn[TDeps] = Callable[[RunContext[TDeps]], str | None]
 _RUN_CONTEXT_CLASS = RunContext
 
 logger = get_logger(__name__)
+_OUTPUT_RETRY_EXHAUSTED_PREFIX: Final[str] = "Exceeded maximum output retries ("
+
+
+def _is_application_retryable(exc: BaseException) -> bool:
+    """Return whether the application-level Tenacity policy retries ``exc``."""
+    return isinstance(exc, LLMApplicationRateLimitError) or (
+        isinstance(exc, LLMTransientError) and not isinstance(exc, LLMRateLimitError)
+    )
 
 
 def _model_supports_cache_point(model_string: str) -> bool:
@@ -149,6 +164,104 @@ def _extract_downstream_provider(messages: tuple[ModelMessage, ...]) -> str | No
             if isinstance(provider, str) and provider:
                 return provider
     return None
+
+
+# Library failure types that map one-to-one onto a Nohiki class with no extra condition.
+# Ordered most specific first: `ContentFilterError` subclasses `UnexpectedModelBehavior`,
+# so it must be matched here before the conditional `UnexpectedModelBehavior` branch below.
+_DIRECT_FAILURE_CLASSES: Final[tuple[tuple[type[BaseException], type[LLMError]], ...]] = (
+    (ContentFilterError, LLMContentFilterError),
+    (UsageLimitExceeded, LLMUsageLimitError),
+    (UserError, LLMConfigurationError),
+)
+
+
+def _classify_agent_failure(exc: BaseException) -> LLMError | None:
+    """Map a PydanticAI failure onto the Nohiki taxonomy, or ``None`` when unmapped.
+
+    Pure and recursive so ``FallbackExceptionGroup`` can be classified member-wise
+    rather than as an opaque container. Order is load-bearing: ``_EmbeddedRateLimitError``
+    before ``ModelHTTPError``, and ``ContentFilterError`` before
+    ``UnexpectedModelBehavior``, because each pair is a subclass relation.
+
+    Returning ``None`` means "not ours": the caller re-raises the original untouched
+    rather than mislabelling it.
+    """
+    if isinstance(exc, FallbackExceptionGroup):
+        return _classify_fallback_group(exc)
+    if isinstance(exc, _EmbeddedRateLimitError):
+        return LLMApplicationRateLimitError(str(exc), retry_after=exc.retry_after)
+    if isinstance(exc, ModelHTTPError):
+        return _classify_http_failure(exc)
+    if isinstance(exc, ModelAPIError):
+        return LLMTransientError(str(exc))
+    classified: LLMError | None = None
+    for library_type, nohiki_type in _DIRECT_FAILURE_CLASSES:
+        if isinstance(exc, library_type):
+            classified = nohiki_type(str(exc))
+            break
+    if classified is None and isinstance(exc, UnexpectedModelBehavior):
+        classified = _classify_unexpected_behavior(exc)
+    return classified
+
+
+def _classify_http_failure(exc: ModelHTTPError) -> LLMError:
+    """Split an HTTP failure into rate limit, retryable, and permanent."""
+    if exc.status_code in HTTP_RETRYABLE_STATUS_CODES:
+        if exc.status_code == HTTP_STATUS_RATE_LIMIT:
+            return LLMRateLimitError(str(exc), retry_after=exc.retry_after)
+        return LLMTransientError(str(exc))
+    return LLMProviderResponseError(str(exc))
+
+
+def _classify_unexpected_behavior(exc: UnexpectedModelBehavior) -> LLMError:
+    """Classify a non-content-filter ``UnexpectedModelBehavior``.
+
+    OpenRouter's null-field body is identified by its library-owned message because it has no
+    distinguishing type. Output retry exhaustion normally chains ``ToolRetryError`` or
+    ``ModelRetry``. The output-tool path instead exposes its original ``ValidationError``,
+    which is also the cause used for malformed provider payloads, so that ambiguous cause is
+    accepted only with PydanticAI's output-budget context.
+    """
+    exc_str = str(exc)
+    if OPENROUTER_INVALID_RESPONSE_PREFIX in exc_str:
+        return LLMProviderResponseError(exc_str)
+    cause = exc.__cause__
+    if isinstance(cause, ToolRetryError | ModelRetry) or (
+        isinstance(cause, ValidationError) and str(exc).startswith(_OUTPUT_RETRY_EXHAUSTED_PREFIX)
+    ):
+        return LLMValidationError(exc_str)
+    return LLMTransientError(exc_str)
+
+
+def _classify_fallback_group(group: FallbackExceptionGroup) -> LLMError | None:
+    """Classify a fallback group by its members rather than as a container.
+
+    Application-retryable failures take precedence because a hop may succeed on
+    the next immediate attempt. Transport-owned rate limits come next because
+    Kafka can retry the whole operation after backoff. Terminal failures are
+    returned only when no retryable hop exists. Members that classify to
+    ``None`` (``ResponseRejected``, anything not ours) carry no provider verdict
+    and are skipped; a group of only those returns ``None`` so the group itself
+    propagates.
+
+    The chosen member's message is surfaced, and the caller chains the whole group
+    onto ``__cause__``, so no hop detail is lost.
+    """
+    first_rate_limit: LLMRateLimitError | None = None
+    first_terminal: LLMError | None = None
+    for member in group.exceptions:
+        classified = _classify_agent_failure(member)
+        if classified is None:
+            continue
+        if _is_application_retryable(classified):
+            return classified
+        if isinstance(classified, LLMRateLimitError):
+            if first_rate_limit is None:
+                first_rate_limit = classified
+        elif first_terminal is None:
+            first_terminal = classified
+    return first_rate_limit or first_terminal
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,10 +628,7 @@ class LLMClient:
         _result: AgentRunResult[TOut] | None = None
         try:
             async for attempt in AsyncRetrying(
-                retry=(
-                    retry_if_exception_type(LLMApplicationRateLimitError)
-                    | (retry_if_exception_type(LLMTransientError) & retry_if_not_exception_type(LLMRateLimitError))
-                ),
+                retry=retry_if_exception(_is_application_retryable),
                 stop=stop_after_attempt(MAX_RETRY_ATTEMPTS),
                 wait=self._retry_wait,
                 reraise=True,
@@ -589,19 +699,12 @@ class LLMClient:
         message_history: list[ModelMessage] | None = None,
         usage_limits: UsageLimits | None = None,
     ) -> AgentRunResult[TOut]:
-        """Execute a single agent attempt, converting transient exceptions.
+        """Execute a single agent attempt, converting library failures to the Nohiki taxonomy.
 
-        ``UnexpectedModelBehavior`` is discriminated by message content:
-
-        - ``VALIDATION_RETRY_EXHAUSTED_PREFIX`` ("Exceeded maximum retries") →
-          ``LLMValidationError`` (non-retryable; PydanticAI already gave the model N
-          feedback attempts). Tenacity does NOT retry this: quality failure.
-        - ``OPENROUTER_INVALID_RESPONSE_PREFIX`` ("Invalid response from openrouter
-          chat completions endpoint") → ``LLMProviderResponseError`` (non-retryable;
-          OpenRouter returned HTTP 200 with all null fields: model not found or
-          permanent provider routing failure).
-        - All other ``UnexpectedModelBehavior`` → ``LLMTransientError`` so Tenacity
-          can retry genuine transient provider failures (e.g., momentary null fields).
+        All classification lives in :func:`_classify_agent_failure`, which dispatches on
+        exception TYPE and on ``__cause__`` and never on message text (the one exception,
+        and the reason why, is documented there). Anything it declines to classify is
+        re-raised untouched rather than mislabelled.
 
         A bare ``ModelAPIError`` needs its own branch: it is the PARENT of
         ``ModelHTTPError`` and a sibling of ``UnexpectedModelBehavior``, so neither of
@@ -622,12 +725,16 @@ class LLMClient:
             Raw ``AgentRunResult`` from PydanticAI.
 
         Raises:
+            LLMApplicationRateLimitError: On a rate limit embedded in an HTTP-200 body.
             LLMRateLimitError: On ``ModelHTTPError`` with status 429.
             LLMTransientError: On ``ModelHTTPError`` with 5xx status, on a bare
                 ``ModelAPIError``, or on other transient ``UnexpectedModelBehavior``.
             LLMProviderResponseError: On ``ModelHTTPError`` with 4xx (non-429) status,
                 or ``UnexpectedModelBehavior`` matching the OpenRouter null-field pattern.
-            LLMValidationError: When PydanticAI's validation retries are exhausted.
+            LLMValidationError: When PydanticAI's output-validation retries are exhausted.
+            LLMContentFilterError: When the provider blocked the request on content policy.
+            LLMUsageLimitError: When a configured ``UsageLimits`` refused the run.
+            LLMConfigurationError: On ``UserError``, a configuration mistake of ours.
         """
         try:
             return await agent.run(
@@ -636,23 +743,11 @@ class LLMClient:
                 message_history=message_history,
                 usage_limits=usage_limits,
             )
-        except _EmbeddedRateLimitError as exc:
-            raise LLMApplicationRateLimitError(str(exc), retry_after=exc.retry_after) from exc
-        except ModelHTTPError as exc:
-            if exc.status_code in HTTP_RETRYABLE_STATUS_CODES:
-                if exc.status_code == HTTP_STATUS_RATE_LIMIT:
-                    raise LLMRateLimitError(str(exc), retry_after=exc.retry_after) from exc
-                raise LLMTransientError(str(exc)) from exc
-            raise LLMProviderResponseError(str(exc)) from exc
-        except ModelAPIError as exc:
-            raise LLMTransientError(str(exc)) from exc
-        except UnexpectedModelBehavior as exc:
-            exc_str = str(exc)
-            if VALIDATION_RETRY_EXHAUSTED_PREFIX in exc_str:
-                raise LLMValidationError(exc_str) from exc
-            if OPENROUTER_INVALID_RESPONSE_PREFIX in exc_str:
-                raise LLMProviderResponseError(exc_str) from exc
-            raise LLMTransientError(exc_str) from exc
+        except (AgentRunError, UserError, FallbackExceptionGroup) as exc:
+            classified = _classify_agent_failure(exc)
+            if classified is None:
+                raise
+            raise classified from exc
 
     def _record_metrics(
         self,
