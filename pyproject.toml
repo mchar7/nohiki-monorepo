@@ -89,6 +89,7 @@ dev = [
 
 
 [tool.uv]
+required-version = "0.11.28"
 default-groups = ["dev"]
 
 # Mutually exclusive ml-compute-service accelerator extras: CPU-only (the default,
