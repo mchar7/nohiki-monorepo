@@ -32,6 +32,10 @@
 # a hardened hook wrapper with an unverified shim.
 set -eu
 
+# Refuse sparse worktrees before any destructive mirror synchronization, then
+# refresh the owner-controlled copy from the primary worktree.
+scripts/dev/secrets-mirror.sh
+
 zero=0000000000000000000000000000000000000000
 
 refs=$(mktemp "${TMPDIR:-/tmp}/nohiki-prepush-refs.XXXXXX")

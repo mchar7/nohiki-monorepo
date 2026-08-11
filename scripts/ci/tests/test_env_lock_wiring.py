@@ -46,6 +46,9 @@ def _prepush_repository(tmp_path: Path) -> tuple[Path, str]:
     dev_scripts = repository / "scripts/dev"
     dev_scripts.mkdir(parents=True)
     shutil.copy2(_ROOT / "scripts/dev/prepush-gate.sh", dev_scripts)
+    mirror = dev_scripts / "secrets-mirror.sh"
+    mirror.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    mirror.chmod(0o755)
     return repository, validated_sha
 
 
@@ -137,10 +140,11 @@ def test_prepush_gate_envelopes_every_phase() -> None:
     assert envelope["use_stdin"] is True
     assert all(inactive_skip[0] in phase["skip"] for phase in jobs[1:])
 
-    # The lock, the resource scope and the re-entrant pass moved into the
-    # envelope script; assert they are still all present and in that order.
+    # The mirror tripwire must run before the lock, resource scope, and
+    # re-entrant pass so a sparse checkout cannot refresh destructively.
     gate = (_ROOT / "scripts" / "dev" / "prepush-gate.sh").read_text(encoding="utf-8")
     chain = (
+        "scripts/dev/secrets-mirror.sh",
         "scripts/dev/env-lock.sh gate pre-push --",
         "scripts/dev/test-run.sh gate --",
         "env NOHIKI_GATE_ACTIVE=1",
