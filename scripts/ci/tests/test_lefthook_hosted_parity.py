@@ -110,7 +110,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         "python-check-format": frozenset({"*.py"}),
         "frontend-lint": frozenset({"*.{ts,tsx,js,jsx,mjs,css}"}),
         "proto-lint": _PROTO_CONTRACT_SURFACE,
-        "markdown-lint": frozenset({"*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore", ".markdownlint.json"}),
+        "markdown-lint": frozenset({"*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore"}),
         "i18n-check": _FRONTEND_SRC_SURFACE
         | {
             "typescript/apps/frontend/public/locales/**",

@@ -99,7 +99,7 @@ def test_lefthook_frontend_mutator_delegates_empty_sets_to_biome() -> None:
 def test_lefthook_serializes_empty_safe_staged_markdown_mutator() -> None:
     command = _load_yaml(_LEFTHOOK)["pre-commit"]["commands"]["markdown-lint"]
 
-    assert command["glob"] == ["*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore", ".markdownlint.json"]
+    assert command["glob"] == ["*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore"]
     assert command["stage_fixed"] is True
     run = command["run"]
     assert isinstance(run, str)
@@ -115,7 +115,6 @@ def test_lefthook_serializes_empty_safe_staged_markdown_mutator() -> None:
         "':(glob)**/*.md'",
         "'.markdownlint-cli2.jsonc'",
         "'.markdownlintignore'",
-        "'.markdownlint.json'",
     ):
         assert pathspec in run
     assert run.count("xargs -0 -r") == 1

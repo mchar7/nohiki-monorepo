@@ -2011,7 +2011,7 @@ def test_schema_types_and_committed_spec_seed_their_contract_test() -> None:
     assert "ci-checks" in spec.affected
 
 
-@pytest.mark.parametrize("path", [".markdownlint-cli2.jsonc", ".markdownlint.json", ".markdownlintignore"])
+@pytest.mark.parametrize("path", [".markdownlint-cli2.jsonc", ".markdownlintignore"])
 def test_markdownlint_configs_select_the_markdown_lane(path: str) -> None:
     decision = evaluate({path}, _synthetic_packages())
 
