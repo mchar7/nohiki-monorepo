@@ -1071,6 +1071,24 @@ def install_registry_hosts(kubeconfig: Path, nodes: Sequence[str]) -> str:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
 
+
+def record_registry_hosts(
+    nodes: Sequence[dict[str, str]],
+    cluster_nodes: Sequence[str],
+    installed_hash: str,
+) -> None:
+    expected_hash = hashlib.sha256(REGISTRY_HOSTS).hexdigest()
+    by_name = {node.get("name", ""): node for node in nodes}
+    if set(by_name) != set(cluster_nodes) or len(by_name) != len(nodes):
+        raise KindctlError("registry hosts measurements do not cover every cluster node")
+    if not installed_hash or installed_hash != expected_hash:
+        raise KindctlError("registry hosts hash is empty or does not match installed content")
+    for name in cluster_nodes:
+        by_name[name]["hostsSha256"] = installed_hash
+    if any(node.get("hostsSha256") != expected_hash for node in nodes):
+        raise KindctlError("registry hosts measurement does not match installed content")
+
+
 def validate_runtime_control(branch: str, reviewed_sha: str) -> None:
     if RUNTIME_BRANCH.fullmatch(branch) is None:
         raise KindctlError("NOHIKI_RUNTIME_CONTROL_BRANCH is not an approved local runtime-control branch")
@@ -2594,6 +2612,8 @@ def create(attempt: Path) -> dict[str, Any]:
         validate_owned_kubeconfig(kubeconfig)
         cluster_uid, cluster_nodes, pod_capacity = validate_cluster(kubeconfig)
         nodes = repair_nodes(kubeconfig)
+        hosts_sha = install_registry_hosts(kubeconfig, cluster_nodes)
+        record_registry_hosts(nodes, cluster_nodes, hosts_sha)
         require_cluster_dns_ready(kubeconfig)
         install_llm_proxy_source(kubeconfig, proxy_source, proxy_values)
         recreate_storage_provisioner(kubeconfig)
