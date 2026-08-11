@@ -198,6 +198,12 @@
             mainProgram = "lefthook";
           };
         };
+        gitGuard = pkgs.runCommand "nohiki-git-guard" { } ''
+          mkdir -p "$out/bin"
+          substitute ${./scripts/dev/git-guard.sh} "$out/bin/git" \
+            --replace-fail '@git@' '${pkgs.git}/bin/git'
+          chmod 0755 "$out/bin/git"
+        '';
 
         coreTools = with pkgs; [
           just
@@ -346,8 +352,13 @@
 
         # Explicit library path for numpy/grpcio wheels that need libstdc++
         libPath = pkgs.lib.makeLibraryPath nativeBuildDeps;
+        gitGuardHook = ''
+          export PATH="${gitGuard}/bin:$PATH"
+        '';
 
         baseHook = ''
+          ${gitGuardHook}
+
           # Export LD_LIBRARY_PATH explicitly for subshells and uv run
           export LD_LIBRARY_PATH="${libPath}:$LD_LIBRARY_PATH"
 
@@ -425,6 +436,8 @@
             PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
           };
           shellHook = ''
+            ${gitGuardHook}
+
             if [ -f "pnpm-lock.yaml" ]; then
               env CI=true LEFTHOOK=0 corepack pnpm install --frozen-lockfile --silent
             fi
@@ -436,6 +449,8 @@
           name = "nohiki-jvm";
           packages = coreTools ++ jvmTools;
           shellHook = ''
+            ${gitGuardHook}
+
             echo "JVM shell ready (JDK ${jdk.version}, Gradle ${gradle.version})"
           '';
         };
@@ -443,7 +458,10 @@
         devShells.infra = pkgs.mkShell {
           name = "nohiki-infra";
           packages = coreTools ++ containerTools ++ infraTools ++ [ python ];
-          shellHook = "echo 'Infrastructure shell ready'";
+          shellHook = ''
+            ${gitGuardHook}
+            echo "Infrastructure shell ready"
+          '';
         };
 
         # Kubernetes tooling for working against any cluster you point KUBECONFIG
@@ -453,6 +471,8 @@
           name = "nohiki-k8s";
           packages = coreTools ++ containerTools ++ infraTools ++ k8sTools ++ [ python ];
           shellHook = ''
+            ${gitGuardHook}
+
             echo "k8s shell ready (kubectl, helm, kustomize, k9s, kubectx, stern, kind, flux, flux-operator, rootless Podman)"
             if [ -n "''${KUBECONFIG:-}" ]; then
               echo "  KUBECONFIG=$KUBECONFIG"
