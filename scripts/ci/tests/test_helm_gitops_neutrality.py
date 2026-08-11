@@ -8,18 +8,21 @@ manifests, guard the retained qdrant, skill-graph, and Secret hooks, and check
 that the local, dev, and staging value sets render.
 """
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
-from _documents import Manifest, containers_of, load_manifests, mapping_at
+from _documents import Manifest, containers_of, load_manifests, mapping_at, mapping_sequence_at, string_at
 from test_image_digest_gitops import _digest_values
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "helm"
 _FIXTURES = Path(__file__).parent / "fixtures"
 _ARGO_PREFIX = "argocd.argoproj.io"
+_CANONICAL_ML_MANIFEST = _ROOT / "data" / "config" / "semantic_representation_manifest.json"
+_PACKAGED_ML_MANIFEST = _CHART / "files" / "semantic_representation_manifest.json"
 
 _MIGRATION_HOOK_TOKENS = {
     "helm.sh/hook": frozenset({"post-install", "post-upgrade"}),
@@ -155,6 +158,44 @@ def test_qdrant_and_skill_bootstrap_jobs_keep_helm_hooks() -> None:
     bootstrap = _jobs_by_suffix(documents, "-bootstrap")
     assert len(bootstrap) == 1, "expected the skill-graph bootstrap hook Job when enabled"
     assert bootstrap[0]["metadata"].get("annotations", {}) == _BOOTSTRAP_HOOK
+
+
+def test_job_volume_sources_are_rendered_by_chart() -> None:
+    documents = load_manifests(_template("values.local.yaml"))
+    config_maps = {document["metadata"]["name"] for document in documents if document["kind"] == "ConfigMap"}
+    secrets = {document["metadata"]["name"] for document in documents if document["kind"] == "Secret"}
+    secrets.update(
+        string_at(document, "spec", "target", "name") for document in documents if document["kind"] == "ExternalSecret"
+    )
+
+    missing: list[str] = []
+    for job in (document for document in documents if document["kind"] == "Job"):
+        pod_spec = mapping_at(job, "spec", "template", "spec")
+        if pod_spec.get("volumes") is None:
+            continue
+        for volume in mapping_sequence_at(pod_spec, "volumes"):
+            if "configMap" in volume:
+                name = string_at(volume, "configMap", "name")
+                if name not in config_maps:
+                    missing.append(f"{job['metadata']['name']}: ConfigMap/{name}")
+            if "secret" in volume:
+                name = string_at(volume, "secret", "secretName")
+                if name not in secrets:
+                    missing.append(f"{job['metadata']['name']}: Secret/{name}")
+
+    assert not missing, f"Job volume sources are not rendered by the chart: {missing}"
+
+
+def test_packaged_and_rendered_ml_manifest_match_canonical_source() -> None:
+    canonical = _CANONICAL_ML_MANIFEST.read_text(encoding="utf-8")
+    assert _PACKAGED_ML_MANIFEST.read_text(encoding="utf-8") == canonical
+
+    config_map = next(
+        document
+        for document in load_manifests(_template("values.local.yaml"))
+        if document["kind"] == "ConfigMap" and document["metadata"]["name"] == "nohiki-ml-manifest"
+    )
+    assert json.loads(config_map["data"]["semantic_representation_manifest.json"]) == json.loads(canonical)
 
 
 def test_model_runtime_can_populate_an_empty_cache_in_every_environment() -> None:

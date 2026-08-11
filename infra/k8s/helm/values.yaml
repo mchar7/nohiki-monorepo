@@ -683,8 +683,8 @@ scheduleTickPublisher:
 # Never commit plaintext secrets. See environments/local/secrets.yaml.dec for structure.
 secretValues: {}
 
-# ML manifest JSON content - injected at deploy time by Helmfile readFile gotmpl.
-# Never set this manually; populated automatically from data/config/semantic_representation_manifest.json.
+# Optional ML manifest JSON override. The chart packages the canonical manifest
+# from data/config/semantic_representation_manifest.json for direct installs.
 mlManifestContent: ""
 
 

@@ -15,8 +15,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-WARM_WALL_BUDGET_SECONDS = 8040
-COLD_WALL_BUDGET_SECONDS = 8040
+WARM_WALL_BUDGET_SECONDS = 540
+COLD_WALL_BUDGET_SECONDS = 660
 
 
 class RunnerClass(StrEnum):
