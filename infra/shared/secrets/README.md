@@ -153,6 +153,28 @@ class DatabaseSettings(BaseSettings):
     database: str
 ```
 
+## Protected Mirror
+
+The files remain real files in the primary worktree because the local secret
+validator deliberately rejects symlinked path components. The pre-push gate
+refreshes an owner-only mirror in
+`$XDG_STATE_HOME/nohiki-secrets-mirror/`, outside every Git worktree and on the
+Snapper-covered persistent home subvolume. When `XDG_STATE_HOME` is unset, it
+uses the standard dot-local `state/` directory under `$HOME`. It refuses to
+refresh from a sparse or incomplete primary worktree.
+
+Restore the worktree copy from the mirror without replacing this README:
+
+```bash
+state_home="${XDG_STATE_HOME:-$(printf '%s/%s/%s' "$HOME" .local state)}"
+rsync -a --delete --exclude=README.md --exclude=.last-refresh \
+  "$state_home/nohiki-secrets-mirror/" infra/shared/secrets/
+```
+
+Run `scripts/dev/secrets-mirror.sh` to check the sparse-checkout tripwire and
+refresh the mirror immediately. The command reports only a file count, never
+secret filenames or contents.
+
 ## Security Notes
 
 - Do not commit actual secret values. The `.gitignore` prevents this.
