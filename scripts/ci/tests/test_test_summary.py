@@ -24,7 +24,7 @@ from ci_checks.checks.tests import (
 from ci_checks.checks.tests import (
     TestResult as RunnerTestResult,
 )
-from ci_checks.core.packages import Package, PackageType, Scope, load_packages
+from ci_checks.core.packages import Package, PackageType, Scope, load_packages, pytest_file_has_marker
 from rich.console import Console
 
 pytest_plugins = ("pytester",)
@@ -126,6 +126,16 @@ def test_docker_marker_selects_only_packages_that_contain_matching_tests() -> No
     assert "nohiki-integration-tests" in names
     assert "nohiki-common-exceptions" not in names
     assert all(package.requires_docker_tests for package in packages)
+
+
+def test_podman_contract_stays_outside_zero_skip_docker_selection() -> None:
+    podman_test = _REPO_ROOT / "scripts/ci/tests/test_compose_portability.py"
+    packages = test_checks._load_testable_packages("all", "requires_docker")
+    ci_checks = next(package for package in packages if package.name == "ci-checks")
+
+    assert pytest_file_has_marker(podman_test, "requires_podman")
+    assert not pytest_file_has_marker(podman_test, "requires_docker")
+    assert "tests/test_compose_portability.py" not in ci_checks.requires_docker_tests
 
 
 def test_longest_prefix_owner_prefers_most_specific_collection_root() -> None:

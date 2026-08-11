@@ -48,6 +48,7 @@ addopts = "-n auto --dist=worksteal"
 filterwarnings = ["error"]
 markers = [
     "requires_docker: tests that build and run real container images",
+    "requires_podman: tests that require rootless Podman user namespaces",
     "requires_node_modules: tests that execute the installed pnpm workspace",
     "requires_skylos: tests that import the private dead-code analyzer",
 ]
