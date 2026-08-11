@@ -695,6 +695,9 @@ jobs:
         id: container-buildx
         if: env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: ${{ runner.environment == 'self-hosted' && 'network=host' || '' }}
+          buildkitd-config: ${{ runner.environment == 'self-hosted' && '.github/buildkitd-self-hosted.toml' || '' }}
 
       - name: Build production frontend image
         id: frontend-image
@@ -708,8 +711,9 @@ jobs:
           file: typescript/apps/frontend/Dockerfile
           load: true
           tags: nohiki-frontend-smoke:ci
-          # GHA exports spent 25 minutes on the fleet uplink; imports remain as fresh-slot insurance.
-          cache-from: type=gha,scope=frontend-smoke
+          # Hosted runners retain GHA imports. Each self-hosted host writes through to its shared registry.
+          cache-from: ${{ runner.environment == 'self-hosted' && 'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache' || 'type=gha,scope=frontend-smoke' }}
+          cache-to: ${{ runner.environment == 'self-hosted' && 'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache,mode=max,ignore-error=true' || '' }}
 
       - name: Smoke production frontend container
         id: frontend-smoke
@@ -852,6 +856,9 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: ${{ runner.environment == 'self-hosted' && 'network=host' || '' }}
+          buildkitd-config: ${{ runner.environment == 'self-hosted' && '.github/buildkitd-self-hosted.toml' || '' }}
 
       - name: Mark unique work start
         id: unique
@@ -868,8 +875,9 @@ jobs:
           file: typescript/apps/frontend/Dockerfile.playwright-runner
           load: true
           tags: nohiki-playwright-runner-smoke:ci
-          # GHA exports spent 25 minutes on the fleet uplink; imports remain as fresh-slot insurance.
-          cache-from: type=gha,scope=playwright-runner-smoke
+          # Hosted runners retain GHA imports. Each self-hosted host writes through to its shared registry.
+          cache-from: ${{ runner.environment == 'self-hosted' && 'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache' || 'type=gha,scope=playwright-runner-smoke' }}
+          cache-to: ${{ runner.environment == 'self-hosted' && 'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache,mode=max,ignore-error=true' || '' }}
 
       - name: Verify Playwright runner
         id: runner-verify
