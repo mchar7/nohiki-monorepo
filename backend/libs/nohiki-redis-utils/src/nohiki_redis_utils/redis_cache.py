@@ -587,12 +587,12 @@ class RedisCache:
 
     async def _smembers_internal(self, key: str) -> builtins.set[str]:
         """Get all members of set in Redis, letting exceptions propagate."""
-        result = await cast(Awaitable[builtins.set[str]], self._redis.smembers(self._make_key(key)))
+        result = await cast("Awaitable[builtins.set[str]]", self._redis.smembers(self._make_key(key)))
         return set(result) if result else set()
 
     async def _sismember_internal(self, key: str, member: str) -> bool:
         """Check if member exists in set in Redis, letting exceptions propagate."""
-        result = await cast(Awaitable[int], self._redis.sismember(self._make_key(key), member))
+        result = await cast("Awaitable[int]", self._redis.sismember(self._make_key(key), member))
         return bool(result)
 
     async def _get_bytes_internal(self, key: str) -> bytes | None:

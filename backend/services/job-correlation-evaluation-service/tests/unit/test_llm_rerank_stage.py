@@ -247,8 +247,8 @@ class TestLLMRerankStage:
         async def post(*_args: object, **kwargs: object) -> MagicMock:
             nonlocal active_requests, max_active_requests
 
-            payload = cast(dict[str, Any], kwargs["json"])
-            documents = cast(list[dict[str, str]], payload["documents"])
+            payload = cast("dict[str, Any]", kwargs["json"])
+            documents = cast("list[dict[str, str]]", payload["documents"])
 
             active_requests += 1
             max_active_requests = max(max_active_requests, active_requests)
@@ -352,8 +352,8 @@ class TestLLMRerankStage:
         ]
 
         async def post(*_args: object, **kwargs: object) -> MagicMock:
-            payload = cast(dict[str, Any], kwargs["json"])
-            documents = cast(list[dict[str, str]], payload["documents"])
+            payload = cast("dict[str, Any]", kwargs["json"])
+            documents = cast("list[dict[str, str]]", payload["documents"])
             if any(doc["id"] == "job-002" for doc in documents):
                 error_message = "Connection refused"
                 raise httpx.HTTPError(error_message)

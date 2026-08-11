@@ -246,12 +246,12 @@ class TwilioSendGridProvider(BaseProvider):
         if not isinstance(data, dict):
             return None
 
-        data_dict = cast(dict[str, object], data)
+        data_dict = cast("dict[str, object]", data)
         errors = data_dict.get("errors")
         if not isinstance(errors, list) or not errors:
             return None
 
-        messages = [self._format_error(cast(dict[str, Any], error)) for error in errors if isinstance(error, dict)]
+        messages = [self._format_error(cast("dict[str, Any]", error)) for error in errors if isinstance(error, dict)]
         return "; ".join(messages) if messages else None
 
     def _format_error(self, error: dict[str, Any]) -> str:

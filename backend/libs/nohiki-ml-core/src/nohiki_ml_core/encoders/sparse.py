@@ -34,7 +34,7 @@ class SparseTextEmbedding(Protocol):
 
 
 def _load_sparse_embedding_class(module: object, attr_name: str) -> type[SparseTextEmbedding]:
-    return cast(type[SparseTextEmbedding], getattr(module, attr_name))
+    return cast("type[SparseTextEmbedding]", getattr(module, attr_name))
 
 
 logger = get_logger(__name__)

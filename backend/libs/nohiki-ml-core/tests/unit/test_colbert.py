@@ -76,7 +76,7 @@ def test_colbert_rejects_non_direct_backend_at_initialization(
     backend: InferenceBackend,
 ) -> None:
     """ColBERT fails before inference when its backend cannot preserve PyLate semantics."""
-    late_interaction = cast(dict[str, object], sample_manifest_data["late_interaction"])
+    late_interaction = cast("dict[str, object]", sample_manifest_data["late_interaction"])
     late_interaction["inference_backend"] = backend
     if backend is InferenceBackend.TEI:
         late_interaction["tei_endpoint"] = "localhost:8090"

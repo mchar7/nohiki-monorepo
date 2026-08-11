@@ -312,7 +312,7 @@ class TestHandleValidationError:
         request.url.path = "/api/v1/test"
 
         try:
-            TestModel(name=cast(str, 123), age=cast(int, "not_an_int"))
+            TestModel(name=cast("str", 123), age=cast("int", "not_an_int"))
         except PydanticValidationError as exc:
             response = handle_validation_error(request, exc)
             assert response.status_code == 422

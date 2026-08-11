@@ -102,7 +102,7 @@ class BaseOAuthClient:
             client_secret=self._client_secret,
             redirect_uri=redirect_uri,
         )
-        return cast(OAuth2ClientProtocol, client)
+        return cast("OAuth2ClientProtocol", client)
 
     def get_authorization_url(
         self,
@@ -249,8 +249,8 @@ def create_oauth_client(provider: OAuthProvider, settings: OAuthSettings) -> OAu
 
     match provider:
         case OAuthProvider.GITHUB:
-            return GitHubOAuthClient(cast(GitHubOAuthSettings, provider_settings))
+            return GitHubOAuthClient(cast("GitHubOAuthSettings", provider_settings))
         case OAuthProvider.GOOGLE:
-            return GoogleOAuthClient(cast(GoogleOAuthSettings, provider_settings))
+            return GoogleOAuthClient(cast("GoogleOAuthSettings", provider_settings))
         case _ as unreachable:
             assert_never(unreachable)

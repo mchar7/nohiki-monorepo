@@ -96,7 +96,7 @@ class DynamicFallbackStrategy(BaseRoutingStrategy):
         key = self._make_fallback_state_key(provider_name)
         state_obj = await _cache.get(key)
 
-        state: dict[str, float | int] = cast(dict[str, float | int], state_obj) if isinstance(state_obj, dict) else {}
+        state: dict[str, float | int] = cast("dict[str, float | int]", state_obj) if isinstance(state_obj, dict) else {}
 
         first_error_at = float(state.get("first_error_at", now))
         last_error_at = float(state.get("last_error_at", now))

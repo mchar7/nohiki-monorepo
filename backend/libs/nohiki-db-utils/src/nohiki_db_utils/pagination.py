@@ -8,14 +8,13 @@ and returns items with total count.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql import Select
 

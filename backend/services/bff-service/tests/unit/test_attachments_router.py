@@ -25,7 +25,7 @@ def _make_attachment_projection(attachment_id: uuid.UUID, user_id: uuid.UUID) ->
     mock.file_size = 1024
     mock.storage_key = f"user-uploads/{user_id}/{attachment_id}/test.pdf"
     mock.created_at = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
-    return cast(AttachmentProjection, mock)
+    return cast("AttachmentProjection", mock)
 
 
 def _make_scalar_all(items: list[Any]) -> MagicMock:
@@ -337,7 +337,7 @@ async def test_attachment_to_response_without_storage_key() -> None:
     mock.content_type = "application/pdf"
     mock.file_size = 1024
     mock.created_at = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
-    attachment = cast(AttachmentProjection, mock)
+    attachment = cast("AttachmentProjection", mock)
     mock_s3 = _make_mock_s3_client()
 
     response = await _attachment_to_response(attachment, mock_s3)

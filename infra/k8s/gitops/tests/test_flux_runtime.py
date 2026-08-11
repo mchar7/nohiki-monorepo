@@ -21,7 +21,7 @@ _CONFIGMAP = _RUNTIME / "attempt-configmap.py"
 
 def _mapping(value: object) -> dict[str, object]:
     assert isinstance(value, dict)
-    return cast(dict[str, object], value)
+    return cast("dict[str, object]", value)
 
 
 def _load(path: Path) -> dict[str, object]:
@@ -197,7 +197,7 @@ def test_core_fallback_stays_on_bootstrap_root_until_publication() -> None:
         "gateway-api-crds.yaml",
         "registry.yaml",
     ]
-    assert len(cast(list[object], _at(_load(_CLUSTER / "kustomization.yaml"), "resources"))) == 8
+    assert len(cast("list[object]", _at(_load(_CLUSTER / "kustomization.yaml"), "resources"))) == 8
 
 
 def test_full_root_preserves_publication_and_ordered_verification_dependencies() -> None:

@@ -277,7 +277,7 @@ async def _record_error(provider_name: str, source: JobBoardSource) -> tuple[int
     first_at = now
     consecutive = 0
     if isinstance(raw_state, dict):
-        state = cast(dict[str, object], raw_state)
+        state = cast("dict[str, object]", raw_state)
         raw_first = state.get("first_error_at")
         if isinstance(raw_first, (int, float)):
             first_at = float(raw_first)

@@ -84,7 +84,7 @@ def format_service_summary(spec: ServiceSpec) -> list[tuple[str, str]]:
         rows.extend(
             [
                 ("S3", "enabled"),
-                ("  Bucket", cast(str, spec.s3.bucket_name)),
+                ("  Bucket", cast("str", spec.s3.bucket_name)),
                 ("  Key prefix", spec.s3.key_prefix or "(root)"),
             ]
         )

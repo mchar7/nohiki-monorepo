@@ -127,7 +127,7 @@ async def publish_attachment_deleted_batch(
     if not attachments:
         return
 
-    await cast(_BatchOutboxWriter, outbox).write_events(
+    await cast("_BatchOutboxWriter", outbox).write_events(
         db=db,
         entries=[
             (

@@ -27,17 +27,15 @@ import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import tomlkit
 from tomlkit.items import Array, String, Table
+from tomlkit.toml_document import TOMLDocument
 
 from nohiki_scaffold.core.exceptions import WorkspaceEditError
 from nohiki_scaffold.core.models import LibSpec, ServiceSpec
 from nohiki_scaffold.core.validators import target_directory_for_lib, target_directory_for_service
-
-if TYPE_CHECKING:
-    from tomlkit.toml_document import TOMLDocument
 
 
 @dataclass(frozen=True, slots=True)

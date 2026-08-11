@@ -96,7 +96,7 @@ async def get_cached_validation_report(cache_key: str) -> ValidationReport | Non
     if not isinstance(cached, dict):
         return None
 
-    cached_data = cast(dict[str, Any], cached)
+    cached_data = cast("dict[str, Any]", cached)
     valid = bool(cached_data.get("valid", True))
     cached_issues = cached_data.get("issues", [])
     issues = [ValidationIssue(**issue) for issue in cached_issues] if cached_issues else []

@@ -129,7 +129,7 @@ async def publish_queries_updated_batch(
     if not queries_list:
         return
 
-    await cast(_BatchOutboxWriter, outbox).write_events(
+    await cast("_BatchOutboxWriter", outbox).write_events(
         db=db,
         entries=[_build_query_changed_request(query, Topics.JOB_QUERY_UPDATED) for query in queries_list],
     )
@@ -145,7 +145,7 @@ async def publish_query_deleted_batch(
     if not query_id_list:
         return
 
-    await cast(_BatchOutboxWriter, outbox).write_events(
+    await cast("_BatchOutboxWriter", outbox).write_events(
         db=db,
         entries=[
             (

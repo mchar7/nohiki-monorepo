@@ -880,7 +880,7 @@ def test_local_proxy_endpoint_uses_its_owner_credential(
     managed_rendered: tuple[Manifest, ...],
 ) -> None:
     local = _named(rendered, "ExternalSecret", "nohiki-model-egress-openai")
-    local_spec = cast(dict[str, object], local["spec"])
+    local_spec = cast("dict[str, object]", local["spec"])
     assert local_spec["data"] == [
         {
             "secretKey": "Authorization",
@@ -892,7 +892,7 @@ def test_local_proxy_endpoint_uses_its_owner_credential(
     ]
 
     managed = _named(managed_rendered, "ExternalSecret", "nohiki-model-egress-openai")
-    managed_spec = cast(dict[str, object], managed["spec"])
+    managed_spec = cast("dict[str, object]", managed["spec"])
     assert managed_spec["data"] == [
         {
             "secretKey": "Authorization",

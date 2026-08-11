@@ -268,7 +268,7 @@ def _merge_values(base: dict[str, object], overlay: dict[str, object]) -> dict[s
     for key, value in overlay.items():
         current = merged.get(key)
         if isinstance(current, dict) and isinstance(value, dict):
-            merged[key] = _merge_values(cast(dict[str, object], current), cast(dict[str, object], value))
+            merged[key] = _merge_values(cast("dict[str, object]", current), cast("dict[str, object]", value))
         else:
             merged[key] = value
     return merged
@@ -420,7 +420,7 @@ def validate_migration_jobs(repo_root: Path, inventory: MigrationInventory) -> N
         names: list[str] = []
         for job in jobs:
             metadata = job.get("metadata", {})
-            metadata_map = cast(dict[str, object], metadata) if isinstance(metadata, dict) else {}
+            metadata_map = cast("dict[str, object]", metadata) if isinstance(metadata, dict) else {}
             names.append(str(metadata_map.get("name", "")).removesuffix("-db-migrate"))
         if len(jobs) != len(inventory.entries):
             issues.append(f"{environment}: rendered {len(jobs)} migration Jobs, expected {len(inventory.entries)}")
@@ -430,11 +430,11 @@ def validate_migration_jobs(repo_root: Path, inventory: MigrationInventory) -> N
             if service not in expected_services:
                 continue
             spec = job.get("spec", {})
-            spec_map = cast(dict[str, object], spec) if isinstance(spec, dict) else {}
+            spec_map = cast("dict[str, object]", spec) if isinstance(spec, dict) else {}
             template = spec_map.get("template", {})
-            template_map = cast(dict[str, object], template) if isinstance(template, dict) else {}
+            template_map = cast("dict[str, object]", template) if isinstance(template, dict) else {}
             pod = template_map.get("spec", {})
-            pod_map = cast(dict[str, object], pod) if isinstance(pod, dict) else {}
+            pod_map = cast("dict[str, object]", pod) if isinstance(pod, dict) else {}
             containers = pod_map.get("containers", [])
             actual = (
                 containers[0].get("image")

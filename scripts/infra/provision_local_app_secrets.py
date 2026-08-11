@@ -185,7 +185,7 @@ def _render(values_path: Path, contract: LocalContractSnapshot) -> list[dict[str
         ]
     )
     documents = [
-        cast(dict[str, object], document)
+        cast("dict[str, object]", document)
         for document in yaml.safe_load_all(result.stdout)
         if isinstance(document, dict) and document.get("kind") == "Secret"
     ]
@@ -202,7 +202,7 @@ def _render(values_path: Path, contract: LocalContractSnapshot) -> list[dict[str
         if not isinstance(data, dict):
             message = f"rendered Secret {name} has no stringData"
             raise ProvisionError(message)
-        data = cast(dict[str, object], data)
+        data = cast("dict[str, object]", data)
         document.pop("metadata")
         document["metadata"] = (
             {
@@ -254,7 +254,7 @@ def _render(values_path: Path, contract: LocalContractSnapshot) -> list[dict[str
     if not isinstance(redis_data, dict):
         message = "rendered Redis Secret is malformed"
         raise ProvisionError(message)
-    redis_data = cast(dict[str, object], redis_data)
+    redis_data = cast("dict[str, object]", redis_data)
     # Valkey is auth-disabled locally; retain the exact consumer key without putting
     # a credential into the in-cluster DSN. A non-empty unused value remains SOPS-encrypted.
     if not redis_data.get("password"):
@@ -268,7 +268,7 @@ def _render(values_path: Path, contract: LocalContractSnapshot) -> list[dict[str
     if not isinstance(s3_data, dict):
         message = "rendered S3 Secret is malformed"
         raise ProvisionError(message)
-    s3_data = cast(dict[str, object], s3_data)
+    s3_data = cast("dict[str, object]", s3_data)
     selected.append(
         {
             "apiVersion": "v1",
@@ -298,7 +298,7 @@ def _verify_plain_inventory(documents: list[dict[str, object]], contract: LocalC
         if not isinstance(metadata, dict) or not isinstance(data, dict):
             message = "rendered Secret inventory is malformed"
             raise ProvisionError(message)
-        data = cast(dict[str, object], data)
+        data = cast("dict[str, object]", data)
         name = metadata.get("name")
         if not isinstance(name, str):
             message = "rendered Secret name is malformed"

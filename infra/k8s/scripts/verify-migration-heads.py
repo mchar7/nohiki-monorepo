@@ -62,7 +62,7 @@ def _parse_entry(index: int, raw: object) -> Entry:
     if not isinstance(raw, dict) or set(raw) != {"service", "schema", "head"}:
         msg = f"invalid inventory entry {index}: expected service, schema, and head"
         raise VerificationError(msg)
-    entry = cast(dict[str, object], raw)
+    entry = cast("dict[str, object]", raw)
     service, schema, head = entry["service"], entry["schema"], entry["head"]
     if not isinstance(service, str) or not _SERVICE.fullmatch(service):
         msg = f"invalid inventory entry {index}: invalid service"

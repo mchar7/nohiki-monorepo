@@ -275,15 +275,47 @@ ignore = [
     "D203",    # One blank line before class docstring (conflicts with D211. begrudgingly not starting on second line to conform with Google Style Guide, even though I find second second line start much cleaner. whatever.)
     "COM812",  # Missing trailing comma (conflicts with formatter)
 
-    # These rules cause widespread false positives with FastAPI. See: https://github.com/astral-sh/ruff/issues/14140
+    # These flag annotation-only imports workspace-wide; moving them is a broad mechanical change
+    # unrelated to the import boundaries enforced below.
     "TC001",   # Move application import into type-checking block
     "TC002",   # Move third-party import into type-checking block
     "TC003",   # Move stdlib import into type-checking block
-    "TC006",   # Disallow quoted type expressions in typing.cast(); conflicts with strict PEP 695 style
+    # TC006 is enforced: a quoted first argument to typing.cast() is never evaluated at runtime.
 ]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+# Sibling-relative imports stay allowed because pytest module discovery relies on them.
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Each entry pins a boundary that repository guidance states in prose only; the protobuf entries
+# restore enforcement that was removed while the tree happened to be clean.
+"grpc".msg = "CONTRIBUTING.md, `Architectural Principles` > `Event-Driven Communication (MANDATORY)`, the No Lookup rule: services communicate over Kafka, S3, and external APIs, never by gRPC to another internal service."
+"grpclib".msg = "Same rule as `grpc`, via the other client library."
+"grpc_tools".msg = "CONTRIBUTING.md, `Domain Model Imports`: domain types come from `nohiki` (betterproto2 dataclasses) via `just proto-gen`; grpc_tools emits the `_pb2` stubs that workflow avoids."
+"google.protobuf".msg = "CONTRIBUTING.md, `Domain Model Imports`, and backend/libs/nohiki-domain-models/README.md, `API Reference` > `Import Pattern`: import domain messages from the generated `nohiki` package instead."
+"nohiki_grpc_stubs".msg = "backend/libs/nohiki-domain-models/README.md, `API Reference` > `Import Pattern`: the gRPC stubs package was deleted; import generated domain messages from `nohiki` instead."
+
+[tool.ruff.lint.flake8-type-checking]
+# These settings prevent FastAPI, Pydantic, and SQLAlchemy runtime-evaluated declarations from being
+# mistaken for annotation-only imports. They also make TC004 enforce runtime imports that annotations
+# genuinely need while allowing guarded imports that are deliberately kept lazy.
+#
+# scripts/benchmark and tests/ use separate Ruff configurations, so they do not inherit this section,
+# the banned APIs, or the parent-relative import ban.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+    "sqlalchemy.orm.DeclarativeBase",
+    "sqlalchemy.orm.MappedAsDataclass",
+]
+runtime-evaluated-decorators = [
+    "dataclasses.dataclass",
+    "pydantic.validate_call",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**/*.py" = [
@@ -313,11 +345,18 @@ convention = "google"
     "ARG002",  # Unused method argument - acceptable in fixtures
     "S607",    # Partial executable path - test orchestration
     "F821",    # Undefined name - forward references to proto types
+    # Sibling-package relative imports are required for pytest test module discovery.
     "TID252",  # Relative imports from parent - required for pytest test module discovery
     "E402",    # Module level import not at top - conftest files must set env vars before imports
 ]
 "backend/services/doc-template-service/src/doc_template_service/core/templates/_jinja_inspect.py" = [
     "N802",    # Jinja2 AST visitor methods must match node class names (visit_Name, visit_Getattr, etc.)
+]
+"backend/libs/nohiki-observability/src/nohiki_observability/_protobuf_init.py" = [
+    # The google.protobuf ban targets Nohiki domain messages; this module imports OpenTelemetry's own
+    # wire-format descriptors to force protobuf registration order before any OTEL import, which is a
+    # different subsystem entirely and predates the ban. It is the only google.protobuf import in the tree.
+    "TID251",
 ]
 "**/nohiki_db_utils/outbox*.py" = [
     "S608",    # SQL injection - table names are trusted constants, not user input
@@ -571,7 +610,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--strict-markers -p no:cacheprovider --tb=short --import-mode=importlib"
+addopts = "--strict-markers --strict-config -p no:cacheprovider --tb=short --import-mode=importlib"
 markers = [
     "integration: mark integration tests",
     "requires_docker: mark tests that require Docker/testcontainers",

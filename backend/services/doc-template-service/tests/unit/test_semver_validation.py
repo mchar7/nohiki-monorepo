@@ -45,7 +45,7 @@ class TestValidateSemanticVersion:
     def test_none_version_raises_error(self) -> None:
         """Test that None version raises SemanticVersionError."""
         with pytest.raises(SemanticVersionError):
-            validate_semantic_version(cast(str, None))
+            validate_semantic_version(cast("str", None))
 
     def test_invalid_format_raises_error(self) -> None:
         """Test that invalid version formats raise SemanticVersionError."""

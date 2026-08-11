@@ -148,5 +148,5 @@ class CorrelationRepository:
             return 0
 
         stmt = update(Correlation).where(Correlation.id.in_(correlation_ids)).values(is_viewed=True)
-        result = cast(CursorResult[tuple[()]], await self._session.execute(stmt))
+        result = cast("CursorResult[tuple[()]]", await self._session.execute(stmt))
         return result.rowcount if result.rowcount is not None else 0

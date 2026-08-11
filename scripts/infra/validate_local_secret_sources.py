@@ -452,7 +452,7 @@ def _validate_jwt(raw: bytes) -> None:
     header = re.match(rb"-----BEGIN (?P<kind>(?:RSA |EC |OPENSSH )?)PRIVATE KEY-----\n", normalized)
     if header is None:
         _fail(label, "must be an unencrypted PEM private key")
-    header = cast(re.Match[bytes], header)
+    header = cast("re.Match[bytes]", header)
     kind = header.group("kind")
     pattern = re.compile(
         rb"-----BEGIN " + re.escape(kind) + rb"PRIVATE KEY-----\n"
@@ -462,7 +462,7 @@ def _validate_jwt(raw: bytes) -> None:
     match = pattern.fullmatch(normalized)
     if match is None:
         _fail(label, "must be a complete PEM private key")
-    match = cast(re.Match[bytes], match)
+    match = cast("re.Match[bytes]", match)
     try:
         decoded = base64.b64decode(b"".join(match.group("body").splitlines()), validate=True)
     except binascii.Error as error:
@@ -489,7 +489,7 @@ def _load_mapping(path: Path, label: str) -> dict[str, object]:
         raise ValidationError(message) from error
     if not isinstance(loaded, dict) or not all(isinstance(key, str) for key in loaded):
         _fail(label, "must contain one YAML mapping")
-    return cast(dict[str, object], loaded)
+    return cast("dict[str, object]", loaded)
 
 
 def _load_documents(path: Path, label: str) -> tuple[dict[str, object], ...]:
@@ -503,7 +503,7 @@ def _load_documents(path: Path, label: str) -> tuple[dict[str, object], ...]:
         isinstance(document, dict) and all(isinstance(key, str) for key in document) for document in loaded
     ):
         _fail(label, "must contain only YAML mappings")
-    return cast(tuple[dict[str, object], ...], loaded)
+    return cast("tuple[dict[str, object], ...]", loaded)
 
 
 def _validate_age_key(path: Path) -> str:
@@ -663,18 +663,18 @@ def _validate_sops_metadata(sops: object, recipient: str, label: str) -> None:
         "version",
     }:
         _fail(label, "has unexpected or incomplete SOPS metadata")
-    sops_mapping = cast(dict[str, object], sops)
+    sops_mapping = cast("dict[str, object]", sops)
     age = sops_mapping.get("age")
     mac = sops_mapping.get("mac")
     lastmodified = sops_mapping.get("lastmodified")
     version = sops_mapping.get("version")
     if sops_mapping.get("encrypted_regex") != "^(data|stringData)$" or not isinstance(age, list) or len(age) != 1:
         _fail(label, "has incomplete or unauthorized SOPS metadata")
-    age_entries = cast(list[object], age)
+    age_entries = cast("list[object]", age)
     age_entry = age_entries[0]
     if not isinstance(age_entry, dict) or set(age_entry) != {"recipient", "enc"}:
         _fail(label, "has incomplete or unauthorized SOPS metadata")
-    age_mapping = cast(dict[str, object], age_entry)
+    age_mapping = cast("dict[str, object]", age_entry)
     envelope = age_mapping.get("enc")
     if (
         age_mapping.get("recipient") != recipient
@@ -688,7 +688,7 @@ def _validate_sops_metadata(sops: object, recipient: str, label: str) -> None:
         or _SOPS_VERSION.fullmatch(version) is None
     ):
         _fail(label, "has incomplete or unauthorized SOPS metadata")
-    lastmodified = cast(str, lastmodified)
+    lastmodified = cast("str", lastmodified)
     try:
         modified = datetime.strptime(lastmodified, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     except ValueError as error:
@@ -703,14 +703,14 @@ def _validate_sops_and_secret(sops_path: Path, secret_path: Path, contract: Loca
     rules = config.get("creation_rules")
     if not isinstance(rules, list) or len(rules) != 1:
         _fail(".sops.yaml", "must contain exactly one creation rule")
-    creation_rules = cast(list[object], rules)
+    creation_rules = cast("list[object]", rules)
     rule = creation_rules[0]
     if not isinstance(rule, dict):
         _fail(".sops.yaml", "must contain exactly one creation rule")
-    rule_mapping = cast(dict[object, object], rule)
+    rule_mapping = cast("dict[object, object]", rule)
     if set(rule_mapping) != {"path_regex", "encrypted_regex", "age"}:
         _fail(".sops.yaml", "local SOPS rule is incomplete or malformed")
-    typed_rule = cast(dict[str, object], rule_mapping)
+    typed_rule = cast("dict[str, object]", rule_mapping)
     recipient = typed_rule.get("age")
     if (
         typed_rule.get("path_regex") != r"infra/k8s/gitops/secrets/local/.*\.sops\.yaml$"
@@ -719,7 +719,7 @@ def _validate_sops_and_secret(sops_path: Path, secret_path: Path, contract: Loca
         or _AGE_RECIPIENT.fullmatch(recipient) is None
     ):
         _fail(".sops.yaml", "local SOPS rule is incomplete or malformed")
-    recipient = cast(str, recipient)
+    recipient = cast("str", recipient)
 
     secret = _load_mapping(secret_path, "encrypted provider Secret")
     if set(secret) != {"apiVersion", "kind", "metadata", "type", "data", "sops"}:
@@ -736,7 +736,7 @@ def _validate_sops_and_secret(sops_path: Path, secret_path: Path, contract: Loca
             "encrypted provider Secret",
             "does not contain the exact required key inventory",
         )
-    data_mapping = cast(dict[str, object], data)
+    data_mapping = cast("dict[str, object]", data)
     if not all(isinstance(value, str) and _SOPS_VALUE.fullmatch(value) for value in data_mapping.values()):
         _fail("encrypted provider Secret", "contains plaintext or malformed ciphertext")
     _validate_sops_metadata(secret.get("sops"), recipient, "encrypted provider Secret")
@@ -768,7 +768,7 @@ def _expected_application_inventory(
     global_local = local.get("global")
     if not isinstance(global_local, dict):
         _fail("local Helm values", "have no global contract")
-    global_values = cast(dict[object, object], global_local)
+    global_values = cast("dict[object, object]", global_local)
     if global_values.get("database") != {"host": "nohiki-pg-rw", "port": 5432}:
         _fail("local Helm values", "do not use the CloudNativePG in-cluster endpoint")
     if global_values.get("redis") != {"host": "nohiki-valkey-primary", "port": 6379}:
@@ -831,11 +831,11 @@ def _validate_encrypted_app_secrets(secret_path: Path, recipient: str, contract:
             or not isinstance(name, str)
         ):
             _fail(label, "has a malformed Secret identity")
-        name = cast(str, name)
+        name = cast("str", name)
         data = document.get("stringData")
         if name in inventory or not isinstance(data, dict):
             _fail(label, "contains duplicate identities or malformed data")
-        data_mapping = cast(dict[object, object], data)
+        data_mapping = cast("dict[object, object]", data)
         if not all(
             isinstance(key, str)
             and isinstance(value, str)
@@ -843,7 +843,7 @@ def _validate_encrypted_app_secrets(secret_path: Path, recipient: str, contract:
             for key, value in data_mapping.items()
         ):
             _fail(label, "contains plaintext or malformed ciphertext")
-        string_data = cast(dict[str, str], data_mapping)
+        string_data = cast("dict[str, str]", data_mapping)
         inventory[name] = set(string_data)
         if name == "nohiki-oauth-credentials":
             encrypted = {
@@ -883,7 +883,7 @@ def _validate_encrypted_tls_secret(secret_path: Path, recipient: str) -> None:
     data = secret.get("stringData")
     if not isinstance(data, dict) or set(data) != {"tls.crt", "tls.key", "ca.crt"}:
         _fail(label, "does not contain the exact required key inventory")
-    data_mapping = cast(dict[str, object], data)
+    data_mapping = cast("dict[str, object]", data)
     if not all(isinstance(value, str) and _SOPS_VALUE.fullmatch(value) for value in data_mapping.values()):
         _fail(label, "contains plaintext or malformed ciphertext")
     _validate_sops_metadata(secret.get("sops"), recipient, label)
@@ -929,7 +929,7 @@ def _validate_flux(path: Path) -> None:
     spec = manifest.get("spec")
     if not isinstance(spec, dict):
         _fail("runtime-secrets Kustomization", "has no spec")
-    spec_mapping = cast(dict[object, object], spec)
+    spec_mapping = cast("dict[object, object]", spec)
     allowed_spec_fields = {
         "dependsOn",
         "interval",
@@ -944,7 +944,7 @@ def _validate_flux(path: Path) -> None:
     }
     if set(spec_mapping) != allowed_spec_fields:
         _fail("runtime-secrets Kustomization", "has unauthorized spec fields")
-    spec_values = cast(dict[str, object], spec_mapping)
+    spec_values = cast("dict[str, object]", spec_mapping)
     expected = {
         "dependsOn": [{"name": "infrastructure"}],
         "sourceRef": {"kind": "GitRepository", "name": "flux-system"},

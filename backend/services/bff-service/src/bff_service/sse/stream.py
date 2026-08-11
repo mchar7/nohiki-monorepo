@@ -123,7 +123,7 @@ def _snapshot_event(
     event_type: str,
 ) -> ServerSentEvent:
     if event_type == SSE_EVENT_COMMAND_STATUS:
-        command = cast(CommandRequest, row)
+        command = cast("CommandRequest", row)
         payload = CommandStatusPayload(
             type=event_type,
             request_id=str(command.request_id),
@@ -132,7 +132,7 @@ def _snapshot_event(
             error_message=command.error_message,
         )
     else:
-        document = cast(DocumentGenerationStatus, row)
+        document = cast("DocumentGenerationStatus", row)
         payload = DocumentStatusPayload(
             type=event_type,
             request_id=str(document.request_id),

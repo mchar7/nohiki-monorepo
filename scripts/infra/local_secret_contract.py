@@ -17,7 +17,7 @@ def _values_mapping(values: Mapping[str, object] | Path) -> Mapping[str, object]
         if not isinstance(loaded, dict):
             message = "Helm values are malformed"
             raise LocalSecretContractError(message)
-        return cast(dict[str, object], loaded)
+        return cast("dict[str, object]", loaded)
     return values
 
 
@@ -37,8 +37,8 @@ def enabled_provider_credentials(
     environment: Mapping[str, object] | Path,
 ) -> tuple[str, ...]:
     """Return exact credential names reachable through enabled environment routes."""
-    base = cast(dict[str, object], _values_mapping(base))
-    environment = cast(dict[str, object], _values_mapping(environment))
+    base = cast("dict[str, object]", _values_mapping(base))
+    environment = cast("dict[str, object]", _values_mapping(environment))
     base_global = base.get("global")
     environment_global = environment.get("global")
     base_egress = base_global.get("modelEgress") if isinstance(base_global, dict) else None

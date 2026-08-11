@@ -66,11 +66,11 @@ class ActionlintDiagnostic:
 
 
 def _mapping(value: object) -> dict[str, object]:
-    return cast(dict[str, object], value) if isinstance(value, dict) else {}
+    return cast("dict[str, object]", value) if isinstance(value, dict) else {}
 
 
 def _sequence(value: object) -> list[object]:
-    return cast(list[object], value) if isinstance(value, list) else []
+    return cast("list[object]", value) if isinstance(value, list) else []
 
 
 def _string(value: object, default: str = "") -> str:

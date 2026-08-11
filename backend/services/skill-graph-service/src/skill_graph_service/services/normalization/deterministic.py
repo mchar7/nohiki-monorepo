@@ -18,10 +18,10 @@ from skill_graph_service.services.normalization.models import (
     build_exact_match_result,
     build_jaccard_match_result,
 )
+from skill_graph_service.services.normalization.ports import SkillCandidate
 
 if TYPE_CHECKING:
     from skill_graph_service.db.models import SkillNode
-    from skill_graph_service.services.normalization.ports import SkillCandidate
 
 type ExactMatchFn = Callable[[str], Awaitable[SkillNode | None]]
 type AliasMatchFn = Callable[..., Awaitable[SkillNode | None]]

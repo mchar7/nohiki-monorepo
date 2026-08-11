@@ -88,7 +88,7 @@ async def test_committed_lifecycle_handler_loads_owned_state_and_only_then_upser
         ) as upsert,
     ):
         assert order == []
-        await cast(Callable[[PrefCreated | PrefUpdated, MessageContext], Awaitable[None]], handler)(
+        await cast("Callable[[PrefCreated | PrefUpdated, MessageContext], Awaitable[None]]", handler)(
             message,
             _context(),
         )

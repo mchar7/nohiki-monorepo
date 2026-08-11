@@ -556,7 +556,7 @@ def _model_config_entries(raw: object) -> list[dict[str, object]]:
             values = list(raw.values())
         case _:
             return []
-    return [cast(dict[str, object], value) for value in values if isinstance(value, dict)]
+    return [cast("dict[str, object]", value) for value in values if isinstance(value, dict)]
 
 
 def _inherit_model_base_urls(provider_data: dict[str, object], chains_data: dict[str, dict[str, object]]) -> None:
@@ -627,8 +627,8 @@ class LLMSettings(BaseModel):
         if not isinstance(provider_raw, dict):
             return data
 
-        provider_data = cast(dict[str, object], provider_raw)
-        chains_data = cast(dict[str, dict[str, object]], chains_raw) if isinstance(chains_raw, dict) else {}
+        provider_data = cast("dict[str, object]", provider_raw)
+        chains_data = cast("dict[str, dict[str, object]]", chains_raw) if isinstance(chains_raw, dict) else {}
         if provider_api_keys := provider_data.get("api_keys"):
             for chain_data in chains_data.values():
                 if not chain_data.get("api_keys"):

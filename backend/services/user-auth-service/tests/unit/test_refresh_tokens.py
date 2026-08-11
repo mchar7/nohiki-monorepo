@@ -492,7 +492,7 @@ class TestRefreshTokenServiceRotateToken:
         async def rotate_and_commit(
             session: _RotationSession,
         ) -> tuple[str, uuid.UUID, uuid.UUID] | RevokedSession | None:
-            result = await service.rotate_token(cast(AsyncSession, session), "same-raw-token")
+            result = await service.rotate_token(cast("AsyncSession", session), "same-raw-token")
             await session.commit()
             return result
 

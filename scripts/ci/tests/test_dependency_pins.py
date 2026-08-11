@@ -73,11 +73,11 @@ def _steps(job: WorkflowJob) -> list[WorkflowStep]:
 
 def _setup_steps() -> list[WorkflowStep]:
     action = load_mapping(_SETUP_CI)
-    runs = cast(dict[str, object], action["runs"])
+    runs = cast("dict[str, object]", action["runs"])
     steps = runs["steps"]
     assert isinstance(steps, list)
     assert all(isinstance(step, dict) for step in steps)
-    return cast(list[WorkflowStep], steps)
+    return cast("list[WorkflowStep]", steps)
 
 
 def test_all_workflow_actions_are_sha_pinned_with_version_comments() -> None:
@@ -249,7 +249,7 @@ def _workspace_member_names() -> set[str]:
     assert isinstance(member_patterns, list)
     assert all(isinstance(pattern, str) for pattern in member_patterns)
     member_projects = {
-        member / "pyproject.toml" for pattern in member_patterns for member in _ROOT.glob(cast(str, pattern))
+        member / "pyproject.toml" for pattern in member_patterns for member in _ROOT.glob(cast("str", pattern))
     }
     assert all(project.is_file() for project in member_projects)
 
@@ -274,7 +274,7 @@ def test_renovate_disables_workspace_and_fixed_skylos_lookups() -> None:
     assert all(isinstance(name, str) for name in package_names)
 
     workspace_names = _workspace_member_names()
-    configured_names = set(cast(list[str], package_names))
+    configured_names = set(cast("list[str]", package_names))
     assert configured_names == workspace_names, (
         f"workspace PyPI lookup rule is missing {sorted(workspace_names - configured_names)} "
         f"and has stale names {sorted(configured_names - workspace_names)}"
@@ -304,8 +304,8 @@ def test_renovate_abandonment_suppression_is_limited_to_verified_false_positives
     assert isinstance(finite_package_names, list)
     assert all(isinstance(name, str) for name in [*finished_package_names, *finite_package_names])
 
-    configured_finished_names = set(cast(list[str], finished_package_names))
-    configured_finite_names = set(cast(list[str], finite_package_names))
+    configured_finished_names = set(cast("list[str]", finished_package_names))
+    configured_finite_names = set(cast("list[str]", finite_package_names))
     assert len(configured_finished_names) == len(finished_package_names)
     assert len(configured_finite_names) == len(finite_package_names)
     assert configured_finished_names == {
@@ -497,8 +497,8 @@ def test_root_lint_group_is_the_minimal_ruff_environment() -> None:
 
 def test_complete_environment_uses_class_specific_cache_profiles() -> None:
     action = load_mapping(_SETUP_CI)
-    inputs = cast(dict[str, object], action["inputs"])
-    runner_class = cast(dict[str, object], inputs["runner-class"])
+    inputs = cast("dict[str, object]", action["inputs"])
+    runner_class = cast("dict[str, object]", inputs["runner-class"])
     assert runner_class["required"] is True
     steps = _setup_steps()
     by_name = {step.get("name"): step for step in steps}
@@ -771,7 +771,7 @@ def test_complete_environment_cache_result_normalizes_both_profiles(tmp_path: Pa
 
 def test_setup_cache_telemetry_uses_restore_outputs_and_matched_keys() -> None:
     action = load_mapping(_SETUP_CI)
-    outputs = cast(dict[str, object], action["outputs"])
+    outputs = cast("dict[str, object]", action["outputs"])
     assert outputs["cache-telemetry"] == {
         "description": "Observed cache outcomes and the keys that supplied restored content.",
         "value": "${{ steps.cache-telemetry.outputs.summary }}",
@@ -846,7 +846,7 @@ def test_worker_uses_the_pinned_skylos_fork_and_static_cache_identity() -> None:
     assert "git hash-object --stdin" in identity_command
 
     restore = next(step for step in setup_steps if step.get("name") == "Restore Skylos static analysis cache")
-    cache_inputs = cast(dict[str, object], restore["with"])
+    cache_inputs = cast("dict[str, object]", restore["with"])
     assert cache_inputs["path"] == "${{ github.workspace }}/.skylos"
     key = str(cache_inputs["key"])
     assert key.startswith("skylos-static-v5-")
@@ -1214,7 +1214,7 @@ def test_renovate_covers_required_dependency_ecosystems_and_policy() -> None:
     assert all(isinstance(manager, dict) for manager in custom_managers)
     custom_by_dependency = {
         (dependency, manager.get("datasourceTemplate")): manager
-        for manager in cast(list[dict[str, object]], custom_managers)
+        for manager in cast("list[dict[str, object]]", custom_managers)
         if isinstance(dependency := manager.get("depNameTemplate"), str)
     }
     # Exact equality, keyed by owner and datasource: a custom manager that is deleted, renamed, or
@@ -1341,7 +1341,7 @@ def _helm_values_managed_files() -> list[Path]:
     patterns = manager.get("managerFilePatterns")
     assert isinstance(patterns, list)
     assert all(isinstance(pattern, str) for pattern in patterns)
-    matchers = [re.compile(cast(str, pattern).strip("/")) for pattern in patterns]
+    matchers = [re.compile(cast("str", pattern).strip("/")) for pattern in patterns]
     paths = [
         path
         for path in sorted((_ROOT / "infra" / "k8s").rglob("*.y*ml"))
@@ -1354,7 +1354,7 @@ def _helm_values_managed_files() -> list[Path]:
 def _tagged_blocks(node: object, location: str) -> Iterator[tuple[str, dict[str, object]]]:
     if isinstance(node, dict):
         if "tag" in node:
-            yield location or "<root>", cast(dict[str, object], node)
+            yield location or "<root>", cast("dict[str, object]", node)
         for key, value in node.items():
             yield from _tagged_blocks(value, f"{location}.{key}" if location else str(key))
     elif isinstance(node, list):

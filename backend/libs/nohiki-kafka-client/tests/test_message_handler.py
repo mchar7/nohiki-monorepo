@@ -33,7 +33,7 @@ class TestMessageHandlerGroupIdRequired:
             ),
             is_testing=True,
         )
-        unsafe_client = cast(Any, client)
+        unsafe_client = cast("Any", client)
 
         # Attempting to use message_handler without group_id should raise TypeError
         with pytest.raises(TypeError, match="group_id"):
@@ -82,7 +82,7 @@ class TestMessageHandlerGroupIdRequired:
         # Attempting to pass group_id as positional should raise TypeError
         with pytest.raises(TypeError):
 
-            @cast(Any, client).message_handler("test.topic.v1", MockMessage, "test-group")
+            @cast("Any", client).message_handler("test.topic.v1", MockMessage, "test-group")
             async def handler(message: MockMessage, context: MessageContext) -> None:
                 assert message is not None
                 assert context is not None

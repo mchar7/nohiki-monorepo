@@ -143,7 +143,7 @@ def cached[**P, T](
 
             cached_value = await _try_cache_get(cache, cache_key, func_name)
             if cached_value is not None:
-                return cast(T, cached_value)
+                return cast("T", cached_value)
 
             result = await func(*args, **kwargs)
             await _try_cache_set(cache, cache_key, result, ttl, func_name)
@@ -166,8 +166,8 @@ def cached[**P, T](
                     error=str(e),
                 )
 
-        cast(Any, wrapper).invalidate = invalidate
-        return cast(CachedAsyncFunction[P, T], wrapper)
+        cast("Any", wrapper).invalidate = invalidate
+        return cast("CachedAsyncFunction[P, T]", wrapper)
 
     return decorator
 
@@ -262,7 +262,7 @@ def cached_sync[**P, T](
 
             cached_value = _sync_cache_get(get_cache, cache_key, func_name)
             if cached_value is not None:
-                return cast(T, cached_value)
+                return cast("T", cached_value)
 
             result = func(*args, **kwargs)
             _sync_cache_set(get_cache, cache_key, result, ttl, func_name)
@@ -283,7 +283,7 @@ def cached_sync[**P, T](
                     error=str(e),
                 )
 
-        cast(Any, wrapper).invalidate = invalidate
-        return cast(CachedSyncFunction[P, T], wrapper)
+        cast("Any", wrapper).invalidate = invalidate
+        return cast("CachedSyncFunction[P, T]", wrapper)
 
     return decorator

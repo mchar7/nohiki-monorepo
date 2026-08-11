@@ -8,12 +8,9 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import Any, TypedDict
 
-if TYPE_CHECKING:
-    from doc_template_service.schemas.models import ValidationIssue
-
-from doc_template_service.schemas.models import ValidationReport
+from doc_template_service.schemas.models import ValidationIssue, ValidationReport
 
 
 class EnvironmentConfig(TypedDict, total=False):

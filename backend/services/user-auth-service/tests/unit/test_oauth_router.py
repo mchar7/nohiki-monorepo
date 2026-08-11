@@ -233,10 +233,10 @@ class TestCallback:
             OAuthCallbackQuery(code=code, state="valid_state", error=error),
         )
 
-        cast(AsyncMock, deps.oauth_service.consume_callback_state).assert_awaited_once_with(
+        cast("AsyncMock", deps.oauth_service.consume_callback_state).assert_awaited_once_with(
             "github", "valid_state", "valid_state"
         )
-        cast(AsyncMock, deps.oauth_service.handle_callback).assert_not_awaited()
+        cast("AsyncMock", deps.oauth_service.handle_callback).assert_not_awaited()
         assert f"error={expected}" in result.headers["location"]
         assert "returnUrl=" not in result.headers["location"]
         self._assert_binding_cleared(result)
@@ -245,7 +245,7 @@ class TestCallback:
     @pytest.mark.asyncio
     async def test_mismatch_does_not_continue_and_clears_binding(self) -> None:
         deps = self._deps()
-        cast(MagicMock, deps.oauth_service).consume_callback_state = AsyncMock(
+        cast("MagicMock", deps.oauth_service).consume_callback_state = AsyncMock(
             side_effect=OAuthError("state_mismatch", "wrong browser")
         )
         result = await callback(
@@ -255,7 +255,7 @@ class TestCallback:
             OAuthCallbackQuery(code="code", state="query"),
         )
 
-        cast(AsyncMock, deps.oauth_service.handle_callback).assert_not_awaited()
+        cast("AsyncMock", deps.oauth_service.handle_callback).assert_not_awaited()
         assert "error=state_mismatch&provider=github" in result.headers["location"]
         self._assert_binding_cleared(result, "query")
 
@@ -270,7 +270,7 @@ class TestCallback:
         )
 
         assert result.headers["location"].endswith("?success=true&returnUrl=%2Fjobs%3Ftab%3Dsaved")
-        cast(AsyncMock, deps.oauth_service.handle_callback).assert_awaited_once()
+        cast("AsyncMock", deps.oauth_service.handle_callback).assert_awaited_once()
         self._assert_binding_cleared(result)
         headers = result.headers.getlist("set-cookie")
         assert any("nohiki_at=" in header for header in headers)
@@ -284,7 +284,7 @@ class TestCallback:
 
         for state in order:
             deps = self._deps()
-            cast(AsyncMock, deps.oauth_service.consume_callback_state).return_value = MagicMock(
+            cast("AsyncMock", deps.oauth_service.consume_callback_state).return_value = MagicMock(
                 return_url=f"/{state}", provider="github"
             )
             result = await callback(
@@ -294,7 +294,8 @@ class TestCallback:
                 OAuthCallbackQuery(code="code", state=state),
             )
 
-            cast(AsyncMock, deps.oauth_service.consume_callback_state).assert_awaited_once_with("github", state, state)
+            consume_state = cast("AsyncMock", deps.oauth_service.consume_callback_state)
+            consume_state.assert_awaited_once_with("github", state, state)
             cleared = get_oauth_state_cookie_name(state, settings)
             other = get_oauth_state_cookie_name(next(value for value in all_states if value != state), settings)
             headers = result.headers.getlist("set-cookie")
@@ -325,7 +326,7 @@ class TestCallback:
             OAuthCallbackQuery(code="code", state=None),
         )
 
-        cast(AsyncMock, deps.oauth_service.consume_callback_state).assert_not_awaited()
+        cast("AsyncMock", deps.oauth_service.consume_callback_state).assert_not_awaited()
         assert "error=state_mismatch&provider=github" in result.headers["location"]
         assert not result.headers.getlist("set-cookie")
         assert not any("nohiki_at=" in h or "nohiki_rt=" in h for h in result.headers.getlist("set-cookie"))
@@ -342,7 +343,7 @@ class TestCallback:
         self, failure: Exception, expected: str
     ) -> None:
         deps = self._deps()
-        cast(MagicMock, deps.oauth_service).handle_callback = AsyncMock(side_effect=failure)
+        cast("MagicMock", deps.oauth_service).handle_callback = AsyncMock(side_effect=failure)
 
         result = await callback(
             self._request(),
@@ -351,7 +352,7 @@ class TestCallback:
             OAuthCallbackQuery(code="code", state="valid_state"),
         )
 
-        cast(AsyncMock, deps.db.rollback).assert_awaited_once()
+        cast("AsyncMock", deps.db.rollback).assert_awaited_once()
         assert f"error={expected}&provider=github" in result.headers["location"]
         self._assert_binding_cleared(result)
         assert not any("nohiki_at=" in h or "nohiki_rt=" in h for h in result.headers.getlist("set-cookie"))
