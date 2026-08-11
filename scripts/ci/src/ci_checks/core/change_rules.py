@@ -171,7 +171,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         packages=("ci-checks",),
     ),
     SurfaceRule(
-        ("*.md", "**/*.md", ".markdownlint-cli2.jsonc", ".markdownlint.json", ".markdownlintignore"),
+        ("*.md", "**/*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore"),
         flags=("lint_markdown",),
     ),
     SurfaceRule(

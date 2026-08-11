@@ -1,4 +1,0 @@
-[[IgnoredVulns]]
-id = "GHSA-rrmf-rvhw-rf47"
-ignoreUntil = 2026-08-15
-reason = "Nohiki does not call torch.jit.script; no fixed PyTorch release is available. Reassess before expiry."
