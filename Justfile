@@ -719,6 +719,7 @@ hooks-precommit:
     {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook run pre-commit --force
 
 hooks-prepush:
+    {{ env_lock }} shared node_modules -- {{ pnpm }} exec commitlint --from origin/main --to HEAD --verbose
     {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook run pre-push --force
 
 hooks-test-msg message:
