@@ -20,12 +20,12 @@
 #    so this script refuses such a push instead of pretending to gate it.
 #
 # 2. An empty selection skips every job, globbed or not, and exits zero.
-#    `--force` would suppress that skip, but it suppresses the empty-selection
-#    check for all jobs at once, so it converts silent skips into confident
-#    passes over the wrong file set while also running all eighteen jobs on
-#    every push. It is deliberately NOT used. Instead the inner pass writes a
-#    liveness marker from an unglobbed job; no marker means Lefthook selected
-#    nothing, and this script fails loudly rather than reporting success.
+#    That is sound only when every published tip is already contained in the
+#    validated origin/main history, which this envelope proves directly. Every
+#    other push requires an inner-pass liveness marker. `--force` would suppress
+#    the empty-selection check for all jobs at once, so it converts silent skips
+#    into confident passes over the wrong file set while also running all
+#    eighteen jobs on every push. It is deliberately NOT used.
 #
 # `--no-auto-install` matters more than it looks: a bare `lefthook run`
 # regenerates .git/hooks/* from the stock template, which would silently replace
@@ -54,8 +54,10 @@ head_tree=$(git rev-parse 'HEAD^{tree}')
 # cannot hide a finding in the published tree, so they only warrant a note.
 dirty=$(git status --porcelain --untracked-files=no)
 untracked=$(git ls-files --others --exclude-standard | wc -l)
+validated_main=$(git rev-parse --quiet --verify 'refs/remotes/origin/main^{commit}' 2>/dev/null || true)
 inspectable=0
 refs_seen=0
+requires_gate=0
 
 # Refuse before taking the gate lock: a push we cannot honestly examine must not
 # also pay the queue wait.
@@ -94,6 +96,13 @@ while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
         printf '%s\n' "$dirty" >&2
         exit 1
     fi
+    if [ -n "$validated_main" ] && git merge-base --is-ancestor "$local_sha" "$validated_main"; then
+        printf 'pre-push gate: passing %s without checks; merge-base with validated origin/main equals outgoing tip %s (origin/main %s), so there are no commits beyond origin/main\n' \
+            "$remote_ref" "$local_sha" "$validated_main" >&2
+        inspectable=1
+        continue
+    fi
+    requires_gate=1
     inspectable=1
     printf 'pre-push gate: examining %s at %s, tree %s (remote %s at %s)\n' \
         "$local_ref" "$local_sha" "$head_tree" "$remote_ref" "$remote_sha" >&2
@@ -108,11 +117,16 @@ if [ "$refs_seen" -eq 0 ]; then
     # the worktree against, so say which tree is being examined and continue.
     printf 'pre-push gate: no ref pairs on standard input; examining worktree HEAD %s\n' \
         "$head_sha" >&2
+    requires_gate=1
     inspectable=1
 fi
 
 if [ "$inspectable" -eq 0 ]; then
     printf 'pre-push gate: every pushed ref is a deletion; nothing to inspect\n' >&2
+    exit 0
+fi
+
+if [ "$requires_gate" -eq 0 ]; then
     exit 0
 fi
 
@@ -140,8 +154,8 @@ if [ ! -e "$liveness" ]; then
     printf 'Every job was skipped and the gate exited zero, so it would have\n' >&2
     printf 'reported success having verified nothing. Lefthook selects pre-push\n' >&2
     printf 'files with `git diff --name-only HEAD @{push}`, falling back to a diff\n' >&2
-    printf 'against the head branch, so an empty selection means this HEAD matches\n' >&2
-    printf 'what the remote already has. Nothing was checked; nothing was pushed.\n' >&2
+    printf 'against the head branch. This empty selection provides no evidence\n' >&2
+    printf 'that the outgoing commits were inspected, so the push is refused.\n' >&2
     exit 1
 fi
 
