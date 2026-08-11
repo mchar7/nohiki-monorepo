@@ -2,7 +2,7 @@
 # Accelerator builder selection. Global ARG so it is usable in the `FROM` below:
 # sync-cpu (default, +cpu torch) or sync-gpu (+cu130 torch) for the production GPU image.
 ARG ML_COMPUTE_BUILDER=sync-cpu
-FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS builder-base
+FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:b0c4ec81396588a94b99052caf2f786e6e92e03111991d3d40c68762ee48d2ab AS builder-base
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /usr/local/bin/uv
 
@@ -53,7 +53,7 @@ RUN find /opt/venv -type d -name "tests" -exec rm -rf {} + 2>/dev/null; \
     find /opt/venv -name "*.pyi" -delete 2>/dev/null; \
     true
 
-FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
+FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:b0c4ec81396588a94b99052caf2f786e6e92e03111991d3d40c68762ee48d2ab
 
 COPY --from=builder /opt/venv /opt/venv
 

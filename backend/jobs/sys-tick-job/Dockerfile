@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.26@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
-FROM docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS supercronic-builder
+FROM docker.io/library/golang:1.26.5-bookworm@sha256:f5b1ea492ad3e465d57c79dcea9393c2f0710ca2dce326078691851fd4307737 AS supercronic-builder
 ARG SUPERCRONIC_VERSION=v0.2.47
 RUN test "$(go env GOVERSION)" = "go1.26.5" && \
     CGO_ENABLED=0 go install "github.com/aptible/supercronic@${SUPERCRONIC_VERSION}"
 
-FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS builder
+FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:b0c4ec81396588a94b99052caf2f786e6e92e03111991d3d40c68762ee48d2ab AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /usr/local/bin/uv
 
@@ -30,7 +30,7 @@ RUN find /opt/venv -type d -name "tests" -exec rm -rf {} + 2>/dev/null; \
     find /opt/venv -name "*.pyi" -delete 2>/dev/null; \
     true
 
-FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
+FROM public.ecr.aws/docker/library/python:3.14.6-slim@sha256:b0c4ec81396588a94b99052caf2f786e6e92e03111991d3d40c68762ee48d2ab
 
 COPY --from=builder /opt/venv /opt/venv
 
