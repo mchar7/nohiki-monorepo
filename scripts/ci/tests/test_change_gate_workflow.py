@@ -1645,6 +1645,9 @@ def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> Non
     assert "exec tsc --noEmit" in steps["Typecheck edge worker"]["run"]
     assert "exec vitest run" in steps["Test edge worker"]["run"]
     assert str(steps["Test frontend"]["run"]).endswith("just fe-test")
+    assert steps["Test frontend"]["env"]["VITEST_MAX_WORKERS"] == (
+        "${{ needs.changes.outputs.runner_class == 'hosted' && '2' || '' }}"
+    )
 
 
 def test_lint_diagnostics_are_uploaded_and_summarized_with_least_privilege() -> None:
