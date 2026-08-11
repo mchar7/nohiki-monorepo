@@ -216,6 +216,7 @@
           gitleaks # Secret detection for git hooks
           lefthookPackage # Git hook manager
           util-linux # flock for environment locks
+          rsync # Owner-controlled local secrets mirror
         ];
 
         pythonTools = with pkgs; [
@@ -333,6 +334,7 @@
           pkgs.kubernetes-helm
           pkgs.podman-compose
           pkgs.gitleaks
+          pkgs.rsync
           pkgs.skopeo
         ];
         ciHygieneTools = ciTestTools ++ ciNodeTools;
