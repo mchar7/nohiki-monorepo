@@ -4,5 +4,15 @@
   // instead of only staged ones. Lefthook handles file discovery via
   // {staged_files}. For manual linting, pass globs on the command line:
   //   pnpm exec markdownlint-cli2 "**/*.md"
-  "gitignore": true
+  "gitignore": true,
+  "config": {
+    "MD013": {
+      "line_length": 120,
+      "tables": false,
+      "code_blocks": false
+    },
+    "MD024": {
+      "siblings_only": true
+    }
+  }
 }

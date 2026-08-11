@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import yaml
+from _documents import load_mapping, mapping_at, string_at
 from helm_test_utils import runtime_eso_args
 from test_image_digest_gitops import _digest_values
 
@@ -497,9 +498,8 @@ def test_local_kafka_scalers_wait_for_bootstrap_service(tmp_path: Path) -> None:
         "helm.sh/hook-weight": "-10",
     }
     container = gate["spec"]["template"]["spec"]["containers"][0]
-    assert container["image"] == (
-        "busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
-    )
+    image = mapping_at(load_mapping(_CHART / "values.yaml"), "opentelemetry-operator", "testFramework", "image")
+    assert container["image"] == f"{string_at(image, 'repository')}:{string_at(image, 'tag')}"
     assert container["env"] == [
         {"name": "KAFKA_BOOTSTRAP_HOST", "value": "nohiki-kafka-kafka-bootstrap"},
         {"name": "KAFKA_BOOTSTRAP_PORT", "value": "9092"},
