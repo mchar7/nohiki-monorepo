@@ -8,7 +8,6 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-import jsonschema
 import pytest
 import yaml
 from test_gateway_browser_policy import _render_helm
@@ -115,6 +114,8 @@ def _crds() -> tuple[dict[str, Any], ...]:
 
 
 def _validate_against_vendored_crd(resource: dict[str, Any]) -> None:
+    import jsonschema
+
     group, version = resource["apiVersion"].split("/", maxsplit=1)
     matching_crds = [
         crd for crd in _crds() if crd["spec"]["group"] == group and crd["spec"]["names"]["kind"] == resource["kind"]

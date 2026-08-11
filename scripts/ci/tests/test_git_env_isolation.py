@@ -21,10 +21,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from nohiki_test_utils import plugins
-
 
 def _clean_env() -> dict[str, str]:
+    from nohiki_test_utils import plugins
+
     return {key: value for key, value in os.environ.items() if key not in plugins._GIT_DISCOVERY_ENV}
 
 
@@ -62,6 +62,8 @@ def test_scrub_git_discovery_env_is_session_scoped() -> None:
     A function-scoped scrub runs after module-scoped fixtures that call git, defeating the
     isolation the fixture exists to provide.
     """
+    from nohiki_test_utils import plugins
+
     marker = plugins._scrub_git_discovery_env._fixture_function_marker
     assert marker.scope == "session", f"expected session scope, got {marker.scope!r}"
     assert marker.autouse, "the scrub must be autouse: no package opts in explicitly"
@@ -85,6 +87,8 @@ def test_scrubbed_env_isolates_scratch_git_init(tmp_path: Path) -> None:
     Scrubbing ``_GIT_DISCOVERY_ENV`` makes the scratch ``git init`` target the scratch repo
     and leave the shared config untouched.
     """
+    from nohiki_test_utils import plugins
+
     shared_config, wt_gitdir, scratch = _outer_worktree(tmp_path)
     leaked = _clean_env() | {"GIT_DIR": str(wt_gitdir)}
     scrubbed = {key: value for key, value in leaked.items() if key not in plugins._GIT_DISCOVERY_ENV}

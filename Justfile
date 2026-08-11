@@ -131,7 +131,7 @@ typecheck-job job:
 # Code hygiene
 
 # Run all strict hygiene checks
-hygiene: hygiene-deps hygiene-arch hygiene-imports hygiene-deadcode-strict hygiene-fixtures-strict hygiene-build-backend-strict
+hygiene: hygiene-deps hygiene-arch hygiene-imports hygiene-test-closure hygiene-deadcode-strict hygiene-fixtures-strict hygiene-build-backend-strict
 
 hygiene-deps packages="ALL":
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope all --packages '{{ packages }}' --ci
@@ -182,6 +182,14 @@ hygiene-fixtures-libs:
 # Require every buildable workspace package to use canonical uv_build settings.
 hygiene-build-backend-strict packages="ALL":
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --packages '{{ packages }}' --ci --strict
+
+# Forbid module-level imports in a package's test tree that fall outside its declared
+# closure. Pytest executes a module body before it deselects it, so an out-of-closure
+# module-level import in an unselected test breaks every partial environment that merely
+# collects the directory. Scope lives in ci_checks.checks.test_closure.ENFORCED_PACKAGES;
+# pass ALL to measure the whole workspace.
+hygiene-test-closure packages="ENFORCED":
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks test-closure --scope all --packages '{{ packages }}' --ci
 
 # Run every developer-reproducible CI check
 verify: lint format-check lint-md typecheck-all test-all-packages test-jvm test-skylos-cache test-node-contracts hygiene fe-check fe-fsd fe-i18n edge-check proto-lint proto-breaking workflow-lint docker-lint secrets-scan nix-check api-schema-check image-matrix-check
