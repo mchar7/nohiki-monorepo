@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.machinery
 import importlib.util
 import ipaddress
@@ -113,6 +114,11 @@ def _stub_create_acceptance(runner: ModuleType, monkeypatch: pytest.MonkeyPatch)
         runner,
         "repair_nodes",
         lambda _path: [{"name": "nohiki-control-plane"}],
+    )
+    monkeypatch.setattr(
+        runner,
+        "install_registry_hosts",
+        lambda _path, _nodes: hashlib.sha256(runner.REGISTRY_HOSTS).hexdigest(),
     )
     monkeypatch.setattr(
         runner,
@@ -579,7 +585,13 @@ def test_create_executes_the_scoped_command_under_its_own_lock(
     ]
     assert state.exists()
     assert json.loads((attempt / "commands/create.json").read_text())["result"] == "passed"
-    assert (attempt / "runner-measurements.json").is_file()
+    measurements = json.loads((attempt / "runner-measurements.json").read_text())
+    assert measurements["nodes"] == [
+        {
+            "hostsSha256": hashlib.sha256(runner.REGISTRY_HOSTS).hexdigest(),
+            "name": "nohiki-control-plane",
+        }
+    ]
     runner.main(["--attempt-dir", str(attempt), "delete"])
 
 
@@ -745,6 +757,19 @@ def test_registry_hosts_copy_uses_exact_bytes_mode_hash_and_annotation(
   skip_verify = true
 """
     )
+
+
+def test_registry_hosts_measurement_rejects_empty_or_mismatched_content() -> None:
+    runner = _load_runner()
+    node = {"hostsSha256": "", "name": "nohiki-control-plane"}
+    with pytest.raises(runner.KindctlError, match="empty or does not match"):
+        runner.record_registry_hosts([node], ["nohiki-control-plane"], "")
+    with pytest.raises(runner.KindctlError, match="empty or does not match"):
+        runner.record_registry_hosts([node], ["nohiki-control-plane"], "b" * 64)
+
+    expected_hash = hashlib.sha256(runner.REGISTRY_HOSTS).hexdigest()
+    runner.record_registry_hosts([node], ["nohiki-control-plane"], expected_hash)
+    assert node["hostsSha256"] == expected_hash
 
 
 def test_storage_probe_reuses_the_bound_claim_and_requires_pv_deletion(

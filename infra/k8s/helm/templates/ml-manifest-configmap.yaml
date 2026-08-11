@@ -1,10 +1,10 @@
 {{/*
 ML Semantic Representation Manifest ConfigMap.
-Content is injected at deploy-time via Helmfile readFile gotmpl - the canonical
-source remains data/config/semantic_representation_manifest.json.
-Gated on .Values.mlManifestContent being non-empty (set by Helmfile).
+The chart packages the canonical manifest so direct Flux HelmRelease installs
+do not depend on an out-of-band values injection. mlManifestContent remains an
+optional override for deployments that need a different manifest.
 */}}
-{{- if .Values.mlManifestContent }}
+{{- $content := required "ML manifest content must not be empty" (.Values.mlManifestContent | default (.Files.Get "files/semantic_representation_manifest.json")) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -14,5 +14,4 @@ metadata:
     {{- include "nohiki.labels" . | nindent 4 }}
 data:
   semantic_representation_manifest.json: |-
-    {{- .Values.mlManifestContent | trim | nindent 4 }}
-{{- end }}
+    {{- $content | trim | nindent 4 }}

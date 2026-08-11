@@ -900,7 +900,7 @@ def test_router_emits_one_target_and_per_class_timeout_contract() -> None:
     )
     assert jobs["title-policy"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.title_timeout_minutes) }}"
     assert jobs["checks"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}"
-    assert _wall_budgets() == {"warm": 8040, "cold": 8040}
+    assert _wall_budgets() == {"warm": 540, "cold": 660}
 
 
 def test_router_emits_scoping_and_tree_attestation_contracts() -> None:
@@ -1106,7 +1106,7 @@ def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
     assert report["env"]["COMMIT_CLASS"] == "${{ needs.changes.outputs.commit_class }}"
     assert "CONTAINER_SELECTED" not in report["env"]
     assert "PLAYWRIGHT_SELECTED" not in report["env"]
-    assert _wall_budgets() == {"warm": 8040, "cold": 8040}
+    assert _wall_budgets() == {"warm": 540, "cold": 660}
     assert _jobs()["playwright-image"]["timeout-minutes"] == (
         "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}"
     )
@@ -1392,7 +1392,7 @@ def test_fan_in_consumes_the_worker_cache_signals() -> None:
 
 def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     cold = select_wall_budget("true", "", "", "true")
-    assert cold.seconds == 8040
+    assert cold.seconds == 660
     assert cold.classification == "cold"
     assert cold.basis == (
         "ready-cache primary key missed by at least one worker leg; dead-code static cache primary key restored"
@@ -1401,7 +1401,7 @@ def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     assert cold.seconds >= cold.seconds
     cold_inside = derive_accounting(
         "2026-07-23T00:00:00Z",
-        datetime(2026, 7, 23, 2, 13, 59, tzinfo=UTC),
+        datetime(2026, 7, 23, 0, 10, 59, tzinfo=UTC),
         [],
         ready_missed="true",
         ready_hit="",
@@ -1411,18 +1411,18 @@ def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     enforce_wall_budget(cold_inside)
     cold_breached = derive_accounting(
         "2026-07-23T00:00:00Z",
-        datetime(2026, 7, 23, 2, 14, tzinfo=UTC),
+        datetime(2026, 7, 23, 0, 11, tzinfo=UTC),
         [],
         ready_missed="true",
         ready_hit="",
         deadcode_missed="",
         deadcode_hit="true",
     )
-    with pytest.raises(ValueError, match=r"class=cold observed_controllable=8040s budget<8040s"):
+    with pytest.raises(ValueError, match=r"class=cold observed_controllable=660s budget<660s"):
         enforce_wall_budget(cold_breached)
 
     warm = select_wall_budget("", "true", "", "true")
-    assert warm.seconds == 8040
+    assert warm.seconds == 540
     assert warm.classification == "warm"
     assert warm.basis == (
         "ready-cache primary key restored by every reporting worker leg; dead-code static cache primary key restored"
@@ -1431,7 +1431,7 @@ def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     assert warm.seconds >= warm.seconds
     warm_inside = derive_accounting(
         "2026-07-23T00:00:00Z",
-        datetime(2026, 7, 23, 2, 13, 59, tzinfo=UTC),
+        datetime(2026, 7, 23, 0, 8, 59, tzinfo=UTC),
         [],
         ready_missed="",
         ready_hit="true",
@@ -1441,14 +1441,14 @@ def test_cold_and_warm_budget_classification_and_breach_boundary() -> None:
     enforce_wall_budget(warm_inside)
     warm_breached = derive_accounting(
         "2026-07-23T00:00:00Z",
-        datetime(2026, 7, 23, 2, 14, tzinfo=UTC),
+        datetime(2026, 7, 23, 0, 9, tzinfo=UTC),
         [],
         ready_missed="",
         ready_hit="true",
         deadcode_missed="",
         deadcode_hit="true",
     )
-    with pytest.raises(ValueError, match=r"class=warm observed_controllable=8040s budget<8040s"):
+    with pytest.raises(ValueError, match=r"class=warm observed_controllable=540s budget<540s"):
         enforce_wall_budget(warm_breached)
 
 

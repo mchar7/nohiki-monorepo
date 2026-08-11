@@ -1,7 +1,7 @@
 {{/*
 Strimzi KafkaConnect - Kafka Connect cluster with Debezium + Qdrant plugins.
 
-Uses FileConfigProvider for secure secret injection from mounted volumes.
+Uses DirectoryConfigProvider for secure secret injection from mounted volumes.
 Connectors are managed via separate KafkaConnector CRDs (strimzi-kafka-connectors.yaml).
 */}}
 {{- if .Values.kafkaConnect.enabled }}
@@ -21,19 +21,21 @@ metadata:
 spec:
   replicas: {{ $cfg.replicas | default 2 }}
   bootstrapServers: {{ $cfg.bootstrapServers }}
+  groupId: {{ $cfg.groupId }}
+  configStorageTopic: {{ $cfg.configStorageTopic }}
+  statusStorageTopic: {{ $cfg.statusStorageTopic }}
+  offsetStorageTopic: {{ $cfg.offsetStorageTopic }}
   # renovate: datasource=maven depName=org.apache.kafka:kafka_2.13
   version: {{ $glob.kafka.version | default "4.3.0" }}
   image: {{ include "nohiki.jobImage" (dict "glob" $glob "cfg" $cfg "default" "kafka-connect") }}
   config:
-    group.id: {{ $cfg.groupId }}
-    config.storage.topic: {{ $cfg.configStorageTopic }}
-    offset.storage.topic: {{ $cfg.offsetStorageTopic }}
-    status.storage.topic: {{ $cfg.statusStorageTopic }}
     config.storage.replication.factor: 1
     offset.storage.replication.factor: 1
     status.storage.replication.factor: 1
-    config.providers: file
-    config.providers.file.class: org.apache.kafka.common.config.provider.FileConfigProvider
+    config.providers: directory
+    # WHY: FileConfigProvider expects path:key properties files, and Strimzi fences built-in provider paths under /opt/kafka.
+    config.providers.directory.class: org.apache.kafka.common.config.provider.DirectoryConfigProvider
+    config.providers.directory.param.allowed.paths: /mnt/secrets
     connector.client.config.override.policy: None
     # Only offset.flush.interval.ms is exposed as a tunable here because it is the
     # single Connect-cluster-level setting we actively tune per environment (10s in
