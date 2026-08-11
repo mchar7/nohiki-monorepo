@@ -41,6 +41,7 @@ from ci_checks.core.process_env import sanitized_python_env
 
 PYTEST_SUCCESS = 0
 _PROCESS_INACTIVITY_WATCHDOG_SECONDS: int = 18 * 60
+_DOCKER_TEST_MARKER = "requires_docker"
 _UNIT_TEST_MARKERS = (
     "not integration and not e2e and not requires_docker "
     "and not requires_node_modules and not requires_skylos and not slow"
@@ -202,6 +203,8 @@ class TestResult:
     duration_ms: int = 0
     output: str = ""
     tests_run: int = 0
+    tests_passed: int = 0
+    tests_skipped: int = 0
     tests_failed: int = 0
     coverage: CoverageResult = field(default_factory=CoverageResult)
     pkg_type: PackageType = PackageType.OTHER
@@ -592,6 +595,8 @@ class _PackagePytestStats:
     """Per-package facts reported by pytest's JUnit output."""
 
     tests_run: int = 0
+    tests_passed: int = 0
+    tests_skipped: int = 0
     tests_failed: int = 0
     duration_ms: int = 0
 
@@ -851,34 +856,43 @@ def _unit_excluded_test_modules(packages: list[Package], markers: str) -> list[P
     ]
 
 
-def _junit_prefix(pkg: Package) -> str:
-    path = _repo_relative(pkg.path)
-    return Path(path).as_posix().replace("/", ".") + ".tests"
+def _junit_prefixes(pkg: Package) -> tuple[str, ...]:
+    """Dotted classname prefixes pytest emits for a package's collection roots."""
+    return tuple(Path(_repo_relative(path)).as_posix().removeprefix("./").replace("/", ".") for path in pkg.test_paths)
+
+
+def _longest_prefix_owner(value: str, owners: dict[str, str], separator: str) -> str | None:
+    """Return the owner of the longest component-aligned prefix."""
+    candidate = value
+    while candidate:
+        if owner := owners.get(candidate):
+            return owner
+        candidate = candidate.rpartition(separator)[0]
+    return None
 
 
 def _parse_package_stats(junit_path: Path, packages: list[Package]) -> dict[str, _PackagePytestStats]:
     stats = {pkg.name: _PackagePytestStats() for pkg in packages}
-    classname_prefixes = sorted(((_junit_prefix(pkg), pkg.name) for pkg in packages), reverse=True)
-    file_prefixes = sorted(
-        (
-            (
-                Path(_repo_relative(pkg.path / "tests")).as_posix().removeprefix("./"),
-                pkg.name,
-            )
-            for pkg in packages
-        ),
-        reverse=True,
-    )
+    classname_prefix_owners = {prefix: pkg.name for pkg in packages for prefix in _junit_prefixes(pkg)}
+    file_prefix_owners = {
+        Path(_repo_relative(path)).as_posix().removeprefix("./"): pkg.name
+        for pkg in packages
+        for path in pkg.test_paths
+    }
+    marker_file_owners = {
+        Path(_repo_relative(pkg.path / relative)).as_posix().removeprefix("./"): pkg.name
+        for pkg in packages
+        for relative in pkg.requires_docker_tests
+    }
     # pytest writes this local temporary file; it is not an untrusted input.
     for testcase in ET.parse(junit_path).getroot().iter("testcase"):  # noqa: S314
         classname = testcase.get("classname", "")
         file = Path(testcase.get("file", "")).as_posix().removeprefix("./")
-        package_name = next((name for prefix, name in file_prefixes if file.startswith(prefix)), None)
+        package_name = marker_file_owners.get(file)
         if package_name is None:
-            package_name = next(
-                (name for prefix, name in classname_prefixes if classname.startswith(prefix)),
-                None,
-            )
+            package_name = _longest_prefix_owner(file, file_prefix_owners, "/")
+        if package_name is None:
+            package_name = _longest_prefix_owner(classname, classname_prefix_owners, ".")
         if package_name is None:
             continue
         package_stats = stats[package_name]
@@ -886,7 +900,168 @@ def _parse_package_stats(junit_path: Path, packages: list[Package]) -> dict[str,
         package_stats.duration_ms += round(float(testcase.get("time", "0")) * 1000)
         if testcase.find("failure") is not None or testcase.find("error") is not None:
             package_stats.tests_failed += 1
+        elif testcase.find("skipped") is not None:
+            package_stats.tests_skipped += 1
+        else:
+            package_stats.tests_passed += 1
     return stats
+
+
+def _consolidated_test_paths(packages: list[Package], markers: str) -> list[Path]:
+    if markers == _DOCKER_TEST_MARKER:
+        return [pkg.path / relative for pkg in packages for relative in sorted(pkg.requires_docker_tests)]
+    return [path for pkg in packages for path in pkg.test_paths]
+
+
+def _consolidated_pytest_command(
+    packages: list[Package],
+    markers: str,
+    extra_args: tuple[str, ...],
+    pytest_workers: int,
+    junit_path: Path,
+    coverage_config: Path,
+    coverage_json: Path,
+    *,
+    with_coverage: bool,
+) -> list[str]:
+    cmd = [
+        "uv",
+        "run",
+        "--no-sync",
+        "pytest",
+        f"--rootdir={REPO_ROOT}",
+        *(_repo_relative(path) for path in _consolidated_test_paths(packages, markers)),
+        *(f"--ignore={_repo_relative(path)}" for path in _unit_excluded_test_modules(packages, markers)),
+        "--tb=short",
+        f"--junitxml={junit_path}",
+        "-o",
+        "junit_family=legacy",
+        "-n",
+        str(pytest_workers),
+        "--dist=worksteal",
+    ]
+    if with_coverage:
+        _write_consolidated_coverage_config(coverage_config, packages)
+        cmd.extend(
+            [
+                "--cov",
+                f"--cov-config={coverage_config}",
+                f"--cov-report=json:{coverage_json}",
+                "--cov-fail-under=0",
+            ]
+        )
+    if markers:
+        cmd.extend(["-m", markers])
+    cmd.extend(extra_args)
+    return cmd
+
+
+def _consolidated_test_env(packages: list[Package]) -> dict[str, str]:
+    test_env = sanitized_python_env(extra={"PROJECT_ROOT": str(REPO_ROOT)})
+    test_paths = [str(path) for path in _pythonpath_test_dirs(packages)]
+    if existing_pythonpath := test_env.get("PYTHONPATH"):
+        test_paths.append(existing_pythonpath)
+    if test_paths:
+        test_env["PYTHONPATH"] = os.pathsep.join(test_paths)
+    return test_env
+
+
+async def _run_consolidated_pytest(cmd: list[str], test_env: dict[str, str]) -> tuple[str, int, int]:
+    started = time.time()
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=REPO_ROOT,
+        env=test_env,
+    )
+    stdout, stderr = await _capture_process_output(proc)
+    output = stdout.decode() + stderr.decode()
+    exit_code = proc.returncode if proc.returncode is not None else -1
+    wall_duration_ms = int((time.time() - started) * 1000)
+    return output, exit_code, wall_duration_ms
+
+
+def _parse_consolidated_reports(
+    junit_path: Path,
+    coverage_json: Path,
+    packages: list[Package],
+    *,
+    with_coverage: bool,
+) -> tuple[dict[str, _PackagePytestStats], dict[str, CoverageResult]]:
+    stats = (
+        _parse_package_stats(junit_path, packages)
+        if junit_path.is_file()
+        else {pkg.name: _PackagePytestStats() for pkg in packages}
+    )
+    coverage = (
+        _parse_package_coverage(coverage_json, packages)
+        if with_coverage
+        else {pkg.name: CoverageResult() for pkg in packages}
+    )
+    return stats, coverage
+
+
+def _classify_consolidated_results(
+    packages: list[Package],
+    markers: str,
+    stats: dict[str, _PackagePytestStats],
+    coverage: dict[str, CoverageResult],
+    output: str,
+    exit_code: int,
+    wall_duration_ms: int,
+) -> list[TestResult]:
+    failed_packages: set[str] = set()
+    results: list[TestResult] = []
+    for pkg in packages:
+        package_stats = stats[pkg.name]
+        has_tests = package_stats.tests_run > 0
+        package_passed = (
+            has_tests
+            and package_stats.tests_failed == 0
+            and (
+                markers != _DOCKER_TEST_MARKER or (package_stats.tests_passed > 0 and package_stats.tests_skipped == 0)
+            )
+        )
+        if not has_tests:
+            package_output = f"No selected tests were collected for package {pkg.name}."
+        elif not package_passed:
+            package_output = output or (
+                f"{package_stats.tests_passed} passed, "
+                f"{package_stats.tests_failed} failed, "
+                f"{package_stats.tests_skipped} skipped."
+            )
+            failed_packages.add(pkg.name)
+        else:
+            package_output = ""
+        results.append(
+            TestResult(
+                name=pkg.name,
+                passed=package_passed,
+                duration_ms=package_stats.duration_ms or (wall_duration_ms if not has_tests else 0),
+                output=package_output,
+                tests_run=package_stats.tests_run,
+                tests_passed=package_stats.tests_passed,
+                tests_skipped=package_stats.tests_skipped,
+                tests_failed=package_stats.tests_failed,
+                coverage=coverage[pkg.name],
+                pkg_type=pkg.pkg_type,
+                source_has_statements=_source_has_statements(pkg),
+            )
+        )
+    if exit_code != PYTEST_SUCCESS:
+        controller_output = f"pytest controller exited with status {exit_code}."
+        if not failed_packages:
+            controller_output = f"{controller_output}\n\n{output}"
+        results.append(
+            TestResult(
+                name=_PYTEST_CONTROLLER_RESULT_NAME,
+                passed=False,
+                duration_ms=wall_duration_ms,
+                output=controller_output,
+            )
+        )
+    return results
 
 
 async def run_consolidated_tests(
@@ -913,113 +1088,48 @@ async def run_consolidated_tests(
         junit_path = Path(temp_dir) / "junit.xml"
         coverage_config = Path(temp_dir) / "coverage.ini"
         coverage_json = Path(temp_dir) / "coverage.json"
-        cmd = [
-            "uv",
-            "run",
-            "--no-sync",
-            "pytest",
-            f"--rootdir={REPO_ROOT}",
-            *(_repo_relative(pkg.path / "tests") for pkg in packages),
-            *(f"--ignore={_repo_relative(path)}" for path in _unit_excluded_test_modules(packages, markers)),
-            "--tb=short",
-            f"--junitxml={junit_path}",
-            "-o",
-            "junit_family=legacy",
-            "-n",
-            str(pytest_workers),
-            "--dist=worksteal",
-        ]
-        if with_coverage:
-            _write_consolidated_coverage_config(coverage_config, packages)
-            cmd.extend(
-                [
-                    "--cov",
-                    f"--cov-config={coverage_config}",
-                    f"--cov-report=json:{coverage_json}",
-                    "--cov-fail-under=0",
-                ]
-            )
-        if markers:
-            cmd.extend(["-m", markers])
-        cmd.extend(extra_args)
-
-        test_env = sanitized_python_env(extra={"PROJECT_ROOT": str(REPO_ROOT)})
-        test_paths = [str(path) for path in _pythonpath_test_dirs(packages)]
-        if existing_pythonpath := test_env.get("PYTHONPATH"):
-            test_paths.append(existing_pythonpath)
-        if test_paths:
-            test_env["PYTHONPATH"] = os.pathsep.join(test_paths)
-
-        started = time.time()
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=REPO_ROOT,
-            env=test_env,
+        cmd = _consolidated_pytest_command(
+            packages,
+            markers,
+            extra_args,
+            pytest_workers,
+            junit_path,
+            coverage_config,
+            coverage_json,
+            with_coverage=with_coverage,
         )
-        stdout, stderr = await _capture_process_output(proc)
-
-        output = stdout.decode() + stderr.decode()
-        exit_code = proc.returncode if proc.returncode is not None else -1
-        stats = (
-            _parse_package_stats(junit_path, packages)
-            if junit_path.is_file()
-            else {pkg.name: _PackagePytestStats() for pkg in packages}
+        output, exit_code, wall_duration_ms = await _run_consolidated_pytest(
+            cmd,
+            _consolidated_test_env(packages),
         )
-        coverage = (
-            _parse_package_coverage(coverage_json, packages)
-            if with_coverage
-            else {pkg.name: CoverageResult() for pkg in packages}
+        stats, coverage = _parse_consolidated_reports(
+            junit_path,
+            coverage_json,
+            packages,
+            with_coverage=with_coverage,
         )
-        failed_packages = {name for name, package_stats in stats.items() if package_stats.tests_failed}
-        wall_duration_ms = int((time.time() - started) * 1000)
-        results: list[TestResult] = []
-        for pkg in packages:
-            package_stats = stats[pkg.name]
-            has_tests = package_stats.tests_run > 0
-            if not has_tests:
-                package_output = f"No selected tests were collected for package {pkg.name}."
-            elif package_stats.tests_failed:
-                package_output = output
-            else:
-                package_output = ""
-            results.append(
-                TestResult(
-                    name=pkg.name,
-                    passed=has_tests and package_stats.tests_failed == 0,
-                    duration_ms=package_stats.duration_ms or (wall_duration_ms if not has_tests else 0),
-                    output=package_output,
-                    tests_run=package_stats.tests_run,
-                    tests_failed=package_stats.tests_failed,
-                    coverage=coverage[pkg.name],
-                    pkg_type=pkg.pkg_type,
-                    source_has_statements=_source_has_statements(pkg),
-                )
-            )
-        if exit_code != PYTEST_SUCCESS:
-            controller_output = f"pytest controller exited with status {exit_code}."
-            if not failed_packages:
-                controller_output = f"{controller_output}\n\n{output}"
-            results.append(
-                TestResult(
-                    name=_PYTEST_CONTROLLER_RESULT_NAME,
-                    passed=False,
-                    duration_ms=wall_duration_ms,
-                    output=controller_output,
-                )
-            )
-        return results
+        return _classify_consolidated_results(
+            packages,
+            markers,
+            stats,
+            coverage,
+            output,
+            exit_code,
+            wall_duration_ms,
+        )
 
 
 def _display_consolidated_results(results: list[TestResult], console: Console, *, with_coverage: bool) -> None:
     cov_header = " Cov% " if with_coverage else ""
-    console.print(f"\n{'Module':<40} {'Tests':>5} {'Time':>6} {'Status':>9}{cov_header}")
-    console.print("-" * 70)
+    console.print(f"\n{'Module':<40} {'Tests':>5} {'Pass':>5} {'Skip':>5} {'Time':>6} {'Status':>9}{cov_header}")
+    console.print("-" * 82)
     for result in results:
         icon = "✓ PASS" if result.passed else "✗ FAIL"
         cov_info = f"  {result.coverage.total_coverage:>3.0f}%" if with_coverage else ""
-        console.print(f"{result.name:<40} {result.tests_run:>5} {result.duration_ms / 1000:>5.1f}s {icon:>9}{cov_info}")
+        console.print(
+            f"{result.name:<40} {result.tests_run:>5} {result.tests_passed:>5} "
+            f"{result.tests_skipped:>5} {result.duration_ms / 1000:>5.1f}s {icon:>9}{cov_info}"
+        )
 
 
 async def run_tests_parallel(
@@ -1181,6 +1291,11 @@ def display_summary(
     if ci_mode:
         console.print(f"\n{'=' * 70}")
         console.print(f"TESTS: {passed} passed, {failed} failed")
+        console.print(
+            f"TEST CASES: {sum(result.tests_passed for result in results)} passed, "
+            f"{sum(result.tests_failed for result in results)} failed, "
+            f"{sum(result.tests_skipped for result in results)} skipped"
+        )
         if with_coverage:
             cov_status = "[green]OK[/green]" if coverage_ok else "[red]BELOW THRESHOLD[/red]"
             console.print(f"COVERAGE: {cov_status}")
@@ -1252,17 +1367,19 @@ def render_github_summary(results: list[TestResult], title: str, *, strict: bool
         "",
     ]
     lines += markdown_table(
-        ["Package", "Duration", "Tests", "Coverage", "Coverage policy"],
+        ["Package", "Duration", "Tests", "Passed", "Skipped", "Coverage", "Coverage policy"],
         [
             (
                 f"`{result.name}`",
                 f"{result.duration_ms / 1000:.1f}s",
-                "Pass" if result.passed else "Fail",
+                str(result.tests_run),
+                str(result.tests_passed),
+                str(result.tests_skipped),
                 *_coverage_cells(result),
             )
             for result in sorted(results, key=lambda item: item.name)
         ],
-        align=("left", "right", "center", "right", "left"),
+        align=("left", "right", "right", "right", "right", "right", "left"),
     )
     return "\n".join(lines) + "\n"
 
@@ -1302,17 +1419,24 @@ tests_app = typer.Typer(
 )
 
 
-def _load_testable_packages(scope_str: str) -> list[Package]:
-    """Load workspace packages filtered by scope and presence of a tests/ dir."""
+def _load_testable_packages(scope_str: str, markers: str = "") -> list[Package]:
+    """Load workspace packages containing tests selected by the marker class."""
     from ci_checks.core.packages import load_packages_with_deps
 
     scope = Scope(scope_str) if scope_str in Scope.__members__.values() else Scope.ALL
-    packages = load_packages_with_deps(scope)
-    return [p for p in packages.values() if p.has_tests]
+    packages = load_packages_with_deps(scope).values()
+    if markers == _DOCKER_TEST_MARKER:
+        return [package for package in packages if package.requires_docker_tests]
+    return [package for package in packages if package.has_tests]
 
 
-def _build_markers(*, integration: bool) -> str:
-    """Build the pytest -m expression for the given flags."""
+def _build_markers(*, integration: bool, requires_docker: bool = False) -> str:
+    """Build the pytest -m expression for the requested test class."""
+    if integration and requires_docker:
+        msg = "--integration and --requires-docker are mutually exclusive"
+        raise ValueError(msg)
+    if requires_docker:
+        return _DOCKER_TEST_MARKER
     return "integration" if integration else _UNIT_TEST_MARKERS
 
 
@@ -1399,6 +1523,10 @@ def all_packages_cmd(
         typer.Option("--scope", "-s", help="Filter: all, services, libs, jobs, scripts, other"),
     ] = "all",
     integration: Annotated[bool, typer.Option("--integration", "-i", help="Run integration tests")] = False,
+    requires_docker: Annotated[
+        bool,
+        typer.Option("--requires-docker", help="Run tests requiring a container runtime"),
+    ] = False,
     workers: Annotated[int, typer.Option("--workers", "-w", help="Max parallel workers")] = 4,
     ci: Annotated[bool, typer.Option("--ci", help="CI mode (simple output)")] = False,
     coverage: Annotated[bool, typer.Option("--coverage/--no-coverage", help="Enable coverage")] = True,
@@ -1413,9 +1541,10 @@ def all_packages_cmd(
     summary: Annotated[Path | None, typer.Option("--summary", help="$GITHUB_STEP_SUMMARY file")] = None,
     summary_title: Annotated[str, typer.Option("--summary-title", help="Batch name for the summary")] = "all",
 ) -> None:
-    """Run tests for all workspace packages with coverage reporting."""
+    """Run tests for all workspace packages with optional coverage reporting."""
     console = Console()
-    testable = _load_testable_packages(scope)
+    markers = _build_markers(integration=integration, requires_docker=requires_docker)
+    testable = _load_testable_packages(scope, markers) if requires_docker else _load_testable_packages(scope)
 
     if packages not in ("", "ALL"):
         requested = {name.strip() for name in packages.split(",") if name.strip()}
@@ -1430,8 +1559,8 @@ def all_packages_cmd(
         console.print("[yellow]No testable packages found[/yellow]")
         return
 
-    console.print(f"[bold]Running tests for {len(testable)} packages with coverage...[/bold]")
-    markers = _build_markers(integration=integration)
+    coverage_label = " with coverage" if coverage else ""
+    console.print(f"[bold]Running tests for {len(testable)} packages{coverage_label}...[/bold]")
     results = asyncio.run(
         run_tests_parallel(testable, markers, (), workers, console, ci_mode=ci, with_coverage=coverage)
     )

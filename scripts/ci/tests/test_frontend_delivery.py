@@ -454,8 +454,7 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' "
         "&& needs.changes.outputs.title_only != 'true' && "
         "(needs.changes.outputs.broad_unbounded == 'true' || "
-        "needs.changes.outputs.frontend_smoke == 'true' || "
-        "needs.changes.outputs.otel_collector == 'true') }}"
+        "needs.changes.outputs.container_contracts == 'true') }}"
     )
     buildx = next(step for step in frontend_steps if step.get("name") == "Set up Docker Buildx")
     assert buildx["id"] == "container-buildx"
@@ -539,6 +538,11 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     assert collector_run.endswith(
         "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary\n"
     )
+    container_tests = next(step for step in frontend_steps if step.get("name") == "Run container contract tests")
+    assert "--requires-docker --ci --workers 1 --no-coverage" in container_tests["run"]
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in container_tests["run"]
+    assert '--summary-title "container contracts"' in container_tests["run"]
+    assert 'echo "executed=true" >> "$GITHUB_OUTPUT"' in container_tests["run"]
 
     attestation = next(step for step in frontend_steps if step.get("name") == "Attest container contract execution")
     assert attestation["if"] == "always() && env.CONTAINER_CONTRACTS_SELECTED == 'true'"
@@ -549,6 +553,12 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "OTEL_OUTCOME": "${{ steps.otel-collector.outcome }}",
         "FRONTEND_SMOKE_EXPECTED": "${{ needs.changes.outputs.frontend_smoke }}",
         "OTEL_EXPECTED": "${{ needs.changes.outputs.otel_collector }}",
+        "CONTAINER_TESTS_OUTCOME": "${{ steps.container-tests.outcome }}",
+        "CONTAINER_TESTS_EXPECTED": (
+            "${{ needs.changes.outputs.broad_unbounded == 'true' "
+            "|| needs.changes.outputs.container_contracts == 'true' }}"
+        ),
+        "CONTAINER_TESTS_EXECUTED": "${{ steps.container-tests.outputs.executed }}",
     }
     assert "workflow.py verdict container" in str(attestation["run"]).replace("\n", " ")
     output = tmp_path / "github-output"
@@ -559,6 +569,9 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "OTEL_OUTCOME": "skipped",
         "FRONTEND_SMOKE_EXPECTED": "true",
         "OTEL_EXPECTED": "false",
+        "CONTAINER_TESTS_OUTCOME": "success",
+        "CONTAINER_TESTS_EXPECTED": "true",
+        "CONTAINER_TESTS_EXECUTED": "true",
     }
     for name, value in outcomes.items():
         monkeypatch.setenv(name, value)
@@ -570,12 +583,17 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "IMAGE_OUTCOME": "frontend-image",
         "SMOKE_OUTCOME": "frontend-smoke",
         "OTEL_OUTCOME": "otel-collector",
+        "CONTAINER_TESTS_OUTCOME": "container-tests",
     }
     for variable, label in labels.items():
         monkeypatch.setenv(variable, "failure")
         with pytest.raises(ValueError, match=rf"{label} was .* but concluded failure"):
             verdict_cmd("container", output)
         monkeypatch.setenv(variable, outcomes[variable])
+    monkeypatch.setenv("CONTAINER_TESTS_EXECUTED", "false")
+    with pytest.raises(ValueError, match="container-tests succeeded without execution evidence"):
+        verdict_cmd("container", output)
+    monkeypatch.setenv("CONTAINER_TESTS_EXECUTED", "true")
     assert worker["outputs"]["container_contracts_executed"] == (
         "${{ steps.container-contracts.outputs.executed == 'true' && 'true' || '' }}"
     )

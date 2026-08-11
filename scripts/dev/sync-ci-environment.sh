@@ -21,6 +21,26 @@ case ${1-} in
                 --no-default-groups --group ci --group deadcode \
                 --no-install-package skylos -q
         ;;
+    container-contracts)
+        # This augments the cached frontend payload without reconciling the full workspace.
+        exec scripts/dev/env-lock.sh exclusive venv -- \
+            uv sync --locked --inexact \
+                --package user-pref-service \
+                --package job-query-composition-service \
+                --package job-storage-service \
+                --package job-correlation-evaluation-service \
+                --package doc-template-service \
+                --package notification-service \
+                --package bff-service \
+                --package nohiki-redis-utils \
+                --package nohiki-db-utils \
+                --package nohiki-kafka-client \
+                --package nohiki-test-utils \
+                --package nohiki-integration-tests \
+                --package ci-checks \
+                --no-default-groups \
+                --no-install-package skylos -q
+        ;;
     *)
         printf 'usage: %s {python|full}\n' "$0" >&2
         exit 2

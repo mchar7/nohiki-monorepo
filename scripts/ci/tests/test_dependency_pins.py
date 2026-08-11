@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from _documents import WorkflowJob, WorkflowStep, load_jsonc, load_mapping, load_workflow, mapping_sequence_at
+from ci_checks.checks import tests as test_checks
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RENOVATE = _ROOT / ".github" / "renovate.json5"
@@ -359,9 +360,9 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
     assert install_step["run"] == ('nix develop .#ci --command scripts/dev/sync-ci-environment.sh "$PAYLOAD"')
     ci_sync = _read_text(_SYNC_CI_ENVIRONMENT).replace("\\\n", " ")
     hosted_syncs: dict[str, list[str]] = {}
-    for payload in ("python", "full"):
+    for payload in ("python", "full", "container-contracts"):
         branch = re.search(
-            rf"^\s*{payload}\)\n(?P<body>.*?)(?=^\s*(?:python|full|\*)\))",
+            rf"^\s*{payload}\)\n(?P<body>.*?)(?=^\s*(?:python|full|container-contracts|\*)\))",
             ci_sync,
             re.MULTILINE | re.DOTALL,
         )
@@ -402,7 +403,49 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
             "skylos",
             "-q",
         ],
+        "container-contracts": [
+            "uv",
+            "sync",
+            "--locked",
+            "--inexact",
+            "--package",
+            "user-pref-service",
+            "--package",
+            "job-query-composition-service",
+            "--package",
+            "job-storage-service",
+            "--package",
+            "job-correlation-evaluation-service",
+            "--package",
+            "doc-template-service",
+            "--package",
+            "notification-service",
+            "--package",
+            "bff-service",
+            "--package",
+            "nohiki-redis-utils",
+            "--package",
+            "nohiki-db-utils",
+            "--package",
+            "nohiki-kafka-client",
+            "--package",
+            "nohiki-test-utils",
+            "--package",
+            "nohiki-integration-tests",
+            "--package",
+            "ci-checks",
+            "--no-default-groups",
+            "--no-install-package",
+            "skylos",
+            "-q",
+        ],
     }
+    container_tokens = hosted_syncs["container-contracts"]
+    installed_container_packages = {
+        container_tokens[index + 1] for index, token in enumerate(container_tokens[:-1]) if token == "--package"
+    }
+    docker_test_packages = {package.name for package in test_checks._load_testable_packages("all", "requires_docker")}
+    assert docker_test_packages <= installed_container_packages
     deadcode_sync_lines = _read_text(_SYNC_CI_DEADCODE).replace("\\\n", " ").splitlines()
     deadcode_sync = next(line[line.index("uv sync") :] for line in deadcode_sync_lines if "uv sync" in line)
     assert shlex.split(deadcode_sync) == [

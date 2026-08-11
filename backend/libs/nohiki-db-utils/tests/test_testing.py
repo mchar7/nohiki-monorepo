@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import sqlalchemy as sa
 from nohiki_db_utils.testing import (
+    POSTGRES_CONTAINER_COMMAND,
     POSTGRES_CONTAINER_IMAGE,
     create_mock_session,
     get_async_engine,
@@ -87,6 +88,7 @@ class TestTestingModuleUnitPaths:
                 next(generator)
 
         container_type.assert_called_once_with(POSTGRES_CONTAINER_IMAGE)
+        container.with_command.assert_called_once_with(POSTGRES_CONTAINER_COMMAND)
         container.waiting_for.assert_called_once_with(wait_strategy)
         container.start.assert_called_once()
         container.get_wrapped_container.return_value.stop.assert_called_once_with(timeout=1)

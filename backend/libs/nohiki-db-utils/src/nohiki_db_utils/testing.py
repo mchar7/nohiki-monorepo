@@ -47,6 +47,7 @@ def create_mock_session() -> MagicMock:
 
 
 POSTGRES_CONTAINER_IMAGE = "postgres:18-alpine"
+POSTGRES_CONTAINER_COMMAND = "postgres -c wal_level=logical -c max_replication_slots=16 -c max_wal_senders=16"
 
 TEST_DATABASE_DSN = "postgresql://test:test@localhost:5432/test"
 """Standard test database DSN for unit tests that mock the database layer."""
@@ -80,6 +81,7 @@ def postgres_container() -> Generator[str]:
             pytest.skip("PostgreSQL container could not be started: Docker daemon unavailable")
 
         container = PostgresContainer(POSTGRES_CONTAINER_IMAGE)
+        container.with_command(POSTGRES_CONTAINER_COMMAND)
         container.waiting_for(
             LogMessageWaitStrategy("database system is ready to accept connections").with_startup_timeout(
                 timedelta(seconds=60)

@@ -51,6 +51,14 @@ def test_smoke_production_frontend_container_uses_complete_ci_environment() -> N
     assert "nix develop" not in playwright_commands
 
 
+def test_container_contracts_selectively_extend_the_cached_environment() -> None:
+    steps = {step.get("name"): step for step in _WORKFLOW["jobs"]["worker"]["steps"]}
+    command = steps["Run container contract tests"]["run"]
+
+    selective_sync = "scripts/dev/sync-ci-environment.sh container-contracts"
+    assert command.index(selective_sync) < command.index("ci-checks tests all")
+
+
 def test_frontend_and_python_tests_split_only_for_broad() -> None:
     jobs = _WORKFLOW["jobs"]
     steps = {step.get("name"): step for step in jobs["worker"]["steps"]}
