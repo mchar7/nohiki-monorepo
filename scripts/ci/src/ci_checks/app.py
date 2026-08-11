@@ -26,6 +26,7 @@ from ci_checks.checks import fixtures as _fixtures
 from ci_checks.checks import freshness as _freshness
 from ci_checks.checks import gate as _gate
 from ci_checks.checks import migration_truth as _migration_truth
+from ci_checks.checks import reporting as _reporting
 from ci_checks.checks import workflow as _workflow
 from ci_checks.checks.tests import tests_app
 from ci_checks.core.display import console
@@ -51,6 +52,11 @@ app.command("workflow-route")(_workflow.route_cmd)
 app.command("workflow-summary")(_workflow.summary_cmd)
 app.command("workflow-verdict")(_workflow.verdict_cmd)
 app.command("workflow-accounting")(_workflow.accounting_cmd)
+
+# Durable lint and scheduled deprecation diagnostic surfaces.
+app.command("lint-report")(_reporting.lint_report_cmd)
+app.command("actionlint-report")(_reporting.actionlint_report_cmd)
+app.command("deprecation-sweep")(_reporting.deprecation_sweep_cmd)
 
 
 def _filter_packages(

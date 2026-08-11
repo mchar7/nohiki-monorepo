@@ -91,7 +91,7 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     assert "typescript/apps/frontend/node_modules/.bin/playwright" in playwright_image
 
     commands = (
-        "biome ci --reporter=github src/",
+        "biome ci --reporter=sarif src/",
         "exec tsc --noEmit",
         "exec vitest run",
         "just typecheck-all",
@@ -107,10 +107,11 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     # Both classes are served by one definition of each command, so one occurrence, not two.
     for command in commands:
         assert work.count(command) == 1
-    assert work.count("just lint") == 1
-    assert work.count("ruff check --output-format=github") == 1
+    assert work.count("ruff check") == 2
+    assert "ruff-lint.sarif" in work
     assert work.count("just format-check") == 1
     assert work.count("ruff format --check") == 1
+    assert "ruff-format.log" in work
 
     owner_commands = "\n".join(_commands(jobs["worker"]))
     proto_step = next(
@@ -157,7 +158,10 @@ def test_workflow_validators_are_pinned_in_hosted_and_local_paths() -> None:
     lint = next(step for step in _steps(workflow["jobs"]["worker"]) if step.get("name") == "Lint workflows")
     command = str(lint["run"])
     parallel_diagnostic = 'step must run script with "run" section or run action with "uses" section'
-    assert command.endswith("just workflow-lint")
+    assert "-format '{{json .}}'" in command
+    assert "ci-checks actionlint-report" in command
+    assert "lint-results/actionlint.sarif" in command
+    assert "check-jsonschema --builtin-schema vendor.github-workflows" in command
 
     policy = _JUSTFILE.read_text(encoding="utf-8")
     assert "actionlint -ignore" not in policy

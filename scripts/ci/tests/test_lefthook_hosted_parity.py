@@ -1353,6 +1353,11 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
     ("worker", "Attest container contract execution"): _support(
         "asserts the two container steps above actually ran; proof bookkeeping, not a tree check"
     ),
+    ("worker", "Detect code scanning availability"): _support(
+        "probes SARIF artifact transport availability, runs no tree check"
+    ),
+    ("worker", "Upload lint diagnostics"): _ARTIFACT,
+    ("worker", "Summarize lint diagnostics"): _SUMMARY,
     ("worker", "Report worker cost"): _TIMING,
     # playwright-image: builds and smoke-tests the e2e runner image.
     ("playwright-image", "Start worker timing"): _TIMING,

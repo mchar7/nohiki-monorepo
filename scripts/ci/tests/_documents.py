@@ -77,6 +77,7 @@ WorkflowStep = TypedDict(
         "with": NotRequired[ReadOnly[dict[str, WorkflowInputValue]]],
         "env": NotRequired[ReadOnly[WorkflowEnvironment]],
         "if": NotRequired[ReadOnly[str]],
+        "continue-on-error": NotRequired[ReadOnly[bool]],
         "id": NotRequired[ReadOnly[str]],
         "parallel": NotRequired[ReadOnly[list["WorkflowStep"]]],
     },
