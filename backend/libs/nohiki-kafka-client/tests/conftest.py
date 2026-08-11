@@ -1,9 +1,4 @@
-"""Pytest configuration for nohiki-kafka-client tests.
-
-Safety mechanism: Tests marked ``requires_docker`` are automatically deselected
-unless ``--run-docker`` is passed on the command line.  This prevents accidental
-Kafka testcontainer startup (heavy JVM process) during normal unit test runs.
-"""
+"""Shared pytest fixtures for nohiki-kafka-client tests."""
 
 from __future__ import annotations
 
@@ -38,39 +33,6 @@ def configure_otel_test_provider(
     provider.shutdown()
 
 
-# Docker safety gate: auto-deselect requires_docker tests by default
-
-
-def pytest_addoption(parser: pytest.Parser) -> None:
-    """Register ``--run-docker`` CLI flag."""
-    parser.addoption(
-        "--run-docker",
-        action="store_true",
-        default=False,
-        help="Run tests marked 'requires_docker' (starts real Kafka container).",
-    )
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Deselect ``requires_docker`` tests unless ``--run-docker`` was passed."""
-    if config.getoption("--run-docker", default=False):
-        return
-
-    docker_marker = pytest.mark.requires_docker
-    selected: list[pytest.Item] = []
-    deselected: list[pytest.Item] = []
-
-    for item in items:
-        if item.get_closest_marker(docker_marker.name):
-            deselected.append(item)
-        else:
-            selected.append(item)
-
-    if deselected:
-        config.hook.pytest_deselected(items=deselected)
-        items[:] = selected
-
-
 @pytest.fixture
 def otel_exporter() -> InMemorySpanExporter:
     """Provide the OpenTelemetry exporter for a test."""
@@ -98,7 +60,5 @@ def reset_auto_kafka_client() -> Iterator[None]:
 
 __all__ = [
     "otel_exporter",
-    "pytest_addoption",
-    "pytest_collection_modifyitems",
     "reset_auto_kafka_client",
 ]

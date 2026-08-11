@@ -17,6 +17,56 @@ _ROOT = Path(__file__).resolve().parents[3]
 _LOCK_WRAPPER = "scripts/dev/env-lock.sh"
 _LOCK_INVOCATION = (f"{_LOCK_WRAPPER} ", "{{ env_lock }} ")
 _DEV_SYNC_SHAPE = "--all-packages --all-extras --no-extra cuda --group deadcode"
+_ZERO_SHA = "0" * 40
+
+
+def _git(repository: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _prepush_repository(tmp_path: Path) -> tuple[Path, str]:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-q", "-b", "main")
+    _git(repository, "config", "user.name", "Test Owner")
+    _git(repository, "config", "user.email", "owner@example.invalid")
+    (repository / "tracked.txt").write_text("validated\n", encoding="utf-8")
+    _git(repository, "add", "tracked.txt")
+    _git(repository, "commit", "-qm", "fixture")
+    validated_sha = _git(repository, "rev-parse", "HEAD")
+    _git(repository, "update-ref", "refs/remotes/origin/main", validated_sha)
+
+    dev_scripts = repository / "scripts/dev"
+    dev_scripts.mkdir(parents=True)
+    shutil.copy2(_ROOT / "scripts/dev/prepush-gate.sh", dev_scripts)
+    mirror = dev_scripts / "secrets-mirror.sh"
+    mirror.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    mirror.chmod(0o755)
+    return repository, validated_sha
+
+
+def _run_prepush_gate(
+    repository: Path,
+    local_sha: str,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [repository / "scripts/dev/prepush-gate.sh", "origin", "https://example.invalid/repository.git"],
+        cwd=repository,
+        input=f"refs/heads/runtime-control {local_sha} refs/heads/runtime-control {_ZERO_SHA}\n",
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
 
 
 def _runs(value: object) -> list[str]:
@@ -90,10 +140,11 @@ def test_prepush_gate_envelopes_every_phase() -> None:
     assert envelope["use_stdin"] is True
     assert all(inactive_skip[0] in phase["skip"] for phase in jobs[1:])
 
-    # The lock, the resource scope and the re-entrant pass moved into the
-    # envelope script; assert they are still all present and in that order.
+    # The mirror tripwire must run before the lock, resource scope, and
+    # re-entrant pass so a sparse checkout cannot refresh destructively.
     gate = (_ROOT / "scripts" / "dev" / "prepush-gate.sh").read_text(encoding="utf-8")
     chain = (
+        "scripts/dev/secrets-mirror.sh",
         "scripts/dev/env-lock.sh gate pre-push --",
         "scripts/dev/test-run.sh gate --",
         "env NOHIKI_GATE_ACTIVE=1",
@@ -142,6 +193,64 @@ def test_prepush_gate_refuses_to_examine_a_tree_it_is_not_publishing() -> None:
     assert "refusing to gate" in gate
     assert "HEAD^{tree}" in gate
     assert "${local_sha}^{tree}" in gate
+
+
+def test_prepush_gate_passes_tip_already_validated_on_origin_main(tmp_path: Path) -> None:
+    repository, validated_sha = _prepush_repository(tmp_path)
+
+    result = _run_prepush_gate(repository, validated_sha)
+
+    assert result.returncode == 0
+    assert (
+        "pre-push gate: passing refs/heads/runtime-control without checks; "
+        f"merge-base with validated origin/main equals outgoing tip {validated_sha} "
+        f"(origin/main {validated_sha}), so there are no commits beyond origin/main"
+    ) in result.stderr
+    assert "inspected nothing" not in result.stderr
+
+
+def test_prepush_gate_keeps_beyond_main_push_fail_closed(tmp_path: Path) -> None:
+    repository, _ = _prepush_repository(tmp_path)
+    (repository / "tracked.txt").write_text("unvalidated\n", encoding="utf-8")
+    _git(repository, "add", "tracked.txt")
+    _git(repository, "commit", "-qm", "one commit beyond main")
+    local_sha = _git(repository, "rev-parse", "HEAD")
+
+    calls = tmp_path / "gate-calls"
+    env_lock = repository / "scripts/dev/env-lock.sh"
+    env_lock.write_text(
+        '#!/bin/sh\nprintf "env-lock\\n" >> "$GATE_CALLS"\nshift 2\nshift\nexec "$@"\n',
+        encoding="utf-8",
+    )
+    env_lock.chmod(0o755)
+    test_run = repository / "scripts/dev/test-run.sh"
+    test_run.write_text(
+        '#!/bin/sh\nprintf "test-run\\n" >> "$GATE_CALLS"\nshift 2\nexec "$@"\n',
+        encoding="utf-8",
+    )
+    test_run.chmod(0o755)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    lefthook = bindir / "lefthook"
+    lefthook.write_text(
+        '#!/bin/sh\nprintf "lefthook\\n" >> "$GATE_CALLS"\nexit 0\n',
+        encoding="utf-8",
+    )
+    lefthook.chmod(0o755)
+
+    result = _run_prepush_gate(
+        repository,
+        local_sha,
+        env=os.environ
+        | {
+            "GATE_CALLS": str(calls),
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+        },
+    )
+
+    assert result.returncode == 1
+    assert calls.read_text(encoding="utf-8") == "env-lock\ntest-run\nlefthook\n"
+    assert "pre-push gate: FAILED, the gate inspected nothing." in result.stderr
 
 
 def test_nested_lock_invocation_is_reentrant() -> None:

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from _documents import WorkflowJob, WorkflowStep, load_jsonc, load_mapping, load_workflow, mapping_sequence_at
+from ci_checks.checks import tests as test_checks
 
 _ROOT = Path(__file__).resolve().parents[3]
 _RENOVATE = _ROOT / ".github" / "renovate.json5"
@@ -23,7 +24,6 @@ _DIGEST_FRESHNESS = _WORKFLOWS / "digest-freshness.yml"
 _AKS_DEPLOY = _WORKFLOWS / "cd_deploy-to-aks_nohiki.yml"
 _WEEKLY_SWEEP = _WORKFLOWS / "weekly-sweep.yml"
 _FLAKE = _ROOT / "flake.nix"
-_UV_CONFIG = _ROOT / "toolchain" / "uv.toml"
 _JUSTFILE = _ROOT / "Justfile"
 _ROOT_PROJECT = _ROOT / "pyproject.toml"
 _CI_PROJECT = _ROOT / "scripts" / "ci" / "pyproject.toml"
@@ -360,9 +360,9 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
     assert install_step["run"] == ('nix develop .#ci --command scripts/dev/sync-ci-environment.sh "$PAYLOAD"')
     ci_sync = _read_text(_SYNC_CI_ENVIRONMENT).replace("\\\n", " ")
     hosted_syncs: dict[str, list[str]] = {}
-    for payload in ("python", "full"):
+    for payload in ("python", "full", "container-contracts"):
         branch = re.search(
-            rf"^\s*{payload}\)\n(?P<body>.*?)(?=^\s*(?:python|full|\*)\))",
+            rf"^\s*{payload}\)\n(?P<body>.*?)(?=^\s*(?:python|full|container-contracts|\*)\))",
             ci_sync,
             re.MULTILINE | re.DOTALL,
         )
@@ -403,7 +403,49 @@ def test_cpu_development_syncs_exclude_cuda_while_gpu_image_opts_in() -> None:
             "skylos",
             "-q",
         ],
+        "container-contracts": [
+            "uv",
+            "sync",
+            "--locked",
+            "--inexact",
+            "--package",
+            "user-pref-service",
+            "--package",
+            "job-query-composition-service",
+            "--package",
+            "job-storage-service",
+            "--package",
+            "job-correlation-evaluation-service",
+            "--package",
+            "doc-template-service",
+            "--package",
+            "notification-service",
+            "--package",
+            "bff-service",
+            "--package",
+            "nohiki-redis-utils",
+            "--package",
+            "nohiki-db-utils",
+            "--package",
+            "nohiki-kafka-client",
+            "--package",
+            "nohiki-test-utils",
+            "--package",
+            "nohiki-integration-tests",
+            "--package",
+            "ci-checks",
+            "--no-default-groups",
+            "--no-install-package",
+            "skylos",
+            "-q",
+        ],
     }
+    container_tokens = hosted_syncs["container-contracts"]
+    installed_container_packages = {
+        container_tokens[index + 1] for index, token in enumerate(container_tokens[:-1]) if token == "--package"
+    }
+    docker_test_packages = {package.name for package in test_checks._load_testable_packages("all", "requires_docker")}
+    assert docker_test_packages <= installed_container_packages
     deadcode_sync_lines = _read_text(_SYNC_CI_DEADCODE).replace("\\\n", " ").splitlines()
     deadcode_sync = next(line[line.index("uv sync") :] for line in deadcode_sync_lines if "uv sync" in line)
     assert shlex.split(deadcode_sync) == [
@@ -964,7 +1006,7 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
             mismatches.append(f"{dockerfile.relative_to(_ROOT)}: uv images do not match scaffold")
     assert not mismatches, "\n".join(mismatches)
 
-    assert "env" not in load_workflow(_CHECKS), "checks.yml must not re-pin toolchain versions beside uv.toml"
+    assert "env" not in load_workflow(_CHECKS), "checks.yml must not re-pin toolchain versions beside pyproject.toml"
     python_version = expected_python[0].removesuffix("-slim")
 
     root_project = tomllib.loads(_read_text(_ROOT_PROJECT))
@@ -972,16 +1014,15 @@ def test_python_and_uv_container_pins_match_scaffold_ci_and_nix() -> None:
     assert root_project["project"]["requires-python"] == f">={python_minor}"
     assert tomllib.loads(_read_text(_ROOT / "uv.lock"))["requires-python"] == f">={python_minor}"
 
-    uv_config = tomllib.loads(_read_text(_UV_CONFIG))
-    uv_version = uv_config.get("required-version")
+    uv_version = root_project["tool"]["uv"].get("required-version")
     assert isinstance(uv_version, str)
     assert re.fullmatch(r"\d+\.\d+\.\d+", uv_version)
-    assert uv_config == {"required-version": uv_version}
     assert expected_uv[0] == uv_version
+    assert not (_ROOT / "toolchain").exists()
 
     flake = _read_text(_FLAKE)
-    assert "uvConfig = builtins.fromTOML (builtins.readFile ./toolchain/uv.toml);" in flake
-    assert "value = uvConfig.required-version;" in flake
+    assert "pyproject = builtins.fromTOML (builtins.readFile ./pyproject.toml);" in flake
+    assert "value = pyproject.tool.uv.required-version;" in flake
     assert 'uvVersion = "' not in flake
     expected_uv_url = (
         'url = "https://github.com/astral-sh/uv/releases/download/${uvVersion}/uv-${uvRelease.target}.tar.gz";'
@@ -1044,7 +1085,7 @@ def test_node_and_pnpm_toolchains_match_ci_nix_and_project_metadata() -> None:
     assert worker_setup["uses"] == "./.github/actions/setup-ci"
     assert worker_setup["with"]["node"] == "${{ env.NODE_SETUP_SELECTED }}"
     assert worker_setup["with"]["runner-class"] == "${{ needs.changes.outputs.runner_class }}"
-    uv_version_file = "toolchain/uv.toml"
+    uv_version_file = "pyproject.toml"
     python_version = _images(_SCAFFOLD_DOCKERFILE, "public.ecr.aws/docker/library/python")[0]["version"]
     assert setup_uv["with"] == {
         "version-file": uv_version_file,

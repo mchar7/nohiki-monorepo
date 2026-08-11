@@ -89,6 +89,7 @@ dev = [
 
 
 [tool.uv]
+required-version = "0.11.28"
 default-groups = ["dev"]
 
 # Mutually exclusive ml-compute-service accelerator extras: CPU-only (the default,
@@ -614,6 +615,7 @@ addopts = "--strict-markers --strict-config -p no:cacheprovider --tb=short --imp
 markers = [
     "integration: mark integration tests",
     "requires_docker: mark tests that require Docker/testcontainers",
+    "requires_podman: mark tests that require rootless Podman user namespaces",
     "requires_node_modules: mark tests that execute the installed pnpm workspace",
     "requires_skylos: mark tests that import the private dead-code analyzer",
     "unit: mark unit tests (default)",

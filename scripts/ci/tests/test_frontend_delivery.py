@@ -454,8 +454,7 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' "
         "&& needs.changes.outputs.title_only != 'true' && "
         "(needs.changes.outputs.broad_unbounded == 'true' || "
-        "needs.changes.outputs.frontend_smoke == 'true' || "
-        "needs.changes.outputs.otel_collector == 'true') }}"
+        "needs.changes.outputs.container_contracts == 'true') }}"
     )
     buildx = next(step for step in frontend_steps if step.get("name") == "Set up Docker Buildx")
     assert buildx["id"] == "container-buildx"
@@ -466,6 +465,12 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     assert separator
     assert action == "docker/setup-buildx-action"
     assert re.fullmatch(r"[0-9a-f]{40}", ref)
+    assert buildx["with"] == {
+        "driver-opts": "${{ runner.environment == 'self-hosted' && 'network=host' || '' }}",
+        "buildkitd-config": (
+            "${{ runner.environment == 'self-hosted' && '.github/buildkitd-self-hosted.toml' || '' }}"
+        ),
+    }
     frontend_build = next(step for step in frontend_steps if step.get("name") == "Build production frontend image")
     assert frontend_build["if"] == (
         "env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"
@@ -475,7 +480,16 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "file": "typescript/apps/frontend/Dockerfile",
         "load": True,
         "tags": "nohiki-frontend-smoke:ci",
-        "cache-from": "type=gha,scope=frontend-smoke",
+        "cache-from": (
+            "${{ runner.environment == 'self-hosted' && "
+            "'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache' || "
+            "'type=gha,scope=frontend-smoke' }}"
+        ),
+        "cache-to": (
+            "${{ runner.environment == 'self-hosted' && "
+            "'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache,"
+            "mode=max,ignore-error=true' || '' }}"
+        ),
     }
     frontend_smoke = next(step for step in frontend_steps if step.get("name") == "Smoke production frontend container")
     assert frontend_smoke == {
@@ -497,8 +511,16 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     playwright_build = next(step for step in playwright_steps if step.get("name") == "Build Playwright runner image")
     assert "if" not in playwright_build
     assert playwright_build["with"]["file"] == "typescript/apps/frontend/Dockerfile.playwright-runner"
-    assert playwright_build["with"]["cache-from"] == "type=gha,scope=playwright-runner-smoke"
-    assert "cache-to" not in playwright_build["with"]
+    assert playwright_build["with"]["cache-from"] == (
+        "${{ runner.environment == 'self-hosted' && "
+        "'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache' || "
+        "'type=gha,scope=playwright-runner-smoke' }}"
+    )
+    assert playwright_build["with"]["cache-to"] == (
+        "${{ runner.environment == 'self-hosted' && "
+        "'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache,"
+        "mode=max,ignore-error=true' || '' }}"
+    )
     assert "typescript/apps/frontend/node_modules/.bin/playwright" in next(
         step["run"] for step in playwright_steps if step.get("name") == "Verify Playwright runner"
     )
@@ -516,6 +538,11 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     assert collector_run.endswith(
         "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary\n"
     )
+    container_tests = next(step for step in frontend_steps if step.get("name") == "Run container contract tests")
+    assert "--requires-docker --ci --workers 1 --no-coverage" in container_tests["run"]
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in container_tests["run"]
+    assert '--summary-title "container contracts"' in container_tests["run"]
+    assert 'echo "executed=true" >> "$GITHUB_OUTPUT"' in container_tests["run"]
 
     attestation = next(step for step in frontend_steps if step.get("name") == "Attest container contract execution")
     assert attestation["if"] == "always() && env.CONTAINER_CONTRACTS_SELECTED == 'true'"
@@ -526,6 +553,12 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "OTEL_OUTCOME": "${{ steps.otel-collector.outcome }}",
         "FRONTEND_SMOKE_EXPECTED": "${{ needs.changes.outputs.frontend_smoke }}",
         "OTEL_EXPECTED": "${{ needs.changes.outputs.otel_collector }}",
+        "CONTAINER_TESTS_OUTCOME": "${{ steps.container-tests.outcome }}",
+        "CONTAINER_TESTS_EXPECTED": (
+            "${{ needs.changes.outputs.broad_unbounded == 'true' "
+            "|| needs.changes.outputs.container_contracts == 'true' }}"
+        ),
+        "CONTAINER_TESTS_EXECUTED": "${{ steps.container-tests.outputs.executed }}",
     }
     assert "workflow.py verdict container" in str(attestation["run"]).replace("\n", " ")
     output = tmp_path / "github-output"
@@ -536,6 +569,9 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "OTEL_OUTCOME": "skipped",
         "FRONTEND_SMOKE_EXPECTED": "true",
         "OTEL_EXPECTED": "false",
+        "CONTAINER_TESTS_OUTCOME": "success",
+        "CONTAINER_TESTS_EXPECTED": "true",
+        "CONTAINER_TESTS_EXECUTED": "true",
     }
     for name, value in outcomes.items():
         monkeypatch.setenv(name, value)
@@ -547,12 +583,17 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "IMAGE_OUTCOME": "frontend-image",
         "SMOKE_OUTCOME": "frontend-smoke",
         "OTEL_OUTCOME": "otel-collector",
+        "CONTAINER_TESTS_OUTCOME": "container-tests",
     }
     for variable, label in labels.items():
         monkeypatch.setenv(variable, "failure")
         with pytest.raises(ValueError, match=rf"{label} was .* but concluded failure"):
             verdict_cmd("container", output)
         monkeypatch.setenv(variable, outcomes[variable])
+    monkeypatch.setenv("CONTAINER_TESTS_EXECUTED", "false")
+    with pytest.raises(ValueError, match="container-tests succeeded without execution evidence"):
+        verdict_cmd("container", output)
+    monkeypatch.setenv("CONTAINER_TESTS_EXECUTED", "true")
     assert worker["outputs"]["container_contracts_executed"] == (
         "${{ steps.container-contracts.outputs.executed == 'true' && 'true' || '' }}"
     )

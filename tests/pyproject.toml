@@ -14,8 +14,8 @@ dependencies = [
     "structlog>=25.5.0",
     "health-check==0.1.0",
     "nohiki-test-utils==0.1.0",
-    "nohiki-db-utils[async]==0.1.0",
-    "nohiki-kafka-client==0.1.0",
+    "nohiki-db-utils[async,outbox,testing]==0.1.0",
+    "nohiki-kafka-client[testing]==0.1.0",
     "nohiki-domain-models==0.1.0",
 ]
 

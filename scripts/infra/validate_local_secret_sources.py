@@ -951,13 +951,25 @@ def _validate_flux(path: Path) -> None:
         "path": "./infra/k8s/gitops/secrets/local",
         "prune": True,
         "wait": True,
-        "decryption": {"provider": "sops", "secretRef": {"name": "sops-age"}},
+        "decryption": {"provider": "sops", "secretRef": {"name": "flux-sops"}},
     }
     for key, value in expected.items():
         if spec_values.get(key) != value:
             _fail("runtime-secrets Kustomization", f"has invalid {key} ownership")
     health_checks = spec_values.get("healthChecks")
     expected_checks = [
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "name": "nohiki-llm-proxy-source",
+            "namespace": "nohiki",
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "name": "nohiki-owner-model-egress-values",
+            "namespace": "flux-system",
+        },
         {
             "apiVersion": "v1",
             "kind": "Secret",

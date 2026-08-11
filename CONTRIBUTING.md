@@ -129,6 +129,9 @@ affected service or library (`feat(correlation): ...`, `chore(ml-manifest): ...`
 One logical behaviour per commit. Tests live with the implementation they
 exercise.
 
+Early repository history used a placeholder Git identity from a bootstrap
+environment. The root `.mailmap` maps that identity to the author.
+
 ## Merging
 
 Merge pull requests through GitHub's **Create a merge commit** option. Required
@@ -376,11 +379,11 @@ pre-push checks and leaves the hosted checks to catch failures.
 Pre-push is not a 30 to 60 second check. Measured full runs took about 180 seconds with warm caches and 420 seconds
 with cold caches. Strict dead-code analysis accounted for about 270 seconds of the cold run.
 
-Those figures predate the gate semaphore and were measured under the single mutex it replaced. From 2026-08-05 a
-gate may legitimately share this machine with a second one, so a warm-cache timing taken after that date is not
-comparable with the numbers above and will read as a regression when it is the bound working. For a comparable
-figure, benchmark with `NOHIKI_GATE_SLOTS=1`, which restores single-mutex behaviour. The slot count, timeout and
-reporting described under **Git hooks (Lefthook)** are all implemented in `scripts/dev/env-lock.sh`.
+Those figures predate the gate semaphore. Multi-slot gates may legitimately share this machine, so warm-cache timings
+from multi-slot runs are not comparable with the numbers above and can read as a regression when the bound is working.
+For a comparable figure, benchmark with `NOHIKI_GATE_SLOTS=1`, which restores single-mutex behaviour. The slot count,
+timeout and reporting described under **Git hooks (Lefthook)** are all implemented in
+`scripts/dev/env-lock.sh`.
 
 GitHub Actions uses `.github/workflows/checks.yml` for lint, commitlint, and pre-push parity; its `changes` job
 change-gates every lane through `ci-checks gate` (dependency-graph package scoping, fail-closed on unmapped files)

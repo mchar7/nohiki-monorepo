@@ -73,6 +73,16 @@ def test_intra_directory_and_relative_imports_are_not_violations(tmp_path: Path)
     assert scan_package(pkg).violations == []
 
 
+def test_nested_helper_stem_does_not_exempt_parent_import(tmp_path: Path) -> None:
+    """A helper is local only to the directory that contains it."""
+    pkg = _fake_package(tmp_path, "import jsonschema\n")
+    helper_dir = tmp_path / "tests" / "nested" / "helpers"
+    helper_dir.mkdir(parents=True)
+    (helper_dir / "jsonschema.py").write_text("", encoding="utf-8")
+
+    assert [module for _, _, module in scan_package(pkg).violations] == ["jsonschema"]
+
+
 def test_declared_dependencies_and_stdlib_are_not_violations(tmp_path: Path) -> None:
     """Declared distributions clear, including ones whose import name differs."""
     pkg = _fake_package(
