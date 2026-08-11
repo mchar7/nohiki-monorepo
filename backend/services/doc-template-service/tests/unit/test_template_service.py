@@ -455,3 +455,43 @@ class TestTemplateService:
 
         model = await get_template_model_by_id(mock_db, sample_template.id)
         assert model == sample_template
+
+
+def test_template_create_rejects_invalid_content_schema() -> None:
+    """Invalid JSON Schema cannot enter storage through a create request."""
+    with pytest.raises(ValueError, match="content_schema is not a valid JSON Schema"):
+        TemplateCreateRequest(
+            namespace="test",
+            name="invalid-schema",
+            display_name="Invalid Schema",
+            template_content="<html></html>",
+            content_schema={"type": "nonsense"},
+        )
+
+
+def test_template_create_rejects_non_local_schema_reference() -> None:
+    """A stored schema cannot reference a resource outside its own document."""
+    with pytest.raises(ValueError, match=r"content_schema contains a non-local \$ref"):
+        TemplateCreateRequest(
+            namespace="test",
+            name="remote-schema",
+            display_name="Remote Schema",
+            template_content="<html></html>",
+            content_schema={"properties": {"summary": {"$ref": "https://schemas.example.invalid/summary.json"}}},
+        )
+
+
+def test_template_create_accepts_local_schema_reference() -> None:
+    """References to definitions in the same schema remain supported."""
+    request = TemplateCreateRequest(
+        namespace="test",
+        name="local-schema",
+        display_name="Local Schema",
+        template_content="<html></html>",
+        content_schema={
+            "$defs": {"summary": {"type": "string"}},
+            "properties": {"summary": {"$ref": "#/$defs/summary"}},
+        },
+    )
+
+    assert request.content_schema is not None

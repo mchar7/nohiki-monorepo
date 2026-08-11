@@ -8,10 +8,13 @@ from __future__ import annotations
 import hashlib
 import json
 from functools import lru_cache
+from itertools import islice
 from typing import TYPE_CHECKING, Any
 
-from jsonschema import Draft7Validator
 from jsonschema.exceptions import SchemaError, ValidationError
+from jsonschema.protocols import Validator
+from nohiki_domain_utils.json_schema import get_json_schema_validator
+from referencing.exceptions import Unresolvable
 
 from doc_template_service.schemas.models import ValidationIssue
 
@@ -19,15 +22,17 @@ if TYPE_CHECKING:
     from doc_template_service.core.validation.models import ValidationResult
 
 SCHEMA_CACHE_NAME = "schema_cache"
+_MAX_REPORTED_SCHEMA_ISSUES = 5
 
 
 @lru_cache(maxsize=128)
-def _get_cached_validator(_schema_hash: str, schema_json: str) -> Draft7Validator:
+def _get_cached_validator(_schema_hash: str, schema_json: str) -> Validator:
     """Get a cached validator. Hash param is for cache key uniqueness only."""
-    return Draft7Validator(json.loads(schema_json))
+    schema: dict[str, Any] = json.loads(schema_json)
+    return get_json_schema_validator(schema)
 
 
-def get_schema_validator(schema: dict[str, Any]) -> Draft7Validator:
+def get_schema_validator(schema: dict[str, Any]) -> Validator:
     """Get a validator cached by immutable schema content.
 
     Caching by ``id(schema)`` is unsafe because schemas are mutable and object
@@ -37,7 +42,7 @@ def get_schema_validator(schema: dict[str, Any]) -> Draft7Validator:
         schema: JSON Schema dict
 
     Returns:
-        Draft7Validator instance for the schema (cached)
+        Validator for the schema's declared dialect, defaulting to Draft 2020-12.
 
     """
     schema_json = json.dumps(schema, sort_keys=True)
@@ -61,19 +66,26 @@ def validate_data_against_schema(
     try:
         validator = get_schema_validator(schema)
 
-        errors = list(validator.iter_errors(data))
-        if errors:
+        errors = iter(validator.iter_errors(data))
+        for error in islice(errors, _MAX_REPORTED_SCHEMA_ISSUES):
             result.valid = False
-            for error in errors:
-                path = "/".join(str(p) for p in error.path) if error.path else "$"
-                result.issues.append(
-                    ValidationIssue(
-                        path=path,
-                        keyword=error.validator,
-                        message=error.message,
-                    )
+            path = "/".join(str(p) for p in error.path) if error.path else "$"
+            result.issues.append(
+                ValidationIssue(
+                    path=path,
+                    keyword=str(error.validator),
+                    message=error.message,
                 )
-    except SchemaError as e:
+            )
+        if next(errors, None) is not None:
+            result.issues.append(
+                ValidationIssue(
+                    path="$",
+                    keyword="truncated",
+                    message="Additional schema violations omitted",
+                )
+            )
+    except (SchemaError, Unresolvable) as e:
         result.valid = False
         result.issues.append(
             ValidationIssue(

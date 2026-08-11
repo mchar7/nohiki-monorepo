@@ -15,6 +15,7 @@ dependencies = [
     "nohiki-s3-client==0.1.0",
     "jinja2>=3.1.6",
     "jsonschema>=4.25.1",
+    "referencing>=0.36.2",
     "lxml>=6.0.2",
     "semver>=3.0.4",
     "html2text>=2025.4.15",

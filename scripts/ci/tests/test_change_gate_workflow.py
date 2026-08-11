@@ -983,12 +983,13 @@ def test_changes_job_computes_gate_from_full_history() -> None:
     assert '--summary "$GITHUB_STEP_SUMMARY"' in command
 
 
-def test_hadolint_enumerates_canonical_and_suffixed_dockerfiles() -> None:
+def test_hadolint_uses_canonical_recipe_with_summary_fallback() -> None:
     lint_steps = _steps(_jobs()["worker"])
     hadolint = next(step for step in lint_steps if step.get("name") == "Lint Dockerfiles (hadolint)")
 
     command = hadolint["run"]
     assert "just docker-lint" in command
+    assert "lint-results/hadolint.log" in command
 
 
 def test_protected_main_reuse_preserves_cache_publication_and_checks_verdict() -> None:
@@ -1569,6 +1570,12 @@ def test_digest_freshness_workflow_probes_on_schedule() -> None:
     commands = "\n".join(step.get("run", "") for step in probe["steps"])
     assert "ci-checks image-freshness" in commands
     assert "gh issue" in commands
+    assert probe["runs-on"] == ["self-hosted", "linux", "x64", "nohiki"]
+    sweep_steps = [step for step in probe["steps"] if step.get("name") == "Sweep dependency deprecations"]
+    assert len(sweep_steps) == 1
+    assert sweep_steps[0]["if"] == "always()"
+    assert sweep_steps[0]["continue-on-error"] is True
+    assert "ci-checks deprecation-sweep" in sweep_steps[0]["run"]
 
 
 def test_gated_jobs_depend_on_change_outputs() -> None:
@@ -1609,11 +1616,36 @@ def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
 
 def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> None:
     steps = {step.get("name"): step for step in _steps(_jobs()["worker"])}
-    assert steps["Lint frontend"]["run"] == "nix develop .#ci --command just fe-lint"
-    assert steps["Lint frontend architecture (Steiger)"]["run"] == "nix develop .#ci --command just fe-fsd"
+    assert "biome check --reporter=sarif" in steps["Lint frontend"]["run"]
+    assert "biome-frontend.sarif" in steps["Lint frontend"]["run"]
+    assert "just fe-fsd" in steps["Lint frontend architecture (Steiger)"]["run"]
     assert "exec tsc --noEmit" in steps["Typecheck edge worker"]["run"]
     assert "exec vitest run" in steps["Test edge worker"]["run"]
     assert str(steps["Test frontend"]["run"]).endswith("just fe-test")
+
+
+def test_lint_diagnostics_are_uploaded_and_summarized_with_least_privilege() -> None:
+    worker = _jobs()["worker"]
+    assert worker["permissions"]["security-events"] == "write"
+    steps = {step.get("name"): step for step in _steps(worker)}
+    detection = steps["Detect code scanning availability"]
+    assert detection["env"]["REPOSITORY_PUBLIC"] == (
+        "${{ github.event.repository && github.event.repository.private == false }}"
+    )
+    assert "code-scanning/alerts?per_page=1" in detection["run"]
+    assert "available=$available" in detection["run"]
+    upload = steps["Upload lint diagnostics"]
+    assert upload["uses"] == ("github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81")
+    assert "steps.code-scanning.outputs.available == 'true'" in upload["if"]
+    assert "head.repo.full_name == github.repository" in upload["if"]
+    assert upload["with"] == {
+        "sarif_file": "lint-results",
+        "category": "lint/${{ matrix.unit }}",
+        "wait-for-processing": False,
+    }
+    summary = steps["Summarize lint diagnostics"]
+    assert summary["if"] == "always() && matrix.unit == 'frontend'"
+    assert "ci-checks lint-report" in summary["run"]
 
 
 def test_setup_and_secret_scan_keep_one_definition_and_one_writer_per_payload() -> None:
@@ -1648,8 +1680,10 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_writer_per_payload() 
         assert ".venv-lint" not in lint_step["run"]
         # Broad lints the whole tree from the same definition that lints the diff on standard.
         assert lint_step["env"]["RUFF_SCOPE"] == ("${{ needs.changes.outputs.broad == 'true' && 'ALL' || 'CHANGED' }}")
-    assert "just lint" in str(steps["Lint Python"]["run"])
+    assert "--output-format=sarif" in str(steps["Lint Python"]["run"])
+    assert "ruff-lint.sarif" in str(steps["Lint Python"]["run"])
     assert "just format-check" in str(steps["Check Python formatting"]["run"])
+    assert "ruff-format.log" in str(steps["Check Python formatting"]["run"])
     assert "--exclude" not in lint_step["run"]
     # test_execution_attestations_are_not_scoped_to_one_commit_class.
 
