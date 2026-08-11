@@ -1074,7 +1074,7 @@ mimir-distributed:
   enabled: true
   image:
     repository: docker.io/grafana/mimir
-    tag: 3.1.2@sha256:39cc23910bbaa60d0280fd162265a22c39120ff61b02bc993f3fd3701fb8606d
+    tag: 3.1.4@sha256:ea395743a08cc1f41ede12a7264613cb32f0268bbda6277f12a5929b71625a41
   memcached:
     image:
       repository: docker.io/memcached

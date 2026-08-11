@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import subprocess
+import tarfile
 from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -301,6 +302,17 @@ def _render(values_name: str, tmp_path: Path, *extra_args: str) -> tuple[dict, .
     return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
 
 
+def _strimzi_kafka_connect_schema() -> dict:
+    archives = tuple((_CHART / "charts").glob("strimzi-kafka-operator-*.tgz"))
+    assert len(archives) == 1, archives
+    with tarfile.open(archives[0], mode="r:gz") as archive:
+        stream = archive.extractfile("strimzi-kafka-operator/crds/041-Crd-kafkaconnect.yaml")
+        assert stream is not None
+        crd = yaml.safe_load(stream)
+    version = next(item for item in crd["spec"]["versions"] if item["name"] == "v1")
+    return version["schema"]["openAPIV3Schema"]
+
+
 def _deployments(documents: tuple[dict, ...]) -> dict[str, dict]:
     return {document["metadata"]["name"]: document for document in documents if document.get("kind") == "Deployment"}
 
@@ -373,6 +385,30 @@ def _is_accepted_public_url(value: str, *, allow_http_loopback: bool) -> bool:
     except ValueError:
         loopback = False
     return loopback
+
+
+def test_local_kafka_connect_matches_vendored_strimzi_crd(tmp_path: Path) -> None:
+    documents = _render("values.local.yaml", tmp_path)
+    resources = [document for document in documents if document.get("kind") == "KafkaConnect"]
+    assert len(resources) == 1
+    resource = resources[0]
+    schema = _strimzi_kafka_connect_schema()
+    spec = resource["spec"]
+    required = set(schema["properties"]["spec"]["required"])
+    assert not required - spec.keys()
+
+    values = mapping_at(load_mapping(_CHART / "values.yaml"), "kafkaConnect")
+    identity_fields = ("groupId", "configStorageTopic", "statusStorageTopic", "offsetStorageTopic")
+    assert {field: spec[field] for field in identity_fields} == {
+        field: string_at(values, field) for field in identity_fields
+    }
+    forbidden_config_fields = {
+        "group.id",
+        "config.storage.topic",
+        "status.storage.topic",
+        "offset.storage.topic",
+    }
+    assert forbidden_config_fields.isdisjoint(spec["config"])
 
 
 def test_local_db_backed_deployments_receive_dsn_from_credential_secret(
