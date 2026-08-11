@@ -355,7 +355,7 @@ def provisioned_sources_template(tmp_path_factory: pytest.TempPathFactory) -> So
                     "dependsOn": [{"name": "infrastructure"}],
                     "decryption": {
                         "provider": "sops",
-                        "secretRef": {"name": "sops-age"},
+                        "secretRef": {"name": "flux-sops"},
                     },
                     "sourceRef": {"kind": "GitRepository", "name": "flux-system"},
                     "prune": True,
@@ -363,6 +363,18 @@ def provisioned_sources_template(tmp_path_factory: pytest.TempPathFactory) -> So
                     "timeout": "2m",
                     "retryInterval": "1m",
                     "healthChecks": [
+                        {
+                            "apiVersion": "v1",
+                            "kind": "Secret",
+                            "name": "nohiki-llm-proxy-source",
+                            "namespace": "nohiki",
+                        },
+                        {
+                            "apiVersion": "v1",
+                            "kind": "ConfigMap",
+                            "name": "nohiki-owner-model-egress-values",
+                            "namespace": "flux-system",
+                        },
                         {
                             "apiVersion": "v1",
                             "kind": "Secret",
