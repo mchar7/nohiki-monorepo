@@ -94,8 +94,8 @@ def _bootstrap_sandbox(tmp_path: Path) -> BootstrapSandbox:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", RUNTIME_CONTROL_BRANCH)
-    _git(repo, "config", "user.name", "Portable Bootstrap Test")
-    _git(repo, "config", "user.email", "portable-bootstrap@example.invalid")
+    _git(repo, "config", "user.name", "Portable Bootstrap Fixture")
+    _git(repo, "config", "user.email", "portable-bootstrap-fixture@example.invalid")
 
     install = repo / "infra" / "k8s" / "gitops" / "install"
     install.mkdir(parents=True)
