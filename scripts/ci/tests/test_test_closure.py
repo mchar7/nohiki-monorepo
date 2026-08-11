@@ -16,6 +16,8 @@ from ci_checks.checks.test_closure import (
     ENFORCED_PACKAGES,
     ClosureResult,
     _executed_imports,
+    _module_distributions,
+    _workspace_module_map,
     declared_closure,
     render_results,
     scan_package,
@@ -25,6 +27,7 @@ from ci_checks.core.packages import Package, PackageType, Scope, load_packages
 
 def _fake_package(tmp_path: Path, test_source: str, *, dependencies: str = '"typer"') -> Package:
     """Build a throwaway workspace package with one test module."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "pyproject.toml").write_text(
         f'[project]\nname = "sample-pkg"\ndependencies = [{dependencies}]\n',
         encoding="utf-8",
@@ -120,6 +123,40 @@ def test_declared_closure_covers_extras_and_dependency_groups() -> None:
     assert {"pytest", "pytest-asyncio", "pytest-xdist"} <= closure, "container-tests group must count"
     assert "skylos" in closure, "deadcode group must count"
     assert "jsonschema" not in closure
+
+
+def test_first_party_import_names_are_derived_from_the_tree() -> None:
+    """The workspace map must come off the filesystem, not a hand-maintained table.
+
+    ``nohiki-domain-models`` ships four top-level packages whose names match
+    neither the distribution nor each other, and deptry hardcodes exactly those
+    four at deptry.py:225 because it hit this wall. Reading them from the
+    member's source root cannot go stale: it regenerates every run.
+    """
+    mapping = _workspace_module_map()
+
+    assert {"nohiki", "nohiki_proto_google", "nohiki_domain_utils", "message_pool"} <= set(mapping)
+    assert {mapping[name] for name in ("nohiki", "message_pool")} == {"nohiki-domain-models"}
+    assert mapping["ci_checks"] == "ci-checks"
+    assert "py" not in mapping, "src/py.typed is a marker file, not an import package"
+    for pkg in load_packages(Scope.ALL, require_src=True):
+        assert pkg.name in set(mapping.values()), f"{pkg.name} contributes no import name"
+
+
+def test_first_party_resolution_does_not_need_the_module_installed(tmp_path: Path) -> None:
+    """The accuracy fix: a workspace name resolves whichever interpreter we scan from.
+
+    ``nohiki`` is absent from the ci-checks environment, so the ambient
+    metadata cannot map it. Resolving it from the tree is what lets the check
+    judge a package other than the one whose environment it is running in.
+    """
+    assert _module_distributions().get("nohiki") is None, "precondition: not installed here"
+
+    declared = _fake_package(tmp_path, "import nohiki\n", dependencies='"nohiki-domain-models"')
+    assert scan_package(declared).violations == []
+
+    undeclared = _fake_package(tmp_path / "other", "import nohiki\n", dependencies='"typer"')
+    assert [module for _, _, module in scan_package(undeclared).violations] == ["nohiki"]
 
 
 def test_enforced_scope_is_green_and_names_only_measured_packages() -> None:

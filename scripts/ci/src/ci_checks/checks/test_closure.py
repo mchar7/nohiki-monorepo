@@ -26,13 +26,16 @@ import tomllib
 from dataclasses import dataclass, field
 from functools import cache
 from importlib.metadata import packages_distributions
+from pathlib import Path
 
 from ci_checks.core.display import render_error_panel, render_summary_table
 from ci_checks.core.packages import (
     REPO_ROOT,
     Package,
+    Scope,
     _iter_dependency_specifiers,
     _parse_dependency_name,
+    load_packages,
 )
 
 # Enforcement scope. Widening is a configuration change: add a package name.
@@ -61,6 +64,34 @@ def _module_distributions() -> dict[str, tuple[str, ...]]:
     return {module: tuple(dists) for module, dists in packages_distributions().items()}
 
 
+def _src_module_names(src_dir: Path) -> set[str]:
+    """Top-level import packages a source root provides, read off the filesystem."""
+    return {
+        entry.name if entry.is_dir() else entry.stem
+        for entry in src_dir.iterdir()
+        if (entry.is_dir() and not entry.name.startswith(".")) or entry.suffix == ".py"
+    }
+
+
+@cache
+def _workspace_module_map() -> dict[str, str]:
+    """Map import name to the workspace distribution that ships it.
+
+    Derived from the tree, not from the environment and not from a table. A
+    member's top-level import packages are exactly the directories under its
+    source root, so ``nohiki`` and its siblings resolve to
+    ``nohiki-domain-models`` whether or not that member is installed in the
+    interpreter running the scan. This is what makes a first-party name
+    resolvable when scanning a package other than the one whose environment we
+    are in, and it cannot go stale: it regenerates from the tree every run.
+    """
+    mapping: dict[str, str] = {}
+    for pkg in load_packages(Scope.ALL, require_src=True):
+        for module in _src_module_names(pkg.src_dir):
+            mapping[module] = pkg.name
+    return mapping
+
+
 def _local_module_names(pkg: Package) -> frozenset[str]:
     """Top-level module names importable from within the package itself.
 
@@ -76,7 +107,7 @@ def _local_module_names(pkg: Package) -> frozenset[str]:
             if path.is_dir() and (path / "__init__.py").is_file():
                 names.add(path.name)
     if pkg.has_src:
-        names.update(entry.stem if entry.is_file() else entry.name for entry in pkg.src_dir.iterdir())
+        names.update(_src_module_names(pkg.src_dir))
     return frozenset(names)
 
 
@@ -155,6 +186,7 @@ def scan_package(pkg: Package) -> ClosureResult:
     closure = declared_closure(pkg)
     local = {_normalize(name) for name in _local_module_names(pkg)}
     module_dists = _module_distributions()
+    workspace = _workspace_module_map()
 
     for path in sorted(pkg.tests_dir.rglob("*.py")):
         if "__pycache__" in path.parts:
@@ -171,7 +203,12 @@ def scan_package(pkg: Package) -> ClosureResult:
             normalized = _normalize(module)
             if normalized in local:
                 continue
-            providers = {_normalize(dist) for dist in module_dists.get(module, ())} or {normalized}
+            # First-party wins: the tree answers this without an install, so a
+            # workspace module resolves the same whichever interpreter we run in.
+            if module in workspace:
+                providers = {_normalize(workspace[module])}
+            else:
+                providers = {_normalize(dist) for dist in module_dists.get(module, ())} or {normalized}
             if providers & closure:
                 continue
             relative = path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path
