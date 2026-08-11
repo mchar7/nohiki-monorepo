@@ -740,6 +740,7 @@ jobs:
           if [[ "$FRONTEND_SMOKE_SELECTED" == true ]]; then
             export FRONTEND_SMOKE_IMAGE=nohiki-frontend-smoke:ci
           fi
+          nix develop .#ci --command scripts/dev/sync-ci-environment.sh container-contracts
           nix develop .#ci --command uv run --no-sync ci-checks tests all --scope all \
             --requires-docker --ci --workers 1 --no-coverage \
             --summary "$GITHUB_STEP_SUMMARY" --summary-title "container contracts"

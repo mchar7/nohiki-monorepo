@@ -949,7 +949,7 @@ async def test_integration_run_ignores_unit_fixture_report(monkeypatch: pytest.M
 
 
 def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
-    """The one work job obtains one environment and runs one bounded Python command."""
+    """The work job reuses one cached environment with a selective container extension."""
     workflow = load_workflow(_CHECKS_WORKFLOW)
     setup_action = load_mapping(_SETUP_CI_ACTION)
     worker = workflow["jobs"]["worker"]
@@ -971,7 +971,7 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
     assert setup_inputs.get("runner-class") == "${{ needs.changes.outputs.runner_class }}"
     assert setup_inputs.get("lookup-only") != "true"
     direct_environment_commands = "\n".join(str(step.get("run", "")) for step in unit_steps)
-    assert "sync-ci-environment.sh" not in direct_environment_commands
+    assert direct_environment_commands.count("sync-ci-environment.sh container-contracts") == 1
     assert "uv sync" not in direct_environment_commands
     worker_nix_selector = str(worker["env"]["NIX_SETUP_SELECTED"])
     assert "needs.changes.outputs.python_any == 'true'" in worker_nix_selector
