@@ -95,7 +95,7 @@
     "@feature-sliced/steiger-plugin": "0.7.0",
     "@nohiki/biome-config": "workspace:*",
     "@nohiki/tsconfig": "workspace:*",
-    "@playwright/test": "1.62.0",
+    "@playwright/test": "1.62.1",
     "@rolldown/plugin-babel": "0.2.3",
     "@tanstack/router-plugin": "1.168.23",
     "@testing-library/jest-dom": "6.9.1",
