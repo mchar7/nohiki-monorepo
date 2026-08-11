@@ -60,6 +60,9 @@ if ! rsync -a --delete --delete-excluded \
     "$source_dir/" "$mirror/" >/dev/null 2>&1; then
     fail 'refresh failed; existing mirror left in place where possible'
 fi
+# Archive mode also applies the source root's permissions to the destination.
+# Reassert the owner-only recovery boundary after synchronization.
+chmod 700 "$mirror"
 touch "$marker"
 
 file_count=$(find "$mirror" -type f ! -name .last-refresh -print | wc -l | tr -d ' ')
