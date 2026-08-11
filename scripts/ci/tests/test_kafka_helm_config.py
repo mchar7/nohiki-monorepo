@@ -223,8 +223,8 @@ def test_rendered_wal_connector_exactly_matches_the_manual_registration_template
         "SCHEMA_NAME": "job_correlation_schema",
         "DATABASE_HOST": "nohiki-pg-rw",
         "DATABASE_PORT": "5432",
-        "DATABASE_USER": "${file:/mnt/secrets/job-correlation-evaluation-service-debezium/username}",
-        "DATABASE_PASSWORD": "${file:/mnt/secrets/job-correlation-evaluation-service-debezium/password}",
+        "DATABASE_USER": "${directory:/mnt/secrets/job-correlation-evaluation-service-debezium:username}",
+        "DATABASE_PASSWORD": "${directory:/mnt/secrets/job-correlation-evaluation-service-debezium:password}",
         "DATABASE_NAME": "job_correlation_evaluation_db",
     }
 
