@@ -190,10 +190,13 @@ def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -
     worker_steps = {step.get("name"): step for step in _steps(workflow["jobs"]["worker"])}
     selected_tests = worker_steps["Run selected Python tests"].get("run")
     integration_tests = worker_steps["Run job correlation integration tests"].get("run")
+    container_tests = worker_steps["Run container contract tests"].get("run")
     assert isinstance(selected_tests, str)
     assert isinstance(integration_tests, str)
+    assert isinstance(container_tests, str)
     assert "--no-coverage" not in selected_tests
     assert "--no-coverage" in integration_tests
+    assert "--no-coverage" in container_tests
 
     lefthook = load_mapping(_LEFTHOOK)
     pre_push = lefthook["pre-push"]

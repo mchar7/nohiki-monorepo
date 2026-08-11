@@ -12,6 +12,7 @@ from ci_checks import app as ci_app_module
 from ci_checks.checks import gate as checks_gate
 from ci_checks.checks import tests as checks_tests
 from ci_checks.checks.gate import gate_cmd
+from ci_checks.core import change_gate as change_gate_module
 from ci_checks.core import packages as packages_module
 from ci_checks.core.change_gate import (
     BroadCause,
@@ -447,11 +448,24 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
     [
         (
             "typescript/apps/frontend/src/App.tsx",
-            {"lint_frontend", "lint_steiger", "typecheck_frontend", "frontend_tests", "frontend_smoke"},
+            {
+                "lint_frontend",
+                "lint_steiger",
+                "typecheck_frontend",
+                "frontend_tests",
+                "frontend_smoke",
+                "container_contracts",
+            },
         ),
         (
             "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
-            {"lint_frontend", "typecheck_frontend", "frontend_smoke", "node_workspace_contracts"},
+            {
+                "lint_frontend",
+                "typecheck_frontend",
+                "frontend_smoke",
+                "node_workspace_contracts",
+                "container_contracts",
+            },
         ),
         (
             "typescript/edge/auth-listings-worker/src/index.ts",
@@ -466,6 +480,7 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
                 "frontend_tests",
                 "edge_worker",
                 "frontend_smoke",
+                "container_contracts",
             },
         ),
     ],
@@ -647,6 +662,7 @@ def test_flake_broad_change_selects_every_devshell_sourced_lane() -> None:
         "lint_proto",
         "lint_workflows",
         "lint_docker",
+        "container_contracts",
         "proto_breaking",
         "image_matrix_parity",
         "api_schema_freshness",
@@ -676,7 +692,7 @@ def test_broad_change_can_co_select_frontend_smoke_and_otel_collector() -> None:
     )
 
     assert decision.commit_class is CommitClass.BROAD
-    assert {"frontend_smoke", "frontend_e2e", "otel_collector"} <= decision.flags
+    assert {"frontend_smoke", "frontend_e2e", "otel_collector", "container_contracts"} <= decision.flags
 
 
 def _tracked_paths() -> set[str]:
@@ -691,7 +707,7 @@ def _tracked_paths() -> set[str]:
     )
 
 
-@pytest.mark.parametrize("flag", ["frontend_e2e", "frontend_smoke"])
+@pytest.mark.parametrize("flag", ["frontend_e2e", "container_contracts"])
 def test_container_image_rule_patterns_each_match_a_tracked_path(flag: str) -> None:
     tracked = _tracked_paths()
 
@@ -716,17 +732,17 @@ def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
         (
             "typescript/apps/frontend/Dockerfile",
             "false",
-            {"frontend_smoke", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
+            {"frontend_smoke", "container_contracts", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "typescript/apps/frontend/Dockerfile.playwright-runner",
             "false",
-            {"frontend_e2e", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
+            {"frontend_e2e", "container_contracts", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "infra/k8s/observability/base/otel/collector.yaml",
             "false",
-            {"otel_collector", "python_any", "hygiene", "typecheck_backend"},
+            {"otel_collector", "container_contracts", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "scripts/util/export-openapi.py",
@@ -736,7 +752,7 @@ def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
         (
             "infra/k8s/local/images.json",
             "false",
-            {"image_matrix_parity", "python_any", "hygiene", "typecheck_backend"},
+            {"image_matrix_parity", "container_contracts", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "unknown.bin",
@@ -2033,12 +2049,79 @@ def test_single_file_contract_inputs_seed_ci_checks(path: str) -> None:
     assert "ci-checks" in evaluate({path}, load_packages_with_deps(Scope.ALL)).affected
 
 
-def test_container_only_assertion_files_select_the_job_that_runs_them() -> None:
-    """Both assertions are requires_docker, which the Python lane deselects."""
+def test_every_requires_docker_test_file_routes_to_container_contracts() -> None:
     packages = load_packages_with_deps(Scope.ALL)
+    marked = {
+        f"{package.path.relative_to(REPO_ROOT).as_posix()}/{test_path}"
+        for package in packages.values()
+        for test_path in package.requires_docker_tests
+    }
 
-    assert "otel_collector" in evaluate({"scripts/ci/tests/test_otel_collector_manifest.py"}, packages).flags
-    assert "frontend_smoke" in evaluate({"scripts/ci/tests/test_frontend_delivery.py"}, packages).flags
+    assert marked
+    assert {path for path in marked if "container_contracts" not in evaluate({path}, packages).flags} == set()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "pyproject.toml",
+        "tests/conftest.py",
+        "backend/libs/nohiki-db-utils/src/nohiki_db_utils/testing.py",
+        "backend/libs/nohiki-kafka-client/src/nohiki_kafka_client/testing.py",
+        "backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/testing.py",
+        "backend/libs/nohiki-test-utils/src/nohiki_test_utils/plugins.py",
+        "backend/libs/nohiki-test-utils/src/nohiki_test_utils/utils/docker.py",
+    ],
+)
+def test_container_test_runtime_inputs_route_to_container_contracts(path: str) -> None:
+    assert "container_contracts" in evaluate({path}, load_packages_with_deps(Scope.ALL)).flags
+
+
+def test_future_workspace_member_routes_custom_root_container_tests_without_generated_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_root = tmp_path / "packages" / "future-container"
+    tests = package_root / "container_tests"
+    tests.mkdir(parents=True)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.uv.workspace]\nmembers = ["packages/future-container"]\n',
+        encoding="utf-8",
+    )
+    (package_root / "pyproject.toml").write_text(
+        '[project]\nname = "future-container"\nversion = "0.1.0"\ndependencies = []\n'
+        '[tool.pytest.ini_options]\ntestpaths = ["container_tests"]\n',
+        encoding="utf-8",
+    )
+    marked = tests / "test_future_container.py"
+    marked.write_text(
+        "import pytest\n\n@pytest.mark.requires_docker\ndef test_container():\n    pass\n",
+        encoding="utf-8",
+    )
+    (tests / "test_unit.py").write_text("def test_unit():\n    pass\n", encoding="utf-8")
+    (package_root / "conftest.py").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(packages_module, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(change_gate_module, "REPO_ROOT", tmp_path)
+    packages = packages_module.load_packages_with_deps(Scope.ALL)
+
+    assert packages["future-container"].requires_docker_tests == frozenset({"container_tests/test_future_container.py"})
+    for changed in (
+        "packages/future-container/container_tests/test_future_container.py",
+        "packages/future-container/container_tests/conftest.py",
+        "packages/future-container/conftest.py",
+        "packages/future-container/pyproject.toml",
+    ):
+        decision = change_gate_module.evaluate({changed}, packages)
+        selected = change_gate_module.selected_test_packages(decision, packages)
+        outputs = change_gate_module.render_outputs(decision, selected, "pull_request")
+
+        assert "container_contracts" in decision.flags
+        assert outputs["test_packages"] == "future-container"
+
+
+def test_root_workspace_manifest_routes_container_contracts() -> None:
+    assert "container_contracts" in evaluate({"pyproject.toml"}, _synthetic_packages()).flags
 
 
 @pytest.mark.parametrize(

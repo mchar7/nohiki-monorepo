@@ -1359,8 +1359,16 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
         scope=_WHOLE_PROJECT,
         waiver="runs the collector image; the local test runner deselects the requires_docker markers.",
     ),
+    ("worker", "Run container contract tests"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver=(
+            "requires a container runtime. The default pre-push remains Docker-free; "
+            "the complementary opt-in local recipe is maintained separately."
+        ),
+    ),
     ("worker", "Attest container contract execution"): _support(
-        "asserts the two container steps above actually ran; proof bookkeeping, not a tree check"
+        "asserts the selected container steps actually ran; proof bookkeeping, not a tree check"
     ),
     ("worker", "Detect code scanning availability"): _support(
         "probes SARIF artifact transport availability, runs no tree check"
