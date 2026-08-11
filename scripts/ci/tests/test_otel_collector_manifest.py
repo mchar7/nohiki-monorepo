@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import re
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -103,13 +105,10 @@ def test_otel_collector_manifests_use_pinned_config() -> None:
 
 
 def _validate_collector_config(image: str, config_path: Path) -> None:
-    subprocess.run(
+    container = subprocess.run(
         [
             "docker",
-            "run",
-            "--rm",
-            "--volume",
-            f"{config_path.resolve()}:/etc/otelcol-contrib/config.yaml:ro",
+            "create",
             image,
             "validate",
             "--config=/etc/otelcol-contrib/config.yaml",
@@ -117,7 +116,34 @@ def _validate_collector_config(image: str, config_path: Path) -> None:
         capture_output=True,
         text=True,
         check=True,
-    )
+    ).stdout.strip()
+    try:
+        config = config_path.read_bytes()
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as stream:
+            member = tarfile.TarInfo("config.yaml")
+            member.mode = 0o444
+            member.size = len(config)
+            stream.addfile(member, io.BytesIO(config))
+        subprocess.run(
+            ["docker", "cp", "-", f"{container}:/etc/otelcol-contrib"],
+            input=archive.getvalue(),
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["docker", "start", "--attach", container],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    finally:
+        subprocess.run(
+            ["docker", "rm", "--force", container],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
 
 @pytest.mark.requires_docker
