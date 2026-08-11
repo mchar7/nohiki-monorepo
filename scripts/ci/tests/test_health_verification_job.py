@@ -15,9 +15,12 @@ from ci_checks.core.image_inventory import load_inventory
 _ROOT = Path(__file__).resolve().parents[3]
 _CHART = _ROOT / "infra" / "k8s" / "verification" / "health"
 _RELEASE = _ROOT / "infra" / "k8s" / "gitops" / "verification" / "helmrelease.yaml"
+_PLATFORM_CHART = _ROOT / "infra" / "k8s" / "helm"
 _LOCAL = _ROOT / "infra" / "k8s" / "gitops" / "clusters" / "local"
 _DOCKERFILE = _ROOT / "scripts" / "util" / "health_check" / "Dockerfile"
 _DIGEST_VALUES = _ROOT / "infra" / "k8s" / "gitops" / "platform" / "local" / "image-digests.values.yaml"
+_HEALTH_PROJECT = _ROOT / "scripts" / "util" / "health_check"
+_CDC_ADAPTER = _HEALTH_PROJECT / "src" / "health_check" / "acceptance" / "live_cluster_cdc.py"
 _NAME = "nohiki-health-verification"
 _DIGEST = "sha256:" + "a" * 64
 _DEPENDENCY_MODULES = {
@@ -31,7 +34,7 @@ _IMAGE_DIGESTS = {
     **{service: f"sha256:{character * 64}" for service, character in zip(_DEPENDENCY_MODULES, "bcde", strict=True)},
 }
 _READ_ONLY_VERBS = {"get", "list", "watch"}
-_FORBIDDEN_RESOURCES = {"secrets", "pods/exec", "pods/portforward"}
+_FORBIDDEN_RESOURCES = {"pods/portforward"}
 _MIGRATION_SERVICES = (
     "bff-service",
     "doc-template-service",
@@ -76,6 +79,44 @@ def _render() -> tuple[dict[str, Any], ...]:
         text=True,
     )
     return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+
+
+@cache
+def _platform_render() -> tuple[dict[str, Any], ...]:
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            "nohiki",
+            ".",
+            "--values",
+            "values.yaml",
+            "--values",
+            "values.local.yaml",
+            "--namespace",
+            "nohiki",
+        ],
+        cwd=_PLATFORM_CHART,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
+
+
+def _platform_service_name(app_name: str, *, component: str | None = None) -> str:
+    matches = [
+        document["metadata"]["name"]
+        for document in _platform_render()
+        if document.get("kind") == "Service"
+        and document.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/name") == app_name
+        and (
+            component is None
+            or document.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component") == component
+        )
+    ]
+    assert len(matches) == 1, (app_name, component, matches)
+    return matches[0]
 
 
 @cache
@@ -142,13 +183,13 @@ def test_health_job_is_non_retrying_hardened_and_uses_token_only_in_pod() -> Non
     assert security["capabilities"] == {"drop": ["ALL"]}
 
 
-def test_health_rbac_is_read_only_without_secret_or_subresource_access() -> None:
-    rules = [
-        *_document("Role", _NAME)["rules"],
-        *_document("ClusterRole", f"{_NAME}-flux-reader")["rules"],
-    ]
+def test_health_rbac_limits_cdc_mutations_and_secret_reads() -> None:
+    role_rules = _document("Role", _NAME)["rules"]
+    cluster_rules = _document("ClusterRole", f"{_NAME}-flux-reader")["rules"]
+    rules = [*role_rules, *cluster_rules]
     observed_resources: set[str] = set()
     observed_verbs: set[str] = set()
+    mutation_rules: list[dict[str, Any]] = []
     for rule in rules:
         resources = set(rule["resources"])
         verbs = set(rule["verbs"])
@@ -156,15 +197,38 @@ def test_health_rbac_is_read_only_without_secret_or_subresource_access() -> None
         assert verbs
         assert "*" not in resources
         assert "*" not in verbs
-        assert verbs <= _READ_ONLY_VERBS
         assert not (resources & _FORBIDDEN_RESOURCES)
+        if not verbs <= _READ_ONLY_VERBS:
+            mutation_rules.append(rule)
         observed_resources.update(resources)
         observed_verbs.update(verbs)
 
-    assert observed_verbs == _READ_ONLY_VERBS
+    assert mutation_rules == [
+        {"apiGroups": [""], "resources": ["pods/exec"], "verbs": ["create"]},
+        {
+            "apiGroups": ["apps"],
+            "resources": ["deployments"],
+            "resourceNames": ["nohiki-connect-connect"],
+            "verbs": ["patch"],
+        },
+    ]
+    assert [rule for rule in role_rules if "secrets" in rule["resources"]] == [
+        {
+            "apiGroups": [""],
+            "resources": ["secrets"],
+            "resourceNames": [
+                "user-auth-service-db-credentials",
+                "user-auth-service-debezium-credentials",
+            ],
+            "verbs": ["get"],
+        }
+    ]
+    assert observed_verbs == _READ_ONLY_VERBS | {"create", "patch"}
     assert {
         "pods",
+        "pods/exec",
         "services",
+        "secrets",
         "endpoints",
         "endpointslices",
         "deployments",
@@ -202,6 +266,14 @@ def test_health_image_is_inventory_owned_and_digest_rendered() -> None:
     assert "backend/libs/" in health.ownership
     assert "backend/services/" not in health.ownership
     assert "scripts/ci/" not in health.ownership
+    assert "scripts/util/health_check/" in health.ownership
+    assert _CDC_ADAPTER.is_file()
+    dockerfile = _DOCKERFILE.read_text(encoding="utf-8")
+    project = (_HEALTH_PROJECT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "COPY scripts/util/health_check ./scripts/util/health_check/" in dockerfile
+    assert "uv sync --frozen --package health-check --no-dev --no-editable" in dockerfile
+    assert "/usr/local/bin/kubectl" in dockerfile
+    assert '"httpx>=0.28.0"' in project
 
     container = _container()
     assert container["image"] == f"localhost:5000/health-runner:immutable@{_DIGEST}"
@@ -286,13 +358,18 @@ def test_health_commands_fail_closed_and_keep_migration_proof_separate() -> None
     assert container["command"] == ["/bin/sh", "-ceu"]
     assert len(container["args"]) == 1
     script = container["args"][0]
+    adapter = "python -m health_check.acceptance.live_cluster_cdc"
     inventory = "health-check inventory --target k8s --json"
     migration = "python -m health_check.verify_migrations"
     runtime = "health-check run --target k8s --no-progress --output-mode boring"
+    assert script.count(adapter) == 1
     assert script.count(inventory) == 1
     assert script.count(migration) == 1
     assert script.count(runtime) == 1
-    assert script.index(inventory) < script.index(migration) < script.index(runtime)
+    assert script.index(adapter) < script.index(inventory) < script.index(migration) < script.index(runtime)
+    assert '--namespace "$K8S_NAMESPACE"' in script
+    assert '--base-url "$E2E_BASE_URL"' in script
+    assert '--evidence "$CDC_ACCEPTANCE_EVIDENCE"' in script
     assert "--inventory /opt/health/migration-heads.json" in script
     assert "--evidence /evidence/migration-heads.json" in script
     assert "alembic" not in inventory
@@ -300,15 +377,23 @@ def test_health_commands_fail_closed_and_keep_migration_proof_separate() -> None
 
 
 def test_health_job_uses_cluster_dns_and_explicit_observability_inputs() -> None:
+    bff_service = _platform_service_name("bff-service")
+    valkey_service = _platform_service_name("valkey", component="primary")
+    kafka_resources = [
+        document["metadata"]["name"] for document in _platform_render() if document.get("kind") == "Kafka"
+    ]
+    assert len(kafka_resources) == 1
+    kafka_bootstrap = f"{kafka_resources[0]}-kafka-bootstrap:9092"
     env_items = _container()["env"]
     literal_env = {item["name"]: item["value"] for item in env_items if "value" in item}
     assert literal_env == {
         "K8S_NAMESPACE": "nohiki",
         "K8S_LOCAL_MODE": "false",
         "K8S_SERVICE_DEPENDENCY_EVIDENCE_DIR": "/evidence/service-dependencies",
-        "E2E_BASE_URL": "http://bff-service:8000",
-        "KAFKA_BOOTSTRAP_SERVERS": "nohiki-kafka-bootstrap:9092",
-        "VALKEY_URL": "redis://valkey:6379",
+        "CDC_ACCEPTANCE_EVIDENCE": "/evidence/live-cdc.json",
+        "E2E_BASE_URL": f"http://{bff_service}:8000",
+        "KAFKA_BOOTSTRAP_SERVERS": kafka_bootstrap,
+        "VALKEY_URL": f"redis://{valkey_service}:6379",
         "PROMETHEUS_URL": "http://prometheus-operated:9090",
         "GRAFANA_URL": "http://grafana-service:3000",
         "LOKI_URL": "http://loki-gateway:80",

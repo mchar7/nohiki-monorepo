@@ -328,6 +328,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/profiles/commands/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Profile Command Status
+         * @description Return an owned profile command request's current status.
+         */
+        get: operations["get_profile_command_status_api_v1_profiles_commands__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/profiles/commands/{request_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Profile Command Events
+         * @description Stream durable status events for an owned profile command request.
+         */
+        get: operations["stream_profile_command_events_api_v1_profiles_commands__request_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/profiles/{pref_id}": {
         parameters: {
             query?: never;
@@ -1184,8 +1224,6 @@ export interface paths {
          *         db: Async database session.
          *         settings: Application settings.
          *         country: ISO 3166-1 alpha-3 country code (3 uppercase letters).
-         *         _lat: Latitude (accepted for forward compatibility, unused in v1).
-         *         _lon: Longitude (accepted for forward compatibility, unused in v1).
          *         lang: Language preference for weighting.
          *
          *     Returns:
@@ -1500,6 +1538,24 @@ export interface components {
              * @default accepted
              */
             status: string;
+        };
+        /**
+         * CommandStatusDetail
+         * @description Command request status returned from the service layer.
+         */
+        CommandStatusDetail: {
+            /** Request Id */
+            request_id: string;
+            /** Command Type */
+            command_type: string;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Error Message */
+            error_message?: string | null;
         };
         /**
          * CompleteUploadRequest
@@ -2105,10 +2161,8 @@ export interface components {
              * @default false
              */
             open_to_relocation: boolean;
-            /** @description Salary preference required for ML scoring */
-            salary_preference: components["schemas"]["SalaryPreferenceRequest"];
-            /** @description Experience preference required for ML scoring */
-            experience_preference: components["schemas"]["ExperiencePreferenceRequest"];
+            salary_preference?: components["schemas"]["SalaryPreferenceRequest"] | null;
+            experience_preference?: components["schemas"]["ExperiencePreferenceRequest"] | null;
         };
         /**
          * ProfileResponse
@@ -2966,6 +3020,68 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CommandAcceptedResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_profile_command_status_api_v1_profiles_commands__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandStatusDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_profile_command_events_api_v1_profiles_commands__request_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -4356,8 +4472,6 @@ export interface operations {
         parameters: {
             query: {
                 country: string;
-                lat?: number | null;
-                lon?: number | null;
                 lang?: string | null;
             };
             header?: {

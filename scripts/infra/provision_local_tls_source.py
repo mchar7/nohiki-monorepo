@@ -63,7 +63,7 @@ def _load_mapping(path: Path) -> dict[str, object]:
     if not isinstance(loaded, dict) or not all(isinstance(key, str) for key in loaded):
         message = "generated SOPS manifest is not a YAML mapping"
         raise ProvisionError(message)
-    return cast(dict[str, object], loaded)
+    return cast("dict[str, object]", loaded)
 
 
 def _policy_recipient() -> str:

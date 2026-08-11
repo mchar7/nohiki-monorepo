@@ -212,6 +212,7 @@ global:
 
   # Kafka configuration (Strimzi, DSN format: kafka://host:port)
   kafka:
+    # renovate: datasource=maven depName=org.apache.kafka:kafka_2.13
     version: 4.3.0
     bootstrapServers: nohiki-kafka-kafka-bootstrap:9092
     dsn: "kafka://nohiki-kafka-kafka-bootstrap:9092"
@@ -360,6 +361,12 @@ user-pref-service:
         - name: user-upload.cdc.upload-deleted.v1
           consumerGroup: user-pref-service-consumer
         - name: user-auth.cdc.account-deleted.v1
+          consumerGroup: user-pref-service-consumer
+        - name: user-pref.cdc.pref-created.v1
+          consumerGroup: user-pref-service-consumer
+        - name: user-pref.cdc.pref-updated.v1
+          consumerGroup: user-pref-service-consumer
+        - name: user-pref.cdc.pref-deleted.v1
           consumerGroup: user-pref-service-consumer
 
 user-upload-service:
@@ -745,6 +752,7 @@ strimzi:
 kafkaCluster:
   enabled: false
   name: nohiki-kafka
+  # renovate: datasource=maven depName=org.apache.kafka:kafka_2.13
   version: 4.3.0
   replicas: 1
   listeners:

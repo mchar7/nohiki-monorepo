@@ -360,7 +360,7 @@ async def delete_user_contributions(db: AsyncSession, user_id: UUID) -> set[UUID
         )
     )
     delete_result = await db.execute(statement)
-    deleted_count = cast(CursorResult[Any], delete_result).rowcount or 0
+    deleted_count = cast("CursorResult[Any]", delete_result).rowcount or 0
 
     await db.flush()
     logger.info("Deleted user contributions", user_id=str(user_id), count=deleted_count)

@@ -5,6 +5,8 @@ from __future__ import annotations
 from nohiki_llm_client import (
     LLMAuthenticationError,
     LLMCircuitOpenError,
+    LLMConfigurationError,
+    LLMContentFilterError,
     LLMContextTooLongError,
     LLMError,
     LLMInvalidSchemaError,
@@ -12,6 +14,7 @@ from nohiki_llm_client import (
     LLMRateLimitError,
     LLMTimeoutError,
     LLMTransientError,
+    LLMUsageLimitError,
     LLMValidationError,
 )
 
@@ -59,6 +62,21 @@ class TestExceptionHierarchy:
         """LLMValidationError is NOT transient: routes to DLQ, not retry."""
         assert issubclass(LLMValidationError, LLMError)
         assert not issubclass(LLMValidationError, LLMTransientError)
+
+    def test_content_filter_error_is_not_transient(self) -> None:
+        """LLMContentFilterError is NOT transient: a policy refusal routes to DLQ, not retry."""
+        assert issubclass(LLMContentFilterError, LLMError)
+        assert not issubclass(LLMContentFilterError, LLMTransientError)
+
+    def test_configuration_error_is_not_transient(self) -> None:
+        """LLMConfigurationError is NOT transient: retrying a misconfiguration burns spend."""
+        assert issubclass(LLMConfigurationError, LLMError)
+        assert not issubclass(LLMConfigurationError, LLMTransientError)
+
+    def test_usage_limit_error_is_not_transient(self) -> None:
+        """LLMUsageLimitError is NOT transient: a budget refusal is the correct outcome."""
+        assert issubclass(LLMUsageLimitError, LLMError)
+        assert not issubclass(LLMUsageLimitError, LLMTransientError)
 
     def test_validation_error_can_be_caught_as_llm_error(self) -> None:
         """LLMValidationError is catchable as the base LLMError."""

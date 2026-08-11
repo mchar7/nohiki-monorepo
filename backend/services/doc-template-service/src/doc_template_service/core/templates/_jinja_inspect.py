@@ -360,7 +360,7 @@ def _navigate_to_property(current_schema: SchemaDict, part: str) -> SchemaDict |
     """Navigate to a nested property in the schema, returning None if not found."""
     properties = current_schema.get("properties")
     if isinstance(properties, dict):
-        prop_dict = cast(dict[str, object], properties)
+        prop_dict = cast("dict[str, object]", properties)
         prop_value = prop_dict.get(part)
         if isinstance(prop_value, dict):
             return cast("SchemaDict", prop_value)

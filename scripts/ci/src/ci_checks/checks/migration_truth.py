@@ -268,7 +268,7 @@ def _merge_values(base: dict[str, object], overlay: dict[str, object]) -> dict[s
     for key, value in overlay.items():
         current = merged.get(key)
         if isinstance(current, dict) and isinstance(value, dict):
-            merged[key] = _merge_values(cast(dict[str, object], current), cast(dict[str, object], value))
+            merged[key] = _merge_values(cast("dict[str, object]", current), cast("dict[str, object]", value))
         else:
             merged[key] = value
     return merged
@@ -313,7 +313,7 @@ def _canonical_image(values: dict[str, object], service: str) -> tuple[str, str]
     if not isinstance(digests, dict):
         msg = "global.imageDigests must be a mapping"
         raise MigrationTruthError(msg)
-    digest = digests.get(repository)
+    digest = digests.get(name)
     if digest:
         if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
             msg = f"invalid digest for image {repository}"
@@ -331,28 +331,14 @@ def _canonical_image(values: dict[str, object], service: str) -> tuple[str, str]
 
 def _validation_digests(values: dict[str, object], inventory: MigrationInventory, repo_root: Path) -> dict[str, str]:
     nonproduction = _merge_values(values, {"global": {"environment": "validation"}})
-    repositories = {_canonical_image(nonproduction, entry.service)[0] for entry in inventory.entries}
+    names = {_canonical_image(nonproduction, entry.service)[0].rsplit("/", 1)[-1] for entry in inventory.entries}
     try:
         image_names = load_inventory(repo_root / "scripts/ci/image_inventory.json", repo_root).names
     except InventoryError as exc:
         msg = f"canonical image inventory is unusable: {exc}"
         raise MigrationTruthError(msg) from exc
-    global_values = nonproduction.get("global", {})
-    global_image = global_values.get("nohikiImage", {}) if isinstance(global_values, dict) else {}
-    if not isinstance(global_image, dict):
-        msg = "invalid canonical image registry values"
-        raise MigrationTruthError(msg)
-    registry = global_image.get("registry", "")
-    owner = global_image.get("owner", "")
-    repository_name = global_image.get("repositoryName", "")
-    for name in image_names:
-        repository = name
-        if registry and owner and repository_name:
-            repository = f"{registry}/{owner}/{repository_name}/{name}"
-        elif registry:
-            repository = f"{registry}/{name}"
-        repositories.add(repository)
-    return {repository: f"sha256:{index:064x}" for index, repository in enumerate(sorted(repositories), start=1)}
+    names.update(image_names)
+    return {name: f"sha256:{index:064x}" for index, name in enumerate(sorted(names), start=1)}
 
 
 def _render_environment_jobs(
@@ -434,7 +420,7 @@ def validate_migration_jobs(repo_root: Path, inventory: MigrationInventory) -> N
         names: list[str] = []
         for job in jobs:
             metadata = job.get("metadata", {})
-            metadata_map = cast(dict[str, object], metadata) if isinstance(metadata, dict) else {}
+            metadata_map = cast("dict[str, object]", metadata) if isinstance(metadata, dict) else {}
             names.append(str(metadata_map.get("name", "")).removesuffix("-db-migrate"))
         if len(jobs) != len(inventory.entries):
             issues.append(f"{environment}: rendered {len(jobs)} migration Jobs, expected {len(inventory.entries)}")
@@ -444,11 +430,11 @@ def validate_migration_jobs(repo_root: Path, inventory: MigrationInventory) -> N
             if service not in expected_services:
                 continue
             spec = job.get("spec", {})
-            spec_map = cast(dict[str, object], spec) if isinstance(spec, dict) else {}
+            spec_map = cast("dict[str, object]", spec) if isinstance(spec, dict) else {}
             template = spec_map.get("template", {})
-            template_map = cast(dict[str, object], template) if isinstance(template, dict) else {}
+            template_map = cast("dict[str, object]", template) if isinstance(template, dict) else {}
             pod = template_map.get("spec", {})
-            pod_map = cast(dict[str, object], pod) if isinstance(pod, dict) else {}
+            pod_map = cast("dict[str, object]", pod) if isinstance(pod, dict) else {}
             containers = pod_map.get("containers", [])
             actual = (
                 containers[0].get("image")

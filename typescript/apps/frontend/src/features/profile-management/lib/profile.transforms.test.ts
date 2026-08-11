@@ -81,7 +81,7 @@ describe('formValuesToCreatePayload', () => {
       },
     };
 
-    expect(formValuesToCreatePayload(values).experience_preference.experience_years).toBe(
+    expect(formValuesToCreatePayload(values).experience_preference?.experience_years).toBe(
       experienceYears,
     );
   });

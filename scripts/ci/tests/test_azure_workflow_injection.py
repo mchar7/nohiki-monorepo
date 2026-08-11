@@ -236,9 +236,9 @@ def test_build_workflow_isolates_digest_gitops_permissions_and_triggers() -> Non
         index for index, step in enumerate(build_steps) if step.get("id") == "build"
     )
     kafka_entry = records["kafka-connect"]
-    assert kafka_entry.context == "infra/k8s/kafka-connect"
+    assert kafka_entry.context == "."
     assert kafka_entry.dockerfile == "infra/k8s/kafka-connect/Dockerfile"
-    assert kafka_entry.lockfile == "infra/k8s/kafka-connect/smt/build.gradle.kts"
+    assert kafka_entry.lockfile == "jvm/nohiki-wal-router-smt/build.gradle.kts"
     assert kafka_entry.build_args == ""
     assert steps["capture-digest"]["if"] == "steps.mode.outputs.push == 'true'"
     assert steps["capture-digest"]["env"]["IMAGE_DIGEST"] == "${{ steps.build.outputs.digest }}"

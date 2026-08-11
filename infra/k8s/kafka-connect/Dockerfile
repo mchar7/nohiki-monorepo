@@ -14,7 +14,7 @@
 # -----------------------------------------------------------------------------
 FROM gradle:9.6.1-jdk25-alpine@sha256:4d50266538c871adbcd8ece20d61d10e42b6c8c7dec1f10498d9508d45759c35 AS smt-builder
 WORKDIR /build
-COPY smt/ /build/
+COPY jvm/nohiki-wal-router-smt/ /build/
 RUN gradle --no-daemon --console=plain test shadowJar
 
 # -----------------------------------------------------------------------------
@@ -40,6 +40,7 @@ RUN for connector in /kafka/connect/debezium-connector-*; do \
 # Debezium 3.6.0 predates fixes in its Kafka runtime dependencies. Replace each
 # active family as a unit; omit JLine and Plexus because the distributed worker
 # does not run Kafka's console or build tooling.
+# Bump procedure: update the Netty family version and every Maven Central SHA-256 together.
 RUN set -eu; \
     fetch_jar() { \
       artifact="$1"; checksum="$2"; destination="$3"; \
@@ -159,6 +160,7 @@ RUN set -eu; \
 
 # Install Qdrant Kafka Sink Connector
 # https://github.com/qdrant/qdrant-kafka
+# Bump procedure: verify the release archive and descriptor patch, then update the version and SHA-256 together.
 ARG QDRANT_CONNECTOR_VERSION=1.3.3
 ARG QDRANT_CONNECTOR_SHA256=f35b1eef7db212e561019b9e9218e4674d231ca577b603a40e028e1de8f59fa6
 RUN mkdir -p /kafka/connect/qdrant-kafka
@@ -198,8 +200,8 @@ ENV CONNECT_PLUGIN_PATH=/kafka/connect
 
 # Add connector configs and scripts for auto-registration
 # Use --chmod to set permissions during COPY (BuildKit feature)
-COPY --chmod=755 scripts/ /kafka/scripts/
-COPY --chmod=644 connectors/ /kafka/connectors/
+COPY --chmod=755 infra/k8s/kafka-connect/scripts/ /kafka/scripts/
+COPY --chmod=644 infra/k8s/kafka-connect/connectors/ /kafka/connectors/
 
 USER 1001
 

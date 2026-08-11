@@ -6,10 +6,13 @@ import pytest
 from health_check.checks.infrastructure.infra_services import InfraServicesCheck
 from health_check.checks.infrastructure.kafka_broker import KafkaBrokerCheck
 from health_check.checks.infrastructure.platform_services import PlatformServicesCheck
-from health_check.checks.infrastructure.postgres_connectivity import PostgresConnectivityCheck
+from health_check.checks.infrastructure.postgres_connectivity import (
+    PostgresConnectivityCheck,
+)
 from health_check.checks.infrastructure.redis_health import RedisHealthCheck
 from health_check.config.thresholds import QDRANT_PORT, RUSTFS_HOST_PORT
 from health_check.core.models import CheckStatus
+from health_check.platform.kubernetes import resolve_kubernetes_service_name
 from health_check.platform.models import PlatformTarget, ServiceStatus
 
 from .._helpers import MockPlatform, make_service_info
@@ -191,10 +194,12 @@ class TestPlatformServicesCheck:
     ) -> None:
         platform = MockPlatform(target=PlatformTarget.KUBERNETES)
 
+        rustfs_url = f"http://{resolve_kubernetes_service_name('rustfs')}:9000/"
+
         def curl(url: str, *, timeout: int = 10) -> tuple[int, str, str]:
             del timeout
-            if url == "http://rustfs:9000/":
-                return 1, "", "Client error '403 Forbidden' for url 'http://rustfs:9000/'"
+            if url == rustfs_url:
+                return 1, "", f"Client error '403 Forbidden' for url '{rustfs_url}'"
             return 0, "", ""
 
         monkeypatch.setattr(platform, "curl", curl)

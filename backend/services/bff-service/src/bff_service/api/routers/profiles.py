@@ -2,21 +2,34 @@
 
 from __future__ import annotations
 
+import re
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from nohiki.common.v1 import CurrencyCode, PaymentFrequency, SeniorityLevel, WorkArrangement
+from nohiki_db_utils import get_async_sessionmaker
 from nohiki_domain_utils import BetterprotoEnumAdapter
-from nohiki_fastapi_utils import PaginatedResponse, PaginationParams
+from nohiki_fastapi_utils import JWTClaims, PaginatedResponse, PaginationParams
 from nohiki_observability import get_logger
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse, ServerSentEvent
+from starlette.background import BackgroundTask
 
-from bff_service.api.deps.auth import get_current_user_id_from_cookie
+from bff_service.api.deps.auth import (
+    get_current_user_claims,
+    get_current_user_id_from_cookie,
+    get_verified_user_claims,
+)
 from bff_service.api.schemas import CommandAcceptedResponse
+from bff_service.core.config import get_settings
 from bff_service.core.db import get_async_db
+from bff_service.services.models import CommandStatusDetail
 from bff_service.services.profile_service import ProfileService
+from bff_service.sse import get_shutdown_event, get_sse_bridge
+from bff_service.sse.events import SSE_EVENT_COMMAND_STATUS
+from bff_service.sse.stream import SSEStreamContext, sse_event_generator
 
 logger = get_logger(__name__)
 
@@ -93,10 +106,8 @@ class ProfileCreate(BaseModel):
     notification_threshold: float = Field(default=0.7, ge=0, le=1)
     auto_tailor_threshold: float | None = Field(default=None, ge=0, le=1)
     open_to_relocation: bool = Field(default=False)
-    salary_preference: SalaryPreferenceRequest = Field(..., description="Salary preference required for ML scoring")
-    experience_preference: ExperiencePreferenceRequest = Field(
-        ..., description="Experience preference required for ML scoring"
-    )
+    salary_preference: SalaryPreferenceRequest | None = None
+    experience_preference: ExperiencePreferenceRequest | None = None
 
 
 class ProfileUpdate(BaseModel):
@@ -209,9 +220,7 @@ async def list_profiles(
         offset=pagination.offset,
         limit=pagination.page_size,
     )
-    profiles = [
-        ProfileResponse.model_validate(p.model_dump() if hasattr(p, "model_dump") else p) for p in profiles_data
-    ]
+    profiles = [ProfileResponse.model_validate(profile.model_dump()) for profile in profiles_data]
     return PaginatedResponse[ProfileResponse].create(
         items=profiles,
         total=total,
@@ -223,14 +232,88 @@ async def list_profiles(
 async def create_profile(
     data: ProfileCreate,
     user_id: Annotated[UUID, Depends(get_current_user_id_from_cookie)],
+    db: Annotated[AsyncSession, Depends(get_async_db)],
     service: Annotated[ProfileService, Depends(get_profile_service)],
 ) -> CommandAcceptedResponse:
     """Create a new job target profile.
 
     Returns 202 Accepted with request_id for async completion tracking.
     """
-    request_id = await service.create_profile_command(user_id, data.model_dump())
+    request_id = await service.create_profile_command(db, user_id, data.model_dump())
     return CommandAcceptedResponse(request_id=request_id)
+
+
+@router.get("/commands/{request_id}", response_model=CommandStatusDetail)
+async def get_profile_command_status(
+    request_id: UUID,
+    user_id: Annotated[UUID, Depends(get_current_user_id_from_cookie)],
+    db: Annotated[AsyncSession, Depends(get_async_db)],
+    service: Annotated[ProfileService, Depends(get_profile_service)],
+) -> CommandStatusDetail:
+    """Return an owned profile command request's current status."""
+    command = await service.get_command_status(db, user_id, request_id)
+    if command is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Command request not found")
+    return command
+
+
+@router.get("/commands/{request_id}/events", response_class=EventSourceResponse)
+async def stream_profile_command_events(
+    request_id: UUID,
+    verified_claims: Annotated[JWTClaims, Depends(get_verified_user_claims)],
+    service: Annotated[ProfileService, Depends(get_profile_service)],
+    last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+) -> EventSourceResponse:
+    """Stream durable status events for an owned profile command request."""
+    settings = get_settings()
+    if settings.database is None:
+        msg = "DATABASE must be configured for database operations"
+        raise RuntimeError(msg)
+
+    session_factory = get_async_sessionmaker(settings.database)
+    async with session_factory() as db:
+        principal = await get_current_user_claims(verified_claims, db)
+        user_id = UUID(principal.sub)
+        if await service.get_command_status(db, user_id, request_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Command request not found")
+
+    if last_event_id is not None and re.fullmatch(r"\d+-\d+", last_event_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Last-Event-ID must be a Redis Stream ID",
+        )
+
+    bridge = get_sse_bridge()
+    lease = await bridge.acquire_stream_slot(
+        user_id,
+        limit=settings.sse.max_concurrent_streams_per_user,
+        ttl_seconds=(settings.sse.max_stream_duration_seconds + settings.sse.heartbeat_interval_seconds),
+    )
+    if lease is None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many concurrent profile command event streams",
+        )
+
+    generator = sse_event_generator(
+        user_id=user_id,
+        principal=principal,
+        context=SSEStreamContext(
+            session_factory=session_factory,
+            bridge=bridge,
+            settings=settings.sse,
+            shutdown_event=get_shutdown_event(),
+            event_type=SSE_EVENT_COMMAND_STATUS,
+        ),
+        request_id=request_id,
+        last_event_id=last_event_id,
+    )
+    return EventSourceResponse(
+        generator,
+        ping=settings.sse.heartbeat_interval_seconds,
+        ping_message_factory=lambda: ServerSentEvent(comment="ping"),
+        background=BackgroundTask(bridge.release_stream_slot, lease),
+    )
 
 
 @router.get("/{pref_id}", response_model=ProfileResponse)
@@ -244,9 +327,7 @@ async def get_profile(
     profile_data = await service.get_profile(db, user_id, pref_id)
     if profile_data is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
-    return ProfileResponse.model_validate(
-        profile_data.model_dump() if hasattr(profile_data, "model_dump") else profile_data
-    )
+    return ProfileResponse.model_validate(profile_data.model_dump())
 
 
 @router.patch("/{pref_id}", response_model=CommandAcceptedResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -254,6 +335,7 @@ async def update_profile(
     pref_id: UUID,
     data: ProfileUpdate,
     user_id: Annotated[UUID, Depends(get_current_user_id_from_cookie)],
+    db: Annotated[AsyncSession, Depends(get_async_db)],
     service: Annotated[ProfileService, Depends(get_profile_service)],
 ) -> CommandAcceptedResponse:
     """Update a job target profile.
@@ -261,6 +343,7 @@ async def update_profile(
     Returns 202 Accepted with request_id for async completion tracking.
     """
     request_id = await service.update_profile_command(
+        db,
         user_id,
         pref_id,
         data.model_dump(exclude_unset=True, exclude_none=True),

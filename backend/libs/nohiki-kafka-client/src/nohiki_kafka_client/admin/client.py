@@ -323,7 +323,7 @@ class KafkaAdmin:
             msg = "Failed to create topics"
             raise AdminError(msg, details={"error": str(exc)}) from exc
 
-        response = cast(_CreateTopicsResponse, raw_response)
+        response = cast("_CreateTopicsResponse", raw_response)
         created: list[str] = []
         for item in response.topic_errors:
             _handle_create_topic_result(item, created)
@@ -352,7 +352,7 @@ class KafkaAdmin:
             msg = "Failed to delete topics"
             raise AdminError(msg, details={"error": str(exc)}) from exc
 
-        response = cast(_DeleteTopicsResponse, raw_response)
+        response = cast("_DeleteTopicsResponse", raw_response)
         deleted: list[str] = []
         for item in response.topic_error_codes:
             _handle_delete_topic_result(item, deleted)
@@ -497,7 +497,7 @@ class KafkaAdmin:
             msg = "Failed to create topics during ensure"
             raise AdminError(msg, details={"error": str(exc)}) from exc
 
-        response = cast(_CreateTopicsResponse, raw_response)
+        response = cast("_CreateTopicsResponse", raw_response)
         created: list[str] = []
         race_existing: list[str] = []
         for item in response.topic_errors:

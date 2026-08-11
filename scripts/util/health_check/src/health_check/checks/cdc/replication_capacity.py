@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Final
 
-from health_check.config.kafka import cdc_connectors_for
+from health_check.config.kafka import cdc_connectors_for, compose_reconciliation_covers
 from health_check.core.base import HealthCheck
 from health_check.core.models import CheckCategory, CheckMetadata, CheckResult, CheckStatus
 from health_check.platform.models import PlatformTarget
@@ -32,7 +32,8 @@ SELECT
  current_setting('max_replication_slots')::int,
  (SELECT count(*) FROM pg_stat_replication),
  current_setting('max_wal_senders')::int,
- (SELECT count(*) FROM pg_replication_slots WHERE slot_name NOT IN ({canonical}))
+ COALESCE((SELECT string_agg(slot_name, ',' ORDER BY slot_name)
+           FROM pg_replication_slots WHERE slot_name NOT IN ({canonical})), '')
 """
 
 
@@ -49,8 +50,10 @@ class ReplicationCapacityCheck(HealthCheck):
         if code != 0:
             return self._make_result(CheckStatus.ERROR, "Cannot query replication capacity", details=(stderr[:200],))
         try:
-            used_slots, max_slots, used_senders, max_senders, unexpected_slots = map(int, stdout.strip().split("|"))
-        except ValueError:
+            capacity_fields = stdout.strip().split("|", maxsplit=4)
+            used_slots, max_slots, used_senders, max_senders = map(int, capacity_fields[:4])
+            unexpected = sorted(name for name in capacity_fields[4].split(",") if name)
+        except IndexError, ValueError:
             return self._make_result(CheckStatus.ERROR, "Invalid replication capacity response")
 
         slot_headroom = max_slots - used_slots
@@ -59,15 +62,15 @@ class ReplicationCapacityCheck(HealthCheck):
         evidence = (
             f"slots={used_slots}/{max_slots} headroom={slot_headroom}",
             f"wal_senders={used_senders}/{max_senders} headroom={sender_headroom}",
-            f"canonical_slots={used_slots - unexpected_slots}/{expected} unexpected={unexpected_slots}",
+            f"canonical_slots={used_slots - len(unexpected)}/{expected} unexpected={len(unexpected)}",
         )
         failures = []
         if slot_headroom <= 0:
             failures.append("max_replication_slots exhausted")
         if sender_headroom <= 0:
             failures.append("max_wal_senders exhausted")
-        if unexpected_slots:
-            failures.append(f"{unexpected_slots} unexpected replication slot(s)")
+        if unexpected:
+            failures.append(f"{len(unexpected)} unexpected replication slot(s)")
         if failures:
             return self._make_result(
                 CheckStatus.FAILED,
@@ -75,8 +78,13 @@ class ReplicationCapacityCheck(HealthCheck):
                 details=evidence,
                 remediation_hint=(
                     "Drop recognized superseded Compose CDC slots with: just connect-reconcile-compose-cdc"
-                    if platform.target == PlatformTarget.COMPOSE and unexpected_slots
-                    else "Drop verified unexpected slots or increase PostgreSQL replication capacity"
+                    if platform.target == PlatformTarget.COMPOSE and compose_reconciliation_covers("slot", unexpected)
+                    else (
+                        "Unexpected slot identities are outside the bounded Compose reconciliation inventory; "
+                        "investigate and remediate them manually"
+                        if platform.target == PlatformTarget.COMPOSE and unexpected
+                        else "Drop verified unexpected slots or increase PostgreSQL replication capacity"
+                    )
                 ),
             )
         return self._make_result(CheckStatus.PASSED, "Replication capacity has headroom", details=evidence)

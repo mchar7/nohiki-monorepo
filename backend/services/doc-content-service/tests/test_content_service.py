@@ -33,6 +33,7 @@ from nohiki.doc.template.v1 import (
 from nohiki.job.listing.v1 import ListingSnapshot
 from nohiki.user.pref.v1 import SearchPrefSnapshot
 from nohiki_common_exceptions import ValidationError
+from user_entitlement_service.core.tiers import TIER_CONFIGS
 
 
 def _create_uuid() -> uuid.UUID:
@@ -497,6 +498,20 @@ class TestProcessContentGeneration:
 
 class TestExtractStorageKeysWithData:
     """Tests for _extract_storage_keys with actual data."""
+
+    def test_accepts_highest_entitlement_attachment_count(self) -> None:
+        from nohiki.common.v1 import UploadReference
+
+        user_id = _create_uuid()
+        entitlement_limit = max(config.max_uploads_per_pref for config in TIER_CONFIGS.values())
+        storage_keys = [
+            f"user-uploads/{user_id}/{_create_uuid()}/attachment-{index}.txt" for index in range(entitlement_limit)
+        ]
+        context = ContentGenerationContext(
+            example_uploads=[UploadReference(storage_key=storage_key) for storage_key in storage_keys],
+        )
+
+        assert _extract_storage_keys(context, user_id) == storage_keys
 
     def test_extracts_example_upload_keys(self) -> None:
         """Test extracting storage keys from example uploads."""

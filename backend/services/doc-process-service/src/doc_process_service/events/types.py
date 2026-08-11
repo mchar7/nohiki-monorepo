@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
+from nohiki.common.v1 import CommandHeader
 from nohiki.doc.process.v1 import ProcessingLevel
-
-if TYPE_CHECKING:
-    from nohiki.common.v1 import CommandHeader
 
 
 @dataclass(frozen=True, slots=True)

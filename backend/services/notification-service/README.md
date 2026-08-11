@@ -213,7 +213,7 @@ its status transitions, retry metadata, and provider response data. The `outbox`
 `processed_events` table (from `nohiki-db-utils`) provides idempotency tracking for Kafka
 handler deduplication.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ### Redis
 

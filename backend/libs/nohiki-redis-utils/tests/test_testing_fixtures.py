@@ -25,9 +25,9 @@ from nohiki_redis_utils.testing import (
 )
 
 # Access the raw generator functions behind the fixture decorators.
-_raw_redis_container = cast(Callable[[], Generator[str]], inspect.unwrap(redis_container))
-_raw_redis_client = cast(Callable[[str], AsyncGenerator[redis.Redis]], inspect.unwrap(redis_client))
-_raw_redis_cache = cast(Callable[[str], AsyncGenerator[RedisCache]], inspect.unwrap(redis_cache))
+_raw_redis_container = cast("Callable[[], Generator[str]]", inspect.unwrap(redis_container))
+_raw_redis_client = cast("Callable[[str], AsyncGenerator[redis.Redis]]", inspect.unwrap(redis_client))
+_raw_redis_cache = cast("Callable[[str], AsyncGenerator[RedisCache]]", inspect.unwrap(redis_cache))
 
 
 class TestRedisContainerFixtureMocked:

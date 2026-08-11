@@ -25,6 +25,7 @@ from ci_checks.core.change_gate import (
     selected_test_packages,
 )
 from ci_checks.core.change_rules import FLAG_NAMES
+from ci_checks.core.display import GATE_LABELS
 from ci_checks.core.image_inventory import affected_images, load_inventory, write_affected_record
 from ci_checks.core.packages import REPO_ROOT, Scope, load_packages_with_deps
 
@@ -62,6 +63,11 @@ def _append(path: Path | None, text: str) -> None:
             handle.write(text)
 
 
+def _label_output(outputs: dict[str, str]) -> str:
+    labels = [{"name": name, "color": color, "active": outputs[flag]} for flag, (name, color) in GATE_LABELS.items()]
+    return json.dumps(labels, separators=(",", ":"))
+
+
 _EVIDENCE_ARTIFACT = "checks-attestation"
 _EVIDENCE_MEMBER = "checks-attestation.json"
 
@@ -91,9 +97,7 @@ class _Attestation:
     event_action: str
     commit_class: str
     run_id: int
-    # Absent from every attestation written before the reuse short-circuit existed. Empty
-    # never equals a real base SHA, so an old proof fails the reuse check closed.
-    base_sha: str = ""
+    base_sha: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,10 +119,6 @@ class _GateEvidence:
 
 
 class _EvidenceError(RuntimeError):
-    pass
-
-
-class _AttestationUnavailableError(_EvidenceError):
     pass
 
 
@@ -258,7 +258,7 @@ def _download_attestation(repository: str, run_id: int) -> _Attestation:
             )
         except _EvidenceError as exc:
             msg = f"run {run_id} has no downloadable {_EVIDENCE_ARTIFACT} artifact"
-            raise _AttestationUnavailableError(msg) from exc
+            raise _EvidenceError(msg) from exc
         members = list(destination.rglob(_EVIDENCE_MEMBER))
         if len(members) != 1:
             msg = f"run {run_id} yielded {len(members)} attestation members"
@@ -276,7 +276,7 @@ def _download_attestation(repository: str, run_id: int) -> _Attestation:
     event_action = item.get("event_action")
     commit_class = item.get("commit_class")
     attested_run_id = item.get("run_id")
-    base_sha = item.get("base_sha", "")
+    base_sha = item.get("base_sha")
     if (
         not isinstance(tested_tree_sha, str)
         or not tested_tree_sha
@@ -324,7 +324,10 @@ def _extract_gate_evidence(repository: str, head_sha: str) -> _GateEvidence:
     for candidate in candidates:
         try:
             attestation = _download_attestation(repository, candidate.run_id)
-        except _AttestationUnavailableError:
+        except _EvidenceError:
+            # Every failure _download_attestation raises is a property of this one candidate:
+            # an expired artifact, an unreadable member, a malformed schema. Skipping keeps the
+            # scan fail-closed, since an empty match set still raises below.
             continue
         if attestation.event_action == "edited" or attestation.base_sha != identity.first_parent_sha:
             continue
@@ -444,7 +447,9 @@ def _prove_tree_already_checked(
     for candidate in _successful_runs(runs, pr_head_sha):
         try:
             attestation = _download_attestation(repository, candidate.run_id)
-        except _AttestationUnavailableError:
+        except _EvidenceError:
+            # One malformed or missing candidate is not evidence about the others; skipping it
+            # leaves the terminal raise below as the only fail-closed exit.
             continue
         # An edited run's verdict is never proof: it may itself have been short-circuited.
         if attestation.event_action == "edited":
@@ -607,9 +612,10 @@ def gate_cmd(
 
     selected_tests = selected_test_packages(decision, packages)
     outputs = render_outputs(decision, selected_tests, event)
+    emitted_outputs = outputs | {"labels": _label_output(outputs)}
     _append(
         github_output,
-        "".join(f"{key}={value}\n" for key, value in outputs.items()),
+        "".join(f"{key}={value}\n" for key, value in emitted_outputs.items()),
     )
     text = render_summary(
         decision,

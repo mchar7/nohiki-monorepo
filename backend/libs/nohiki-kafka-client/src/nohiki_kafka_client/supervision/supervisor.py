@@ -13,7 +13,6 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
 
 from aiokafka.errors import (
     CommitFailedError,
@@ -29,9 +28,7 @@ from aiokafka.errors import (
 from nohiki_observability import get_logger
 
 from nohiki_kafka_client.exceptions import DLQPublishError
-
-if TYPE_CHECKING:
-    from nohiki_kafka_client.handlers import HandlerRegistration
+from nohiki_kafka_client.handlers import HandlerRegistration
 
 logger = get_logger(__name__)
 

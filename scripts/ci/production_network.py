@@ -171,7 +171,7 @@ def _generate(source: Path, destination: Path) -> None:
         "    managedEgress:",
     ]
     for service in ("database", "redis", "s3", "kafka"):
-        cidrs = ", ".join(cast(list[str], values[service]["cidrs"]))
+        cidrs = ", ".join(cast("list[str]", values[service]["cidrs"]))
         lines += [f"      {service}:", f"        cidrs: [{cidrs}]"]
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text("\n".join((*lines, "")), encoding="utf-8")

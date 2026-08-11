@@ -30,6 +30,7 @@ from bff_service.events.projections.user_auth import (
     handle_account_updated,
 )
 from bff_service.events.projections.user_pref import (
+    handle_pref_enrichment_failed,
     handle_profile_created,
     handle_profile_deleted,
     handle_profile_updated,
@@ -40,7 +41,9 @@ from bff_service.events.projections.user_upload import (
     handle_attachment_created,
     handle_attachment_deleted,
 )
+from bff_service.sse.events import CommandStatusPayload, DocumentStatusPayload
 from nohiki.common.v1 import (
+    AccessScope,
     CommutePreferences,
     CurrencyCode,
     Location,
@@ -49,6 +52,7 @@ from nohiki.common.v1 import (
     SalaryPreference,
     TransitMode,
 )
+from nohiki.doc.template.v1 import TemplateAudience
 from nohiki.job.correlation.v1 import (
     FitFactor,
     FitFactorContribution,
@@ -109,17 +113,24 @@ def _make_context(*, db_session: AsyncMock | None = None) -> MessageContext:
     )
 
 
-def _assert_command_marked_completed(mock_session: AsyncMock, request_id: uuid.UUID) -> None:
-    """Assert a correlated CDC event transitions only its pending command row."""
+def _assert_command_marked_completed(
+    mock_session: AsyncMock,
+    request_id: uuid.UUID,
+    active_statuses: str | list[str] = "pending",
+    user_id: uuid.UUID | None = None,
+) -> None:
+    """Assert a correlated CDC event transitions only an active command row."""
     assert mock_session.execute.await_count == 2
     statement = mock_session.execute.await_args_list[1].args[0]
     compiled = statement.compile(compile_kwargs={"literal_binds": False})
     sql = str(compiled).lower()
     assert "command_requests" in sql
     assert "status" in sql
-    assert "pending" in compiled.params.values()
+    assert active_statuses in compiled.params.values()
     assert "completed" in compiled.params.values()
     assert request_id in compiled.params.values()
+    if user_id is not None:
+        assert user_id in compiled.params.values()
 
 
 @pytest.mark.asyncio
@@ -386,6 +397,25 @@ async def test_handle_account_deleted_records_cutoff_before_atomic_delete() -> N
     assert user_id in statement.compile().params.values()
 
 
+@pytest.mark.asyncio
+async def test_handle_account_deleted_rejects_missing_metadata() -> None:
+    """Absent event metadata gives no revocation cutoff, so the deletion must not be projected."""
+    mock_session = create_mock_session()
+    event = AccountDeleted(user_id=str(uuid.uuid4()), metadata=None)
+
+    with (
+        patch(
+            "bff_service.events.projections.user_auth.record_user_revocation_cutoff",
+            new_callable=AsyncMock,
+        ) as helper,
+        pytest.raises(ValueError, match="AccountDeleted metadata is required for revocation cutoff"),
+    ):
+        await handle_account_deleted(event, _make_context(db_session=mock_session))
+
+    helper.assert_not_awaited()
+    mock_session.execute.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     ("handler", "event"),
     [
@@ -406,30 +436,6 @@ async def test_revocation_handlers_reject_malformed_user_uuid(
     """Malformed event user identifiers fail before a ledger write."""
     with pytest.raises(ValueError, match="badly formed hexadecimal UUID string"):
         await handler(event, _make_context(db_session=create_mock_session()))
-
-
-@pytest.mark.asyncio
-async def test_handle_legacy_account_deleted_creates_permanent_tombstone() -> None:
-    """Legacy deletion replay without metadata still blocks resurrection."""
-    user_id = uuid.uuid4()
-    mock_session = create_mock_session()
-
-    with patch(
-        "bff_service.events.projections.user_auth.record_user_revocation_cutoff",
-        new_callable=AsyncMock,
-    ) as record:
-        await handle_account_deleted(
-            AccountDeleted(user_id=str(user_id), metadata=None),
-            _make_context(db_session=mock_session),
-        )
-
-    record.assert_awaited_once_with(
-        mock_session,
-        user_id=user_id,
-        revoked_before=datetime.min.replace(tzinfo=UTC),
-        is_permanent=True,
-    )
-    assert any("DELETE FROM" in str(call.args[0]) for call in mock_session.execute.await_args_list)
 
 
 @pytest.mark.asyncio
@@ -454,6 +460,7 @@ async def test_handle_profile_created(experience_years: int) -> None:
     """Created projections preserve exact experience years under API field names."""
     pref_id = uuid.uuid4()
     user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
 
     snapshot = SearchPrefSnapshot()
     snapshot.id = str(pref_id)
@@ -466,13 +473,17 @@ async def test_handle_profile_created(experience_years: int) -> None:
     event = PrefCreated()
     event.pref_id = str(pref_id)
     event.pref_snapshot = snapshot
+    event.user_id = str(user_id)
+    event.metadata = MagicMock(correlation_id=str(request_id))
 
     mock_session = create_mock_session()
     ctx = _make_context(db_session=mock_session)
 
     await handle_profile_created(event, ctx)
 
-    statement = mock_session.execute.await_args.args[0]
+    _assert_command_marked_completed(mock_session, request_id, ["pending", "in_progress"], user_id)
+    mock_session.commit.assert_not_awaited()
+    statement = mock_session.execute.await_args_list[0].args[0]
     assert {
         "experience_years": experience_years,
         "seniority_levels": [],
@@ -485,6 +496,7 @@ async def test_handle_profile_updated(experience_years: int) -> None:
     """Updated projections preserve exact experience years under API field names."""
     pref_id = uuid.uuid4()
     user_id = uuid.uuid4()
+    request_id = uuid.uuid4()
 
     snapshot = SearchPrefSnapshot()
     snapshot.id = str(pref_id)
@@ -497,17 +509,85 @@ async def test_handle_profile_updated(experience_years: int) -> None:
     event = PrefUpdated()
     event.pref_id = str(pref_id)
     event.pref_snapshot = snapshot
+    event.user_id = str(user_id)
+    event.metadata = MagicMock(correlation_id=str(request_id))
 
     mock_session = create_mock_session()
     ctx = _make_context(db_session=mock_session)
 
     await handle_profile_updated(event, ctx)
 
-    statement = mock_session.execute.await_args.args[0]
+    _assert_command_marked_completed(mock_session, request_id, ["pending", "in_progress"], user_id)
+    mock_session.commit.assert_not_awaited()
+    statement = mock_session.execute.await_args_list[0].args[0]
     assert {
         "experience_years": experience_years,
         "seniority_levels": [],
     } in statement.compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_pref_enrichment_failure_updates_only_active_command_and_emits_status() -> None:
+    """A matched failure becomes terminal and is visible on the existing SSE channel."""
+    request_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    event = MagicMock(
+        request_id=str(request_id),
+        user_id=str(user_id),
+        error_message="Embedding service unavailable",
+    )
+    result = MagicMock()
+    result.one_or_none.return_value = (user_id, "create_profile")
+    session = create_mock_session()
+    session.execute.return_value = result
+    bridge = MagicMock()
+    bridge.publish = AsyncMock()
+
+    with patch("bff_service.events.projections.user_pref.get_sse_bridge", return_value=bridge):
+        await handle_pref_enrichment_failed(event, _make_context(db_session=session))
+
+    statement = session.execute.await_args.args[0]
+    params = statement.compile().params.values()
+    assert request_id in params
+    assert user_id in params
+    assert ["pending", "in_progress"] in params
+    assert "failed" in params
+    assert "Embedding service unavailable" in params
+    assert any(isinstance(value, datetime) for value in params)
+    session.commit.assert_not_awaited()
+    bridge.publish.assert_awaited_once()
+    assert bridge.publish.await_args is not None
+    published_user_id, payload = bridge.publish.await_args.args
+    assert published_user_id == user_id
+    assert isinstance(payload, CommandStatusPayload)
+    assert not isinstance(payload, DocumentStatusPayload)
+    assert payload.request_id == str(request_id)
+    assert payload.type == "command_status"
+    assert payload.command_type == "create_profile"
+    assert payload.status == "failed"
+    assert payload.error_message == "Embedding service unavailable"
+
+
+@pytest.mark.asyncio
+async def test_pref_enrichment_failure_without_active_command_emits_no_status() -> None:
+    """Completed, failed, missing, and mismatched rows do not produce a new status event."""
+    event = MagicMock(
+        request_id=str(uuid.uuid4()),
+        user_id=str(uuid.uuid4()),
+        error_message="Late failure",
+    )
+    result = MagicMock()
+    result.one_or_none.return_value = None
+    session = create_mock_session()
+    session.execute.return_value = result
+    bridge = MagicMock()
+    bridge.publish = AsyncMock()
+
+    with patch("bff_service.events.projections.user_pref.get_sse_bridge", return_value=bridge):
+        await handle_pref_enrichment_failed(event, _make_context(db_session=session))
+
+    session.commit.assert_not_awaited()
+    bridge.publish.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -1127,7 +1207,7 @@ async def test_handle_template_updated() -> None:
     snapshot.name = "resume-modern"
     snapshot.display_name = "Modern Résumé"
     snapshot.description = "Modern resume"
-    snapshot.access_scope = None
+    snapshot.access_scope = AccessScope.UNSPECIFIED
     snapshot.owner_id = ""
     snapshot.version_snapshot = version_snapshot
 
@@ -1144,6 +1224,75 @@ async def test_handle_template_updated() -> None:
     _assert_command_marked_completed(mock_session, request_id)
     projection_stmt = mock_session.execute.await_args_list[0].args[0]
     assert projection_stmt.compile().params["display_name"] == "Modern Résumé"
+
+
+@pytest.mark.asyncio
+async def test_handle_template_updated_preserves_protobuf_defaults() -> None:
+    """Default-valued optional snapshot fields are projected, not treated as absent."""
+    template_id = uuid.uuid4()
+    request_id = uuid.uuid4()
+    version_snapshot = MagicMock(
+        version_id="",
+        version="2.0.0",
+        template_content="<html>{{ title }}</html>",
+        content_schema_json="",
+    )
+    snapshot = MagicMock(
+        namespace="default",
+        name="resume-modern",
+        display_name="",
+        audience=TemplateAudience.UNSPECIFIED,
+        description="",
+        access_scope=AccessScope.UNSPECIFIED,
+        owner_id="",
+        version_snapshot=version_snapshot,
+    )
+    event = TemplateUpdated()
+    event.template_id = str(template_id)
+    event.template_snapshot = snapshot
+    event.metadata = MagicMock(correlation_id=str(request_id))
+    mock_session = create_mock_session()
+
+    await handle_template_updated(event, _make_context(db_session=mock_session))
+
+    _assert_command_marked_completed(mock_session, request_id)
+    projection_stmt = mock_session.execute.await_args_list[0].args[0]
+    projection_params = projection_stmt.compile().params
+    assert projection_params["display_name"] == ""
+    assert projection_params["audience"] == TemplateAudience.UNSPECIFIED
+
+
+@pytest.mark.asyncio
+async def test_handle_template_updated_does_not_widen_unspecified_access_scope() -> None:
+    """An unspecified access scope is projected as-is, never widened to the public scope."""
+    request_id = uuid.uuid4()
+    version_snapshot = MagicMock(
+        version_id="",
+        version="2.0.0",
+        template_content="<html>{{ title }}</html>",
+        content_schema_json="",
+    )
+    snapshot = MagicMock(
+        namespace="default",
+        name="resume-modern",
+        display_name="Modern Résumé",
+        audience=TemplateAudience.DOCUMENT,
+        description="",
+        access_scope=AccessScope.UNSPECIFIED,
+        owner_id="",
+        version_snapshot=version_snapshot,
+    )
+    event = TemplateUpdated()
+    event.template_id = str(uuid.uuid4())
+    event.template_snapshot = snapshot
+    event.metadata = MagicMock(correlation_id=str(request_id))
+    mock_session = create_mock_session()
+
+    await handle_template_updated(event, _make_context(db_session=mock_session))
+
+    projection_params = mock_session.execute.await_args_list[0].args[0].compile().params
+    assert projection_params["access_scope"] == AccessScope.UNSPECIFIED
+    assert projection_params["access_scope"] != AccessScope.PUBLIC
 
 
 @pytest.mark.asyncio

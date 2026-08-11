@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from nohiki.feedback.v1 import ScoreFeedbackType
@@ -21,35 +21,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class ListingFeedbackAggregate:
-    """Aggregate feedback statistics for a listing across all users."""
-
-    listing_id: UUID
-    good_count: int
-    too_high_count: int
-    too_low_count: int
-
-    @property
-    def total_count(self) -> int:
-        """Total feedback count for this listing."""
-        return self.good_count + self.too_high_count + self.too_low_count
-
-    @property
-    def quality_signal(self) -> float:
-        """Compute a quality signal from feedback.
-
-        Returns a value between -1.0 (all TOO_HIGH) and 1.0 (all TOO_LOW).
-        0.0 indicates balanced feedback or all GOOD.
-
-        TOO_HIGH feedback suggests listing is oversold (low quality).
-        TOO_LOW feedback suggests listing is undervalued (high quality).
-        """
-        if self.total_count == 0:
-            return 0.0
-        return (self.too_low_count - self.too_high_count) / self.total_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,27 +99,9 @@ class FeedbackRepository:
         self,
         correlation_id: UUID,
         user_id: UUID,
-        adjustment: ManualAdjustmentCreate | None = None,
-        **legacy_fields: float | str | None,
+        adjustment: ManualAdjustmentCreate,
     ) -> ManualAdjustmentModel:
-        """Create an idempotent, finite manual score adjustment.
-
-        Args:
-            correlation_id: The correlation being adjusted.
-            user_id: The user providing the adjustment.
-            adjustment: Typed adjustment fields.
-            **legacy_fields: Backward-compatible keyword fields for direct callers.
-
-        Returns:
-            The created adjustment model.
-        """
-        if adjustment is None:
-            adjustment = ManualAdjustmentCreate(
-                original_score=cast("float", legacy_fields["original_score"]),
-                adjusted_score=cast("float", legacy_fields["adjusted_score"]),
-                reasoning=cast("str", legacy_fields["reasoning"]),
-                request_id=cast("str | None", legacy_fields.get("request_id")),
-            )
+        """Create an idempotent, finite manual score adjustment."""
         original_score = adjustment.original_score
         adjusted_score = adjustment.adjusted_score
         reasoning = adjustment.reasoning

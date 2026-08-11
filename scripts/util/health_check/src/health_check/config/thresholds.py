@@ -17,17 +17,6 @@ CHECK_DEFAULT_TIMEOUT_SECONDS: Final[float] = 30.0
 FIX_DEFAULT_TIMEOUT_SECONDS: Final[float] = 60.0
 """Default timeout for automated fix operations."""
 
-CDC_END_TO_END_TIMEOUT_SECONDS: Final[float] = 60.0
-"""Total timeout for the CDC end-to-end flow test (insert → Kafka delivery)."""
-
-CDC_END_TO_END_POLL_INTERVAL_SECONDS: Final[float] = 1.0
-"""Interval between Kafka poll attempts in the CDC end-to-end check."""
-
-CDC_END_TO_END_INITIAL_WAIT_SECONDS: Final[float] = 4.0
-"""Seconds to wait after outbox insert before polling, giving Debezium time to process."""
-
-CDC_END_TO_END_MAX_WAIT_SECONDS: Final[float] = 30.0
-"""Maximum seconds to wait for the test event to appear in Kafka after the initial wait."""
 
 KAFKA_CONNECT_DEFAULT_PORT: Final[int] = 8083
 """Default Kafka Connect REST API port."""

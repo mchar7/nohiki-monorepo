@@ -3,10 +3,7 @@
 from job_correlation_evaluation_service.repositories.correlation_repository import (
     CorrelationRepository,
 )
-from job_correlation_evaluation_service.repositories.feedback_repository import (
-    FeedbackRepository,
-    ListingFeedbackAggregate,
-)
+from job_correlation_evaluation_service.repositories.feedback_repository import FeedbackRepository
 from job_correlation_evaluation_service.repositories.projection_repository import (
     ProfileProjectionRepository,
 )
@@ -14,6 +11,5 @@ from job_correlation_evaluation_service.repositories.projection_repository impor
 __all__ = [
     "CorrelationRepository",
     "FeedbackRepository",
-    "ListingFeedbackAggregate",
     "ProfileProjectionRepository",
 ]

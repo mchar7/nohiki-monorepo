@@ -152,7 +152,7 @@ export function TagInput({
         onKeyDown={handleKeyDown}
         onBlur={handleBlur}
         placeholder={value.length >= maxTags ? t('counts.more', { count: 0 }) : placeholder}
-        disabled={disabled || value.length >= maxTags}
+        disabled={disabled === true || value.length >= maxTags}
         aria-invalid={ariaInvalid}
         className={cn('h-9', shaking && 'animate-shake')}
         onAnimationEnd={() => setShaking(false)}

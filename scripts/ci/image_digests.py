@@ -116,13 +116,12 @@ def record(args: argparse.Namespace) -> None:
     )
 
 
-def existing_digests(path: Path, inventory: ImageInventory, prefix: str) -> dict[str, str]:
+def existing_digests(path: Path, inventory: ImageInventory) -> dict[str, str]:
     """Read the checked-in overlay and require one canonical digest per inventory name.
 
     Args:
         path: Existing overlay path.
         inventory: Validated inventory.
-        prefix: Canonical GHCR prefix.
 
     Returns:
         Canonical name to digest for every inventory image.
@@ -136,10 +135,9 @@ def existing_digests(path: Path, inventory: ImageInventory, prefix: str) -> dict
         match = OVERLAY_RE.fullmatch(line)
         if match is None:
             continue
-        image = match["image"]
-        name = image.removeprefix(f"{prefix}/")
-        if name == image or name not in inventory.names:
-            fail(f"existing digest overlay has a noncanonical reference {image}")
+        name = match["image"]
+        if name not in inventory.names:
+            fail(f"existing digest overlay has a noncanonical image name {name}")
         if name in found:
             fail(f"existing digest overlay repeats {name}")
         found[name] = match["digest"]
@@ -219,7 +217,7 @@ def assemble(args: argparse.Namespace) -> None:
             fail(str(exc))
         if args.existing is None:
             fail("--affected requires --existing to carry unaffected digests forward")
-        carried = existing_digests(args.existing, inventory, prefix)
+        carried = existing_digests(args.existing, inventory)
     published = fresh_digests(args.records, affected, inventory, prefix, args.repository)
     selected = set(affected)
     lines = [
@@ -228,8 +226,7 @@ def assemble(args: argparse.Namespace) -> None:
         "  imageDigests:",
     ]
     lines.extend(
-        f"    {prefix}/{name}: {published[name] if name in selected else carried[name]}"
-        for name in sorted(inventory.names)
+        f"    {name}: {published[name] if name in selected else carried[name]}" for name in sorted(inventory.names)
     )
     lines.append("")
     args.output.parent.mkdir(parents=True, exist_ok=True)

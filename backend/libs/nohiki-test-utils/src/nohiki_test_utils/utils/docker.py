@@ -131,10 +131,40 @@ def _docker_endpoint_available(endpoint: str) -> bool:
     return False
 
 
+# Docker availability is a property of the machine, so it is probed once and then inherited. The
+# verdict lives in the environment rather than in this module because a nested pytest session may
+# re-import the module, and would get a cold cache, but it always inherits the environment. A
+# nested session starts inside a test that has installed the outbound-network guard, so a second
+# probe there resolves a hostname the guard rejects and kills that session before it collects.
+DOCKER_ENDPOINT_VERDICT_ENV = "NOHIKI_TEST_DOCKER_ENDPOINT"
+
+
+def _probe_docker_endpoint() -> str | None:
+    return next((endpoint for endpoint in _docker_endpoint_candidates() if _docker_endpoint_available(endpoint)), None)
+
+
+def publish_docker_endpoint_verdict() -> str | None:
+    """Return the inherited verdict, or probe once and record it for every nested session."""
+    verdict = os.environ.get(DOCKER_ENDPOINT_VERDICT_ENV)
+    if verdict is not None:
+        return verdict or None
+    endpoint = _probe_docker_endpoint()
+    os.environ[DOCKER_ENDPOINT_VERDICT_ENV] = endpoint or ""
+    return endpoint
+
+
 @lru_cache(maxsize=1)
 def resolve_docker_endpoint() -> str | None:
-    """Return the first configured Docker endpoint that accepts connections."""
-    return next((endpoint for endpoint in _docker_endpoint_candidates() if _docker_endpoint_available(endpoint)), None)
+    """Return the Docker endpoint for this machine without probing twice.
+
+    A published session verdict answers without touching the network, which is what keeps
+    collection inside a nested pytest session from resolving a hostname the outer test's
+    outbound guard forbids. Probing is the fallback for callers outside a pytest session.
+    """
+    verdict = os.environ.get(DOCKER_ENDPOINT_VERDICT_ENV)
+    if verdict is not None:
+        return verdict or None
+    return _probe_docker_endpoint()
 
 
 def docker_daemon_available() -> bool:

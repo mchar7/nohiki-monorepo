@@ -31,7 +31,7 @@ class ColBERTModel(Protocol):
 
 
 def _load_colbert_model_class(module: object, attr_name: str) -> type[ColBERTModel]:
-    return cast(type[ColBERTModel], getattr(module, attr_name))
+    return cast("type[ColBERTModel]", getattr(module, attr_name))
 
 
 class ColBERTEncoder:

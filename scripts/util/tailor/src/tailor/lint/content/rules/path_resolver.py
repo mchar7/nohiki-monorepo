@@ -112,7 +112,7 @@ def resolve_glob_path(
     if path.startswith(_SIBLING_PREFIX):
         return _resolve_sibling(path, runtime)
 
-    return _resolve_with_root(data, path, ROOT_PATH, strip_prefix_in_output=True)
+    return _resolve_with_root(data, path, ROOT_PATH)
 
 
 def _resolve_sibling(
@@ -140,28 +140,20 @@ def _resolve_sibling(
     prefix = f"{_SIBLING_PREFIX}{sibling_name}"
     if sub_path == "":
         return [(prefix, [sibling_data])]
-    return _resolve_with_root(sibling_data, sub_path, prefix, strip_prefix_in_output=False)
+    return _resolve_with_root(sibling_data, sub_path, prefix)
 
 
 def _resolve_with_root(
     data: object,
     path: str,
     concrete_root: str,
-    *,
-    strip_prefix_in_output: bool,
 ) -> list[tuple[str, list[object]]]:
-    """Core resolver that walks ``path`` against ``data``.
-
-    ``concrete_root`` is prepended to the emitted paths when
-    ``strip_prefix_in_output`` is False — this keeps sibling prefixes visible
-    while the primary document uses the bare path (for backwards compatibility
-    with earlier implementations).
-    """
+    """Walk ``path`` against ``data`` and emit paths rooted at ``concrete_root``."""
     if "[*]" not in path:
         value = navigate(data, path)
         if value is None:
             return []
-        concrete = path if strip_prefix_in_output else f"{concrete_root}.{path}"
+        concrete = f"{concrete_root}.{path}"
         if isinstance(value, list):
             # List → treat each element as an item (classic list-of-items scope).
             return [(concrete, cast("list[object]", value))]
@@ -180,7 +172,7 @@ def _resolve_with_root(
 
     results: list[tuple[str, list[object]]] = []
     for i, item in enumerate(prefix_value):
-        concrete_prefix = f"{prefix}[{i}]" if strip_prefix_in_output else f"{concrete_root}.{prefix}[{i}]"
+        concrete_prefix = f"{concrete_root}.{prefix}[{i}]"
         if not suffix:
             # Empty suffix (``foo[*]``) emits one scope entry per index. When the
             # item is itself a list, use it directly as ``items`` (matrix-style

@@ -482,15 +482,28 @@ def test_platform_helmrelease_has_explicit_readiness_and_remediation(
     env = CLUSTER_ENV[cluster]
     spec = helmrelease(f"infra/k8s/gitops/platform/{env}", "nohiki")["spec"]
     assert spec["timeout"] == "20m"
-    assert spec["install"] == {
-        "createNamespace": True,
-        "crds": "Create",
-        "remediation": {"retries": 3, "remediateLastFailure": True},
-    }
+    if env == "local":
+        assert spec["install"] == {
+            "createNamespace": True,
+            "crds": "Create",
+            "strategy": {
+                "name": "RetryOnFailure",
+                "retryInterval": "2m",
+            },
+            "disableWait": True,
+            "timeout": "30m",
+        }
+    else:
+        assert spec["install"] == {
+            "createNamespace": True,
+            "crds": "Create",
+            "remediation": {"retries": 3, "remediateLastFailure": True},
+        }
     assert spec["upgrade"] == {
         "crds": "CreateReplace",
         "cleanupOnFail": True,
         "remediation": {"retries": 3, "remediateLastFailure": True},
+        **({"disableWait": True} if env == "local" else {}),
     }
     assert spec["driftDetection"] == {"mode": "enabled"}
 

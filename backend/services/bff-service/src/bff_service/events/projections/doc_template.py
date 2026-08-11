@@ -4,10 +4,9 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from nohiki.common.v1 import AccessScope, ProcessingStatus
+from nohiki.common.v1 import ProcessingStatus
 from nohiki.doc.template.v1 import (
     DocumentRenderCompleted,
-    TemplateAudience,
     TemplateCreated,
     TemplateDeleted,
     TemplateUpdated,
@@ -59,16 +58,10 @@ async def _upsert_template_from_snapshot(session: AsyncSession, msg: TemplateCre
             return False
         content_schema = parsed
 
-    access_scope = snapshot.access_scope or AccessScope.PUBLIC
+    access_scope = snapshot.access_scope
     owner_id = UUID(snapshot.owner_id) if snapshot.owner_id else None
-    display_name = getattr(snapshot, "display_name", "") or snapshot.name.replace("_", " ").replace("-", " ").title()
-    audience = getattr(snapshot, "audience", TemplateAudience.UNSPECIFIED)
-    if audience == TemplateAudience.UNSPECIFIED:
-        audience = (
-            TemplateAudience.INTERNAL
-            if snapshot.namespace == "messaging-service" and snapshot.name == "job_notification"
-            else TemplateAudience.DOCUMENT
-        )
+    display_name = snapshot.display_name
+    audience = snapshot.audience
 
     stmt = (
         insert(TemplateProjection)

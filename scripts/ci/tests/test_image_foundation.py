@@ -17,6 +17,7 @@ from typing import TypeIs
 import pytest
 import yaml
 from _documents import load_mapping, string_at
+from helm_test_utils import runtime_eso_args
 
 
 def _is_mapping(value: object) -> TypeIs[dict[str, object]]:
@@ -45,6 +46,15 @@ def _string(value: object) -> str:
 def _strings(value: object) -> list[str]:
     assert isinstance(value, list)
     return [_string(item) for item in value]
+
+
+def _images(value: object) -> list[str]:
+    if isinstance(value, dict):
+        images = [image] if isinstance(image := value.get("image"), str) else []
+        return images + [image for child in value.values() for image in _images(child)]
+    if isinstance(value, list):
+        return [image for child in value for image in _images(child)]
+    return []
 
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -422,7 +432,7 @@ def test_digest_values_reject_mutable_tag_drift(tmp_path: Path, tag: str) -> Non
         _IMAGE_FOUNDATION.cmd_render_values(argparse.Namespace(digests=str(digests)))
 
 
-def test_rendered_values_are_digest_only_and_cover_local_inventory(
+def test_rendered_values_use_bare_digest_keys_and_cover_local_inventory(
     tmp_path: Path,
 ) -> None:
     result = _run("render-values", "--digests", str(_write_digests(tmp_path / "digests.json")))
@@ -437,6 +447,47 @@ def test_rendered_values_are_digest_only_and_cover_local_inventory(
     assert set(_mapping(foundation["images"])) == set(_local_names())
     assert "latest" not in result.stdout
     assert ":dev" not in result.stdout
+
+
+def test_rendered_values_feed_local_helm_release_as_digest_references(tmp_path: Path) -> None:
+    result = _run("render-values", "--digests", str(_write_digests(tmp_path / "digests.json")))
+    assert result.returncode == 0, result.stderr
+    digest_values = tmp_path / "image-digests.values.yaml"
+    digest_values.write_text(result.stdout, encoding="utf-8")
+    command = [
+        "helm",
+        "template",
+        "nohiki",
+        str(_ROOT / "infra/k8s/helm"),
+        "--namespace",
+        "nohiki",
+        "--values",
+        str(_ROOT / "infra/k8s/helm/values.yaml"),
+        "--values",
+        str(_ROOT / "infra/k8s/helm/values.local.yaml"),
+        "--values",
+        str(digest_values),
+        *runtime_eso_args("local"),
+    ]
+    rendered = subprocess.run(command, cwd=_ROOT, capture_output=True, text=True, check=False)
+    assert rendered.returncode == 0, rendered.stderr
+    local_images = [
+        image
+        for document in yaml.safe_load_all(rendered.stdout)
+        for image in _images(document)
+        if image.startswith(f"{_REGISTRY_NAME}/")
+    ]
+    assert local_images
+    invalid = [
+        image
+        for image in local_images
+        if re.fullmatch(
+            rf"{re.escape(_REGISTRY_NAME)}/[^:@]+(?::[^@]+)?@sha256:[0-9a-f]{{64}}",
+            image,
+        )
+        is None
+    ]
+    assert not invalid, sorted(set(invalid))
 
 
 def test_every_node_proves_every_canonical_digest_pull(tmp_path: Path) -> None:
@@ -495,19 +546,39 @@ def test_local_helmrelease_consumes_stable_committed_digest_values() -> None:
     assert generator_options["disableNameSuffixHash"] is True
     patches = _mapping_list(kustomization["patches"])
     patch = yaml.safe_load(str(patches[0]["patch"]))
-    assert patch == [
+    assert patch[0] == {
+        "op": "add",
+        "path": "/spec/valuesFrom",
+        "value": [
+            {
+                "kind": "ConfigMap",
+                "name": "nohiki-image-digests",
+                "valuesKey": "values.yaml",
+                "optional": False,
+            },
+            {
+                "kind": "ConfigMap",
+                "name": "nohiki-owner-model-egress-values",
+                "valuesKey": "values.yaml",
+                "optional": False,
+            },
+        ],
+    }
+    runtime_secrets = _load_yaml(_ROOT / "infra/k8s/gitops/clusters/local/runtime-secrets.yaml")
+    runtime_spec = _mapping_at(runtime_secrets, "spec")
+    assert _mapping_list(runtime_spec["healthChecks"])[:2] == [
         {
-            "op": "add",
-            "path": "/spec/valuesFrom",
-            "value": [
-                {
-                    "kind": "ConfigMap",
-                    "name": "nohiki-image-digests",
-                    "valuesKey": "values.yaml",
-                    "optional": False,
-                }
-            ],
-        }
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "name": "nohiki-llm-proxy-source",
+            "namespace": "nohiki",
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "name": "nohiki-owner-model-egress-values",
+            "namespace": "flux-system",
+        },
     ]
     values = _load_yaml(_DIGEST_VALUES)
     global_values = _mapping_at(values, "global")
@@ -540,8 +611,8 @@ def test_publish_git_write_is_guarded_to_reviewed_digest_artifact() -> None:
     assert 'git commit -m "chore(kind): publish local image digests" -- "$artifact"' in publish
     assert "git diff --cached --name-only" in publish
     assert 'git diff-tree --no-commit-id --name-only -r "$after"' in publish
-    assert '--force-with-lease="refs/heads/$branch:$reviewed"' in publish
-    assert '"HEAD:refs/heads/$branch"' in publish
+    assert re.search(r"\bgit\s+push\b", publish) is None
+    assert "Prepared digest artifact commit for PUSH-DELEGATE" in publish
     assert "image references are redacted" in publish
     assert "before=%s after=%s path=%s" in publish
     assert 'cat "$artifact"' not in publish

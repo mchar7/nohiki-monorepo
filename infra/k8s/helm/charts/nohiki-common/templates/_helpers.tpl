@@ -86,10 +86,9 @@ Service account name.
 {{- end }}
 
 {{/*
-Canonical image repository path (no tag/digest). Shared by nohiki-common.image
-and the accelerator digest guard so both compute the digest key identically.
-For local k3s (empty registry): image-name
-For CI/prod (with registry): registry/owner/repo/image-name
+Canonical image repository path (no tag/digest).
+For local k3s: registry/image-name
+For CI/prod: registry/owner/repo/image-name
 */}}
 {{- define "nohiki-common.imageRepository" -}}
 {{- $glob := .Values.global | default dict }}
@@ -117,7 +116,7 @@ Container image reference (repository + digest in prod, repository + tag otherwi
 {{- $imageName := $svcImage.name | default .Chart.Name }}
 {{- $repository := include "nohiki-common.imageRepository" . | trim }}
 {{- $digests := $glob.imageDigests | default dict }}
-{{- $digest := index $digests $repository | default "" }}
+{{- $digest := index $digests $imageName | default "" }}
 {{- if $digest }}
 {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) }}
 {{- fail (printf "invalid digest for image %s: %s" $imageName $digest) }}

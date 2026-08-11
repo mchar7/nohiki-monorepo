@@ -70,9 +70,12 @@ spec:
     retentionPolicy: {{ $cfg.backup.retentionPolicy | default "7d" }}
   {{- end }}
 
-  # Per-service roles managed via ESO-generated secrets
-  # App roles: DML access to service database
-  # Debezium roles: REPLICATION plus per-database owner-role membership for CDC
+  # Per-service roles managed via ESO-generated secrets.
+  # Debezium uses a distinct login and secret, but inherits the application owner
+  # role because filtered publication auto-creation requires table ownership.
+  # This distinct-identity control supports attribution and independent revocation.
+  # Removing the inherited privileges requires a separate migration that pre-creates
+  # publications, grants table-scoped SELECT, and defines ordering and rollback.
   managed:
     roles:
       {{- range $svcName, $svcValues := $.Values }}
@@ -100,8 +103,9 @@ spec:
         replication: true
         passwordSecret:
           name: {{ $svcName }}-debezium-credentials
-        # Debezium creates the filtered publication and replication slot from
-        # the KafkaConnector declaration; owner membership permits table capture.
+        # Filtered publication auto-creation requires table ownership. This distinct
+        # login therefore inherits the app role until publications and table-scoped
+        # SELECT grants are managed by an ordered, reversible database migration.
         inRoles:
           - {{ $appRole }}
         {{- end }}

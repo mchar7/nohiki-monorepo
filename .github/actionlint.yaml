@@ -1,3 +1,6 @@
 self-hosted-runner:
   labels:
     - nohiki
+    - nohiki-t1
+    - nohiki-t2
+    - nohiki-t3

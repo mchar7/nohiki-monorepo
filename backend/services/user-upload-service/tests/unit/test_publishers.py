@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from nohiki.common.v1 import DocumentCategory
 from nohiki_db_utils.testing import create_mock_session
 from nohiki_kafka_client import Topics
 from user_upload_service.db.models import Upload
@@ -29,6 +30,7 @@ def sample_attachment() -> MagicMock:
     attachment.user_id = uuid.uuid4()
     attachment.name = "resume.pdf"
     attachment.content_type = "application/pdf"
+    attachment.category = DocumentCategory.RESUME
     attachment.content_hash = "abc123def456"
     attachment.file_size = 2048
     attachment.storage_key = f"{attachment.user_id}/{attachment.content_hash}/resume.pdf"
@@ -125,6 +127,26 @@ class TestBuildUploadSnapshot:
         with pytest.raises(ValueError, match="created_at and updated_at must be set"):
             _build_upload_snapshot(attachment)
 
+    def test_includes_document_category_from_attachment(self) -> None:
+        """Snapshot document_category matches attachment.category."""
+        from user_upload_service.events.publishers import _build_upload_snapshot
+
+        attachment = MagicMock(spec=Upload)
+        attachment.id = uuid.uuid4()
+        attachment.user_id = uuid.uuid4()
+        attachment.name = "resume.pdf"
+        attachment.content_type = "application/pdf"
+        attachment.category = DocumentCategory.RESUME
+        attachment.content_hash = "abc"
+        attachment.file_size = 100
+        attachment.storage_key = "key"
+        attachment.created_at = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        attachment.updated_at = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+
+        snapshot = _build_upload_snapshot(attachment)
+
+        assert snapshot.document_category == DocumentCategory.RESUME
+
     def test_adds_utc_to_naive_created_at(self) -> None:
         """Adds UTC tzinfo to timezone-naive created_at."""
         from user_upload_service.events.publishers import _build_upload_snapshot
@@ -134,6 +156,7 @@ class TestBuildUploadSnapshot:
         attachment.user_id = uuid.uuid4()
         attachment.name = "test.pdf"
         attachment.content_type = "application/pdf"
+        attachment.category = DocumentCategory.OTHER
         attachment.content_hash = "abc"
         attachment.file_size = 100
         attachment.storage_key = "key"
@@ -155,6 +178,7 @@ class TestBuildUploadSnapshot:
         attachment.user_id = uuid.uuid4()
         attachment.name = "test.pdf"
         attachment.content_type = "application/pdf"
+        attachment.category = DocumentCategory.OTHER
         attachment.content_hash = "abc"
         attachment.file_size = 100
         attachment.storage_key = "key"

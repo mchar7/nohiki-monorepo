@@ -11,6 +11,7 @@ import httpx
 import pytest
 from job_correlation_evaluation_service.services.scoring.stages.llm_rerank import (
     CircuitBreaker,
+    LLMRerankConfig,
     LLMRerankStage,
     RerankCandidate,
 )
@@ -118,10 +119,12 @@ class TestLLMRerankStage:
     def stage(self) -> LLMRerankStage:
         """Create LLMRerankStage."""
         return LLMRerankStage(
-            endpoint_url="http://localhost:8080/rerank",
-            timeout_seconds=10.0,
-            batch_size=10,
-            default_limit=50,
+            LLMRerankConfig(
+                endpoint_url="http://localhost:8080/rerank",
+                timeout_seconds=10.0,
+                batch_size=10,
+                default_limit=50,
+            )
         )
 
     @pytest.fixture
@@ -183,7 +186,7 @@ class TestLLMRerankStage:
         sample_candidates: list[NativeMaxSimCandidate],
     ) -> None:
         """Test rerank passes through when no endpoint configured."""
-        stage = LLMRerankStage(endpoint_url="")
+        stage = LLMRerankStage(LLMRerankConfig(endpoint_url=""))
 
         result = await stage.rerank("python developer", sample_candidates)
 
@@ -221,11 +224,13 @@ class TestLLMRerankStage:
     async def test_rerank_batches_are_parallel_but_bounded(self) -> None:
         """Test batched requests run concurrently but respect the limit."""
         stage = LLMRerankStage(
-            endpoint_url="http://localhost:8080/rerank",
-            timeout_seconds=10.0,
-            batch_size=2,
-            default_limit=10,
-            max_concurrent_batches=2,
+            LLMRerankConfig(
+                endpoint_url="http://localhost:8080/rerank",
+                timeout_seconds=10.0,
+                batch_size=2,
+                default_limit=10,
+                max_concurrent_batches=2,
+            )
         )
         candidates = [
             NativeMaxSimCandidate(
@@ -242,8 +247,8 @@ class TestLLMRerankStage:
         async def post(*_args: object, **kwargs: object) -> MagicMock:
             nonlocal active_requests, max_active_requests
 
-            payload = cast(dict[str, Any], kwargs["json"])
-            documents = cast(list[dict[str, str]], payload["documents"])
+            payload = cast("dict[str, Any]", kwargs["json"])
+            documents = cast("list[dict[str, str]]", payload["documents"])
 
             active_requests += 1
             max_active_requests = max(max_active_requests, active_requests)
@@ -303,9 +308,11 @@ class TestLLMRerankStage:
     ) -> None:
         """Untrusted response IDs cannot affect ranking and count as an endpoint failure."""
         stage = LLMRerankStage(
-            endpoint_url="http://localhost:8080/rerank",
-            circuit_breaker_failure_threshold=1,
-            circuit_breaker_recovery_seconds=3600,
+            LLMRerankConfig(
+                endpoint_url="http://localhost:8080/rerank",
+                circuit_breaker_failure_threshold=1,
+                circuit_breaker_recovery_seconds=3600,
+            )
         )
         response = MagicMock()
         response.json.return_value = {"results": invalid_results}
@@ -327,11 +334,13 @@ class TestLLMRerankStage:
     ) -> None:
         """Test multi-batch failures still fall back to passthrough."""
         stage = LLMRerankStage(
-            endpoint_url="http://localhost:8080/rerank",
-            timeout_seconds=10.0,
-            batch_size=2,
-            default_limit=10,
-            max_concurrent_batches=2,
+            LLMRerankConfig(
+                endpoint_url="http://localhost:8080/rerank",
+                timeout_seconds=10.0,
+                batch_size=2,
+                default_limit=10,
+                max_concurrent_batches=2,
+            )
         )
         candidates = [
             NativeMaxSimCandidate(
@@ -343,8 +352,8 @@ class TestLLMRerankStage:
         ]
 
         async def post(*_args: object, **kwargs: object) -> MagicMock:
-            payload = cast(dict[str, Any], kwargs["json"])
-            documents = cast(list[dict[str, str]], payload["documents"])
+            payload = cast("dict[str, Any]", kwargs["json"])
+            documents = cast("list[dict[str, str]]", payload["documents"])
             if any(doc["id"] == "job-002" for doc in documents):
                 error_message = "Connection refused"
                 raise httpx.HTTPError(error_message)

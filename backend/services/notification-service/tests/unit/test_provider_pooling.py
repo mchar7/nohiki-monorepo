@@ -8,8 +8,9 @@ carry an explicit per-phase timeout so a hung provider releases the worker.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -30,9 +31,6 @@ from notification_service.db.models import Message
 from notification_service.services.provider_clients.http_pool import build_pooled_client
 from notification_service.services.provider_clients.resend_email_provider import ResendEmailProvider
 from notification_service.services.provider_clients.twilio_email_provider import TwilioSendGridProvider
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 @dataclass(frozen=True, slots=True)

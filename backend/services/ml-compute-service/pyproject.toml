@@ -5,6 +5,8 @@ license = "AGPL-3.0-only"
 description = "Kubernetes ML compute service using nohiki-ml-core"
 requires-python = ">=3.14"
 dependencies = [
+    "boto3>=1.43.0",
+    "botocore>=1.43.0",
     "huggingface-hub>=1.23.0",
     "nohiki-core-settings==0.1.0",
     "nohiki-fastapi-utils[server]==0.1.0",
@@ -40,3 +42,13 @@ torch = [
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12"]
 build-backend = "uv_build"
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP002: runtime-selected adapters or deployment extras, installed but not imported here.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+[tool.deptry.per_rule_ignores]
+# boto3 and botocore reach infra/k8s/local/model_archive_seed.py, which kindctl runs as
+# `uv run --package ml-compute-service`. Deptry scans src/ only, so that consumer is
+# invisible to it while the declaration remains load-bearing for the RustFS upload path.
+DEP002 = ["boto3", "botocore", "huggingface-hub", "torch"]
+DEP003 = ["fastapi", "numpy", "pydantic", "pydantic_settings", "uvicorn"]

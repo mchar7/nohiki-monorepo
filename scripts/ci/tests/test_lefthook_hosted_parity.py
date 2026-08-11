@@ -110,7 +110,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         "python-check-format": frozenset({"*.py"}),
         "frontend-lint": frozenset({"*.{ts,tsx,js,jsx,mjs,css}"}),
         "proto-lint": _PROTO_CONTRACT_SURFACE,
-        "markdown-lint": frozenset({"*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore", ".markdownlint.json"}),
+        "markdown-lint": frozenset({"*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore"}),
         "i18n-check": _FRONTEND_SRC_SURFACE
         | {
             "typescript/apps/frontend/public/locales/**",
@@ -123,6 +123,11 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         "docker-lint": frozenset({"**/Dockerfile{,.*}", "Dockerfile", ".hadolint.yaml"}),
     },
     "pre-push": {
+        # Not a check and has no hosted counterpart: it exists so the envelope can
+        # tell "the gate ran" from "the gate selected no files and skipped
+        # everything". Unglobbed on purpose, since an empty selection skips
+        # unglobbed jobs too and that is precisely the condition being detected.
+        "gate-liveness": frozenset(),
         "secrets-scan": frozenset(),
         "python-lint": frozenset(),
         "python-format": frozenset(),
@@ -174,6 +179,8 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         # No glob: the affected-test runner owns the selection policy. Asserted by
         # test_affected_test_selection_is_delegated_to_the_runner.
         "python-tests": frozenset(),
+        # No glob: this opt-in gate always reproduces the hosted package selection.
+        "job-correlation-integration": frozenset(),
         "skylos-cache-tests": frozenset(
             {
                 "scripts/ci/src/ci_checks/checks/skylos_cache.py",
@@ -240,6 +247,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
         ),
         "proto-breaking": _PROTO_CONTRACT_SURFACE
         | {
+            "proto/.breaking-allowlist.json",
             "scripts/proto_gen/*.py",
             "scripts/proto_gen/**/*.py",
             "scripts/proto_gen/pyproject.toml",
@@ -282,6 +290,8 @@ _HOSTED_SELF_REFERENCE = frozenset(
         "flake.lock",
         ".github/workflows/checks.yml",
         ".github/actions/setup-ci/action.yml",
+        "scripts/ci/src/ci_checks/core/change_gate.py",
+        "scripts/ci/src/ci_checks/core/change_rules.py",
         "scripts/ci/src/ci_checks/checks/gate.py",
         "scripts/ci/src/ci_checks/checks/tests.py",
     }
@@ -323,6 +333,12 @@ _NOT_EXERCISED_LOCALLY: dict[tuple[str, str], str] = {
     ("i18n-check", "typescript/apps/frontend/__mocks__/**"): "module mocks carry no translation keys",
     ("i18n-check", "typescript/apps/frontend/scripts/generate-api*.mjs"): (
         "the schema generator is not imported by scripts/i18n-check.mjs"
+    ),
+    # Named exactly rather than as `scripts/*.test.mjs`: fnmatch wildcards cross separators here,
+    # so that pattern would also exempt `scripts/i18n/*.test.mjs`, which tests the key checker
+    # itself and must keep reaching it.
+    ("i18n-check", "typescript/apps/frontend/scripts/worker-bound.test.mjs"): (
+        "the worker-bound test is not imported by scripts/i18n-check.mjs and carries no keys"
     ),
     (
         "i18n-check",
@@ -372,6 +388,10 @@ _NOT_EXERCISED_LOCALLY: dict[tuple[str, str], str] = {
     ("python-typecheck", "proto/**/*"): (
         "a proto edit moves no Python source until `just proto-gen` regenerates the dataclasses"
     ),
+    (
+        "proto-lint",
+        "proto/.breaking-allowlist.json",
+    ): "buf lint does not consume the breaking-allowlist; only proto-breaking reads it",
 }
 
 
@@ -1061,10 +1081,11 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
     ("changes", "Compute change gate"): _support("emits the lane flags, runs no check"),
     ("changes", "Upload affected image record"): _ARTIFACT,
     ("changes", "Look up a reusable Checks proof"): _support("proof cache lookup, runs no check"),
-    ("changes", "Derive worker guard"): _support("computes a timeout, runs no check"),
+    ("changes", "Select runner route"): _support("selects the payload runner class, runs no check"),
     ("changes", "Write Checks attestation"): _support("writes the proof document, runs no check"),
     ("changes", "Upload Checks attestation"): _ARTIFACT,
     ("changes", "Report router cost"): _TIMING,
+    ("label-sync", "Sync area labels"): _support("advisory pull request metadata update, runs no check"),
     # worker: every verification of the tree lives here.
     ("worker", "Start worker timing"): _TIMING,
     ("worker", "Open worker summary"): _SUMMARY,
@@ -1203,9 +1224,20 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
     ("worker", "Run job correlation integration tests"): _HostedStep(
         verifies=True,
         scope=_AFFECTED_PACKAGES,
+        gates=(
+            _LocalGate(
+                "pre-push",
+                "job-correlation-integration",
+                _AFFECTED_PACKAGES,
+            ),
+        ),
+    ),
+    ("worker", "Test JVM module"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
         waiver=(
-            "runs integration and requires_docker tests against hosted PostgreSQL; local "
-            "pre-push python-tests explicitly deselects both markers"
+            "runs the blocking Gradle build and static analysis; no local hook invokes the "
+            "separate JVM devshell, so developers reproduce it explicitly with `just test-jvm`"
         ),
     ),
     ("worker", "Run Node workspace contract tests"): _HostedStep(
@@ -1268,6 +1300,24 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
         scope=_WHOLE_PROJECT,
         gates=(_LocalGate("pre-push", "semgrep", _WHOLE_PROJECT),),
     ),
+    ("worker", "Check import boundaries"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        gap=(
+            "runs `just hygiene-imports`, the import-linter boundary contracts over the whole "
+            "backend import graph. It is hosted-only because local pre-push checks are "
+            "change-selected, while these contracts certify the whole backend graph."
+        ),
+    ),
+    ("worker", "Check test import closure"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        # No dedicated hook job: the invariant is asserted from inside the ci-checks
+        # suite by tests/test_test_closure.py, which scans the same tree and fails on
+        # the same violations, and `python-tests` selects ci-checks whenever its test
+        # tree moves. That is the surface the hosted step guards today.
+        gates=(_LocalGate("pre-push", "python-tests", _WHOLE_PROJECT),),
+    ),
     ("worker", "Check build backends"): _HostedStep(
         verifies=True,
         scope=_AFFECTED_PACKAGES,
@@ -1309,9 +1359,22 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
         scope=_WHOLE_PROJECT,
         waiver="runs the collector image; the local test runner deselects the requires_docker markers.",
     ),
-    ("worker", "Attest container contract execution"): _support(
-        "asserts the two container steps above actually ran; proof bookkeeping, not a tree check"
+    ("worker", "Run container contract tests"): _HostedStep(
+        verifies=True,
+        scope=_WHOLE_PROJECT,
+        waiver=(
+            "requires a container runtime. The default pre-push remains Docker-free; "
+            "the complementary opt-in local recipe is maintained separately."
+        ),
     ),
+    ("worker", "Attest container contract execution"): _support(
+        "asserts the selected container steps actually ran; proof bookkeeping, not a tree check"
+    ),
+    ("worker", "Detect code scanning availability"): _support(
+        "probes SARIF artifact transport availability, runs no tree check"
+    ),
+    ("worker", "Upload lint diagnostics"): _ARTIFACT,
+    ("worker", "Summarize lint diagnostics"): _SUMMARY,
     ("worker", "Report worker cost"): _TIMING,
     # playwright-image: builds and smoke-tests the e2e runner image.
     ("playwright-image", "Start worker timing"): _TIMING,
@@ -1365,6 +1428,7 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
 _KNOWN_OPEN_GAPS = frozenset(
     {
         ("worker", "Scan repository for secrets"),
+        ("worker", "Check import boundaries"),
     }
 )
 

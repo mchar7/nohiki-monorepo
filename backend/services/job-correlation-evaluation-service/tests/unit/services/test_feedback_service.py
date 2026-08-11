@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from job_correlation_evaluation_service.repositories.correlation_repository import CorrelationUpdate
 from job_correlation_evaluation_service.services.feedback_service import (
     CorrelationFeedbackService,
 )
@@ -80,7 +81,11 @@ class TestRecordFeedback:
             feedback_type=FeedbackType.VIEWED,
         )
 
-        mock_repository.update.assert_called_once_with(correlation_id, is_viewed=True)
+        mock_repository.update.assert_called_once_with(
+            correlation_id,
+            CorrelationUpdate(is_viewed=True),
+            user_id=None,
+        )
 
     @pytest.mark.asyncio
     async def test_record_applied(
@@ -98,8 +103,8 @@ class TestRecordFeedback:
 
         mock_repository.update.assert_called_once_with(
             correlation_id,
-            is_applied=True,
-            is_viewed=True,
+            CorrelationUpdate(is_applied=True, is_viewed=True),
+            user_id=None,
         )
 
     @pytest.mark.asyncio
@@ -116,7 +121,11 @@ class TestRecordFeedback:
             feedback_type=FeedbackType.DISMISSED,
         )
 
-        mock_repository.update.assert_called_once_with(correlation_id, is_dismissed=True)
+        mock_repository.update.assert_called_once_with(
+            correlation_id,
+            CorrelationUpdate(is_dismissed=True),
+            user_id=None,
+        )
 
     @pytest.mark.asyncio
     async def test_record_saved(
@@ -134,8 +143,8 @@ class TestRecordFeedback:
 
         mock_repository.update.assert_called_once_with(
             correlation_id,
-            user_feedback=UserFeedback.POSITIVE,
-            is_viewed=True,
+            CorrelationUpdate(user_feedback=UserFeedback.POSITIVE, is_viewed=True),
+            user_id=None,
         )
 
     @pytest.mark.asyncio
@@ -154,8 +163,8 @@ class TestRecordFeedback:
 
         mock_repository.update.assert_called_once_with(
             correlation_id,
-            user_feedback=UserFeedback.POSITIVE,
-            is_viewed=True,
+            CorrelationUpdate(user_feedback=UserFeedback.POSITIVE, is_viewed=True),
+            user_id=None,
         )
 
     @pytest.mark.asyncio
@@ -174,7 +183,8 @@ class TestRecordFeedback:
 
         mock_repository.update.assert_called_once_with(
             correlation_id,
-            user_feedback=UserFeedback.NEGATIVE,
+            CorrelationUpdate(user_feedback=UserFeedback.NEGATIVE),
+            user_id=None,
         )
 
     @pytest.mark.asyncio
@@ -208,16 +218,16 @@ class TestRecordFeedback:
             async def update(
                 self,
                 requested_id: object,
+                changes: CorrelationUpdate,
                 *,
                 user_id: object | None = None,
-                **changes: object,
             ) -> MagicMock:
                 del changes
                 if requested_id != correlation_id or (user_id is not None and user_id != owner_id):
                     raise CorrelationNotFoundError(correlation_id)
                 return MagicMock()
 
-        service = CorrelationFeedbackService(cast(CorrelationRepository, OwnershipAwareRepository()))
+        service = CorrelationFeedbackService(cast("CorrelationRepository", OwnershipAwareRepository()))
 
         with pytest.raises(CorrelationNotFoundError):
             await service.record_feedback(

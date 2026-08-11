@@ -23,10 +23,11 @@ class PlainSaga(StateMachineMixin):
 
     __status_field__: ClassVar[str] = "status"
     __transitions__: ClassVar[dict[str, frozenset[str]]] = {
-        "PENDING": frozenset({"COMPLETED", "FAILED", "EXPIRED"}),
+        "PENDING": frozenset({"COMPLETED", "FAILED", "EXPIRED", "CANCELLED"}),
         "COMPLETED": frozenset(),
         "FAILED": frozenset(),
         "EXPIRED": frozenset(),
+        "CANCELLED": frozenset(),
     }
 
     def __init__(
@@ -56,15 +57,16 @@ class TestSagaStatus:
         assert SagaStatus.COMPLETED == "COMPLETED"
         assert SagaStatus.FAILED == "FAILED"
         assert SagaStatus.EXPIRED == "EXPIRED"
+        assert SagaStatus.CANCELLED == "CANCELLED"
 
     def test_is_str_enum(self) -> None:
         """SagaStatus values are strings."""
         for status in SagaStatus:
             assert isinstance(status, str)
 
-    def test_all_four_states_defined(self) -> None:
-        """Exactly four saga states exist."""
-        assert len(SagaStatus) == 4
+    def test_all_five_states_defined(self) -> None:
+        """Exactly five saga states exist."""
+        assert len(SagaStatus) == 5
 
 
 class TestSagaIsComplete:
@@ -117,6 +119,12 @@ class TestSagaTransitions:
         saga.transition_to(SagaStatus.EXPIRED)
         assert saga.status == SagaStatus.EXPIRED
 
+    def test_pending_to_cancelled(self) -> None:
+        """PENDING → CANCELLED is valid."""
+        saga = PlainSaga(status=SagaStatus.PENDING)
+        saga.transition_to(SagaStatus.CANCELLED)
+        assert saga.status == SagaStatus.CANCELLED
+
     def test_completed_is_terminal(self) -> None:
         """COMPLETED is terminal: no outgoing transitions."""
         saga = PlainSaga(status=SagaStatus.COMPLETED)
@@ -131,6 +139,11 @@ class TestSagaTransitions:
     def test_expired_is_terminal(self) -> None:
         """EXPIRED is terminal."""
         saga = PlainSaga(status=SagaStatus.EXPIRED)
+        assert saga.is_terminal is True
+
+    def test_cancelled_is_terminal(self) -> None:
+        """CANCELLED is terminal."""
+        saga = PlainSaga(status=SagaStatus.CANCELLED)
         assert saga.is_terminal is True
 
     def test_pending_is_not_terminal(self) -> None:
@@ -154,9 +167,9 @@ class TestSagaTransitions:
         assert err.target_state == "PENDING"
 
     def test_allowed_transitions_from_pending(self) -> None:
-        """PENDING has exactly COMPLETED, FAILED, EXPIRED as allowed targets."""
+        """PENDING has exactly the four valid terminal targets."""
         saga = PlainSaga(status=SagaStatus.PENDING)
-        assert saga.allowed_transitions == frozenset({"COMPLETED", "FAILED", "EXPIRED"})
+        assert saga.allowed_transitions == frozenset({"COMPLETED", "FAILED", "EXPIRED", "CANCELLED"})
 
 
 class TestSagaBaseMixinMetadata:
@@ -171,9 +184,10 @@ class TestSagaBaseMixinMetadata:
         assert SagaBaseMixin.__abstract__ is True
 
     def test_transitions_defined(self) -> None:
-        """All four states appear in __transitions__ keys."""
+        """All five states appear in __transitions__ keys."""
         transitions = SagaBaseMixin.__transitions__
         assert "PENDING" in transitions
         assert "COMPLETED" in transitions
         assert "FAILED" in transitions
         assert "EXPIRED" in transitions
+        assert "CANCELLED" in transitions

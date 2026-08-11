@@ -30,25 +30,6 @@ message ListingAccepted {
   google.protobuf.Timestamp discovered_at = 5 [(buf.validate.field).required = true];
 }
 
-// ════════════════════════════════════════════════════════════════════
-// DUPLICATE DETECTED: Published when a raw listing is identified as duplicate
-// Topic: listings.fct.duplicate-detected.v1
-// NOTE: Profile-agnostic - no ProfileReference
-// ════════════════════════════════════════════════════════════════════
-message DuplicateDetected {
-  nohiki.common.v1.EventMetadata metadata = 1 [(buf.validate.field).required = true];
-  nohiki.common.v1.ListingReference listing = 2 [(buf.validate.field).required = true];
-
-  string existing_listing_id = 3 [
-    (buf.validate.field).required = true,
-    (buf.validate.field).string.uuid = true
-  ];
-
-  google.protobuf.Timestamp first_seen_at = 4 [(buf.validate.field).required = true];
-
-  // ECST: Embedded snapshot of the existing listing for downstream consumers
-  ListingSnapshot existing_listing_snapshot = 10 [(buf.validate.field).required = true];
-}
 
 // ════════════════════════════════════════════════════════════════════
 // LISTING CREATED: Published when a listing is stored in the job store

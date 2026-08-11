@@ -12,13 +12,25 @@ manifests or in-tree metadata; no secret values are inspected.
 
 import hashlib
 import importlib.util
+import re
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
-from typing import Any
+from typing import TypeIs
 
 import pytest
 import yaml
+from _documents import (
+    Manifest,
+    containers_of,
+    load_manifests,
+    load_mapping,
+    mapping_at,
+    mapping_sequence_at,
+    string_at,
+    string_sequence_at,
+)
 from helm_test_utils import runtime_eso_args
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -28,15 +40,10 @@ _OBSERVABILITY = _ROOT / "infra" / "k8s" / "observability"
 _AKS_TF = _ROOT / "infra" / "terraform" / "aks.tf"
 _LOCAL_SECRET_CONTRACT = _ROOT / "scripts" / "infra" / "local_secret_contract.py"
 
-_ESO_CHART_VERSION = "2.7.0"
-_ESO_CHART_SHA256 = "a2ce165cc59b74c88451c9e21eb72c329b392506c53763df19061e62ec29ac60"
-_ESO_REPOSITORY = "https://charts.external-secrets.io"
-_ESO_IMAGE = (
-    "ghcr.io/external-secrets/external-secrets:v2.7.0"
-    "@sha256:6615aaea8ff44924d9d7dbc99982a130c82913f7583e212fa3aeebc6dc21fbf9"
-)
+_ESO_CHART_LEDGER = ("2.7.0", "a2ce165cc59b74c88451c9e21eb72c329b392506c53763df19061e62ec29ac60")
 _STORE_NAME = "nohiki-secret-store"
 _SA_NAME = "external-secrets-sa"
+_PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
 
 # Shared (non per-service-database) secrets every managed environment must project.
 _SHARED_SECRETS = frozenset(
@@ -55,8 +62,17 @@ _SHARED_SECRETS = frozenset(
 _MODEL_EGRESS_TLS_EXTERNAL_SECRETS = frozenset({"nohiki-model-egress-tls", "nohiki-model-egress-ca"})
 
 
-def _load(path: Path) -> dict[str, Any]:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def _is_mapping(value: object) -> TypeIs[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _mapping(value: object) -> dict[str, object]:
+    assert _is_mapping(value)
+    return value
+
+
+def _is_manifest(value: object) -> TypeIs[Manifest]:
+    return _is_mapping(value)
 
 
 def _enabled_provider_credentials(values_name: str) -> tuple[str, ...]:
@@ -69,8 +85,9 @@ def _enabled_provider_credentials(values_name: str) -> tuple[str, ...]:
 
 
 def _model_egress_client_secrets() -> frozenset[str]:
-    values = _load(_CHART / "values.yaml")
-    return frozenset(client["secretName"] for client in values["global"]["modelEgress"]["clients"])
+    values = load_mapping(_CHART / "values.yaml")
+    clients = mapping_sequence_at(values, "global", "modelEgress", "clients")
+    return frozenset(string_at(client, "secretName") for client in clients)
 
 
 def _model_egress_external_secrets(values_name: str) -> frozenset[str]:
@@ -82,7 +99,7 @@ def _model_egress_external_secrets(values_name: str) -> frozenset[str]:
     )
 
 
-def _render_platform(environment: str, namespace: str, *, eso_identity: bool) -> tuple[dict[str, Any], ...]:
+def _render_platform(environment: str, namespace: str, *, eso_identity: bool) -> tuple[Manifest, ...]:
     command = [
         "helm",
         "template",
@@ -98,12 +115,10 @@ def _render_platform(environment: str, namespace: str, *, eso_identity: bool) ->
     if eso_identity:
         command.extend(runtime_eso_args(environment))
     result = subprocess.run(command, cwd=_CHART, capture_output=True, text=True, check=True)
-    return tuple(
-        document for document in yaml.load_all(result.stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict)
-    )
+    return tuple(load_manifests(result.stdout))
 
 
-def _kustomize(overlay: str) -> tuple[dict[str, Any], ...]:
+def _kustomize(overlay: str) -> tuple[Manifest, ...]:
     command = ["kustomize", "build"] if shutil.which("kustomize") else ["kubectl", "kustomize"]
     if not shutil.which(command[0]):
         pytest.skip("kustomize or kubectl is required to render manifests")
@@ -114,9 +129,7 @@ def _kustomize(overlay: str) -> tuple[dict[str, Any], ...]:
         text=True,
         check=True,
     )
-    return tuple(
-        document for document in yaml.load_all(result.stdout, Loader=yaml.CSafeLoader) if isinstance(document, dict)
-    )
+    return tuple(load_manifests(result.stdout))
 
 
 class _HelmLoader(yaml.CSafeLoader):
@@ -126,24 +139,22 @@ class _HelmLoader(yaml.CSafeLoader):
 _HelmLoader.add_constructor("tag:yaml.org,2002:value", lambda loader, node: loader.construct_scalar(node))
 
 
-def _render_foundation(*, include_crds: bool = False) -> tuple[dict[str, Any], ...]:
+def _render_foundation(*, include_crds: bool = False) -> tuple[Manifest, ...]:
     command = ["helm", "template", "nohiki-foundation", str(_FOUNDATION)]
     if include_crds:
         command.append("--include-crds")
     result = subprocess.run(command, cwd=_ROOT, capture_output=True, text=True, check=True)
-    return tuple(
-        document for document in yaml.load_all(result.stdout, Loader=_HelmLoader) if isinstance(document, dict)
-    )
+    return tuple(document for document in yaml.load_all(result.stdout, Loader=_HelmLoader) if _is_manifest(document))
 
 
 @pytest.fixture(scope="module")
-def foundation_documents() -> tuple[dict[str, Any], ...]:
+def foundation_documents() -> tuple[Manifest, ...]:
     """Render foundation workloads and CRDs once."""
     return _render_foundation(include_crds=True)
 
 
 @pytest.fixture(scope="module")
-def platform_documents() -> dict[str, tuple[dict[str, Any], ...]]:
+def platform_documents() -> dict[str, tuple[Manifest, ...]]:
     """Render each immutable platform values variant once."""
     return {
         "dev": _render_platform("dev", "nohiki-dev", eso_identity=True),
@@ -153,16 +164,14 @@ def platform_documents() -> dict[str, tuple[dict[str, Any], ...]]:
 
 
 @pytest.fixture(scope="module")
-def observability_documents() -> dict[str, tuple[dict[str, Any], ...]]:
+def observability_documents() -> dict[str, tuple[Manifest, ...]]:
     """Render each immutable observability overlay once."""
     return {overlay: _kustomize(overlay) for overlay in ("dev", "staging", "prod", "local")}
 
 
-def _named(documents: tuple[dict[str, Any], ...], kind: str, name: str) -> dict[str, Any]:
+def _named(documents: tuple[Manifest, ...], kind: str, name: str) -> Manifest:
     return next(
-        document
-        for document in documents
-        if document.get("kind") == kind and document.get("metadata", {}).get("name") == name
+        document for document in documents if document.get("kind") == kind and document["metadata"].get("name") == name
     )
 
 
@@ -181,61 +190,92 @@ def _hcl_block(text: str, header: str) -> str:
 
 
 def test_foundation_owns_the_single_external_secrets_operator_and_crds() -> None:
-    chart = _load(_FOUNDATION / "Chart.yaml")
-    dependencies = [dep for dep in chart["dependencies"] if dep["name"] == "external-secrets"]
+    chart = load_mapping(_FOUNDATION / "Chart.yaml")
+    dependencies = [dep for dep in mapping_sequence_at(chart, "dependencies") if dep["name"] == "external-secrets"]
     assert len(dependencies) == 1
     dependency = dependencies[0]
-    assert dependency["version"] == _ESO_CHART_VERSION
-    assert dependency["repository"] == _ESO_REPOSITORY
 
-    values = _load(_FOUNDATION / "values.yaml")
-    eso = values["external-secrets"]
+    lock = load_mapping(_FOUNDATION / "Chart.lock")
+    locked_dependencies = [
+        dep for dep in mapping_sequence_at(lock, "dependencies") if dep["name"] == dependency["name"]
+    ]
+    assert len(locked_dependencies) == 1
+    locked_dependency = locked_dependencies[0]
+    assert dependency["version"] == locked_dependency["version"]
+    ledger_version, ledger_sha256 = _ESO_CHART_LEDGER
+    assert locked_dependency["version"] == ledger_version
+    assert dependency["repository"] == locked_dependency["repository"]
+
+    values = load_mapping(_FOUNDATION / "values.yaml")
+    eso = mapping_at(values, "external-secrets")
     assert eso["enabled"] is True
     assert eso["installCRDs"] is True
 
-    lock = _load(_FOUNDATION / "Chart.lock")
-    assert "external-secrets" in {dep["name"] for dep in lock["dependencies"]}
-    archive = _FOUNDATION / "charts" / f"external-secrets-{_ESO_CHART_VERSION}.tgz"
+    locked_name = string_at(locked_dependency, "name")
+    archive = _FOUNDATION / "charts" / f"{locked_name}-{string_at(locked_dependency, 'version')}.tgz"
     assert archive.exists()
-    assert hashlib.sha256(archive.read_bytes()).hexdigest() == _ESO_CHART_SHA256
+    with tarfile.open(archive, mode="r:gz") as chart_archive:
+        metadata_file = chart_archive.extractfile(f"{locked_name}/Chart.yaml")
+        assert metadata_file is not None
+        metadata_document: object = yaml.safe_load(metadata_file)
+    metadata = _mapping(metadata_document)
+    assert metadata["name"] == locked_dependency["name"]
+    assert metadata["version"] == locked_dependency["version"]
+    image_tags = {
+        string_at(eso, "image", "tag"),
+        string_at(eso, "webhook", "image", "tag"),
+        string_at(eso, "certController", "image", "tag"),
+    }
+    assert {tag.partition("@")[0] for tag in image_tags} == {metadata["appVersion"]}
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == ledger_sha256
 
 
 def test_umbrella_no_longer_owns_external_secrets() -> None:
-    chart = _load(_CHART / "Chart.yaml")
-    assert "external-secrets" not in {dep["name"] for dep in chart["dependencies"]}
+    chart = load_mapping(_CHART / "Chart.yaml")
+    assert "external-secrets" not in {dep["name"] for dep in mapping_sequence_at(chart, "dependencies")}
 
-    lock = _load(_CHART / "Chart.lock")
-    assert "external-secrets" not in {dep["name"] for dep in lock["dependencies"]}
+    lock = load_mapping(_CHART / "Chart.lock")
+    assert "external-secrets" not in {dep["name"] for dep in mapping_sequence_at(lock, "dependencies")}
 
-    values = _load(_CHART / "values.yaml")
+    values = load_mapping(_CHART / "values.yaml")
     assert "external-secrets" not in values
 
     assert not list((_CHART / "charts").glob("external-secrets-*.tgz"))
 
 
 def test_foundation_operator_workloads_are_exact_and_pinned(
-    foundation_documents: tuple[dict[str, Any], ...],
+    foundation_documents: tuple[Manifest, ...],
 ) -> None:
     documents = foundation_documents
     workloads = {
         doc["metadata"]["name"]: doc
         for doc in documents
         if doc.get("kind") == "Deployment"
-        and doc.get("metadata", {}).get("name", "").startswith("nohiki-foundation-external-secrets")
+        and doc["metadata"].get("name", "").startswith("nohiki-foundation-external-secrets")
     }
-    assert set(workloads) == {
-        "nohiki-foundation-external-secrets",
-        "nohiki-foundation-external-secrets-webhook",
-        "nohiki-foundation-external-secrets-cert-controller",
+    values = mapping_at(load_mapping(_FOUNDATION / "values.yaml"), "external-secrets")
+    image = mapping_at(values, "image")
+    webhook_image = mapping_at(values, "webhook", "image")
+    cert_controller_image = mapping_at(values, "certController", "image")
+    expected_images = {
+        "nohiki-foundation-external-secrets": f"{string_at(image, 'repository')}:{string_at(image, 'tag')}",
+        "nohiki-foundation-external-secrets-webhook": (
+            f"{string_at(webhook_image, 'repository')}:{string_at(webhook_image, 'tag')}"
+        ),
+        "nohiki-foundation-external-secrets-cert-controller": (
+            f"{string_at(cert_controller_image, 'repository')}:{string_at(cert_controller_image, 'tag')}"
+        ),
     }
-    for workload in workloads.values():
-        containers = workload["spec"]["template"]["spec"]["containers"]
+    assert set(workloads) == expected_images.keys()
+    assert all(_PINNED_IMAGE.fullmatch(image_name) for image_name in expected_images.values())
+    for name, workload in workloads.items():
+        containers = containers_of(workload)
         assert len(containers) == 1
-        assert containers[0]["image"] == _ESO_IMAGE
+        assert containers[0]["image"] == expected_images[name]
 
 
 def test_foundation_external_secrets_crds_are_stable_v1_only(
-    foundation_documents: tuple[dict[str, Any], ...],
+    foundation_documents: tuple[Manifest, ...],
 ) -> None:
     crds = {
         doc["metadata"]["name"]: doc for doc in foundation_documents if doc.get("kind") == "CustomResourceDefinition"
@@ -248,8 +288,8 @@ def test_foundation_external_secrets_crds_are_stable_v1_only(
     assert required_crds <= set(crds)
     for name in required_crds:
         crd = crds[name]
-        assert crd["spec"].get("conversion") is None
-        versions = {version["name"]: version for version in crd["spec"]["versions"]}
+        assert mapping_at(crd, "spec").get("conversion") is None
+        versions = {string_at(version, "name"): version for version in mapping_sequence_at(crd, "spec", "versions")}
         assert versions["v1"]["served"] is True
         assert versions["v1"]["storage"] is True
         assert versions["v1beta1"]["served"] is False
@@ -260,7 +300,7 @@ def test_foundation_external_secrets_crds_are_stable_v1_only(
 def test_dev_staging_platform_emit_chart_managed_service_account_store_and_secrets(
     environment: str,
     namespace: str,
-    platform_documents: dict[str, tuple[dict[str, Any], ...]],
+    platform_documents: dict[str, tuple[Manifest, ...]],
 ) -> None:
     documents = platform_documents[environment]
     expected_model_secrets = _model_egress_external_secrets(f"values.{environment}.yaml")
@@ -273,7 +313,7 @@ def test_dev_staging_platform_emit_chart_managed_service_account_store_and_secre
     assert "azure.workload.identity/tenant-id" in annotations
 
     store = _named(documents, "ClusterSecretStore", _STORE_NAME)
-    azurekv = store["spec"]["provider"]["azurekv"]
+    azurekv = mapping_at(store, "spec", "provider", "azurekv")
     assert azurekv["authType"] == "WorkloadIdentity"
     assert azurekv["serviceAccountRef"] == {"name": _SA_NAME, "namespace": namespace}
 
@@ -288,23 +328,24 @@ def test_dev_staging_platform_emit_chart_managed_service_account_store_and_secre
     expected_ref = {"name": _STORE_NAME, "kind": "ClusterSecretStore"}
     for name, secret in external_secrets.items():
         assert secret["metadata"]["namespace"] == namespace
-        assert secret["spec"]["target"]["creationPolicy"] == "Owner"
+        spec = mapping_at(secret, "spec")
+        assert mapping_at(spec, "target")["creationPolicy"] == "Owner"
         if name in _model_egress_client_secrets():
-            assert secret["spec"]["refreshPolicy"] == "CreatedOnce"
-            assert "secretStoreRef" not in secret["spec"]
+            assert spec["refreshPolicy"] == "CreatedOnce"
+            assert "secretStoreRef" not in spec
         else:
-            assert secret["spec"]["secretStoreRef"] == expected_ref
+            assert spec["secretStoreRef"] == expected_ref
 
 
 @pytest.mark.parametrize("environment", ["dev", "staging"])
 def test_dev_staging_disable_the_in_cluster_cnpg_cluster(environment: str) -> None:
-    values = _load(_CHART / f"values.{environment}.yaml")
+    values = load_mapping(_CHART / f"values.{environment}.yaml")
     assert "cnpgCluster" in values
-    assert values["cnpgCluster"]["enabled"] is False
+    assert mapping_at(values, "cnpgCluster")["enabled"] is False
 
 
 def test_local_platform_chart_emits_exact_split_external_secrets(
-    platform_documents: dict[str, tuple[dict[str, Any], ...]],
+    platform_documents: dict[str, tuple[Manifest, ...]],
 ) -> None:
     documents = platform_documents["local"]
     external = {
@@ -313,18 +354,19 @@ def test_local_platform_chart_emits_exact_split_external_secrets(
     assert set(external) == _model_egress_external_secrets("values.local.yaml")
     assert not any(document.get("kind") == "ClusterSecretStore" for document in documents)
     assert not any(
-        document.get("kind") == "ServiceAccount" and document.get("metadata", {}).get("name") == _SA_NAME
+        document.get("kind") == "ServiceAccount" and document["metadata"].get("name") == _SA_NAME
         for document in documents
     )
 
     for name, secret in external.items():
         assert secret["metadata"]["namespace"] == "nohiki"
-        assert secret["spec"]["target"]["creationPolicy"] == "Owner"
+        spec = mapping_at(secret, "spec")
+        assert mapping_at(spec, "target")["creationPolicy"] == "Owner"
         if name in _model_egress_client_secrets():
-            assert secret["spec"]["refreshPolicy"] == "CreatedOnce"
-            assert "secretStoreRef" not in secret["spec"]
+            assert spec["refreshPolicy"] == "CreatedOnce"
+            assert "secretStoreRef" not in spec
         else:
-            assert secret["spec"]["secretStoreRef"] == {
+            assert spec["secretStoreRef"] == {
                 "name": "nohiki-local-secret-store",
                 "kind": "SecretStore",
             }
@@ -333,7 +375,7 @@ def test_local_platform_chart_emits_exact_split_external_secrets(
 @pytest.mark.parametrize("overlay", ["dev", "staging", "prod"])
 def test_shared_observability_overlays_reuse_platform_store_without_defining_one(
     overlay: str,
-    observability_documents: dict[str, tuple[dict[str, Any], ...]],
+    observability_documents: dict[str, tuple[Manifest, ...]],
 ) -> None:
     documents = observability_documents[overlay]
     assert not any(document.get("kind") == "ClusterSecretStore" for document in documents)
@@ -341,19 +383,19 @@ def test_shared_observability_overlays_reuse_platform_store_without_defining_one
     external_secrets = [document for document in documents if document.get("kind") == "ExternalSecret"]
     assert external_secrets
     for secret in external_secrets:
-        assert secret["spec"]["secretStoreRef"] == {
+        assert mapping_at(secret, "spec")["secretStoreRef"] == {
             "kind": "ClusterSecretStore",
             "name": _STORE_NAME,
         }
 
 
 def test_shared_observability_base_does_not_ship_a_cluster_secret_store() -> None:
-    base = _load(_OBSERVABILITY / "base" / "kustomization.yaml")
-    assert not any("cluster-secret-store" in resource for resource in base["resources"])
+    base = load_mapping(_OBSERVABILITY / "base" / "kustomization.yaml")
+    assert not any("cluster-secret-store" in resource for resource in string_sequence_at(base, "resources"))
 
 
 def test_local_observability_overlay_defines_no_secret_delivery_fallback(
-    observability_documents: dict[str, tuple[dict[str, Any], ...]],
+    observability_documents: dict[str, tuple[Manifest, ...]],
 ) -> None:
     documents = observability_documents["local"]
     secret_resources = {

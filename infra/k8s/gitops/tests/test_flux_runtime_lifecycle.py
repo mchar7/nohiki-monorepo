@@ -75,6 +75,7 @@ def test_runtime_commands_reach_their_effectful_entrypoints(
         "finalize_flux_runtime",
         lambda *_args: calls.append(("finalize", _args[-1])) or {},
     )
+    monkeypatch.setattr(runner, "finish_memory_sampler", lambda *_args: {})
     monkeypatch.setattr(
         runner,
         "qualify_offline_policy",
@@ -251,11 +252,22 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
             "configMapUid": "configmap-uid",
         },
     )
+    measurements = {
+        "attempt": 4,
+        "nodes": [
+            {
+                "containerId": "5" * 64,
+                "name": f"{runner.CLUSTER}-control-plane",
+                "startTime": "2026-08-04T00:00:00Z",
+            }
+        ],
+    }
     monkeypatch.setattr(
         runner,
         "runtime_binding",
-        lambda *_: ({"attempt": 4}, "cluster-uid"),
+        lambda *_: (measurements, "cluster-uid"),
     )
+    monkeypatch.setattr(runner, "kind_node_cgroup_memory_peak", lambda _: 7_516_192_768)
     bindings: list[tuple[object, ...]] = []
     monkeypatch.setattr(
         runner,
@@ -279,6 +291,8 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
         gets += 1
         if "configmap" in argv:
             pytest.fail("finalize must use the exact ConfigMap binding guard")
+        if "storageclass" in argv:
+            return {"items": [{"metadata": {"name": "standard"}}]}
         if "fluxinstance" in argv:
             return {
                 "metadata": {"uid": "flux-uid"},
@@ -299,6 +313,7 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
         tmp_path / "publication.json",
     )
     assert result["fluxInstanceUid"] == "flux-uid"
+    assert result["kindNodeCgroupMemoryPeakBytes"] == 7_516_192_768
     final_apply = next(index for index, argv in enumerate(calls) if "apply" in argv)
     expected = ["flux-system", *runner.FULL_CHILDREN]
     ready_waits = [argv for argv in calls[final_apply + 1 :] if "--for=condition=Ready=True" in argv]
@@ -313,7 +328,7 @@ def test_finalize_applies_full_instance_and_observes_every_child_in_order(
     ]
     assert bindings
     assert bindings[0][3:5] == (4, "cluster-uid")
-    assert gets == len(runner.FULL_CHILDREN) * 2 + 5
+    assert gets == len(runner.FULL_CHILDREN) * 2 + 6
 
 
 def test_finalize_rejects_a_replaced_attempt_configmap(

@@ -24,7 +24,7 @@ from ci_checks.checks.tests import (
 from ci_checks.checks.tests import (
     TestResult as RunnerTestResult,
 )
-from ci_checks.core.packages import Package, PackageType
+from ci_checks.core.packages import Package, PackageType, Scope, load_packages, pytest_file_has_marker
 from rich.console import Console
 
 pytest_plugins = ("pytester",)
@@ -80,6 +80,9 @@ def test_marker_expressions_keep_slow_tests_out_of_unit_lane(
     )
     assert test_checks._build_markers(integration=False) == test_checks._UNIT_TEST_MARKERS
     assert test_checks._build_markers(integration=True) == "integration"
+    assert test_checks._build_markers(integration=False, requires_docker=True) == "requires_docker"
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        test_checks._build_markers(integration=True, requires_docker=True)
 
     pytester.makeini(
         """
@@ -113,6 +116,73 @@ def test_marker_expressions_keep_slow_tests_out_of_unit_lane(
 
     integration_result = pytester.runpytest("-q", "-m", test_checks._build_markers(integration=True))
     integration_result.assert_outcomes(passed=1, deselected=2)
+
+
+def test_docker_marker_selects_only_packages_that_contain_matching_tests() -> None:
+    packages = test_checks._load_testable_packages("all", "requires_docker")
+    names = {package.name for package in packages}
+
+    assert "nohiki-kafka-client" in names
+    assert "nohiki-integration-tests" in names
+    assert "nohiki-common-exceptions" not in names
+    assert all(package.requires_docker_tests for package in packages)
+
+
+def test_podman_contract_stays_outside_zero_skip_docker_selection() -> None:
+    podman_test = _REPO_ROOT / "scripts/ci/tests/test_compose_portability.py"
+    packages = test_checks._load_testable_packages("all", "requires_docker")
+    ci_checks = next(package for package in packages if package.name == "ci-checks")
+
+    assert pytest_file_has_marker(podman_test, "requires_podman")
+    assert not pytest_file_has_marker(podman_test, "requires_docker")
+    assert "tests/test_compose_portability.py" not in ci_checks.requires_docker_tests
+
+
+def test_longest_prefix_owner_prefers_most_specific_collection_root() -> None:
+    owners = {"tests": "root", "tests.integration": "integration"}
+
+    assert test_checks._longest_prefix_owner("tests.integration.test_cdc", owners, ".") == "integration"
+    assert test_checks._longest_prefix_owner("tests.unit.test_model", owners, ".") == "root"
+
+
+def test_unconventional_collection_roots_are_selected_and_attributed(tmp_path: Path) -> None:
+    """The repo-root integration package must reach the unit lane under its own testpaths.
+
+    `nohiki-integration-tests` lives at the repository root with `testpaths = ["integration",
+    "api"]` and no `tests/` directory. A hardcoded `tests/` hands pytest a path that does not
+    exist, which aborts the whole consolidated run, and leaves its cases unattributable.
+    """
+    packages = test_checks._load_testable_packages("all")
+    package = next(item for item in packages if item.name == "nohiki-integration-tests")
+
+    assert not package.tests_dir.is_dir()
+    assert package.test_roots == frozenset({"integration", "api"})
+    assert all(path.is_dir() for pkg in packages for path in pkg.test_paths)
+
+    junit = tmp_path / "junit.xml"
+    junit.write_text(
+        '<testsuites><testsuite name="pytest">'
+        '<testcase classname="tests.integration.test_debezium_cdc" '
+        'file="tests/integration/test_debezium_cdc.py" name="test_case" time="0.5"/>'
+        "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    stats = test_checks._parse_package_stats(junit, packages)
+
+    assert stats["nohiki-integration-tests"].tests_run == 1
+    assert stats["nohiki-integration-tests"].tests_passed == 1
+
+
+def test_marker_discovered_package_stays_out_of_conventional_tests_selection() -> None:
+    """Coverage and fixture consumers must keep meaning the conventional directory.
+
+    A package with no `tests/` directory has no `src/` coverage target either, and admitting
+    it would cancel root omit patterns against a target coverage never measures.
+    """
+    names = {package.name for package in load_packages(Scope.ALL, require_tests=True)}
+
+    assert "nohiki-integration-tests" not in names
+    assert "ci-checks" in names
 
 
 @pytest.mark.parametrize(
@@ -226,9 +296,9 @@ def test_github_summary_renders_named_results_as_markdown() -> None:
 
     assert summary.startswith("#### Python tests (focused)\n\n**1/2 packages passed.**")
     assert "Coverage is reported, not enforced" in summary
-    assert "| `package-a` | 1.2s | Pass | 96% | meets strict policy: module >= 90%, file >= 80% |" in summary
+    assert "| `package-a` | 1.2s | 0 | 0 | 0 | 96% | meets strict policy: module >= 90%, file >= 80% |" in summary
     assert (
-        "| `package-b` | 2.3s | Fail | 78% | below strict policy: module >= 90%, file >= 80%, 1 file under 80% |"
+        "| `package-b` | 2.3s | 0 | 0 | 0 | 78% | below strict policy: module >= 90%, file >= 80%, 1 file under 80% |"
     ) in summary
 
 
@@ -267,14 +337,14 @@ def test_github_summary_states_the_policy_behind_every_coverage_number() -> None
 
     assert "Coverage is enforced" in summary
     assert (
-        "| `tooling` | 1.0s | Pass | 21% | no policy: scripts packages carry the "
+        "| `tooling` | 1.0s | 0 | 0 | 0 | 21% | no policy: scripts packages carry the "
         "no-requirements gate (module >= 0%, file >= 0%) |"
     ) in summary
     assert (
-        "| `namespace-only` | 0.5s | Pass | n/a | no policy: the package carries no measurable statements |"
+        "| `namespace-only` | 0.5s | 0 | 0 | 0 | n/a | no policy: the package carries no measurable statements |"
     ) in summary
     assert (
-        "| `blanked` | 0.8s | Pass | none | unmeasured: source carries statements but coverage measured none |"
+        "| `blanked` | 0.8s | 0 | 0 | 0 | none | unmeasured: source carries statements but coverage measured none |"
     ) in summary
     # The two zero-statement rows share a predicate but not a verdict; conflating them is the defect.
     assert not _coverage_meets_policy(results[2])
@@ -480,6 +550,115 @@ async def test_consolidated_pytest_uses_one_bounded_workstealing_process(
     assert "--no-coverage" not in command
     assert not any(arg.startswith("--cov=") for arg in command)
     assert "--cov" not in command
+
+
+@pytest.mark.asyncio
+async def test_container_selection_collects_only_marker_derived_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    package = _package(tmp_path)
+    marked = package.path / "tests" / "test_container.py"
+    unit = package.path / "tests" / "test_unit.py"
+    marked.write_text(
+        "import pytest\n\n@pytest.mark.requires_docker\ndef test_container():\n    pass\n",
+        encoding="utf-8",
+    )
+    unit.write_text("def test_unit():\n    pass\n", encoding="utf-8")
+    package = Package(
+        package.name,
+        package.path,
+        package.pkg_type,
+        requires_docker_tests=frozenset({"tests/test_container.py"}),
+    )
+    commands: list[tuple[str, ...]] = []
+    marked_arg = test_checks._repo_relative(marked)
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> _SuccessfulPytestProcess:
+        del kwargs
+        commands.append(command)
+        _write_junit(
+            command,
+            "<testsuites><testsuite>"
+            f'<testcase classname="tests.test_container" file="{marked_arg}" '
+            'name="test_container" time="0.1"/>'
+            "</testsuite></testsuites>",
+        )
+        return _SuccessfulPytestProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    results = await test_checks.run_consolidated_tests(
+        [package],
+        "requires_docker",
+        (),
+        pytest_workers=1,
+        with_coverage=False,
+    )
+
+    assert [result.passed for result in results] == [True]
+    assert marked_arg in commands[0]
+    assert test_checks._repo_relative(unit) not in commands[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("markers", "passed_case_count", "expected_package_pass"),
+    [
+        pytest.param(test_checks._UNIT_TEST_MARKERS, 0, 1, id="ordinary-skip-only"),
+        pytest.param(test_checks._UNIT_TEST_MARKERS, 1, 1, id="ordinary-mixed"),
+        pytest.param("requires_docker", 1, 0, id="required-container-skip"),
+    ],
+)
+async def test_consolidated_results_distinguish_skipped_cases_from_passes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    markers: str,
+    passed_case_count: int,
+    expected_package_pass: int,
+) -> None:
+    package = _package(tmp_path)
+    test_file = test_checks._repo_relative(package.path / "tests" / "test_container.py")
+    package = Package(
+        package.name,
+        package.path,
+        package.pkg_type,
+        requires_docker_tests=frozenset({"tests/test_container.py"}),
+    )
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> _SuccessfulPytestProcess:
+        del kwargs
+        passed = (
+            f'<testcase classname="tests.test_container" file="{test_file}" name="test_passes" time="0.1"/>'
+            if passed_case_count
+            else ""
+        )
+        _write_junit(
+            command,
+            "<testsuites><testsuite>"
+            f"{passed}"
+            f'<testcase classname="tests.test_container" file="{test_file}" '
+            'name="test_skips" time="0.0"><skipped message="no Docker"/></testcase>'
+            "</testsuite></testsuites>",
+        )
+        return _SuccessfulPytestProcess(b"1 skipped\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    results = await test_checks.run_consolidated_tests(
+        [package],
+        markers,
+        (),
+        pytest_workers=1,
+        with_coverage=False,
+    )
+
+    assert len(results) == 1
+    assert results[0].passed is bool(expected_package_pass)
+    assert results[0].tests_run == 1 + passed_case_count
+    assert results[0].tests_passed == passed_case_count
+    assert results[0].tests_skipped == 1
+    assert results[0].tests_failed == 0
 
 
 @pytest.mark.asyncio
@@ -780,7 +959,7 @@ async def test_integration_run_ignores_unit_fixture_report(monkeypatch: pytest.M
 
 
 def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
-    """The one work job obtains one environment and runs one bounded Python command."""
+    """The work job reuses one cached environment with a selective container extension."""
     workflow = load_workflow(_CHECKS_WORKFLOW)
     setup_action = load_mapping(_SETUP_CI_ACTION)
     worker = workflow["jobs"]["worker"]
@@ -799,9 +978,10 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
     setup_inputs = setup_steps[0].get("with", {})
     assert isinstance(setup_inputs, dict)
     assert setup_inputs.get("ready-cache") == "${{ env.NIX_SETUP_SELECTED }}"
+    assert setup_inputs.get("runner-class") == "${{ needs.changes.outputs.runner_class }}"
     assert setup_inputs.get("lookup-only") != "true"
     direct_environment_commands = "\n".join(str(step.get("run", "")) for step in unit_steps)
-    assert "sync-ci-environment.sh" not in direct_environment_commands
+    assert direct_environment_commands.count("sync-ci-environment.sh container-contracts") == 1
     assert "uv sync" not in direct_environment_commands
     worker_nix_selector = str(worker["env"]["NIX_SETUP_SELECTED"])
     assert "needs.changes.outputs.python_any == 'true'" in worker_nix_selector
@@ -810,19 +990,21 @@ def test_scoped_worker_uses_one_cached_environment_with_bounded_tests() -> None:
     environment_restores = [
         step
         for step in action_steps
-        if str(step.get("uses", "")).startswith("nix-community/cache-nix-action/restore@")
+        if str(step.get("uses", "")).startswith(("nix-community/cache-nix-action/restore@", "actions/cache/restore@"))
         and "inputs.lookup-only != 'true'" in str(step.get("if", ""))
+        and "ready-cache" in str(step.get("id", ""))
     ]
     environment_syncs = [
         step for step in action_steps if "scripts/dev/sync-ci-environment.sh" in str(step.get("run", ""))
     ]
-    assert len(environment_restores) == 1
+    assert {step["id"] for step in environment_restores} == {
+        "hosted-ready-cache",
+        "persistent-ready-cache",
+    }
     assert len(environment_syncs) == 1
-    assert "steps.ready-cache.outputs.hit-primary-key != 'true'" in str(environment_syncs[0]["if"])
+    assert "steps.ready-cache-result.outputs.restore-exact != 'true'" in str(environment_syncs[0]["if"])
 
-    test_steps = [step for step in unit_steps if "ci-checks tests all --scope all" in str(step.get("run", ""))]
-    assert len(test_steps) == 1
-    test = test_steps[0]
+    test = next(step for step in unit_steps if step.get("name") == "Run selected Python tests")
     test_command = str(test["run"])
     assert worker["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
     assert '--packages "$TEST_PACKAGES"' in test_command

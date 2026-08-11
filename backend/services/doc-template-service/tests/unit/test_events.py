@@ -205,8 +205,26 @@ class TestValidateRenderRequest:
         with pytest.raises(ValidationError, match="template_version"):
             _validate_render_request(mock_message)
 
-    def test_returns_tuple_on_success(self) -> None:
-        """Test successful validation returns tuple."""
+    def test_raises_error_when_template_version_is_not_semver(self) -> None:
+        """ValidationError is raised for a nonempty invalid template version."""
+        message = DocumentRenderRequested(
+            metadata=EventMetadata(
+                event_id="test-id",
+                correlation_id="corr-id",
+                source_service="test",
+            ),
+            template_id="template-123",
+            template_content="<html></html>",
+            template_version="not-a-version",
+        )
+
+        with pytest.raises(ValidationError, match="template_version") as exc_info:
+            _validate_render_request(message)
+
+        assert exc_info.value.field_name == "template_version"
+
+    def test_accepts_valid_semver(self) -> None:
+        """Valid semantic versions return the extracted request fields."""
         mock_message = MagicMock()
         mock_message.metadata = EventMetadata(
             event_id="test-id",
@@ -215,11 +233,11 @@ class TestValidateRenderRequest:
         )
         mock_message.template_id = "template-123"
         mock_message.template_content = "<html></html>"
-        mock_message.template_version = "1.0.0"
+        mock_message.template_version = "1.2.3-rc.1+build.7"
 
         result = _validate_render_request(mock_message)
 
-        assert result == ("corr-id", "template-123", "1.0.0")
+        assert result == ("corr-id", "template-123", "1.2.3-rc.1+build.7")
 
 
 class TestRenderAndStore:
@@ -252,7 +270,7 @@ class TestRenderAndStore:
                 return_value=mock_storage_result,
             ) as mock_store,
         ):
-            result = await _render_and_store(mock_message, "corr-id", "template-123")
+            result = await _render_and_store(AsyncMock(), mock_message, "corr-id", "template-123")
 
             assert result[0] == "rendered/corr/tmpl.pdf"
             assert result[1] == "application/pdf"
@@ -285,25 +303,6 @@ class TestRenderCompletedParams:
 
 class TestHandleTemplateRenderRequested:
     """Tests for handle_template_render_requested event handler."""
-
-    def test_old_v1_render_payload_defaults_new_optional_fields(self) -> None:
-        """v1 requests without later ECST fields retain protobuf defaults when decoded."""
-        legacy = DocumentRenderRequested(
-            metadata=EventMetadata(
-                event_id="legacy-event",
-                correlation_id="legacy-correlation",
-                source_service="legacy-service",
-            ),
-            template_id="legacy-template",
-        )
-
-        decoded = DocumentRenderRequested().parse(bytes(legacy))
-
-        assert decoded.template_id == "legacy-template"
-        assert decoded.template_version is None
-        assert decoded.template_name is None
-        assert decoded.template_content is None
-        assert decoded.validation_schema is None
 
     @pytest.mark.asyncio
     async def test_invalid_metadata_publishes_one_correlated_terminal_failure(
@@ -479,6 +478,157 @@ class TestHandleTemplateRenderRequested:
             await _publish_render_completed(mock_db, mock_outbox, params)
 
         mock_outbox.write_event.assert_not_awaited()
+
+
+_SCHEMA_TEMPLATE_ID = "3f9d2c1e-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+_CONTENT_SCHEMA = {
+    "type": "object",
+    "required": ["summary"],
+    "properties": {"summary": {"type": "string"}},
+}
+
+
+def _make_render_message(data: dict[str, object]) -> MagicMock:
+    """Build a well-formed DocumentRenderRequested stand-in carrying ``data``."""
+    message = MagicMock()
+    message.metadata = EventMetadata(event_id="evt", correlation_id="corr-schema", source_service="test")
+    message.template_id = _SCHEMA_TEMPLATE_ID
+    message.template_version = "1.0.0"
+    message.template_name = "resume"
+    message.template_content = "<html>{{ summary }}</html>"
+    message.include_text_alt = False
+    message.output_format = RenderOutputFormat.HTML
+    message.data = Struct.from_dict(data)
+    return message
+
+
+class TestRenderContentSchemaEnforcement:
+    """The render payload is validated against the template's stored content schema."""
+
+    @staticmethod
+    def _template_with_schema() -> MagicMock:
+        template = MagicMock()
+        template.content_schema = _CONTENT_SCHEMA
+        return template
+
+    @pytest.mark.asyncio
+    async def test_violating_payload_does_not_render_and_fails_terminally(self) -> None:
+        """A payload missing a required property never reaches the generator."""
+        mock_db = create_mock_session()
+        mock_outbox = AsyncMock()
+        mock_context = _make_context(db=mock_db, outbox=mock_outbox)
+
+        with (
+            patch(
+                "doc_template_service.events.render_handler.get_template_model_by_id",
+                new_callable=AsyncMock,
+                return_value=self._template_with_schema(),
+            ),
+            patch(
+                "doc_template_service.events.render_handler.generate_document",
+                new_callable=AsyncMock,
+                return_value="<html>rendered anyway</html>",
+            ) as mock_generate,
+            patch(
+                "doc_template_service.events.render_handler.store_rendered_document",
+                new_callable=AsyncMock,
+                return_value=StoredRenderResult(
+                    storage_key="rendered/corr-schema/leak.html",
+                    file_size=100,
+                    content_hash="c" * 64,
+                ),
+            ) as mock_store,
+        ):
+            await handle_template_render_requested(_make_render_message({"headline": "nope"}), mock_context)
+
+        mock_generate.assert_not_awaited()
+        mock_store.assert_not_awaited()
+        mock_outbox.write_event.assert_awaited_once()
+        event = mock_outbox.write_event.await_args.kwargs["event"]
+        assert event.result.status.name == "FAILED"
+        assert event.result.error.retryable is False
+        assert event.storage_key == ""
+        assert "content schema" in event.result.error.error_message
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"type": "nonsense"},
+            {"$ref": "https://schemas.example.invalid/missing.json"},
+        ],
+        ids=["invalid-schema", "unresolvable-reference"],
+    )
+    @pytest.mark.asyncio
+    async def test_invalid_stored_schema_fails_terminally(self, schema: dict[str, object]) -> None:
+        """Invalid or unresolvable stored schemas cannot trigger redelivery."""
+        mock_db = create_mock_session()
+        mock_outbox = AsyncMock()
+        mock_context = _make_context(db=mock_db, outbox=mock_outbox)
+        template = MagicMock()
+        template.content_schema = schema
+
+        with (
+            patch(
+                "doc_template_service.events.render_handler.get_template_model_by_id",
+                new_callable=AsyncMock,
+                return_value=template,
+            ),
+            patch(
+                "doc_template_service.events.render_handler.generate_document",
+                new_callable=AsyncMock,
+            ) as mock_generate,
+            patch(
+                "doc_template_service.events.render_handler.store_rendered_document",
+                new_callable=AsyncMock,
+            ) as mock_store,
+        ):
+            await handle_template_render_requested(_make_render_message({"summary": "ok"}), mock_context)
+
+        mock_generate.assert_not_awaited()
+        mock_store.assert_not_awaited()
+        mock_outbox.write_event.assert_awaited_once()
+        mock_db.commit.assert_awaited_once()
+        event = mock_outbox.write_event.await_args.kwargs["event"]
+        assert event.result.status.name == "FAILED"
+        assert event.result.error.retryable is False
+        assert "Schema error" in event.result.error.error_message
+
+    @pytest.mark.asyncio
+    async def test_conforming_payload_still_renders(self) -> None:
+        """A payload satisfying the stored schema renders and publishes a completion."""
+        mock_db = create_mock_session()
+        mock_outbox = AsyncMock()
+        mock_context = _make_context(db=mock_db, outbox=mock_outbox)
+        mock_storage_result = StoredRenderResult(
+            storage_key=f"rendered/corr-schema/{_SCHEMA_TEMPLATE_ID}.html",
+            file_size=100,
+            content_hash="b" * 64,
+        )
+
+        with (
+            patch(
+                "doc_template_service.events.render_handler.get_template_model_by_id",
+                new_callable=AsyncMock,
+                return_value=self._template_with_schema(),
+            ),
+            patch(
+                "doc_template_service.events.render_handler.generate_document",
+                new_callable=AsyncMock,
+                return_value="<html>ok</html>",
+            ) as mock_generate,
+            patch(
+                "doc_template_service.events.render_handler.store_rendered_document",
+                new_callable=AsyncMock,
+                return_value=mock_storage_result,
+            ),
+        ):
+            await handle_template_render_requested(_make_render_message({"summary": "ok"}), mock_context)
+
+        mock_generate.assert_awaited_once()
+        mock_outbox.write_event.assert_awaited_once()
+        event = mock_outbox.write_event.await_args.kwargs["event"]
+        assert event.result.status.name == "COMPLETED"
+        assert event.content_hash == "b" * 64
 
 
 class TestHandleTemplateCreateRequested:

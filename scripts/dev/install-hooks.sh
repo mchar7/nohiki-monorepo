@@ -26,6 +26,14 @@ HARDENED_HINT='verify_hash'
 xdg_default="${HOME}/.""local/share"
 GUARD="${NOHIKI_REFERENCE_GUARD:-${XDG_DATA_HOME:-${xdg_default}}/nohiki/reference-guard/install_reference_guard.py}"
 
+# Linked worktrees default to a private hooks dir under .git/worktrees/<name>/hooks,
+# so they miss the shared install until something rewires them. Write core.hooksPath
+# into the common config: every current and future linked worktree inherits it
+# without a post-worktree hook Git does not give us.
+common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+hooks_dir="${common_dir}/hooks"
+git config --file "${common_dir}/config" core.hooksPath "${hooks_dir}"
+
 if [ -f "${GUARD}" ]; then
     if "${GUARD}" --check >/dev/null 2>&1; then
         printf 'Hooks are installed and verified by the hardened wrapper. Nothing to do.\n'
@@ -39,7 +47,6 @@ if [ -f "${GUARD}" ]; then
     exit 1
 fi
 
-hooks_dir="$(git rev-parse --path-format=absolute --git-common-dir)/hooks"
 looks_hardened=()
 for hook in pre-commit commit-msg pre-push prepare-commit-msg post-checkout; do
     path="${hooks_dir}/${hook}"

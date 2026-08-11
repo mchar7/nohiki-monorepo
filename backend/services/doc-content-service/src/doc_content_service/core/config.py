@@ -17,7 +17,7 @@ class GenerationSettings(BaseModel):
 
     timeout_seconds: PositiveInt = Field(default=120)
     max_retry_attempts: PositiveInt = Field(default=3)
-    max_attachments: PositiveInt = Field(default=20)
+    max_attachments: PositiveInt = Field(default=25)
     max_attachment_bytes: PositiveInt = Field(default=1_000_000)
     max_total_attachment_bytes: PositiveInt = Field(default=5_000_000)
     max_schema_bytes: PositiveInt = Field(default=1_000_000)

@@ -12,6 +12,7 @@ from ci_checks import app as ci_app_module
 from ci_checks.checks import gate as checks_gate
 from ci_checks.checks import tests as checks_tests
 from ci_checks.checks.gate import gate_cmd
+from ci_checks.core import change_gate as change_gate_module
 from ci_checks.core import packages as packages_module
 from ci_checks.core.change_gate import (
     BroadCause,
@@ -26,7 +27,7 @@ from ci_checks.core.change_gate import (
     selected_test_packages,
 )
 from ci_checks.core.change_rules import BROAD_RULES, FLAG_NAMES, SURFACE_RULES
-from ci_checks.core.display import LANE_DISPLAY_NAMES, LANE_RUNNERS
+from ci_checks.core.display import GATE_LABELS, LANE_DISPLAY_NAMES, LANE_RUNNERS
 from ci_checks.core.image_inventory import load_inventory
 from ci_checks.core.packages import (
     REPO_ROOT,
@@ -163,6 +164,26 @@ def test_commit_class_boundaries(path: str, expected: CommitClass) -> None:
 
     assert decision.commit_class is expected
     assert not decision.unmatched
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "scripts/ci/src/ci_checks/core/change_gate.py",
+        "scripts/ci/src/ci_checks/core/change_rules.py",
+        "scripts/ci/src/ci_checks/checks/gate.py",
+        "scripts/ci/src/ci_checks/checks/tests.py",
+    ],
+)
+def test_gate_authority_changes_select_every_lane_including_jvm(path: str) -> None:
+    decision = evaluate(
+        {path},
+        _synthetic_packages(),
+        EventContext(event="pull_request", base_sha="base", head_sha="head"),
+    )
+
+    assert decision.flags == set(FLAG_NAMES)
+    assert decision.flag_value("jvm_tests")
 
 
 def test_unmapped_path_fails_closed_without_unrelated_frontend_smoke() -> None:
@@ -427,11 +448,24 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
     [
         (
             "typescript/apps/frontend/src/App.tsx",
-            {"lint_frontend", "lint_steiger", "typecheck_frontend", "frontend_tests", "frontend_smoke"},
+            {
+                "lint_frontend",
+                "lint_steiger",
+                "typecheck_frontend",
+                "frontend_tests",
+                "frontend_smoke",
+                "container_contracts",
+            },
         ),
         (
             "typescript/apps/frontend/e2e/journeys/jobs.spec.ts",
-            {"lint_frontend", "typecheck_frontend", "frontend_smoke", "node_workspace_contracts"},
+            {
+                "lint_frontend",
+                "typecheck_frontend",
+                "frontend_smoke",
+                "node_workspace_contracts",
+                "container_contracts",
+            },
         ),
         (
             "typescript/edge/auth-listings-worker/src/index.ts",
@@ -446,6 +480,7 @@ def test_proto_change_seeds_domain_models_and_real_test_extra_dependents() -> No
                 "frontend_tests",
                 "edge_worker",
                 "frontend_smoke",
+                "container_contracts",
             },
         ),
     ],
@@ -580,6 +615,38 @@ def test_node_workspace_contracts_ignores_paths_the_marked_tests_never_execute(p
     assert "node_workspace_contracts" not in evaluate({path}, _synthetic_packages()).flags
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "jvm/nohiki-wal-router-smt/build.gradle.kts",
+        "jvm/nohiki-wal-router-smt/gradle/wrapper/gradle-wrapper.properties",
+        "jvm/nohiki-wal-router-smt/gradle/wrapper/gradle-wrapper.jar",
+        "jvm/nohiki-wal-router-smt/src/main/java/ai/nohiki/kafka/connect/transforms/NohikiWalRouterSmt.java",
+        "jvm/nohiki-wal-router-smt/src/test/java/ai/nohiki/kafka/connect/transforms/NohikiWalRouterSmtTest.java",
+        "infra/k8s/kafka-connect/Dockerfile",
+    ],
+)
+def test_jvm_tests_select_every_module_and_image_build_input(path: str) -> None:
+    decision = evaluate({path}, _synthetic_packages())
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert decision.flag_value("jvm_tests")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "backend/libs/lib-a/src/lib_a.py",
+        "typescript/apps/frontend/src/App.tsx",
+        "infra/k8s/helm/values.yaml",
+    ],
+)
+def test_jvm_tests_ignore_unrelated_registered_paths(path: str) -> None:
+    decision = evaluate({path}, _synthetic_packages())
+
+    assert not decision.flag_value("jvm_tests")
+
+
 def test_flake_broad_change_selects_every_devshell_sourced_lane() -> None:
     packages = load_packages_with_deps(Scope.ALL)
     decision = evaluate({"flake.nix"}, packages)
@@ -595,6 +662,7 @@ def test_flake_broad_change_selects_every_devshell_sourced_lane() -> None:
         "lint_proto",
         "lint_workflows",
         "lint_docker",
+        "container_contracts",
         "proto_breaking",
         "image_matrix_parity",
         "api_schema_freshness",
@@ -624,7 +692,7 @@ def test_broad_change_can_co_select_frontend_smoke_and_otel_collector() -> None:
     )
 
     assert decision.commit_class is CommitClass.BROAD
-    assert {"frontend_smoke", "frontend_e2e", "otel_collector"} <= decision.flags
+    assert {"frontend_smoke", "frontend_e2e", "otel_collector", "container_contracts"} <= decision.flags
 
 
 def _tracked_paths() -> set[str]:
@@ -639,7 +707,7 @@ def _tracked_paths() -> set[str]:
     )
 
 
-@pytest.mark.parametrize("flag", ["frontend_e2e", "frontend_smoke"])
+@pytest.mark.parametrize("flag", ["frontend_e2e", "container_contracts"])
 def test_container_image_rule_patterns_each_match_a_tracked_path(flag: str) -> None:
     tracked = _tracked_paths()
 
@@ -664,17 +732,17 @@ def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
         (
             "typescript/apps/frontend/Dockerfile",
             "false",
-            {"frontend_smoke", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
+            {"frontend_smoke", "container_contracts", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "typescript/apps/frontend/Dockerfile.playwright-runner",
             "false",
-            {"frontend_e2e", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
+            {"frontend_e2e", "container_contracts", "lint_docker", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "infra/k8s/observability/base/otel/collector.yaml",
             "false",
-            {"otel_collector", "python_any", "hygiene", "typecheck_backend"},
+            {"otel_collector", "container_contracts", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "scripts/util/export-openapi.py",
@@ -684,7 +752,7 @@ def test_build_backend_selects_manifests_not_backend_leaf_sources() -> None:
         (
             "infra/k8s/local/images.json",
             "false",
-            {"image_matrix_parity", "python_any", "hygiene", "typecheck_backend"},
+            {"image_matrix_parity", "container_contracts", "python_any", "hygiene", "typecheck_backend"},
         ),
         (
             "unknown.bin",
@@ -868,6 +936,19 @@ def test_selected_test_packages_full_and_scoped_exclude_packages_without_tests(
 
 def test_lane_display_names_and_runners_cover_gate_flags_exactly() -> None:
     assert set(LANE_DISPLAY_NAMES) == set(LANE_RUNNERS) == set(FLAG_NAMES)
+
+
+def test_gate_labels_cover_typed_classifications_with_distinct_colors() -> None:
+    assert GATE_LABELS == {
+        "python_any": ("area:backend", "1D76DB"),
+        "frontend_tests": ("area:frontend", "D4C5F9"),
+        "lint_proto": ("area:proto", "FBCA04"),
+        "lint_docker": ("area:docker", "0E8A16"),
+        "lint_workflows": ("area:workflows", "5319E7"),
+        "lint_markdown": ("area:docs", "0075CA"),
+        "full": ("ci:full-run", "B60205"),
+    }
+    assert len({color for _, color in GATE_LABELS.values()}) == len(GATE_LABELS)
 
 
 def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
@@ -1636,7 +1717,6 @@ def _reuse_fixture(tmp_path: Path, tree_sha: str) -> Path:
         }
         return record | overrides
 
-    legacy = {key: value for key, value in attested(204).items() if key != "base_sha"}
     scenarios: dict[str, object] = {
         "proven": {"runs": runs(201), "attestations": {"201": attested(201)}},
         "tree_mismatch": {
@@ -1649,7 +1729,6 @@ def _reuse_fixture(tmp_path: Path, tree_sha: str) -> Path:
             "runs": runs(203),
             "attestations": {"203": attested(203, base_sha="a-different-base")},
         },
-        "legacy_without_base": {"runs": runs(204), "attestations": {"204": legacy}},
         "only_edited": {
             "runs": runs(205),
             "attestations": {"205": attested(205, event_action="edited")},
@@ -1657,6 +1736,20 @@ def _reuse_fixture(tmp_path: Path, tree_sha: str) -> Path:
         "artifact_expired": {"runs": runs(206), "attestations": {}},
         "no_successful_run": {"runs": {"workflow_runs": []}, "attestations": {}},
         "api_failure": {"fail_api": "runs", "runs": {}, "attestations": {}},
+        # A legacy attestation predating base binding carries no base_sha at all. It proves
+        # nothing about this base, and it must not cost the older candidates their scan.
+        "malformed_newer_candidate": {
+            "runs": runs(207, 208),
+            "attestations": {
+                "208": {
+                    "tested_tree_sha": tree_sha,
+                    "event_action": "synchronize",
+                    "commit_class": "standard",
+                    "run_id": 208,
+                },
+                "207": attested(207),
+            },
+        },
     }
     path = tmp_path / "reuse_scenarios.json"
     path.write_text(json.dumps(scenarios), encoding="utf-8")
@@ -1710,7 +1803,6 @@ def test_gate_reuse_proves_a_title_edit_and_names_the_run_it_relied_on(
     [
         "tree_mismatch",
         "base_retargeted",
-        "legacy_without_base",
         "only_edited",
         "artifact_expired",
         "no_successful_run",
@@ -1739,6 +1831,61 @@ def test_gate_reuse_defines_both_outputs_without_calling_github_off_an_edit(
     # The renderer reads these on every event, so a skipped lookup must still define them.
     assert values == {"title_only": "false", "reused_run_id": ""}
     assert not log.exists()
+
+
+def test_attestation_without_a_base_sha_key_is_rejected_as_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """base_sha is mandatory: a missing key is a schema failure, not an empty default."""
+
+    def fake_gh(args: list[str]) -> subprocess.CompletedProcess[str]:
+        destination = Path(args[args.index("--dir") + 1])
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "checks-attestation.json").write_text(
+            json.dumps(
+                {
+                    "tested_tree_sha": "tree-merge",
+                    "event_action": "synchronize",
+                    "commit_class": "standard",
+                    "run_id": 301,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(checks_gate, "_run_gh", fake_gh)
+
+    with pytest.raises(checks_gate._EvidenceError, match="attestation schema is invalid"):
+        checks_gate._download_attestation("mchar7/nohiki-monorepo", 301)
+
+
+def test_gate_reuse_skips_a_malformed_candidate_instead_of_abandoning_the_scan(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    """One unusable attestation must cost only its own entry, not every older candidate."""
+    fixtures = _reuse_fixture(tmp_path, _checked_out_tree())
+    values = _run_gate_reuse(tmp_path, gate_evidence_harness, "malformed_newer_candidate", fixtures)
+
+    assert values == {"title_only": "true", "reused_run_id": "207"}
+
+
+def test_gate_evidence_skips_a_malformed_attestation_and_keeps_scanning(
+    tmp_path: Path,
+    gate_evidence_harness: tuple[dict[str, str], Path],
+) -> None:
+    values, calls, _output = _run_gate_evidence(tmp_path, gate_evidence_harness, "malformed_then_valid")
+
+    assert values == {
+        "CI_ASSOCIATED_PR_MERGED": "true",
+        "CI_MERGE_COMMIT_SHA": "merge-sha",
+        "CI_CHECKS_RUN_SUCCESS": "true",
+        "CI_TESTED_TREE_SHA": "tree-merge",
+        "CI_PUSHED_TREE_SHA": "tree-merge",
+    }
+    assert any(call[:3] == ["run", "download", "105"] for call in calls)
+    assert any(call[:3] == ["run", "download", "101"] for call in calls)
 
 
 def _consumer_packages(tmp_path: Path) -> list[Package]:
@@ -1880,7 +2027,7 @@ def test_schema_types_and_committed_spec_seed_their_contract_test() -> None:
     assert "ci-checks" in spec.affected
 
 
-@pytest.mark.parametrize("path", [".markdownlint-cli2.jsonc", ".markdownlint.json", ".markdownlintignore"])
+@pytest.mark.parametrize("path", [".markdownlint-cli2.jsonc", ".markdownlintignore"])
 def test_markdownlint_configs_select_the_markdown_lane(path: str) -> None:
     decision = evaluate({path}, _synthetic_packages())
 
@@ -1902,12 +2049,79 @@ def test_single_file_contract_inputs_seed_ci_checks(path: str) -> None:
     assert "ci-checks" in evaluate({path}, load_packages_with_deps(Scope.ALL)).affected
 
 
-def test_container_only_assertion_files_select_the_job_that_runs_them() -> None:
-    """Both assertions are requires_docker, which the Python lane deselects."""
+def test_every_requires_docker_test_file_routes_to_container_contracts() -> None:
     packages = load_packages_with_deps(Scope.ALL)
+    marked = {
+        f"{package.path.relative_to(REPO_ROOT).as_posix()}/{test_path}"
+        for package in packages.values()
+        for test_path in package.requires_docker_tests
+    }
 
-    assert "otel_collector" in evaluate({"scripts/ci/tests/test_otel_collector_manifest.py"}, packages).flags
-    assert "frontend_smoke" in evaluate({"scripts/ci/tests/test_frontend_delivery.py"}, packages).flags
+    assert marked
+    assert {path for path in marked if "container_contracts" not in evaluate({path}, packages).flags} == set()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "pyproject.toml",
+        "tests/conftest.py",
+        "backend/libs/nohiki-db-utils/src/nohiki_db_utils/testing.py",
+        "backend/libs/nohiki-kafka-client/src/nohiki_kafka_client/testing.py",
+        "backend/libs/nohiki-redis-utils/src/nohiki_redis_utils/testing.py",
+        "backend/libs/nohiki-test-utils/src/nohiki_test_utils/plugins.py",
+        "backend/libs/nohiki-test-utils/src/nohiki_test_utils/utils/docker.py",
+    ],
+)
+def test_container_test_runtime_inputs_route_to_container_contracts(path: str) -> None:
+    assert "container_contracts" in evaluate({path}, load_packages_with_deps(Scope.ALL)).flags
+
+
+def test_future_workspace_member_routes_custom_root_container_tests_without_generated_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_root = tmp_path / "packages" / "future-container"
+    tests = package_root / "container_tests"
+    tests.mkdir(parents=True)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.uv.workspace]\nmembers = ["packages/future-container"]\n',
+        encoding="utf-8",
+    )
+    (package_root / "pyproject.toml").write_text(
+        '[project]\nname = "future-container"\nversion = "0.1.0"\ndependencies = []\n'
+        '[tool.pytest.ini_options]\ntestpaths = ["container_tests"]\n',
+        encoding="utf-8",
+    )
+    marked = tests / "test_future_container.py"
+    marked.write_text(
+        "import pytest\n\n@pytest.mark.requires_docker\ndef test_container():\n    pass\n",
+        encoding="utf-8",
+    )
+    (tests / "test_unit.py").write_text("def test_unit():\n    pass\n", encoding="utf-8")
+    (package_root / "conftest.py").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(packages_module, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(change_gate_module, "REPO_ROOT", tmp_path)
+    packages = packages_module.load_packages_with_deps(Scope.ALL)
+
+    assert packages["future-container"].requires_docker_tests == frozenset({"container_tests/test_future_container.py"})
+    for changed in (
+        "packages/future-container/container_tests/test_future_container.py",
+        "packages/future-container/container_tests/conftest.py",
+        "packages/future-container/conftest.py",
+        "packages/future-container/pyproject.toml",
+    ):
+        decision = change_gate_module.evaluate({changed}, packages)
+        selected = change_gate_module.selected_test_packages(decision, packages)
+        outputs = change_gate_module.render_outputs(decision, selected, "pull_request")
+
+        assert "container_contracts" in decision.flags
+        assert outputs["test_packages"] == "future-container"
+
+
+def test_root_workspace_manifest_routes_container_contracts() -> None:
+    assert "container_contracts" in evaluate({"pyproject.toml"}, _synthetic_packages()).flags
 
 
 @pytest.mark.parametrize(
@@ -2166,6 +2380,25 @@ def _run_gate_producer(
         else {}
     )
     return result.exit_code, result.output, emitted, record
+
+
+def test_gate_cli_emits_typed_label_state_from_current_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exit_code, output, emitted, _record = _run_gate_producer(
+        tmp_path,
+        monkeypatch,
+        lambda _base, _head: {"README.md"},
+        event="pull_request",
+        with_record=False,
+    )
+
+    assert exit_code == 0, output
+    labels = {item["name"]: item for item in json.loads(emitted["labels"])}
+    assert set(labels) == {name for name, _color in GATE_LABELS.values()}
+    for flag, (name, color) in GATE_LABELS.items():
+        assert labels[name] == {"name": name, "color": color, "active": emitted[flag]}
 
 
 def test_record_holds_the_declaration_ordered_owner_union_for_a_service_diff(

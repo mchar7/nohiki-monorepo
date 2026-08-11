@@ -86,14 +86,14 @@ class TestSubstituteParams:
 
     def test_returns_copy_when_substitutable_fields_empty(self) -> None:
         """substitute_params returns copy of params when substitutable_fields is empty."""
-        params = cast(dict[str, object], {"foo": "{{ bar }}", "baz": "qux"})
+        params = cast("dict[str, object]", {"foo": "{{ bar }}", "baz": "qux"})
         result = substitute_params(params, frozenset(), {"bar": "VALUE"}, rule_id="test.rule")
         assert result == params
         assert result is not params  # Should be a copy
 
     def test_substitutes_only_declared_fields(self) -> None:
         """substitute_params substitutes only fields in substitutable_fields."""
-        params = cast(dict[str, object], {"target": "{{ var }}", "pattern": "{{ var }}"})
+        params = cast("dict[str, object]", {"target": "{{ var }}", "pattern": "{{ var }}"})
         variables = {"var": "VALUE"}
         result = substitute_params(params, frozenset(("target",)), variables, rule_id="test.rule")
         # Only 'target' is substituted
@@ -103,7 +103,7 @@ class TestSubstituteParams:
 
     def test_leaves_non_substitutable_fields_alone(self) -> None:
         """substitute_params leaves non-substitutable fields unchanged."""
-        params = cast(dict[str, object], {"substitutable": "{{ x }}", "other": "{{ x }}"})
+        params = cast("dict[str, object]", {"substitutable": "{{ x }}", "other": "{{ x }}"})
         variables = {"x": "VALUE"}
         result = substitute_params(params, frozenset(("substitutable",)), variables, rule_id="test.rule")
         assert result["substitutable"] == "VALUE"
@@ -111,7 +111,7 @@ class TestSubstituteParams:
 
     def test_leaves_non_string_values_alone(self) -> None:
         """substitute_params leaves non-string values untouched for substitutable fields."""
-        params = cast(dict[str, object], {"num": 42, "bool": True, "list": [1, 2, 3]})
+        params = cast("dict[str, object]", {"num": 42, "bool": True, "list": [1, 2, 3]})
         result = substitute_params(params, frozenset(("num", "bool", "list")), {}, rule_id="test.rule")
         assert result["num"] == 42
         assert result["bool"] is True
@@ -119,7 +119,7 @@ class TestSubstituteParams:
 
     def test_raises_for_missing_variable_with_rule_id(self) -> None:
         """substitute_params raises LintConfigError for missing var with rule_id in message."""
-        params = cast(dict[str, object], {"target": "{{ missing }}"})
+        params = cast("dict[str, object]", {"target": "{{ missing }}"})
         with pytest.raises(LintConfigError) as exc_info:
             substitute_params(params, frozenset(("target",)), {}, rule_id="my.rule.id")
         assert "my.rule.id" in str(exc_info.value)
@@ -127,7 +127,7 @@ class TestSubstituteParams:
     def test_only_substitutes_strings_with_placeholders(self) -> None:
         """substitute_params only processes string fields that contain placeholders."""
         params = cast(
-            dict[str, object],
+            "dict[str, object]",
             {
                 "text_with_placeholder": "prefix {{ x }} suffix",
                 "text_without_placeholder": "plain text",
@@ -147,14 +147,14 @@ class TestSubstituteParams:
 
     def test_multiple_placeholders_in_same_field(self) -> None:
         """substitute_params handles multiple placeholders in one field."""
-        params = cast(dict[str, object], {"template": "{{ a }}-{{ b }}-{{ c }}"})
+        params = cast("dict[str, object]", {"template": "{{ a }}-{{ b }}-{{ c }}"})
         variables = {"a": "X", "b": "Y", "c": "Z"}
         result = substitute_params(params, frozenset(("template",)), variables, rule_id="test.rule")
         assert result["template"] == "X-Y-Z"
 
     def test_preserves_original_params(self) -> None:
         """substitute_params does not mutate original params dict."""
-        params = cast(dict[str, object], {"field": "{{ x }}"})
+        params = cast("dict[str, object]", {"field": "{{ x }}"})
         variables = {"x": "VALUE"}
         substitute_params(params, frozenset(("field",)), variables, rule_id="test.rule")
         assert params["field"] == "{{ x }}"

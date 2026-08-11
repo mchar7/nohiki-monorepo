@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ from nohiki_db_utils.seeding import (
     SeedingConfig,
     SeedingError,
     SeedingState,
+    _acquire_lock_with_metadata,
     _clear_lock_metadata,
     _ensure_seed_tables,
     _execute_seeding,
@@ -141,6 +143,144 @@ class TestLockOperations:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_lock_metadata_is_published_before_contender_observes_lock(self) -> None:
+        """A seed contender cannot lose the lock before holder metadata is committed."""
+        guard = asyncio.Lock()
+        holder_writing_metadata = asyncio.Event()
+        allow_metadata_write = asyncio.Event()
+        contender_tried_lock = asyncio.Event()
+        metadata: dict[int, str] = {}
+        holder_conn = AsyncMock()
+        contender_conn = AsyncMock()
+        holder_ctx = SeedContext("svc", "pod-1", "postgresql://db", "seed", "1", 30)
+        contender_ctx = SeedContext("svc", "pod-2", "postgresql://db", "seed", "1", 30)
+
+        async def acquire_guard(_conn: object, _lock_id: int) -> None:
+            await guard.acquire()
+
+        async def try_lock(conn: object, _lock_id: int) -> bool:
+            if conn is contender_conn:
+                contender_tried_lock.set()
+                return False
+            return True
+
+        async def set_metadata(
+            _conn: object,
+            lock_id: int,
+            holder_id: str,
+            _seed_name: str,
+        ) -> None:
+            holder_writing_metadata.set()
+            await allow_metadata_write.wait()
+            metadata[lock_id] = holder_id
+
+        async def get_metadata(
+            _conn: object,
+            lock_id: int,
+        ) -> tuple[datetime, str, str] | None:
+            holder_id = metadata.get(lock_id)
+            return (datetime.now(UTC), holder_id, "seed") if holder_id else None
+
+        async def commit() -> None:
+            guard.release()
+
+        holder_conn.commit.side_effect = commit
+        contender_conn.commit.side_effect = commit
+
+        with (
+            patch("nohiki_db_utils.seeding._acquire_metadata_guard", side_effect=acquire_guard),
+            patch("nohiki_db_utils.seeding._try_acquire_lock", side_effect=try_lock),
+            patch("nohiki_db_utils.seeding._set_lock_metadata", side_effect=set_metadata),
+            patch("nohiki_db_utils.seeding._get_lock_metadata", side_effect=get_metadata),
+        ):
+            holder = asyncio.create_task(_acquire_lock_with_metadata(holder_conn, 12345, holder_ctx))
+            await holder_writing_metadata.wait()
+            contender = asyncio.create_task(_acquire_lock_with_metadata(contender_conn, 12345, contender_ctx))
+            await asyncio.sleep(0)
+
+            assert not contender_tried_lock.is_set()
+            assert metadata == {}
+
+            allow_metadata_write.set()
+            assert await holder == (True, None)
+            contender_result = await contender
+            assert contender_result[0] is False
+            assert contender_result[1] is not None
+            assert contender_result[1][1:] == ("pod-1", "seed")
+
+        assert contender_tried_lock.is_set()
+        assert metadata == {12345: "pod-1"}
+
+    @pytest.mark.asyncio
+    async def test_waiter_probe_cannot_be_observed_owning_the_lock_without_metadata(self) -> None:
+        """A seed poll that momentarily takes the lock must stay invisible to a contender."""
+        from nohiki_db_utils.seeding import _probe_lock_released
+
+        guard = asyncio.Lock()
+        held = False
+        probe_owns_lock = asyncio.Event()
+        allow_probe_release = asyncio.Event()
+        contender_tried_lock = asyncio.Event()
+        metadata: dict[int, str] = {}
+        prober_conn = AsyncMock()
+        contender_conn = AsyncMock()
+        contender_ctx = SeedContext("svc", "pod-2", "postgresql://db", "seed", "1", 30)
+
+        async def acquire_guard(_conn: object, _lock_id: int) -> None:
+            await guard.acquire()
+
+        async def try_lock(conn: object, _lock_id: int) -> bool:
+            nonlocal held
+            if conn is contender_conn:
+                contender_tried_lock.set()
+            if held:
+                return False
+            held = True
+            return True
+
+        async def release(conn: object, _lock_id: int) -> None:
+            nonlocal held
+            if conn is prober_conn:
+                probe_owns_lock.set()
+                await allow_probe_release.wait()
+            held = False
+
+        async def set_metadata(_conn: object, lock_id: int, holder_id: str, _seed_name: str) -> None:
+            metadata[lock_id] = holder_id
+
+        async def get_metadata(_conn: object, lock_id: int) -> tuple[datetime, str, str] | None:
+            holder_id = metadata.get(lock_id)
+            return (datetime.now(UTC), holder_id, "seed") if holder_id else None
+
+        async def commit() -> None:
+            guard.release()
+
+        prober_conn.commit.side_effect = commit
+        contender_conn.commit.side_effect = commit
+
+        with (
+            patch("nohiki_db_utils.seeding._acquire_metadata_guard", side_effect=acquire_guard),
+            patch("nohiki_db_utils.seeding._try_acquire_lock", side_effect=try_lock),
+            patch("nohiki_db_utils.seeding._release_lock", side_effect=release),
+            patch("nohiki_db_utils.seeding._set_lock_metadata", side_effect=set_metadata),
+            patch("nohiki_db_utils.seeding._get_lock_metadata", side_effect=get_metadata),
+        ):
+            prober = asyncio.create_task(_probe_lock_released(prober_conn, 12345))
+            await probe_owns_lock.wait()
+            contender = asyncio.create_task(_acquire_lock_with_metadata(contender_conn, 12345, contender_ctx))
+            await asyncio.sleep(0)
+
+            # The prober owns the advisory lock with no metadata row. A contender able to observe
+            # this window would read (False, None) and raise "Seed lock metadata missing".
+            assert not contender_tried_lock.is_set()
+
+            allow_probe_release.set()
+            assert await prober is True
+            assert await contender == (True, None)
+
+        assert metadata == {12345: "pod-2"}
+
+    @pytest.mark.asyncio
     async def test_release_lock(self) -> None:
         """Test lock release."""
         mock_conn = AsyncMock()
@@ -154,13 +294,14 @@ class TestLockOperations:
         """Test waiting for lock release - success case."""
         mock_conn = AsyncMock()
 
-        # First call fails, second succeeds (lock acquired), third for release
+        # Each poll issues the metadata guard, then the try, then the release.
+        mock_guard = MagicMock()
         mock_result1 = MagicMock()
         mock_result1.scalar.return_value = False
         mock_result2 = MagicMock()
         mock_result2.scalar.return_value = True
         mock_result3 = MagicMock()  # For _release_lock call
-        mock_conn.execute.side_effect = [mock_result1, mock_result2, mock_result3]
+        mock_conn.execute.side_effect = [mock_guard, mock_result1, mock_guard, mock_result2, mock_result3]
 
         ctx = SeedContext(
             service_name="test-svc",
@@ -249,7 +390,7 @@ class TestLockMetadataOperations:
         await _set_lock_metadata(mock_conn, 12345, "pod-1", "test_seed")
 
         mock_conn.execute.assert_called_once()
-        mock_conn.commit.assert_called_once()
+        mock_conn.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_lock_metadata_found(self) -> None:
@@ -289,7 +430,7 @@ class TestLockMetadataOperations:
         await _clear_lock_metadata(mock_conn, 12345)
 
         mock_conn.execute.assert_called_once()
-        mock_conn.commit.assert_called_once()
+        mock_conn.commit.assert_not_called()
 
 
 class TestEnsureSeedTables:
@@ -422,13 +563,11 @@ class TestHandleLockNotAcquiredSeeding:
     """Tests for _handle_lock_not_acquired function in seeding."""
 
     @patch("nohiki_db_utils.seeding._get_seed_version")
-    @patch("nohiki_db_utils.seeding._get_lock_metadata")
     @patch("nohiki_db_utils.seeding._wait_for_lock_release")
     @pytest.mark.asyncio
     async def test_handle_lock_not_acquired_with_metadata(
         self,
         mock_wait: AsyncMock,
-        mock_get_meta: AsyncMock,
         mock_get_version: AsyncMock,
     ) -> None:
         """Test handling lock not acquired with existing metadata."""
@@ -444,26 +583,28 @@ class TestHandleLockNotAcquiredSeeding:
         state = SeedingState()
 
         acquired_at = datetime.now(UTC)
-        mock_get_meta.return_value = (acquired_at, "other-pod", "test_seed")
         mock_get_version.return_value = "1.0.0"  # Same version = skipped
 
-        await _handle_lock_not_acquired(mock_conn, 12345, ctx, state)
+        await _handle_lock_not_acquired(
+            mock_conn,
+            12345,
+            ctx,
+            state,
+            (acquired_at, "other-pod", "test_seed"),
+        )
 
-        mock_get_meta.assert_called_once()
         mock_wait.assert_called_once()
         assert state.status == "skipped"
 
     @patch("nohiki_db_utils.seeding._get_seed_version")
-    @patch("nohiki_db_utils.seeding._get_lock_metadata")
     @patch("nohiki_db_utils.seeding._wait_for_lock_release")
     @pytest.mark.asyncio
-    async def test_handle_lock_not_acquired_no_metadata(
+    async def test_missing_metadata_raises_without_waiting(
         self,
         mock_wait: AsyncMock,
-        mock_get_meta: AsyncMock,
         mock_get_version: AsyncMock,
     ) -> None:
-        """Test handling lock not acquired with no metadata."""
+        """A held seed lock with no metadata row is impossible under the guard, so it is an error."""
         mock_conn = AsyncMock()
         ctx = SeedContext(
             service_name="test-svc",
@@ -475,23 +616,18 @@ class TestHandleLockNotAcquiredSeeding:
         )
         state = SeedingState()
 
-        mock_get_meta.return_value = None
-        mock_get_version.return_value = "1.0.0"  # Same version = skipped
+        with pytest.raises(SeedingError, match="Seed lock metadata missing"):
+            await _handle_lock_not_acquired(mock_conn, 12345, ctx, state, None)
 
-        await _handle_lock_not_acquired(mock_conn, 12345, ctx, state)
-
-        mock_get_meta.assert_called_once()
-        mock_wait.assert_called_once()
-        assert state.status == "skipped"
+        mock_wait.assert_not_called()
+        mock_get_version.assert_not_called()
 
     @patch("nohiki_db_utils.seeding._get_seed_version")
-    @patch("nohiki_db_utils.seeding._get_lock_metadata")
     @patch("nohiki_db_utils.seeding._wait_for_lock_release")
     @pytest.mark.asyncio
     async def test_handle_lock_not_acquired_version_mismatch(
         self,
         mock_wait: AsyncMock,
-        mock_get_meta: AsyncMock,
         mock_get_version: AsyncMock,
     ) -> None:
         """Test version mismatch after lock release raises error."""
@@ -507,26 +643,28 @@ class TestHandleLockNotAcquiredSeeding:
         state = SeedingState()
 
         acquired_at = datetime.now(UTC)
-        mock_get_meta.return_value = (acquired_at, "other-pod", "test_seed")
         mock_get_version.return_value = "0.9.0"  # Different version = error
 
         with pytest.raises(SeedingError, match="version mismatch"):
-            await _handle_lock_not_acquired(mock_conn, 12345, ctx, state)
+            await _handle_lock_not_acquired(
+                mock_conn,
+                12345,
+                ctx,
+                state,
+                (acquired_at, "other-pod", "test_seed"),
+            )
 
-        mock_get_meta.assert_called_once()
         mock_wait.assert_called_once()
         assert state.status == "failed"
         assert state.error is not None
         assert "version mismatch" in state.error
 
     @patch("nohiki_db_utils.seeding._get_seed_version")
-    @patch("nohiki_db_utils.seeding._get_lock_metadata")
     @patch("nohiki_db_utils.seeding._wait_for_lock_release")
     @pytest.mark.asyncio
     async def test_handle_lock_not_acquired_stale_lock(
         self,
         mock_wait: AsyncMock,
-        mock_get_meta: AsyncMock,
         mock_get_version: AsyncMock,
     ) -> None:
         """Test stale lock detection when age exceeds timeout (line 421)."""
@@ -544,10 +682,15 @@ class TestHandleLockNotAcquiredSeeding:
         from datetime import timedelta
 
         acquired_at = datetime.now(UTC) - timedelta(seconds=120)
-        mock_get_meta.return_value = (acquired_at, "other-pod", "test_seed")
         mock_get_version.return_value = "1.0.0"  # Version matches after wait
 
-        await _handle_lock_not_acquired(mock_conn, 12345, ctx, state)
+        await _handle_lock_not_acquired(
+            mock_conn,
+            12345,
+            ctx,
+            state,
+            (acquired_at, "other-pod", "test_seed"),
+        )
 
         assert state.status == "skipped"
         mock_wait.assert_called_once()
@@ -637,13 +780,13 @@ class TestRunSeedingWithCoordinationFull:
     @patch("nohiki_db_utils.seeding.create_async_engine_with_ssl")
     @patch("nohiki_db_utils.seeding._ensure_seed_tables")
     @patch("nohiki_db_utils.seeding._get_seed_version")
-    @patch("nohiki_db_utils.seeding._try_acquire_lock")
+    @patch("nohiki_db_utils.seeding._acquire_lock_with_metadata")
     @patch("nohiki_db_utils.seeding._run_with_lock")
     @pytest.mark.asyncio
     async def test_seed_requires_update_lock_acquired(
         self,
         mock_run_with_lock: AsyncMock,
-        mock_try_acquire: AsyncMock,
+        mock_acquire: AsyncMock,
         mock_get_version: AsyncMock,
         mock_ensure_tables: AsyncMock,
         mock_create_engine: MagicMock,
@@ -661,7 +804,7 @@ class TestRunSeedingWithCoordinationFull:
         mock_create_engine.return_value = mock_engine
 
         mock_get_version.return_value = "0.9.0"
-        mock_try_acquire.return_value = True
+        mock_acquire.return_value = (True, None)
 
         config = SeedingConfig(
             service_name="test-svc",
@@ -679,13 +822,13 @@ class TestRunSeedingWithCoordinationFull:
     @patch("nohiki_db_utils.seeding.create_async_engine_with_ssl")
     @patch("nohiki_db_utils.seeding._ensure_seed_tables")
     @patch("nohiki_db_utils.seeding._get_seed_version")
-    @patch("nohiki_db_utils.seeding._try_acquire_lock")
+    @patch("nohiki_db_utils.seeding._acquire_lock_with_metadata")
     @patch("nohiki_db_utils.seeding._run_with_lock")
     @pytest.mark.asyncio
     async def test_seed_not_yet_applied_lock_acquired(
         self,
         mock_run_with_lock: AsyncMock,
-        mock_try_acquire: AsyncMock,
+        mock_acquire: AsyncMock,
         mock_get_version: AsyncMock,
         mock_ensure_tables: AsyncMock,
         mock_create_engine: MagicMock,
@@ -703,7 +846,7 @@ class TestRunSeedingWithCoordinationFull:
         mock_create_engine.return_value = mock_engine
 
         mock_get_version.return_value = None
-        mock_try_acquire.return_value = True
+        mock_acquire.return_value = (True, None)
 
         config = SeedingConfig(
             service_name="test-svc",
@@ -721,13 +864,13 @@ class TestRunSeedingWithCoordinationFull:
     @patch("nohiki_db_utils.seeding.create_async_engine_with_ssl")
     @patch("nohiki_db_utils.seeding._ensure_seed_tables")
     @patch("nohiki_db_utils.seeding._get_seed_version")
-    @patch("nohiki_db_utils.seeding._try_acquire_lock")
+    @patch("nohiki_db_utils.seeding._acquire_lock_with_metadata")
     @patch("nohiki_db_utils.seeding._handle_lock_not_acquired")
     @pytest.mark.asyncio
     async def test_lock_not_acquired_delegates(
         self,
         mock_handle_not_acquired: AsyncMock,
-        mock_try_acquire: AsyncMock,
+        mock_acquire: AsyncMock,
         mock_get_version: AsyncMock,
         mock_ensure_tables: AsyncMock,
         mock_create_engine: MagicMock,
@@ -745,7 +888,7 @@ class TestRunSeedingWithCoordinationFull:
         mock_create_engine.return_value = mock_engine
 
         mock_get_version.return_value = "0.9.0"
-        mock_try_acquire.return_value = False
+        mock_acquire.return_value = (False, (datetime.now(UTC), "other-pod", "test_seed"))
 
         config = SeedingConfig(
             service_name="test-svc",

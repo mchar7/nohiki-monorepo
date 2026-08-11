@@ -11,6 +11,7 @@ from doc_template_service.core.templates.jinja_engine import render_template
 from doc_template_service.events.render_handler import _render_and_store
 from doc_template_service.services.gotenberg import GotenbergError, GotenbergService
 from doc_template_service.services.render_storage import store_rendered_document
+from jinja2 import TemplateAssertionError
 from nohiki.common.v1 import RenderOutputFormat
 from nohiki_common_exceptions import ValidationError
 from nohiki_proto_google.protobuf import Struct
@@ -40,13 +41,12 @@ async def test_untrusted_template_values_are_html_escaped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_safe_filter_escapes_instead_of_bypassing_autoescape() -> None:
-    rendered = await render_template(
-        "<p>{{ value | safe }}</p>",
-        {"value": '<img src=x onerror="alert(1)">'},
-    )
-
-    assert rendered == "<p>&lt;img src=x onerror=&#34;alert(1)&#34;&gt;</p>"
+async def test_safe_filter_is_rejected() -> None:
+    with pytest.raises(TemplateAssertionError, match="No filter named 'safe'"):
+        await render_template(
+            "<p>{{ value | safe }}</p>",
+            {"value": '<img src=x onerror="alert(1)">'},
+        )
 
 
 @pytest.mark.asyncio
@@ -196,7 +196,7 @@ async def test_oversized_render_data_is_rejected_before_generation_or_upload() -
         patch("doc_template_service.events.render_handler.store_rendered_document", store),
         pytest.raises(ValidationError, match="render data exceeds"),
     ):
-        await _render_and_store(message, "correlation", "template")
+        await _render_and_store(AsyncMock(), message, "correlation", "template")
 
     generate.assert_not_awaited()
     store.assert_not_awaited()

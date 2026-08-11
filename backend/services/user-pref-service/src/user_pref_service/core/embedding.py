@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from functools import cache
 from hashlib import sha256
@@ -55,35 +54,10 @@ def build_profile_embedding_text(
 
 
 @dataclass(frozen=True, slots=True)
-class PrefEmbeddingState(CallbackStateMixin):
-    """State carried through the embedding pipeline for preference embeddings.
+class PrefEnrichmentSagaContext(CallbackStateMixin):
+    """Minimal durable saga identity carried across callback boundaries."""
 
-    Full user skill data is persisted to the DB by persist_skill_enrichment
-    (user_skills_data column), so only a minimal ~80-byte context is needed here.
-
-    Attributes:
-        pref_id: UUID string of the target search preference profile.
-        action: Lifecycle action: "create" or "update".
-
-    """
-
-    pref_id: str
-    action: str
-    embedded_text: str = ""
-    semantic_generation: int = 0
-
-    def to_bytes(self) -> bytes:
-        """Serialize only non-default optional state for compact callback headers."""
-        payload = {"pref_id": self.pref_id, "action": self.action}
-        if self.embedded_text:
-            payload["embedded_text"] = self.embedded_text
-        if self.semantic_generation:
-            payload["semantic_generation"] = self.semantic_generation
-        if self.semantic_hash:
-            payload["semantic_hash"] = self.semantic_hash
-        return json.dumps(payload).encode("utf-8")
-
-    semantic_hash: str = ""
+    saga_id: str
 
 
 def profile_embedding_content_hash(embedded_text: str) -> str:

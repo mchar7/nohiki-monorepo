@@ -45,3 +45,18 @@ test = [
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12"]
 build-backend = "uv_build"
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP002: runtime-selected adapters or deployment extras, installed but not imported here.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+[tool.deptry.per_rule_ignores]
+DEP002 = [
+    "fastembed",
+    "nohiki-common-exceptions",
+    "nohiki-redis-utils",
+    "nohiki-s3-client",
+    "onnxruntime",
+    "pylate",
+    "triton",
+]
+DEP003 = ["opentelemetry"]

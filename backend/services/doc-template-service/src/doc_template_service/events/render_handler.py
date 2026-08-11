@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from nohiki.common.v1 import (
@@ -26,6 +26,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from doc_template_service.core.config import get_settings
 from doc_template_service.core.generator import GenerationError, TextAlternativeMode, generate_document
 from doc_template_service.core.kafka import kafka_client
+from doc_template_service.core.semver_validation import SemanticVersionError, validate_semantic_version
+from doc_template_service.core.validation.orchestrator import validate_data
 from doc_template_service.services import store_rendered_document
 from doc_template_service.services.template_service import get_template_model_by_id
 
@@ -134,11 +136,71 @@ def _validate_render_request(message: DocumentRenderRequested) -> tuple[str, str
             field_name="template_version",
             constraint=f"template_version is required for template_id={template_id}",
         )
+    try:
+        validate_semantic_version(template_version)
+    except SemanticVersionError as exc:
+        raise ValidationError(
+            field_name="template_version",
+            constraint="template_version must be a valid semantic version",
+        ) from exc
 
     return correlation_id, template_id, template_version
 
 
+async def _enforce_content_schema(db: AsyncSession, template_id: str, data: dict[str, Any]) -> None:
+    """Enforce the template version's content schema on the render payload.
+
+    The payload reaches this service either as LLM output from
+    doc-content-service or as caller-supplied data from the BFF. Neither path
+    validates it: doc-content wraps the schema in pydantic-ai's
+    ``StructuredDict``, whose core schema only asserts "dict with string keys"
+    and advertises the JSON Schema to the model without enforcing it on
+    receipt. This is the only gate between that payload and a user-facing
+    document, so it validates against this service's own authoritative
+    ``content_schema`` rather than anything carried on the event.
+
+    A schema violation is permanent: the same payload will never conform on
+    redelivery. It is therefore raised as ``ValidationError``, which the
+    handler already converts into a terminal FAILED ``DocumentRenderCompleted``
+    with ``retryable=False``.
+
+    Templates with no stored schema, and template ids with no row (deleted
+    between publish and render), carry no contract to enforce and are skipped,
+    matching how ``_record_template_usage`` treats the same lookup.
+    """
+    try:
+        parsed_id = UUID(template_id)
+    except ValueError:
+        logger.warning("Skipping content schema enforcement - invalid template_id", template_id=template_id)
+        return
+
+    template = await get_template_model_by_id(db, parsed_id)
+    if template is None:
+        logger.warning("Skipping content schema enforcement - template not found", template_id=template_id)
+        return
+    if not template.content_schema:
+        logger.debug("Skipping content schema enforcement - template declares no schema", template_id=template_id)
+        return
+
+    report = validate_data(data, template.content_schema)
+    if report.valid:
+        return
+
+    detail = "; ".join(f"{issue.path}: {issue.message}" for issue in report.issues)
+    logger.warning(
+        "Render payload violates template content schema",
+        template_id=template_id,
+        reported_issue_count=len(report.issues),
+        issues=detail,
+    )
+    raise ValidationError(
+        field_name="data",
+        constraint=f"render data violates content schema for template_id={template_id}: {detail}",
+    )
+
+
 async def _render_and_store(
+    db: AsyncSession,
     message: DocumentRenderRequested,
     correlation_id: str,
     template_id: str,
@@ -151,6 +213,7 @@ async def _render_and_store(
     template_data = message.data.to_dict() if message.data else {}
     if len(json.dumps(template_data, separators=(",", ":")).encode("utf-8")) > 1024 * 1024:
         raise ValidationError(field_name="data", constraint="render data exceeds 1048576 bytes")
+    await _enforce_content_schema(db, template_id, template_data)
     # _validate_render_request rejects empty/None template_content before this
     # function is reached; ty cannot follow that across calls so re-establish
     # the invariant locally to keep generate_document's str contract.
@@ -345,6 +408,7 @@ async def handle_template_render_requested(
 
     try:
         storage_key, content_type, file_size, content_hash, text_alternative = await _render_and_store(
+            db=db,
             message=message,
             correlation_id=correlation_id,
             template_id=template_id,

@@ -277,7 +277,7 @@ def _record(raw: object, checkout: Path) -> ImageRecord:
     if not isinstance(raw, dict):
         msg = f"image record keys must be exactly {sorted(IMAGE_KEYS)}"
         raise InventoryError(msg)
-    fields = cast(dict[str, object], raw)
+    fields = cast("dict[str, object]", raw)
     if set(fields) != IMAGE_KEYS:
         msg = f"image record keys must be exactly {sorted(IMAGE_KEYS)}"
         raise InventoryError(msg)

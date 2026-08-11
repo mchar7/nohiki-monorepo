@@ -45,7 +45,7 @@ class TestValidateSemanticVersion:
     def test_none_version_raises_error(self) -> None:
         """Test that None version raises SemanticVersionError."""
         with pytest.raises(SemanticVersionError):
-            validate_semantic_version(cast(str, None))
+            validate_semantic_version(cast("str", None))
 
     def test_invalid_format_raises_error(self) -> None:
         """Test that invalid version formats raise SemanticVersionError."""
@@ -60,6 +60,15 @@ class TestValidateSemanticVersion:
 
         with pytest.raises(SemanticVersionError, match="semantic versioning format"):
             validate_semantic_version("1.0.0.0")
+
+        with pytest.raises(SemanticVersionError, match="semantic versioning format"):
+            validate_semantic_version("\u0661.\u0662.\u0663")
+
+        with pytest.raises(SemanticVersionError, match="semantic versioning format"):
+            validate_semantic_version("1.2.3-01")
+
+        with pytest.raises(SemanticVersionError, match="semantic versioning format"):
+            validate_semantic_version("1.2.3-alpha..1")
 
     def test_leading_zeros_raises_error(self) -> None:
         """Test that versions with leading zeros raise SemanticVersionError."""

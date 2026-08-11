@@ -1,13 +1,19 @@
+import re
 import subprocess
 import tarfile
 from pathlib import Path
+from typing import TypeIs
 
 import pytest
 import yaml
 from _documents import (
     Manifest,
+    containers_of,
     load_manifests,
     load_mapping,
+    mapping_at,
+    mapping_sequence_at,
+    string_at,
 )
 from helm_test_utils import runtime_eso_args
 
@@ -16,17 +22,57 @@ _PLATFORM_CHART = _ROOT / "infra" / "k8s" / "helm"
 _FOUNDATION_CHART = _ROOT / "infra" / "k8s" / "helm-foundation"
 _OBSERVABILITY_OVERLAY = _ROOT / "infra" / "k8s" / "observability" / "overlays" / "staging"
 _STAGING_GITOPS = _ROOT / "infra" / "k8s" / "gitops" / "clusters" / "staging-aks"
-_ARCHIVE = _FOUNDATION_CHART / "charts" / "opentelemetry-operator-0.119.0.tgz"
-_MANAGER = (
-    "ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator:0.154.0@sha256:"
-    "263699ffea0c418530b43d95dcd49a125533325a222ffac675cbbf0d63ef035b"
-)
 _OPERATOR_CRDS = {
     "instrumentations.opentelemetry.io",
     "opampbridges.opentelemetry.io",
     "opentelemetrycollectors.opentelemetry.io",
     "targetallocators.opentelemetry.io",
 }
+_PINNED_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}")
+_PINNED_IMAGE = re.compile(r"[A-Za-z0-9./_-]+:[A-Za-z0-9_.-]+@sha256:[0-9a-f]{64}")
+
+
+def _is_mapping(value: object) -> TypeIs[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _mapping(value: object) -> dict[str, object]:
+    assert _is_mapping(value)
+    return value
+
+
+def _mapping_list(value: object) -> list[dict[str, object]]:
+    assert isinstance(value, list)
+    return [_mapping(item) for item in value]
+
+
+def _locked_operator_dependency() -> dict[str, object]:
+    lock = load_mapping(_FOUNDATION_CHART / "Chart.lock")
+    dependencies = mapping_sequence_at(lock, "dependencies")
+    return next(item for item in dependencies if item.get("name") == "opentelemetry-operator")
+
+
+def _operator_archive() -> Path:
+    dependency = _locked_operator_dependency()
+    name = string_at(dependency, "name")
+    version = string_at(dependency, "version")
+    return _FOUNDATION_CHART / "charts" / f"{name}-{version}.tgz"
+
+
+def _archived_mapping(member: str) -> dict[str, object]:
+    with tarfile.open(_operator_archive()) as archive:
+        metadata_file = archive.extractfile(member)
+        assert metadata_file is not None
+        metadata: object = yaml.safe_load(metadata_file)
+    return _mapping(metadata)
+
+
+def _manager_image() -> str:
+    defaults = _archived_mapping("opentelemetry-operator/values.yaml")
+    repository = string_at(defaults, "manager", "image", "repository")
+    values = load_mapping(_FOUNDATION_CHART / "values.yaml")
+    tag = string_at(values, "opentelemetry-operator", "manager", "image", "tag")
+    return f"{repository}:{tag}"
 
 
 def _render_platform() -> tuple[Manifest, ...]:
@@ -94,55 +140,44 @@ def test_foundation_owns_locked_operator_dependency_and_platform_disables_its_co
     platform_values = load_mapping(_PLATFORM_CHART / "values.yaml")
     foundation_values = load_mapping(_FOUNDATION_CHART / "values.yaml")
 
-    chart_dependencies_value = foundation_chart["dependencies"]
-    lock_dependencies_value = foundation_lock["dependencies"]
-    assert isinstance(chart_dependencies_value, list)
-    assert isinstance(lock_dependencies_value, list)
-    assert all(isinstance(item, dict) for item in chart_dependencies_value)
-    assert all(isinstance(item, dict) for item in lock_dependencies_value)
     chart_dependencies = [
         item
-        for item in chart_dependencies_value
-        if isinstance(item, dict) and item.get("name") == "opentelemetry-operator"
+        for item in mapping_sequence_at(foundation_chart, "dependencies")
+        if item.get("name") == "opentelemetry-operator"
     ]
     lock_dependencies = [
         item
-        for item in lock_dependencies_value
-        if isinstance(item, dict) and item.get("name") == "opentelemetry-operator"
+        for item in mapping_sequence_at(foundation_lock, "dependencies")
+        if item.get("name") == "opentelemetry-operator"
     ]
     assert len(chart_dependencies) == len(lock_dependencies) == 1
-    assert chart_dependencies[0].get("version") == lock_dependencies[0].get("version") == "0.119.0"
-    foundation_operator = foundation_values["opentelemetry-operator"]
-    platform_operator = platform_values["opentelemetry-operator"]
-    assert isinstance(foundation_operator, dict)
-    assert isinstance(platform_operator, dict)
+    chart_dependency = chart_dependencies[0]
+    lock_dependency = lock_dependencies[0]
+    assert chart_dependency.get("version") == lock_dependency.get("version")
+    assert chart_dependency.get("repository") == lock_dependency.get("repository")
+    foundation_operator = mapping_at(foundation_values, "opentelemetry-operator")
+    platform_operator = mapping_at(platform_values, "opentelemetry-operator")
     assert foundation_operator.get("enabled") is True
     assert platform_operator.get("enabled") is False
 
-    assert _ARCHIVE.is_file()
-    with tarfile.open(_ARCHIVE) as archive:
-        metadata_file = archive.extractfile("opentelemetry-operator/Chart.yaml")
-        assert metadata_file is not None
-        metadata: object = yaml.safe_load(metadata_file)
-    assert isinstance(metadata, dict)
-    assert metadata.get("version") == "0.119.0"
-    assert metadata.get("appVersion") == "0.154.0"
+    archive_path = _operator_archive()
+    assert archive_path.is_file()
+    metadata = _archived_mapping("opentelemetry-operator/Chart.yaml")
+    assert metadata.get("name") == lock_dependency.get("name")
+    assert metadata.get("version") == lock_dependency.get("version")
+    tag = string_at(foundation_operator, "manager", "image", "tag")
+    assert tag.partition("@")[0] == metadata.get("appVersion")
 
 
 def test_foundation_values_pin_manager_and_preserve_metric_shape() -> None:
     root_values = load_mapping(_FOUNDATION_CHART / "values.yaml")
-    values = root_values["opentelemetry-operator"]
-    assert isinstance(values, dict)
-    manager = values.get("manager")
-    assert isinstance(manager, dict)
-    image = manager.get("image")
-    feature_gates = manager.get("featureGatesMap")
-    service_monitor = manager.get("serviceMonitor")
-    assert isinstance(image, dict)
-    assert isinstance(feature_gates, dict)
-    assert isinstance(service_monitor, dict)
-    assert image.get("tag") == ("0.154.0@sha256:263699ffea0c418530b43d95dcd49a125533325a222ffac675cbbf0d63ef035b")
-    assert feature_gates.get("operator.collector.usedefaulttelemetryshape") is False
+    values = mapping_at(root_values, "opentelemetry-operator")
+    manager = mapping_at(values, "manager")
+    service_monitor = mapping_at(manager, "serviceMonitor")
+    assert _is_mapping(manager.get("image"))
+    assert _is_mapping(manager.get("featureGatesMap"))
+    tag = string_at(manager, "image", "tag")
+    assert _PINNED_TAG.fullmatch(tag)
     assert "featureGates" not in manager
     assert "kubeRBACProxy" not in values
     assert service_monitor.get("enabled") is False
@@ -172,18 +207,12 @@ def test_operator_renders_single_manager_with_secure_metrics(
         "Helm",
     )
 
-    deployment_spec = deployment["spec"]
-    assert isinstance(deployment_spec, dict)
-    template = deployment_spec.get("template")
-    assert isinstance(template, dict)
-    pod_spec = template.get("spec")
-    assert isinstance(pod_spec, dict)
-    containers = pod_spec.get("containers")
-    assert isinstance(containers, list)
+    containers = containers_of(deployment)
     assert len(containers) == 1
     manager = containers[0]
-    assert isinstance(manager, dict)
-    assert manager.get("image") == _MANAGER
+    expected_manager_image = _manager_image()
+    assert manager["image"] == expected_manager_image
+    assert _PINNED_IMAGE.fullmatch(expected_manager_image)
     manager_args = manager.get("args")
     assert isinstance(manager_args, list)
     assert "--metrics-addr=0.0.0.0:8443" in manager_args
@@ -195,32 +224,18 @@ def test_operator_renders_single_manager_with_secure_metrics(
         "path": "/readyz",
         "port": 8081,
     }
-    container_images: list[str] = []
-    for container in containers:
-        assert isinstance(container, dict)
-        image = container.get("image", "")
-        assert isinstance(image, str)
-        container_images.append(image)
-    assert not any("kube-rbac-proxy" in image for image in container_images)
+    assert not any("kube-rbac-proxy" in container["image"] for container in containers)
 
     services = _operator_resources(foundation, "Service")
     assert len(services) == 2
     metrics_services: list[Manifest] = []
     for service in services:
-        service_spec = service["spec"]
-        assert isinstance(service_spec, dict)
-        ports = service_spec.get("ports", [])
-        assert isinstance(ports, list)
-        assert all(isinstance(port, dict) for port in ports)
-        if any(isinstance(port, dict) and port.get("name") == "metrics" for port in ports):
+        ports = _mapping_list(mapping_at(service, "spec").get("ports", []))
+        if any(port.get("name") == "metrics" for port in ports):
             metrics_services.append(service)
     assert len(metrics_services) == 1
-    metrics_spec = metrics_services[0]["spec"]
-    assert isinstance(metrics_spec, dict)
-    metrics_ports = metrics_spec.get("ports")
-    assert isinstance(metrics_ports, list)
-    assert all(isinstance(port, dict) for port in metrics_ports)
-    metrics_port = next(port for port in metrics_ports if isinstance(port, dict) and port.get("name") == "metrics")
+    metrics_ports = mapping_sequence_at(metrics_services[0], "spec", "ports")
+    metrics_port = next(port for port in metrics_ports if port.get("name") == "metrics")
     assert metrics_port == {
         "name": "metrics",
         "port": 8443,
@@ -257,13 +272,8 @@ def test_operator_renders_current_collector_crd_api(
     assert len(collector_crds) == 1
     collector_crd = collector_crds[0]
     assert collector_crd["apiVersion"] == "apiextensions.k8s.io/v1"
-    collector_spec = collector_crd["spec"]
-    assert isinstance(collector_spec, dict)
-    versions_value = collector_spec.get("versions")
-    assert isinstance(versions_value, list)
     versions: dict[str, tuple[object, object]] = {}
-    for version in versions_value:
-        assert isinstance(version, dict)
+    for version in mapping_sequence_at(collector_crd, "spec", "versions"):
         name = version.get("name")
         assert isinstance(name, str)
         versions[name] = (version.get("served"), version.get("storage"))
@@ -286,12 +296,9 @@ def test_operator_renders_current_collector_crd_api(
     infrastructure = load_mapping(_STAGING_GITOPS / "infrastructure.yaml")
     platform = load_mapping(_STAGING_GITOPS / "platform.yaml")
     observability = load_mapping(_STAGING_GITOPS / "observability.yaml")
-    infrastructure_spec = infrastructure["spec"]
-    platform_spec = platform["spec"]
-    observability_spec = observability["spec"]
-    assert isinstance(infrastructure_spec, dict)
-    assert isinstance(platform_spec, dict)
-    assert isinstance(observability_spec, dict)
+    infrastructure_spec = mapping_at(infrastructure, "spec")
+    platform_spec = mapping_at(platform, "spec")
+    observability_spec = mapping_at(observability, "spec")
     assert infrastructure_spec.get("healthChecks") == [
         {
             "apiVersion": "helm.toolkit.fluxcd.io/v2",
@@ -304,11 +311,8 @@ def test_operator_renders_current_collector_crd_api(
     assert platform_spec.get("dependsOn") == [{"name": "infrastructure"}]
     assert observability_spec.get("dependsOn") == [{"name": "platform"}]
     assert observability_spec.get("wait") is False
-    health_checks = observability_spec.get("healthChecks")
-    assert isinstance(health_checks, list)
     otel_health_checks: set[tuple[object, object, str, object]] = set()
-    for check in health_checks:
-        assert isinstance(check, dict)
+    for check in mapping_sequence_at(observability_spec, "healthChecks"):
         kind = check.get("kind")
         name = check.get("name")
         if kind in {"OpenTelemetryCollector", "Deployment"} and isinstance(name, str) and "collector" in name:

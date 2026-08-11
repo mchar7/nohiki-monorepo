@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 from contextlib import AbstractContextManager
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -210,14 +211,14 @@ class TestDisplaySuiteResults:
 
         suite = _make_suite(
             platform=PlatformTarget.KUBERNETES,
-            unexercised_ids=("cdc_end_to_end",),
+            unexercised_ids=("unexercised_check",),
         )
         buf = io.StringIO()
         display_suite_results(suite, Console(file=buf, no_color=True, markup=False))
 
         output = buf.getvalue()
         assert "INCOMPLETE COVERAGE" in output
-        assert "cdc_end_to_end" in output
+        assert "unexercised_check" in output
         assert "SYSTEMS OPERATIONAL" not in output
 
     def test_verbose_includes_detail_lines(self) -> None:
@@ -296,7 +297,7 @@ class TestDisplayJson:
 
         suite = _make_suite(
             platform=PlatformTarget.KUBERNETES,
-            unexercised_ids=("cdc_end_to_end",),
+            unexercised_ids=("unexercised_check",),
         )
         buf = io.StringIO()
         display_json(suite, Console(file=buf, no_color=True, markup=False, highlight=False))
@@ -311,7 +312,7 @@ class TestDisplayJson:
             "unexercised": 1,
             "total": 2,
         }
-        assert data["unexercised_ids"] == ["cdc_end_to_end"]
+        assert data["unexercised_ids"] == ["unexercised_check"]
 
 
 class TestDisplaySuiteResultsBoring:
@@ -380,14 +381,14 @@ class TestDisplaySuiteResultsBoring:
 
         suite = _make_suite(
             platform=PlatformTarget.KUBERNETES,
-            unexercised_ids=("cdc_end_to_end",),
+            unexercised_ids=("unexercised_check",),
         )
         display_suite_results_boring(suite)
 
         output = capsys.readouterr().out
         assert "INCOMPLETE" in output
         assert "1/2 passed" in output
-        assert "cdc_end_to_end" in output
+        assert "unexercised_check" in output
         assert "ALL PASSED" not in output
 
 
@@ -631,10 +632,15 @@ class TestInitRunFunction:
         ids = [c.metadata.check_id for c in checks]
         assert "postgres_connectivity" not in ids
 
-    def test_full_kubernetes_run_surfaces_inapplicable_capabilities(self) -> None:
+    def test_full_kubernetes_run_surfaces_missing_cdc_evidence(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
         from health_check.cli.commands.run import _init_run
         from health_check.platform.models import PlatformTarget
 
+        monkeypatch.setenv("CDC_ACCEPTANCE_EVIDENCE", str(tmp_path / "missing-live-cdc.json"))
         mock_platform = mock.MagicMock()
         mock_platform.target = PlatformTarget.KUBERNETES
         with mock.patch("health_check.cli.commands.run.get_platform", return_value=mock_platform):
@@ -682,7 +688,7 @@ class TestRunSuiteFunction:
             mock_platform,
             console,
             show_progress=False,
-            unexercised_ids=("cdc_end_to_end",),
+            unexercised_ids=("unexercised_check",),
         )
 
         assert suite.complete is False
@@ -716,7 +722,7 @@ class TestRunCommand:
         suite = _make_suite(
             [CheckStatus.PASSED],
             platform=PlatformTarget.KUBERNETES,
-            unexercised_ids=("cdc_end_to_end",),
+            unexercised_ids=("unexercised_check",),
         )
         with _patched_init_run(suite):
             result = _runner.invoke(app, ["run", "--no-progress", "--output-mode", "boring"])
@@ -734,7 +740,7 @@ class TestRunCommand:
             result = _runner.invoke(app, ["run", "--quiet", "--no-progress"])
         assert result.exit_code == 0
 
-    def test_no_checks_exits_0(self) -> None:
+    def test_unfiltered_no_checks_preserves_full_suite_exit_0(self) -> None:
         platform = mock.MagicMock()
         platform.target = PlatformTarget.COMPOSE
         with mock.patch.multiple(
@@ -743,6 +749,25 @@ class TestRunCommand:
         ):
             result = _runner.invoke(app, ["run", "--output-mode", "boring"])
         assert result.exit_code == 0
+
+    @pytest.mark.parametrize(
+        "filter_args",
+        [
+            ["--check", "fake_check"],
+            ["--exclude", "fake_check"],
+        ],
+    )
+    def test_explicit_filter_matching_no_checks_exits_1(self, filter_args: list[str]) -> None:
+        platform = mock.MagicMock()
+        platform.target = PlatformTarget.COMPOSE
+        with mock.patch.multiple(
+            "health_check.cli.commands.run",
+            _init_run=mock.MagicMock(return_value=(platform, [], ())),
+        ):
+            result = _runner.invoke(app, ["run", "--output-mode", "boring", *filter_args])
+
+        assert result.exit_code == 1
+        assert "No checks matched" in result.output
 
     def test_no_checks_exits_1_when_capabilities_remain_unexercised(self) -> None:
         platform = mock.MagicMock()

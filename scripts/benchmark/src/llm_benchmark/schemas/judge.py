@@ -29,13 +29,6 @@ class CategoryScore(BaseModel):
     reasoning: Annotated[str, Field(min_length=10, max_length=60)]
 
 
-class Disqualification(BaseModel):
-    """Legacy critical-failure record loaded from older checkpoints only."""
-
-    category: str
-    reason: Annotated[str, Field(min_length=10, max_length=500)]
-
-
 class PointwiseJudgment(BaseModel):
     """Residual subjective assessment for one blinded extraction output.
 
@@ -62,13 +55,3 @@ class PointwiseJudgment(BaseModel):
     def average_score(self) -> float:
         """Mean score across residual categories."""
         return sum(self.category_scores.values()) / len(CATEGORY_NAMES)
-
-    @property
-    def disqualifications(self) -> list[Disqualification]:
-        """Subjective evaluation never creates critical-failure flags."""
-        return []
-
-    @property
-    def is_disqualified(self) -> bool:
-        """Subjective evaluation cannot disqualify a treatment."""
-        return False

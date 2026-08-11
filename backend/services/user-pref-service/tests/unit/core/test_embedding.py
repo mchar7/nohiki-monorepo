@@ -11,45 +11,27 @@ from nohiki_common_exceptions import ValidationError
 from nohiki_embedding_client import EmbeddingPublisher, EmbeddingSpec
 from user_pref_service.core.embedding import (
     PREF_EMBEDDING_SPEC,
-    PrefEmbeddingState,
+    PrefEnrichmentSagaContext,
     build_profile_embedding_text,
     get_embedding_publisher,
     profile_embedding_content_hash,
 )
 
 
-class TestPrefEmbeddingState:
-    """Tests for PrefEmbeddingState serialization round-trip."""
+class TestPrefEnrichmentSagaContext:
+    """Tests for the minimal durable saga callback carrier."""
 
     def test_round_trip(self) -> None:
-        """Serialization and deserialization are inverse operations."""
-        state = PrefEmbeddingState(pref_id="abc-123", action="create")
-        restored = PrefEmbeddingState.from_bytes(state.to_bytes())
-        assert restored.pref_id == "abc-123"
-        assert restored.action == "create"
-
-    def test_round_trip_update_action(self) -> None:
-        """Update action survives serialization round-trip."""
-        state = PrefEmbeddingState(pref_id="abc-123", action="update")
-        restored = PrefEmbeddingState.from_bytes(state.to_bytes())
-        assert restored.action == "update"
+        state = PrefEnrichmentSagaContext(saga_id="f47ac10b-58cc-4372-a567-0e02b2c3d479")
+        assert PrefEnrichmentSagaContext.from_bytes(state.to_bytes()) == state
 
     def test_from_bytes_ignores_unknown_fields(self) -> None:
-        """Unknown fields in serialized data are silently ignored (defensive deserialization)."""
-        data = json.dumps({"pref_id": "x", "action": "create", "legacy_field": "ignored"}).encode()
-        state = PrefEmbeddingState.from_bytes(data)
-        assert state.pref_id == "x"
-        assert state.action == "create"
+        data = json.dumps({"saga_id": "abc", "legacy_field": "ignored"}).encode()
+        assert PrefEnrichmentSagaContext.from_bytes(data).saga_id == "abc"
 
-    def test_payload_size_is_minimal(self) -> None:
-        """State serializes to under 100 bytes: no bulk data inline per plan Appendix D."""
-        state = PrefEmbeddingState(pref_id="f47ac10b-58cc-4372-a567-0e02b2c3d479", action="create")
-        assert len(state.to_bytes()) < 100
-
-    def test_unicode_round_trip(self) -> None:
-        """Non-ASCII pref_id characters survive serialization."""
-        state = PrefEmbeddingState(pref_id="pref-\u00e9\u00e0", action="create")
-        assert PrefEmbeddingState.from_bytes(state.to_bytes()).pref_id == "pref-\u00e9\u00e0"
+    def test_payload_contains_only_saga_identity(self) -> None:
+        state = PrefEnrichmentSagaContext(saga_id="f47ac10b-58cc-4372-a567-0e02b2c3d479")
+        assert json.loads(state.to_bytes()) == {"saga_id": state.saga_id}
 
 
 class TestPrefEmbeddingSpec:

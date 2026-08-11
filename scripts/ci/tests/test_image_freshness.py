@@ -45,7 +45,7 @@ def _skopeo_must_not_run(args: list[str]) -> Never:
 def test_collect_pins_matches_platform_case_and_dedupes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(freshness, "REPO_ROOT", tmp_path)
     (tmp_path / "Dockerfile").write_text(
-        f"FROM --platform=linux/amd64 docker.io/library/python:3.14-slim@sha256:{_DIGEST}\n"
+        f"FROM --platform=linux/amd64 docker.io/library/python:98.76-slim@sha256:{_DIGEST}\n"
         f"from quay.io/x/y:1.0@sha256:{_DIGEST}\n"
         "FROM scratch\n"
         "FROM alpine:3.20\n",
@@ -59,7 +59,7 @@ def test_collect_pins_matches_platform_case_and_dedupes(monkeypatch: pytest.Monk
     pins = freshness.collect_pins(["Dockerfile", "other.Dockerfile"])
 
     assert pins == {
-        f"docker.io/library/python:3.14-slim@sha256:{_DIGEST}": ["Dockerfile"],
+        f"docker.io/library/python:98.76-slim@sha256:{_DIGEST}": ["Dockerfile"],
         f"quay.io/x/y:1.0@sha256:{_DIGEST}": ["Dockerfile", "other.Dockerfile"],
     }
 
@@ -70,8 +70,8 @@ def test_collect_pins_covers_copy_from_and_checksum_but_not_build_stages(
 ) -> None:
     monkeypatch.setattr(freshness, "REPO_ROOT", tmp_path)
     (tmp_path / "Dockerfile").write_text(
-        f"FROM public.ecr.aws/docker/library/python:3.14-slim@sha256:{_DIGEST} AS builder\n"
-        f"COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:{_OTHER} /uv /usr/local/bin/uv\n"
+        f"FROM public.ecr.aws/docker/library/python:98.76-slim@sha256:{_DIGEST} AS builder\n"
+        f"COPY --from=ghcr.io/astral-sh/uv:98.76.54@sha256:{_OTHER} /uv /usr/local/bin/uv\n"
         f"COPY --chown=app:app --from=quay.io/x/y:1.0@sha256:{_OTHER} /y /usr/local/bin/y\n"
         f"ADD --chmod=0555 --checksum=sha256:{_CHECKSUM} \\\n"
         f"    {_URL} /usr/local/bin/kubectl\n"
@@ -85,8 +85,8 @@ def test_collect_pins_covers_copy_from_and_checksum_but_not_build_stages(
     pins = freshness.collect_pins(["Dockerfile"])
 
     assert pins == {
-        f"public.ecr.aws/docker/library/python:3.14-slim@sha256:{_DIGEST}": ["Dockerfile"],
-        f"ghcr.io/astral-sh/uv:0.11.28@sha256:{_OTHER}": ["Dockerfile"],
+        f"public.ecr.aws/docker/library/python:98.76-slim@sha256:{_DIGEST}": ["Dockerfile"],
+        f"ghcr.io/astral-sh/uv:98.76.54@sha256:{_OTHER}": ["Dockerfile"],
         f"quay.io/x/y:1.0@sha256:{_OTHER}": ["Dockerfile"],
         _URL: ["Dockerfile"],
     }

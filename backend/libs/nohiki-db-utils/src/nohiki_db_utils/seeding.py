@@ -62,6 +62,11 @@ logger = get_logger(__name__)
 SEEDING_LOCK_TIMEOUT_DEFAULT = 120
 SEEDING_POLL_INTERVAL = 1
 
+# Two-key advisory locks occupy a namespace separate from one-key seed locks. This is the same
+# constant the migration guard uses; see migrations/lock.py for the three properties it rests on
+# that no test here verifies, the crc32 collision case between the two prefixes included.
+_LOCK_METADATA_GUARD_NAMESPACE = 0x4E4F4849
+
 # SQLAlchemy table definitions for seeding coordination
 _seed_meta = MetaData()
 
@@ -218,7 +223,6 @@ async def _set_lock_metadata(
         set_={"acquired_at": now, "holder_id": holder_id, "seed_name": seed_name},
     )
     await conn.execute(upsert_stmt)
-    await conn.commit()
 
 
 async def _get_lock_metadata(
@@ -242,7 +246,6 @@ async def _get_lock_metadata(
 async def _clear_lock_metadata(conn: AsyncConnection, lock_id: int) -> None:
     """Clear lock metadata after release."""
     await conn.execute(delete(seed_lock_meta_table).where(seed_lock_meta_table.c.lock_id == lock_id))
-    await conn.commit()
 
 
 async def _try_acquire_lock(conn: AsyncConnection, lock_id: int) -> bool:
@@ -254,6 +257,69 @@ async def _try_acquire_lock(conn: AsyncConnection, lock_id: int) -> bool:
 async def _release_lock(conn: AsyncConnection, lock_id: int) -> None:
     """Release advisory lock."""
     await conn.execute(select(func.pg_advisory_unlock(lock_id)))
+
+
+async def _acquire_metadata_guard(conn: AsyncConnection, lock_id: int) -> None:
+    """Serialize advisory-lock ownership changes with metadata changes."""
+    await conn.execute(select(func.pg_advisory_xact_lock(_LOCK_METADATA_GUARD_NAMESPACE, lock_id)))
+
+
+async def _acquire_lock_with_metadata(
+    conn: AsyncConnection,
+    lock_id: int,
+    ctx: SeedContext,
+) -> tuple[bool, tuple[datetime, str, str] | None]:
+    """Acquire the seed lock and observe holder metadata under the same guard."""
+    await _acquire_metadata_guard(conn, lock_id)
+    acquired = False
+    try:
+        acquired = await _try_acquire_lock(conn, lock_id)
+        metadata = None
+        if acquired:
+            await _set_lock_metadata(conn, lock_id, ctx.pod_id, ctx.seed_name)
+        else:
+            metadata = await _get_lock_metadata(conn, lock_id)
+        await conn.commit()
+    except Exception, asyncio.CancelledError:
+        try:
+            if acquired:
+                await _release_lock(conn, lock_id)
+        finally:
+            await conn.rollback()
+        raise
+    return acquired, metadata
+
+
+async def _release_lock_with_metadata(conn: AsyncConnection, lock_id: int) -> None:
+    """Release the seed lock and remove metadata as one observable transition."""
+    await _acquire_metadata_guard(conn, lock_id)
+    try:
+        await _release_lock(conn, lock_id)
+        await _clear_lock_metadata(conn, lock_id)
+        await conn.commit()
+    except Exception, asyncio.CancelledError:
+        await conn.rollback()
+        raise
+
+
+async def _probe_lock_released(conn: AsyncConnection, lock_id: int) -> bool:
+    """Report whether the seed lock is free, without ever owning it observably.
+
+    The probe takes the lock to learn it is free, which makes the prober a momentary owner
+    with no metadata row. Holding the metadata guard across the probe keeps that momentary
+    ownership invisible to a contender in ``_acquire_lock_with_metadata``, which would
+    otherwise read no metadata and treat that state as impossible.
+    """
+    await _acquire_metadata_guard(conn, lock_id)
+    try:
+        released = await _try_acquire_lock(conn, lock_id)
+        if released:
+            await _release_lock(conn, lock_id)
+        await conn.commit()
+    except Exception, asyncio.CancelledError:
+        await conn.rollback()
+        raise
+    return released
 
 
 async def _wait_for_lock_release(
@@ -270,8 +336,7 @@ async def _wait_for_lock_release(
 
     while elapsed < max_wait_seconds:
         poll_count += 1
-        if await _try_acquire_lock(conn, lock_id):
-            await _release_lock(conn, lock_id)
+        if await _probe_lock_released(conn, lock_id):
             logger.info(
                 "Seed lock released by holder",
                 service=ctx.service_name,
@@ -358,7 +423,6 @@ async def _run_with_lock(
         seed_name=ctx.seed_name,
         lock_id=lock_id,
     )
-    await _set_lock_metadata(conn, lock_id, ctx.pod_id, ctx.seed_name)
 
     try:
         await _execute_seeding(conn, ctx, seed_function)
@@ -382,8 +446,8 @@ async def _run_with_lock(
         state.completed_at = time.time()
         raise
     finally:
-        await _clear_lock_metadata(conn, lock_id)
-        await _release_lock(conn, lock_id)
+        await conn.rollback()
+        await _release_lock_with_metadata(conn, lock_id)
         logger.info(
             "Seed lock released",
             service=ctx.service_name,
@@ -397,41 +461,36 @@ async def _handle_lock_not_acquired(
     lock_id: int,
     ctx: SeedContext,
     state: SeedingState,
+    lock_meta: tuple[datetime, str, str] | None,
 ) -> None:
     """Handle case when lock is held by another pod."""
-    lock_meta = await _get_lock_metadata(conn, lock_id)
+    if lock_meta is None:
+        msg = "Seed lock metadata missing"
+        raise SeedingError(msg)
 
-    if lock_meta:
-        acquired_at, holder_id, _ = lock_meta
-        age_seconds = (datetime.now(UTC) - acquired_at).total_seconds()
+    acquired_at, holder_id, _ = lock_meta
+    age_seconds = (datetime.now(UTC) - acquired_at).total_seconds()
 
-        logger.info(
-            "Seed lock held by another pod",
+    logger.info(
+        "Seed lock held by another pod",
+        service=ctx.service_name,
+        seed_name=ctx.seed_name,
+        holder_pod=holder_id,
+        lock_age_seconds=round(age_seconds, 1),
+        max_wait_seconds=ctx.timeout_seconds,
+    )
+
+    if age_seconds > ctx.timeout_seconds:
+        logger.warning(
+            "Stale seed lock detected",
             service=ctx.service_name,
             seed_name=ctx.seed_name,
             holder_pod=holder_id,
             lock_age_seconds=round(age_seconds, 1),
-            max_wait_seconds=ctx.timeout_seconds,
+            timeout_seconds=ctx.timeout_seconds,
         )
 
-        if age_seconds > ctx.timeout_seconds:
-            logger.warning(
-                "Stale seed lock detected",
-                service=ctx.service_name,
-                seed_name=ctx.seed_name,
-                holder_pod=holder_id,
-                lock_age_seconds=round(age_seconds, 1),
-                timeout_seconds=ctx.timeout_seconds,
-            )
-
-        remaining_wait = max(0, ctx.timeout_seconds - age_seconds)
-    else:
-        logger.info(
-            "Seed lock held (no metadata - legacy lock)",
-            service=ctx.service_name,
-            seed_name=ctx.seed_name,
-        )
-        remaining_wait = ctx.timeout_seconds
+    remaining_wait = max(0, ctx.timeout_seconds - age_seconds)
 
     # Wait for lock release
     await _wait_for_lock_release(conn, lock_id, int(remaining_wait) + 5, ctx)
@@ -534,7 +593,7 @@ async def run_seeding_with_coordination(
     # Generate unique lock ID from service name and seed name
     lock_id = zlib.crc32(f"seed:{config.service_name}:{config.seed_name}".encode()) & 0x7FFFFFFF
 
-    engine: AsyncEngine = create_async_engine_with_ssl(config.database_url, isolation_level="AUTOCOMMIT")
+    engine: AsyncEngine = create_async_engine_with_ssl(config.database_url)
 
     ctx = SeedContext(
         service_name=config.service_name,
@@ -549,6 +608,7 @@ async def run_seeding_with_coordination(
         async with engine.connect() as conn:
             # Ensure coordination tables exist
             await _ensure_seed_tables(conn)
+            await conn.commit()
 
             # Check if target version already applied
             current_version = await _get_seed_version(conn, config.seed_name)
@@ -591,12 +651,13 @@ async def run_seeding_with_coordination(
                 lock_id=lock_id,
             )
 
-            acquired = await _try_acquire_lock(conn, lock_id)
+            await conn.rollback()
+            acquired, lock_meta = await _acquire_lock_with_metadata(conn, lock_id, ctx)
 
             if acquired:
                 await _run_with_lock(conn, lock_id, ctx, seed_function, state)
             else:
-                await _handle_lock_not_acquired(conn, lock_id, ctx, state)
+                await _handle_lock_not_acquired(conn, lock_id, ctx, state, lock_meta)
 
     except SeedingError:
         raise

@@ -172,7 +172,7 @@ candidate IDs to detect hallucinations before being applied.
 
 Schema `job_ingest_enrichment_schema` stores the embedding saga rows that track convergence of parallel
 embedding callbacks during enrichment. The schema also contains the standard outbox and processed-events
-tables used by all stateful services. See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+tables used by all stateful services. See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ### Vector Store
 

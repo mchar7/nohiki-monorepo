@@ -124,9 +124,12 @@ global:
 
   # Kafka configuration (Strimzi in-cluster)
   kafka:
+    # renovate: datasource=maven depName=org.apache.kafka:kafka_2.13
     version: "4.3.0"
     bootstrapServers: nohiki-kafka-kafka-bootstrap:9092
     dsn: "kafka://nohiki-kafka-kafka-bootstrap:9092"
+    bootstrapGate:
+      enabled: true
     security:
       protocol: PLAINTEXT
 
@@ -229,6 +232,7 @@ strimzi:
 kafkaCluster:
   enabled: true
   name: nohiki-kafka
+  # renovate: datasource=maven depName=org.apache.kafka:kafka_2.13
   version: "4.3.0"
   replicas: 1
   resources:
@@ -290,7 +294,6 @@ rustfs:
   ingress:
     enabled: false
   persistence:
-    storageClass: local-path
     size: 2Gi
   # No PDB for single replica
   pdb:
@@ -439,6 +442,11 @@ ml-gateway-service:
 ml-compute-service:
   enabled: true
   image: *localFirstPartyImage
+  extraEnv:
+    - name: FASTEMBED_CACHE_PATH
+      value: /home/app/.cache/fastembed
+    - name: HF_HOME
+      value: /home/app/.cache/huggingface
   scaling:
     enabled: true
     minReplicas: 1
@@ -535,6 +543,8 @@ mimir-distributed:
     structuredConfig:
       ingest_storage:
         enabled: false
+      ingester:
+        push_grpc_method_enabled: true
       common:
         storage:
           s3:

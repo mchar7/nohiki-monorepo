@@ -9,6 +9,17 @@
 # unrelated issue as part of the same branch before merging.
 
 min_version: 2.1.10
+# Repo-carried: do not regenerate hooks from config alone. Publishing checkouts
+# must not depend on the gitignored lefthook-local.yml overlay for this.
+# A bare `lefthook run` reinstalls hooks from Lefthook's own template before
+# running them. This repository's hooks are a hardened wrapper that pins and
+# digest-verifies every binary it invokes, so that regeneration silently
+# replaces integrity checks with an unverified shim. The same setting exists in
+# a developer's gitignored lefthook-local.yml, which is exactly why it has to
+# live here too: linked worktrees have no local override, and their
+# core.hooksPath points at the primary checkout's hooks directory, so a push
+# from any worktree would rewrite the primary's hardened hook.
+no_auto_install: true
 
 output:
   - meta
@@ -94,7 +105,6 @@ pre-commit:
         - "*.md"
         - ".markdownlint-cli2.jsonc"
         - ".markdownlintignore"
-        - ".markdownlint.json"
       exclude:
         - "**/node_modules/**"
       run: |
@@ -109,7 +119,6 @@ pre-commit:
           ':(glob)**/*.md' \
           '.markdownlint-cli2.jsonc' \
           '.markdownlintignore' \
-          '.markdownlint.json' > "$paths"
         xargs -0 -r scripts/dev/env-lock.sh shared node_modules -- pnpm exec markdownlint-cli2 --fix -- < "$paths"
       stage_fixed: true
 
@@ -153,18 +162,32 @@ pre-commit:
 # Phased execution: typecheck -> tests -> hygiene
 pre-push:
   jobs:
+    # `use_stdin` is what makes git's ref pairs reach this job at all: without it
+    # Lefthook hands job commands an empty standard input. The envelope needs them
+    # to prove the worktree it is about to examine is the tree being published.
     - skip:
         - run: test "${NOHIKI_GATE_ACTIVE:-0}" = 1
+      use_stdin: true
+      run: exec scripts/dev/prepush-gate.sh {1} {2}
+
+    # Proof that the inner pass selected a non-empty file set. An empty selection
+    # skips every job, unglobbed ones included, and exits zero; the envelope reads
+    # the absence of this marker as exactly that condition and fails the push.
+    # Deliberately unglobbed and trivial: it must never be the thing that fails.
+    - name: gate-liveness
+      skip: &unless_gate_active
+        - run: test "${NOHIKI_GATE_ACTIVE:-0}" != 1
       run: |
-        exec scripts/dev/env-lock.sh gate pre-push -- \
-          scripts/dev/test-run.sh gate -- \
-          env NOHIKI_GATE_ACTIVE=1 lefthook run pre-push
+        set -eu
+        if [ -n "${NOHIKI_GATE_LIVENESS:-}" ]; then
+          : >"$NOHIKI_GATE_LIVENESS"
+        fi
 
     # Scan only the commits being pushed. Whole-history scans include unrelated worktree branches.
     # No glob: secrets can appear in any file type, so path filtering would create blind spots.
     - name: secrets-scan
-      skip: &unless_gate_active
-        - run: test "${NOHIKI_GATE_ACTIVE:-0}" != 1
+      skip: *unless_gate_active
+      use_stdin: true
       run: |
         set -eu
         refs=$(cat)
@@ -174,7 +197,30 @@ pre-push:
               echo "ERROR: malformed pre-push ref input" >&2
               exit 1
             fi
-            just secrets-scan-range "$remote_sha..$local_sha"
+            zero=0000000000000000000000000000000000000000
+            # A deletion publishes no commits, so there is nothing to scan.
+            if [ "$local_sha" = "$zero" ]; then
+              continue
+            fi
+            # A new remote branch reports an all-zero remote sha, and
+            # "$zero..$local_sha" is not a revision range: git rejects it and
+            # gitleaks reports the resulting error as "no leaks found", which is a
+            # pass having scanned nothing. Bound it by the integration branch
+            # instead, matching the no-stdin fallback below.
+            if [ "$remote_sha" = "$zero" ]; then
+              range="origin/main..$local_sha"
+            else
+              range="$remote_sha..$local_sha"
+            fi
+            if ! count=$(git rev-list --count "$range" 2>/dev/null); then
+              echo "ERROR: cannot resolve push range $range" >&2
+              exit 1
+            fi
+            if [ "$count" -eq 0 ]; then
+              echo "secrets-scan: no commits in $range; nothing to scan" >&2
+            else
+              just secrets-scan-range "$range"
+            fi
           done
         else
           range='@{push}..HEAD'
@@ -315,6 +361,17 @@ pre-push:
               - ".npmrc"
             run: just edge-test
 
+    # Opt-in counterpart to the hosted PostgreSQL integration step. It is excluded from
+    # routine pre-push because the real-database tests carry `requires_docker`.
+    - name: job-correlation-integration
+      skip:
+        - run: test "${NOHIKI_GATE_ACTIVE:-0}" != 1
+        - run: test "${NOHIKI_INTEGRATION_GATE_ACTIVE:-0}" != 1
+      run: scripts/dev/env-lock.sh shared venv -- uv run --no-sync ci-checks tests all --scope services --packages job-correlation-evaluation-service --integration --ci --workers 1 --no-coverage
+      env:
+        OTEL_SDK_DISABLED: "true"
+        UV_NO_SYNC: "1"
+
     # Phase 3: Code Hygiene (parallel, runs after tests)
     - skip: *unless_gate_active
       group:
@@ -437,6 +494,7 @@ pre-push:
         - "proto/**/*.proto"
         - "proto/buf.yaml"
         - "proto/buf.lock"
+        - "proto/.breaking-allowlist.json"
         - "scripts/proto_gen/*.py"
         - "scripts/proto_gen/**/*.py"
         - "scripts/proto_gen/pyproject.toml"

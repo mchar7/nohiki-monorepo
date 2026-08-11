@@ -124,10 +124,11 @@ class TestHandleTrainingExportRequested:
         mock_service.export_training_data = AsyncMock(
             return_value=[
                 {
-                    "correlation_id": uuid4(),
+                    "correlation_id": str(uuid4()),
                     "label": 1.0,
                     "features": [0.1, 0.2, 0.3],
-                    "query_id": uuid4(),
+                    "query_id": str(uuid4()),
+                    "feature_schema_version": "test",
                 },
             ]
         )
@@ -162,6 +163,9 @@ class TestHandleTrainingExportRequested:
 
             mock_service.export_training_data.assert_awaited_once()
             mock_kafka_client.publish.assert_awaited_once()
+            event = mock_kafka_client.publish.call_args.args[1]
+            assert event.success.samples[0].label == pytest.approx(1.0)
+            assert event.success.samples[0].features == pytest.approx([0.1, 0.2, 0.3])
 
     @pytest.mark.asyncio
     async def test_uses_default_limit_when_zero(self) -> None:
@@ -275,98 +279,6 @@ class TestHandleTrainingExportRequested:
             call_kwargs = mock_service.export_training_data.call_args.kwargs
             assert call_kwargs["min_date"] is None
             assert call_kwargs["max_date"] is None
-
-    @pytest.mark.asyncio
-    async def test_handles_label_as_list(self) -> None:
-        """Test that label as list is handled correctly."""
-        mock_service = MagicMock()
-        mock_service.export_training_data = AsyncMock(
-            return_value=[
-                {
-                    "correlation_id": uuid4(),
-                    "label": [1.0],
-                    "features": [0.1, 0.2],
-                    "query_id": uuid4(),
-                },
-            ]
-        )
-
-        mock_message = MagicMock()
-        mock_message.command.operation_id = "test-request"
-        mock_message.command.callback_topic = "custom-topic"
-        mock_message.command.caller_context = b""
-        mock_message.command.attributes = {}
-        mock_message.limit = 100
-        mock_message.min_date = ""
-        mock_message.max_date = ""
-
-        mock_db = create_mock_session()
-        context = _make_context(db_session=mock_db)
-
-        with (
-            patch("job_correlation_evaluation_service.events.feedback_handlers.CorrelationRepository"),
-            patch(
-                "job_correlation_evaluation_service.events.feedback_handlers.CorrelationFeedbackService"
-            ) as mock_service_class,
-            patch("job_correlation_evaluation_service.events.feedback_handlers.kafka_client") as mock_kafka_client,
-        ):
-            mock_kafka_client.publish = AsyncMock()
-            mock_service_class.return_value = mock_service
-
-            from job_correlation_evaluation_service.events.feedback_handlers import (
-                handle_training_export_requested,
-            )
-
-            await handle_training_export_requested(mock_message, context)
-
-            mock_kafka_client.publish.assert_awaited_once()
-            call_args = mock_kafka_client.publish.call_args
-            assert call_args.args[0] == "custom-topic"
-
-    @pytest.mark.asyncio
-    async def test_handles_non_numeric_label(self) -> None:
-        """Test that non-numeric labels default to 0.0."""
-        mock_service = MagicMock()
-        mock_service.export_training_data = AsyncMock(
-            return_value=[
-                {
-                    "correlation_id": uuid4(),
-                    "label": None,
-                    "features": [],
-                    "query_id": uuid4(),
-                },
-            ]
-        )
-
-        mock_message = MagicMock()
-        mock_message.command.operation_id = "test-request"
-        mock_message.command.callback_topic = ""
-        mock_message.command.caller_context = b""
-        mock_message.command.attributes = {}
-        mock_message.limit = 100
-        mock_message.min_date = ""
-        mock_message.max_date = ""
-
-        mock_db = create_mock_session()
-        context = _make_context(db_session=mock_db)
-
-        with (
-            patch("job_correlation_evaluation_service.events.feedback_handlers.CorrelationRepository"),
-            patch(
-                "job_correlation_evaluation_service.events.feedback_handlers.CorrelationFeedbackService"
-            ) as mock_service_class,
-            patch("job_correlation_evaluation_service.events.feedback_handlers.kafka_client") as mock_kafka_client,
-        ):
-            mock_kafka_client.publish = AsyncMock()
-            mock_service_class.return_value = mock_service
-
-            from job_correlation_evaluation_service.events.feedback_handlers import (
-                handle_training_export_requested,
-            )
-
-            await handle_training_export_requested(mock_message, context)
-
-            mock_kafka_client.publish.assert_awaited_once()
 
 
 class TestHandleScoreFeedbackRequested:

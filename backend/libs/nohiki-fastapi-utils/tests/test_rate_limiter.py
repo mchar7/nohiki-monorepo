@@ -50,14 +50,12 @@ class TestRateLimitExceededHTTP:
 class TestGetClientId:
     """Tests for get_client_id function."""
 
-    def test_returns_user_id_when_present(self) -> None:
-        """Test returns user ID from header."""
+    def test_unverified_account_header_without_peer_is_ignored(self) -> None:
         request = MagicMock(spec=Request)
         request.headers = {"X-Account-ID": "user-123"}
         request.client = None
 
-        result = get_client_id(request)
-        assert result == "user:user-123"
+        assert get_client_id(request) == "ip:unknown"
 
     def test_forwarded_for_without_peer_is_untrusted(self) -> None:
         request = MagicMock(spec=Request)
@@ -519,18 +517,8 @@ class TestRateLimitMiddleware:
         assert int(limited_response.headers["Retry-After"]) >= 1
 
 
-class TestGetClientIdFallbacks:
-    """Tests for get_client_id header fallback paths."""
-
-    def test_uses_x_account_id_header(self) -> None:
-        """get_client_id falls back to X-Account-ID header when JWT unavailable."""
-        mock_request = MagicMock(spec=Request)
-        mock_request.headers = {"X-Account-ID": "user-abc"}
-
-        with patch("nohiki_fastapi_utils.rate_limiter._extract_verified_user_id", return_value=None):
-            result = get_client_id(mock_request)
-
-        assert result == "user:user-abc"
+class TestGetClientIdVerification:
+    """Tests for verified client identity."""
 
     def test_uses_verified_jwt_user_id(self) -> None:
         """get_client_id uses verified JWT user ID when available."""

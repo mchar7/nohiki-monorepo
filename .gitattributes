@@ -1,1 +1,3 @@
 infra/k8s/gitops/gateway-api-crds/gateway-api-crds.yaml -whitespace
+# Preserve the Gradle Windows launcher CRLF while checking its other whitespace.
+jvm/nohiki-wal-router-smt/gradlew.bat whitespace=cr-at-eol

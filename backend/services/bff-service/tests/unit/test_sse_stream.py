@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bff_service.core.config import SSESettings
 from bff_service.sse.bridge import SSEBridge, StreamEvent
-from bff_service.sse.events import SSE_EVENT_DOCUMENT_STATUS
+from bff_service.sse.events import SSE_EVENT_COMMAND_STATUS, SSE_EVENT_DOCUMENT_STATUS
 from bff_service.sse.stream import SSEStreamContext, sse_event_generator
 from nohiki_fastapi_utils import JWTClaims
 from sqlalchemy.exc import OperationalError
@@ -249,6 +249,7 @@ async def test_snapshot_is_scoped_and_uses_captured_tail_for_lossless_live_repla
     assert USER_ID in query_parameters
     assert REQUEST_ID in query_parameters
     assert [event.id for event in events] == [None, "11-0"]
+    assert [event.event for event in events] == [SSE_EVENT_DOCUMENT_STATUS, SSE_EVENT_DOCUMENT_STATUS]
     assert json.loads(str(events[0].data)) == {
         "type": SSE_EVENT_DOCUMENT_STATUS,
         "request_id": str(REQUEST_ID),
@@ -294,6 +295,73 @@ async def test_retained_cursor_skips_snapshot_and_replays_strictly_after_it() ->
     assert sum(session.execute.await_count for session in factory.sessions) == 0
     assert [(event.id, event.data) for event in events] == [("42-1", replay.data)]
     assert bridge.read_after.await_args.args == (USER_ID, REQUEST_ID, "42-0")
+
+
+@pytest.mark.asyncio
+async def test_profile_command_live_event_uses_payload_event_name() -> None:
+    live_event = StreamEvent(
+        event_id="43-1",
+        data=(
+            '{"type":"command_status","request_id":"aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb",'
+            '"command_type":"create_profile","status":"failed","error_message":"Enrichment failed"}'
+        ),
+        terminal=True,
+    )
+    bridge = _bridge(reads=[[live_event]])
+
+    events = [
+        event
+        async for event in sse_event_generator(
+            USER_ID,
+            _principal(),
+            SSEStreamContext(
+                session_factory=_SessionFactory(),
+                bridge=bridge,
+                settings=_settings(),
+                shutdown_event=asyncio.Event(),
+                event_type=SSE_EVENT_COMMAND_STATUS,
+            ),
+            request_id=REQUEST_ID,
+            last_event_id="43-0",
+        )
+    ]
+
+    assert len(events) == 1
+    assert events[0].event == SSE_EVENT_COMMAND_STATUS
+    assert events[0].data == live_event.data
+
+
+@pytest.mark.asyncio
+async def test_profile_command_snapshot_is_retrievable_as_command_event() -> None:
+    bridge = _bridge(latest_id="44-0")
+    events = [
+        event
+        async for event in sse_event_generator(
+            USER_ID,
+            _principal(),
+            SSEStreamContext(
+                session_factory=_SessionFactory(
+                    [_row(status="completed", command_type="create_profile", error_message=None)]
+                ),
+                bridge=bridge,
+                settings=_settings(),
+                shutdown_event=asyncio.Event(),
+                event_type=SSE_EVENT_COMMAND_STATUS,
+            ),
+            request_id=REQUEST_ID,
+        )
+    ]
+
+    assert len(events) == 1
+    assert events[0].event == SSE_EVENT_COMMAND_STATUS
+    assert json.loads(str(events[0].data)) == {
+        "type": SSE_EVENT_COMMAND_STATUS,
+        "request_id": str(REQUEST_ID),
+        "status": "completed",
+        "command_type": "create_profile",
+        "error_message": None,
+    }
+    bridge.read_after.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -351,8 +419,8 @@ async def test_terminal_snapshot_is_yielded_once_without_opening_live_read() -> 
 
 @pytest.mark.asyncio
 async def test_terminal_live_event_stops_before_later_batch_entries() -> None:
-    terminal = StreamEvent("7-1", '{"status":"completed"}', terminal=True)
-    unreachable = StreamEvent("7-2", '{"status":"pending"}', terminal=False)
+    terminal = StreamEvent("7-1", '{"type":"document_status","status":"completed"}', terminal=True)
+    unreachable = StreamEvent("7-2", '{"type":"document_status","status":"pending"}', terminal=False)
     bridge = _bridge(reads=[[terminal, unreachable]])
 
     events = [

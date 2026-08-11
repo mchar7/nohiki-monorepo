@@ -62,6 +62,7 @@ def _build_upload_snapshot(attachment: Upload) -> UploadSnapshot:
         file_size=attachment.file_size,
         content_hash=attachment.content_hash,
         storage_key=attachment.storage_key,
+        document_category=attachment.category,
         timestamps=timestamps,
     )
 
@@ -126,7 +127,7 @@ async def publish_attachment_deleted_batch(
     if not attachments:
         return
 
-    await cast(_BatchOutboxWriter, outbox).write_events(
+    await cast("_BatchOutboxWriter", outbox).write_events(
         db=db,
         entries=[
             (

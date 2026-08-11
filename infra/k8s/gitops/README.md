@@ -58,9 +58,9 @@ infrastructure  ->  platform  ->  observability
 Both HelmReleases build the chart from the Git source path with
 `reconcileStrategy: Revision`, so every repository revision rebuilds the chart
 even when the chart version is unchanged. They enable drift detection and retry
-remediation. The platform install does not wait (`install.disableWait: true`)
-because a fresh install converges through database migration hooks; upgrades do
-wait so migrations gate the rollout.
+remediation. The local platform install and upgrade do not wait
+(`disableWait: true`) because both paths converge through database migration
+hooks. Nonlocal platform releases retain Helm's default wait behavior.
 
 Helm `valuesFiles` are resolved from the GitRepository root, so every entry is
 written repo-root-relative (for example `infra/k8s/helm/values.yaml`), not

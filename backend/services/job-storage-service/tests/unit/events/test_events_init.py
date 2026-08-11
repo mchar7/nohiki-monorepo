@@ -82,12 +82,6 @@ class TestPublisherExports:
 
         assert callable(publish_listing_accepted_event)
 
-    def test_exports_publish_duplicate_detected_event(self) -> None:
-        """Test that publish_duplicate_detected_event is exported."""
-        from job_storage_service.events import publish_duplicate_detected_event
-
-        assert callable(publish_duplicate_detected_event)
-
 
 class TestAllExports:
     """Tests for __all__ exports."""
@@ -99,7 +93,6 @@ class TestAllExports:
         expected = [
             "PublishContext",
             "build_listing_snapshot",
-            "publish_duplicate_detected_event",
             "publish_listing_accepted_event",
             "publish_listing_created_event",
             "publish_listing_deleted_event",

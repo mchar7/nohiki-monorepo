@@ -9,6 +9,7 @@ from betterproto2 import Casing
 from nohiki.user.pref.v1 import (
     PrefCreated,
     PrefDeleted,
+    PrefEnrichmentFailed,
     PrefUpdated,
     UserPrefSettingsCreated,
     UserPrefSettingsUpdated,
@@ -16,16 +17,23 @@ from nohiki.user.pref.v1 import (
 from nohiki_common_exceptions import ValidationError
 from nohiki_kafka_client import MessageContext, Topics
 from nohiki_observability import get_logger
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from bff_service.core.kafka import kafka_client
-from bff_service.db.models import ProfileProjection, UserPrefSettingsProjection
+from bff_service.db.models import (
+    CommandRequest,
+    ProfileProjection,
+    UserPrefSettingsProjection,
+)
 from bff_service.events.projections._constants import projection_priority_group_id
 from bff_service.events.projections._helpers import (
     get_notification_threshold,
     percent_to_ratio,
 )
+from bff_service.sse import get_sse_bridge
+from bff_service.sse.events import SSE_EVENT_COMMAND_STATUS, CommandStatusPayload
 
 logger = get_logger(__name__)
 
@@ -52,6 +60,37 @@ def _experience_preference(snapshot: object) -> dict[str, object] | None:
         "experience_years": preference.experience_years,
         "seniority_levels": [level.name for level in preference.seniority_levels],
     }
+
+
+async def _mark_correlated_command_completed(
+    session: AsyncSession,
+    message: PrefCreated | PrefUpdated,
+) -> None:
+    """Complete the active command correlated with a terminal preference event."""
+    correlation_id = message.metadata.correlation_id if message.metadata else None
+    if not correlation_id:
+        return
+    raw_user_id = getattr(message, "user_id", None)
+    try:
+        request_id = UUID(correlation_id)
+        user_id = UUID(raw_user_id)
+    except AttributeError, TypeError, ValueError:
+        logger.warning(
+            "Preference terminal event has invalid command identifiers",
+            correlation_id=correlation_id,
+            user_id=raw_user_id,
+        )
+        return
+
+    await session.execute(
+        update(CommandRequest)
+        .where(
+            CommandRequest.request_id == request_id,
+            CommandRequest.user_id == user_id,
+            CommandRequest.status.in_(("pending", "in_progress")),
+        )
+        .values(status="completed", completed_at=datetime.now(UTC))
+    )
 
 
 @kafka_client.message_handler(
@@ -126,6 +165,7 @@ async def handle_profile_created(message: PrefCreated, context: MessageContext) 
         )
     )
     await session.execute(stmt)
+    await _mark_correlated_command_completed(session, message)
     logger.info("Profile projection created", pref_id=snapshot.id)
 
 
@@ -200,7 +240,62 @@ async def handle_profile_updated(message: PrefUpdated, context: MessageContext) 
         )
     )
     await session.execute(stmt)
+    await _mark_correlated_command_completed(session, message)
     logger.info("Profile projection updated", pref_id=snapshot.id)
+
+
+@kafka_client.message_handler(
+    Topics.USER_PREF_ENRICHMENT_FAILED,
+    PrefEnrichmentFailed,
+    group_id=projection_priority_group_id,
+    preserve_partition_order=False,
+)
+@kafka_client.with_db_session()
+async def handle_pref_enrichment_failed(
+    message: PrefEnrichmentFailed,
+    context: MessageContext,
+) -> None:
+    """Project preference enrichment failure onto its tracked command."""
+    try:
+        request_id = UUID(message.request_id)
+        user_id = UUID(message.user_id)
+    except ValueError:
+        logger.warning(
+            "Preference enrichment failure has invalid identifiers",
+            request_id=message.request_id,
+            user_id=message.user_id,
+        )
+        return
+
+    error_message = message.error_message or "Preference enrichment failed"
+    session = context.require_db_session()
+    result = await session.execute(
+        update(CommandRequest)
+        .where(
+            CommandRequest.request_id == request_id,
+            CommandRequest.user_id == user_id,
+            CommandRequest.status.in_(("pending", "in_progress")),
+        )
+        .values(
+            status="failed",
+            error_message=error_message,
+            completed_at=datetime.now(UTC),
+        )
+        .returning(CommandRequest.user_id, CommandRequest.command_type)
+    )
+    command = result.one_or_none()
+    if command is not None:
+        owning_user_id, command_type = command
+        await get_sse_bridge().publish(
+            owning_user_id,
+            CommandStatusPayload(
+                type=SSE_EVENT_COMMAND_STATUS,
+                request_id=str(request_id),
+                command_type=command_type,
+                status="failed",
+                error_message=error_message,
+            ),
+        )
 
 
 @kafka_client.message_handler(

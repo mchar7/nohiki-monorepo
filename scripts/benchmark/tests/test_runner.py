@@ -653,6 +653,7 @@ class TestBenchmarkRunnerResumeCostGating:
             actual_cost_usd=None,
             reserved_cost_usd=reserved_cost_usd,
             error_message="prior dispatched failure",
+            retry_count=0,
         )
         return BenchmarkResult(
             experiment_fingerprint=runner._experiment_fingerprint,

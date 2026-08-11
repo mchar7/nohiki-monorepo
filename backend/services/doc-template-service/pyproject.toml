@@ -15,6 +15,7 @@ dependencies = [
     "nohiki-s3-client==0.1.0",
     "jinja2>=3.1.6",
     "jsonschema>=4.25.1",
+    "referencing>=0.36.2",
     "lxml>=6.0.2",
     "semver>=3.0.4",
     "html2text>=2025.4.15",
@@ -24,3 +25,8 @@ dependencies = [
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12"]
 build-backend = "uv_build"
+
+# deptry exceptions for this package, name-scoped so every other dependency stays enforced.
+# DEP003: modules deliberately consumed through a declared workspace facade dependency.
+[tool.deptry.per_rule_ignores]
+DEP003 = ["fastapi", "nohiki_common_exceptions", "pydantic", "pydantic_settings", "sqlalchemy", "uvicorn"]

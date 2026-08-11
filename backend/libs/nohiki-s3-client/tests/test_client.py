@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 def _s3_backend(client: S3Client) -> _S3Backend:
     """Return the S3 backend selected by the S3 settings fixtures."""
-    return cast("_S3Backend", client._backend)
+    return cast("_S3Backend", client._get_backend())
 
 
 def _create_client_error(code: str, message: str = "Error") -> ClientError:

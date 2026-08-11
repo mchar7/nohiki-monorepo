@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import shlex
 import subprocess
+import tarfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -25,26 +27,31 @@ _IMMUTABLE_GATEWAY_INPUTS = {
 }
 _VENDORED_MARKER = b"# ---8<--- BEGIN VENDORED CONTENT ---8<---\n"
 
-_GATEWAY_API_VERSION = "v1.3.0"
-_GATEWAY_API_BUNDLE_EXPECTED_HEX = "3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8"
-_GATEWAY_DEPENDENCIES = {
-    "kgateway-crds": ("v2.3.6", "oci://cr.kgateway.dev/kgateway-dev/charts"),
-    "kgateway": ("v2.3.6", "oci://cr.kgateway.dev/kgateway-dev/charts"),
-    "agentgateway-crds": ("v1.3.1", "oci://cr.agentgateway.dev/charts"),
-    "agentgateway": ("v1.3.1", "oci://cr.agentgateway.dev/charts"),
+_GATEWAY_REPOSITORIES = {
+    "kgateway-crds": "oci://cr.kgateway.dev/kgateway-dev/charts",
+    "kgateway": "oci://cr.kgateway.dev/kgateway-dev/charts",
+    "agentgateway-crds": "oci://cr.agentgateway.dev/charts",
+    "agentgateway": "oci://cr.agentgateway.dev/charts",
 }
-_OPERATOR_DEPENDENCIES = {
-    "keda": (
-        "2.20.1",
-        "https://kedacore.github.io/charts",
-        "584c42b33427151abc03d4dd0c8c24be6c9aec96fc988dcf1559711c4dbd0d79",
-    ),
-    "cloudnative-pg": (
-        "0.29.0",
-        "https://cloudnative-pg.github.io/charts",
-        "668e065ff53508d58238788fd35b355a925060843629a951df0e6a9362e6d32f",
-    ),
+_GATEWAY_IMAGE_REPOSITORIES = {
+    "kgateway": "cr.kgateway.dev/kgateway-dev/kgateway",
+    "agentgateway": "cr.agentgateway.dev/controller",
 }
+# Completeness comes from the operators/ tree, not a hardcoded name map.
+# The archive digest ledger is the only owner-reviewed pin.
+_OPERATOR_ARCHIVE_SHA256 = {
+    "keda-2.20.1.tgz": "584c42b33427151abc03d4dd0c8c24be6c9aec96fc988dcf1559711c4dbd0d79",
+    "cloudnative-pg-0.29.0.tgz": "668e065ff53508d58238788fd35b355a925060843629a951df0e6a9362e6d32f",
+}
+
+
+def _operator_wrappers() -> tuple[str, ...]:
+    return tuple(
+        sorted(chart_path.parent.name for chart_path in (_FOUNDATION_CHART / "operators").glob("*/Chart.yaml"))
+    )
+
+
+# Bump procedure: rebuild every gateway archive, verify its OCI layer, then update each filename and SHA-256.
 _GATEWAY_ARCHIVE_SHA256 = {
     "kgateway-crds-v2.3.6.tgz": "d6b1d8bf0e2636bca6b8fb2b4a1525806fd1b4f9e84614c8a6a16eda585a119c",
     "kgateway-v2.3.6.tgz": "23ce30f3180dffad0d68f8aab03d5da422d2c983d513f8e86dd01012845b603a",
@@ -81,6 +88,28 @@ def _coordinates(dependencies: list[dict[str, Any]]) -> list[tuple[str, str, str
     return [(dependency["name"], dependency["version"], dependency["repository"]) for dependency in dependencies]
 
 
+def _archive_metadata(archive_path: Path, chart_name: str) -> dict[str, Any]:
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        stream = archive.extractfile(f"{chart_name}/Chart.yaml")
+        assert stream is not None, archive_path
+        metadata = yaml.safe_load(stream.read())
+    assert isinstance(metadata, dict), archive_path
+    return metadata
+
+
+def _gateway_api_provenance(header: bytes) -> tuple[str, str]:
+    provenance = header.decode("utf-8")
+    versions = re.findall(r"(?m)^# version:\s*(v\d+\.\d+\.\d+)\s*$", provenance)
+    digests = re.findall(r"(?m)^# sha256:\s*([0-9a-f]{64})\s*$", provenance)
+    source_versions = re.findall(
+        r"(?m)^# Source:\s+\S+/releases/download/(v\d+\.\d+\.\d+)/experimental-install\.yaml\s*$",
+        provenance,
+    )
+    assert len(versions) == len(digests) == len(source_versions) == 1
+    assert source_versions == versions
+    return versions[0], digests[0]
+
+
 def _render_foundation() -> tuple[dict[str, Any], ...]:
     result = subprocess.run(
         [
@@ -110,64 +139,72 @@ def foundation_documents() -> tuple[dict[str, Any], ...]:
 def test_foundation_dependency_coordinates_lock_and_archives_are_exact() -> None:
     chart = _load(_FOUNDATION_CHART / "Chart.yaml")
     dependencies = {dependency["name"]: dependency for dependency in chart["dependencies"]}
-    for name, (version, repository) in _GATEWAY_DEPENDENCIES.items():
-        assert (dependencies[name]["version"], dependencies[name]["repository"]) == (
-            version,
-            repository,
-        )
+    assert set(_GATEWAY_REPOSITORIES) <= dependencies.keys()
+    for name, repository in _GATEWAY_REPOSITORIES.items():
+        assert dependencies[name]["repository"] == repository
 
     lock = _load(_FOUNDATION_CHART / "Chart.lock")
     assert _coordinates(lock["dependencies"]) == _coordinates(chart["dependencies"])
 
     chart_dir = _FOUNDATION_CHART / "charts"
+    expected_archives = {f"{name}-{dependencies[name]['version']}.tgz" for name in _GATEWAY_REPOSITORIES}
     gateway_archives = {path.name for path in chart_dir.glob("*gateway*.tgz")}
-    assert gateway_archives == set(_GATEWAY_ARCHIVE_SHA256)
-    for archive_name, expected_sha256 in _GATEWAY_ARCHIVE_SHA256.items():
-        assert hashlib.sha256((chart_dir / archive_name).read_bytes()).hexdigest() == expected_sha256
+    assert gateway_archives == expected_archives == set(_GATEWAY_ARCHIVE_SHA256)
+    for name in _GATEWAY_REPOSITORIES:
+        dependency = dependencies[name]
+        archive_name = f"{name}-{dependency['version']}.tgz"
+        archive_path = chart_dir / archive_name
+        assert hashlib.sha256(archive_path.read_bytes()).hexdigest() == _GATEWAY_ARCHIVE_SHA256[archive_name]
+        metadata = _archive_metadata(archive_path, name)
+        assert (metadata["name"], metadata["version"]) == (name, dependency["version"])
 
 
-@pytest.mark.parametrize(
-    ("name", "version", "repository", "expected_sha256"),
-    tuple((name, *coordinates) for name, coordinates in _OPERATOR_DEPENDENCIES.items()),
-)
-def test_operator_wrapper_coordinates_locks_and_archives_are_exact(
-    name: str,
-    version: str,
-    repository: str,
-    expected_sha256: str,
-) -> None:
-    wrapper = _FOUNDATION_CHART / "operators" / name
+@pytest.mark.parametrize("wrapper_name", _operator_wrappers())
+def test_operator_wrapper_coordinates_locks_and_archives_are_exact(wrapper_name: str) -> None:
+    wrapper = _FOUNDATION_CHART / "operators" / wrapper_name
     chart = _load(wrapper / "Chart.yaml")
+    assert "appVersion" not in chart
     lock = _load(wrapper / "Chart.lock")
-    expected_coordinates = [(name, version, repository)]
+    assert len(chart["dependencies"]) == 1
+    dependency = chart["dependencies"][0]
+    assert dependency["name"] == wrapper_name
+    repository = dependency["repository"]
+    assert isinstance(repository, str)
+    assert repository
+    assert _coordinates(lock["dependencies"]) == _coordinates(chart["dependencies"])
 
-    assert _coordinates(chart["dependencies"]) == expected_coordinates
-    assert _coordinates(lock["dependencies"]) == expected_coordinates
-    archive = wrapper / "charts" / f"{name}-{version}.tgz"
+    wrappers = _operator_wrappers()
+    expected_archives = {
+        f"{operator_dependency['name']}-{operator_dependency['version']}.tgz"
+        for operator_name in wrappers
+        for operator_dependency in _load(_FOUNDATION_CHART / "operators" / operator_name / "Chart.yaml")["dependencies"]
+    }
+    assert set(_OPERATOR_ARCHIVE_SHA256) == expected_archives
+    archive = wrapper / "charts" / f"{wrapper_name}-{dependency['version']}.tgz"
     assert {path.name for path in (wrapper / "charts").glob("*.tgz")} == {archive.name}
-    assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected_sha256
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == _OPERATOR_ARCHIVE_SHA256[archive.name]
+    metadata = _archive_metadata(archive, wrapper_name)
+    assert (metadata["name"], metadata["version"]) == (wrapper_name, dependency["version"])
     assert not (_FOUNDATION_CHART / "charts" / archive.name).exists()
 
     foundation = _load(_FOUNDATION_CHART / "Chart.yaml")
-    assert name not in {dependency["name"] for dependency in foundation["dependencies"]}
+    assert wrapper_name not in {dependency["name"] for dependency in foundation["dependencies"]}
     assert "operators/" in (_FOUNDATION_CHART / ".helmignore").read_text(encoding="utf-8").splitlines()
 
 
 def test_gateway_api_bundle_matches_agentgateway_compatible_schema_and_digest() -> None:
     chart = _load(_FOUNDATION_CHART / "Chart.yaml")
     values = _load(_FOUNDATION_CHART / "values.yaml")
-    assert chart["annotations"]["nohiki.io/gateway-api-version"] == _GATEWAY_API_VERSION
-    assert chart["annotations"]["nohiki.io/gateway-bundle-integrity"] == _GATEWAY_API_BUNDLE_EXPECTED_HEX
-    assert values["gatewayApi"] == {
-        "version": _GATEWAY_API_VERSION,
-        "sha256": _GATEWAY_API_BUNDLE_EXPECTED_HEX,
-    }
-
     header, marker, content = _GATEWAY_API_BUNDLE.read_bytes().partition(_VENDORED_MARKER)
     assert marker, "vendored Gateway API boundary marker is missing"
-    assert hashlib.sha256(content).hexdigest() == _GATEWAY_API_BUNDLE_EXPECTED_HEX
-    assert b"experimental-install.yaml" in header
-    assert _GATEWAY_API_VERSION.encode() in header
+    version, expected_sha256 = _gateway_api_provenance(header)
+    assert chart["annotations"]["nohiki.io/gateway-api-version"] == version
+    assert chart["annotations"]["nohiki.io/gateway-bundle-integrity"] == expected_sha256
+    assert values["gatewayApi"] == {
+        "version": version,
+        "sha256": expected_sha256,
+    }
+    assert hashlib.sha256(content).hexdigest() == expected_sha256
 
     documents = tuple(
         document for document in yaml.load_all(content, Loader=yaml.CSafeLoader) if isinstance(document, dict)
@@ -177,7 +214,7 @@ def test_gateway_api_bundle_matches_agentgateway_compatible_schema_and_digest() 
     assert set(crds) == _GATEWAY_API_CRDS
     for document in crds.values():
         annotations = document["metadata"]["annotations"]
-        assert annotations["gateway.networking.k8s.io/bundle-version"] == _GATEWAY_API_VERSION
+        assert annotations["gateway.networking.k8s.io/bundle-version"] == version
         assert annotations["gateway.networking.k8s.io/channel"] == "experimental"
     for name in _AGENTGATEWAY_ROUTE_CRDS:
         versions = crds[name]["spec"]["versions"]
@@ -192,11 +229,11 @@ def test_foundation_is_the_only_gateway_controller_and_crd_owner(
         gateway_dependencies = {
             dependency["name"]
             for dependency in _load(chart_path).get("dependencies", [])
-            if dependency["name"] in _GATEWAY_DEPENDENCIES
+            if dependency["name"] in _GATEWAY_REPOSITORIES
         }
         if gateway_dependencies:
             owners[chart_path.relative_to(_ROOT)] = gateway_dependencies
-    assert owners == {Path("infra/k8s/helm-foundation/Chart.yaml"): set(_GATEWAY_DEPENDENCIES)}
+    assert owners == {Path("infra/k8s/helm-foundation/Chart.yaml"): set(_GATEWAY_REPOSITORIES)}
 
     documents = foundation_documents
     controller_counts = Counter(
@@ -214,10 +251,15 @@ def test_foundation_is_the_only_gateway_controller_and_crd_owner(
         if document.get("kind") == "Deployment"
         and document.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/name") in controller_counts
     }
-    assert images == {
-        "kgateway": "cr.kgateway.dev/kgateway-dev/kgateway:v2.3.6",
-        "agentgateway": "cr.agentgateway.dev/controller:v1.3.1",
+    dependencies = {
+        dependency["name"]: dependency for dependency in _load(_FOUNDATION_CHART / "Chart.yaml")["dependencies"]
     }
+    assert set(images) == set(_GATEWAY_IMAGE_REPOSITORIES)
+    for name, image in images.items():
+        repository, separator, tag = image.rpartition(":")
+        assert separator
+        assert repository == _GATEWAY_IMAGE_REPOSITORIES[name]
+        assert tag == dependencies[name]["version"]
 
     rendered_crd_names = [
         document["metadata"]["name"] for document in documents if document.get("kind") == "CustomResourceDefinition"
@@ -403,6 +445,18 @@ def test_flux_orders_crds_foundation_and_platform_with_health_gates() -> None:
             runtime_secrets = _load(cluster / "runtime-secrets.yaml")
             assert runtime_secrets["spec"]["dependsOn"] == [{"name": "infrastructure"}]
             assert runtime_secrets["spec"]["healthChecks"] == [
+                {
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "name": "nohiki-llm-proxy-source",
+                    "namespace": "nohiki",
+                },
+                {
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "name": "nohiki-owner-model-egress-values",
+                    "namespace": "flux-system",
+                },
                 {
                     "apiVersion": "v1",
                     "kind": "Secret",

@@ -9,14 +9,15 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+import ci_checks.checks.workflow as workflow_helpers
 import pytest
 from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, string_at
 from ci_checks.app import app
 from ci_checks.checks.workflow import (
     COLD_WALL_BUDGET_SECONDS,
     WARM_WALL_BUDGET_SECONDS,
-    hosted_equivalent_minutes,
     render_report_summary,
+    runner_minute_totals,
     select_wall_budget,
 )
 from ci_checks.core.change_gate import GateDecision, render_outputs
@@ -69,6 +70,7 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     jobs = workflow["jobs"]
     assert set(jobs) == {
         "changes",
+        "label-sync",
         "worker",
         "playwright-image",
         "title-policy",
@@ -89,7 +91,7 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     assert "typescript/apps/frontend/node_modules/.bin/playwright" in playwright_image
 
     commands = (
-        "biome ci --reporter=github src/",
+        "biome ci --reporter=sarif src/",
         "exec tsc --noEmit",
         "exec vitest run",
         "just typecheck-all",
@@ -105,10 +107,11 @@ def test_checks_workflow_routes_standard_and_broad_contracts_once() -> None:
     # Both classes are served by one definition of each command, so one occurrence, not two.
     for command in commands:
         assert work.count(command) == 1
-    assert work.count("just lint") == 1
-    assert work.count("ruff check --output-format=github") == 1
+    assert work.count("ruff check") == 2
+    assert "ruff-lint.sarif" in work
     assert work.count("just format-check") == 1
     assert work.count("ruff format --check") == 1
+    assert "ruff-format.log" in work
 
     owner_commands = "\n".join(_commands(jobs["worker"]))
     proto_step = next(
@@ -155,13 +158,22 @@ def test_workflow_validators_are_pinned_in_hosted_and_local_paths() -> None:
     lint = next(step for step in _steps(workflow["jobs"]["worker"]) if step.get("name") == "Lint workflows")
     command = str(lint["run"])
     parallel_diagnostic = 'step must run script with "run" section or run action with "uses" section'
-    assert command.endswith("just workflow-lint")
+    assert "-format '{{json .}}'" in command
+    assert "ci-checks actionlint-report" in command
+    assert "lint-results/actionlint.sarif" in command
+    assert "check-jsonschema --builtin-schema vendor.github-workflows" in command
 
     policy = _JUSTFILE.read_text(encoding="utf-8")
     assert "actionlint -ignore" not in policy
     assert "actionlint -oneline" in policy
-    assert policy.count(parallel_diagnostic) == 4
-    assert "suppress only their exact source locations" in policy
+    # The narrowness this defends is the exact diagnostic text, not how many times it is written
+    # out. The four source locations are read from the workflow rather than pinned, because pinned
+    # line numbers drift on any edit above them and then silently stop suppressing, and re-pinning
+    # at the new numbers only rearms that. A pinned literal would pass a count and still be aimed
+    # at the wrong lines, so the count is replaced by a ban on the pinned form.
+    assert parallel_diagnostic in policy
+    assert "- parallel:" in policy
+    assert not re.search(r"checks\.yml:\d+:", policy), "workflow-lint must not pin suppressions by line number"
     assert "check-jsonschema" in policy
     assert "--builtin-schema vendor.github-workflows .github/workflows/*.yml" in policy
 
@@ -178,17 +190,20 @@ def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -
     worker_steps = {step.get("name"): step for step in _steps(workflow["jobs"]["worker"])}
     selected_tests = worker_steps["Run selected Python tests"].get("run")
     integration_tests = worker_steps["Run job correlation integration tests"].get("run")
+    container_tests = worker_steps["Run container contract tests"].get("run")
     assert isinstance(selected_tests, str)
     assert isinstance(integration_tests, str)
+    assert isinstance(container_tests, str)
     assert "--no-coverage" not in selected_tests
     assert "--no-coverage" in integration_tests
+    assert "--no-coverage" in container_tests
 
     lefthook = load_mapping(_LEFTHOOK)
     pre_push = lefthook["pre-push"]
     assert isinstance(pre_push, Mapping)
     phases = pre_push.get("jobs")
     assert isinstance(phases, list)
-    local_commands: list[str] = []
+    local_commands: dict[str, str] = {}
     for phase in phases:
         assert isinstance(phase, Mapping)
         if "group" in phase:
@@ -200,15 +215,16 @@ def test_ci_self_tests_use_worksteal_xdist_without_dropping_package_coverage() -
             nested_jobs = [phase]
         for nested in nested_jobs:
             assert isinstance(nested, Mapping)
-            if nested.get("name") == "python-tests":
+            name = nested.get("name")
+            if name in {"python-tests", "job-correlation-integration"}:
                 run = nested.get("run")
                 assert isinstance(run, str)
-                local_commands.append(run)
-    local_command = next(iter(local_commands))
-    assert "--no-coverage" not in local_command
+                local_commands[str(name)] = run
+    assert "--no-coverage" not in local_commands["python-tests"]
+    assert "--no-coverage" in local_commands["job-correlation-integration"]
 
 
-def test_checks_aggregator_requires_every_hosted_lane() -> None:
+def test_checks_aggregator_requires_every_required_hosted_lane() -> None:
     workflow = load_workflow(_CHECKS)
     jobs = workflow["jobs"]
     checks = jobs["checks"]
@@ -216,7 +232,8 @@ def test_checks_aggregator_requires_every_hosted_lane() -> None:
     assert checks["if"] == "always()"
     needs = checks["needs"]
     assert isinstance(needs, list)
-    assert set(needs) == set(jobs) - {"checks"}
+    advisory = {job_id for job_id, job in jobs.items() if job.get("continue-on-error") is True}
+    assert set(needs) == set(jobs) - {"checks"} - advisory
 
     contract = str(checks)
     for job in needs:
@@ -275,7 +292,7 @@ def test_checks_workflow_factors_shared_shell_behaviour_into_python() -> None:
             assert "workflow.py summary" in command
 
     commands = "\n".join(command for job in jobs.values() for command in _commands(job))
-    assert "workflow.py guard" in commands.replace("\n", " ")
+    assert "workflow.py route" in commands.replace("\n", " ")
     assert commands.count("workflow.py verdict") == 2
     assert "workflow.py accounting" in commands
     for retired_shell in (
@@ -319,19 +336,38 @@ def test_workflow_summary_subcommand_writes_exact_report(
     )
 
 
-def test_workflow_guard_and_verdict_subcommands_preserve_decisions(
+def test_workflow_route_and_verdict_subcommands_preserve_decisions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output = tmp_path / "output"
-    broad = CliRunner().invoke(app, ["workflow-guard", "broad", str(output)])
-    assert broad.exit_code == 0, broad.output
-    assert output.read_text(encoding="utf-8") == "worker_timeout_minutes=52\n"
-
-    invalid = CliRunner().invoke(app, ["workflow-guard", "invalid", str(output)])
-    assert invalid.exit_code != 0
-    assert isinstance(invalid.exception, ValueError)
-    assert str(invalid.exception) == "cannot derive a guard for commit class: invalid"
+    summary = tmp_path / "summary"
+    inventory = [
+        {
+            "total_count": 1,
+            "runners": [
+                {
+                    "name": "nohiki-runner-01",
+                    "status": "online",
+                    "busy": True,
+                    "os": "linux",
+                    "labels": [{"name": label} for label in ("self-hosted", "Linux", "X64", "nohiki", "nohiki-t3")],
+                }
+            ],
+        }
+    ]
+    monkeypatch.setenv("GH_TOKEN", "redacted")
+    monkeypatch.setattr(workflow_helpers, "_gh_json", lambda _args: inventory)
+    route = CliRunner().invoke(
+        app,
+        ["workflow-route", "owner/repository", str(output), str(summary)],
+    )
+    assert route.exit_code == 0, route.output
+    emitted = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    assert emitted["runner_class"] == "nohiki-t3"
+    assert emitted["runner_target"] == '["self-hosted","Linux","X64","nohiki","nohiki-t3"]'
+    assert emitted["worker_timeout_minutes"] == "52"
+    assert emitted["playwright_timeout_minutes"] == "30"
 
     values = {
         "BROAD": "false",
@@ -370,10 +406,11 @@ def test_workflow_accounting_arithmetic_and_wall_boundary() -> None:
         {
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": "2026-07-23T00:01:01Z",
+            "labels": ["self-hosted", "Linux", "X64", "nohiki", "nohiki-t1"],
         }
     ]
-    assert hosted_equivalent_minutes(jobs, now) == 2
-    assert hosted_equivalent_minutes([], now) == 0
+    assert runner_minute_totals(jobs, now) == (2, 0)
+    assert runner_minute_totals([], now) == (0, 0)
 
     warm = select_wall_budget("", "true", "", "true")
     cold = select_wall_budget("true", "", "", "true")

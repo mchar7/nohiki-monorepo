@@ -23,3 +23,34 @@ patches:
             name: nohiki-image-digests
             valuesKey: values.yaml
             optional: false
+          - kind: ConfigMap
+            name: nohiki-owner-model-egress-values
+            valuesKey: values.yaml
+            optional: false
+      - op: remove
+        path: /spec/install/remediation
+      - op: add
+        path: /spec/install/strategy
+        value:
+          name: RetryOnFailure
+          retryInterval: 2m
+      - op: add
+        path: /spec/install/disableWait
+        value: true
+      - op: add
+        path: /spec/upgrade/disableWait
+        value: true
+      - op: add
+        path: /spec/install/timeout
+        value: 30m
+      - op: add
+        path: /spec/postRenderers
+        value:
+          - kustomize:
+              patches:
+                - target:
+                    kind: Deployment
+                  patch: |-
+                    - op: add
+                      path: /spec/progressDeadlineSeconds
+                      value: 1800

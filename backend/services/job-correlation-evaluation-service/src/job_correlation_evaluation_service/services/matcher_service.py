@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from nohiki.job.listing.v1 import ListingSnapshot
 from nohiki_common_exceptions import DataNotAvailableError
 from nohiki_observability import get_logger
 
@@ -29,7 +30,6 @@ from job_correlation_evaluation_service.services.scoring_service import MLScorin
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from nohiki.job.listing.v1 import ListingSnapshot
     from nohiki.user.pref.v1 import SearchPrefSnapshot
     from sqlalchemy.ext.asyncio import AsyncSession
 

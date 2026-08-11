@@ -4,8 +4,11 @@ import re
 from functools import cache
 from pathlib import Path
 
+import yaml
+
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _TERRAFORM = _REPOSITORY_ROOT / "infra" / "terraform"
+_FOUNDATION_CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm-foundation"
 _WORKFLOWS = _REPOSITORY_ROOT / ".github" / "workflows"
 
 # Settings that only ever configured the application umbrella chart. With the
@@ -46,14 +49,30 @@ def test_environment_terraform_owns_no_application_chart_writer() -> None:
         releases.update(_HELM_RELEASE.findall(text))
     assert releases == _CLUSTER_ADDON_RELEASES, releases
     keda = _read(_TERRAFORM / "keda.tf")
-    keda_contract = re.sub(r"\s+", " ", keda)
     assert re.findall(r"(?m)^\s*count\s*=\s*(.+)$", keda) == [
         'var.deployment_type == "aks" ? 1 : 0',
         'var.deployment_type == "aks" ? 1 : 0',
     ]
-    assert 'repository = "https://kedacore.github.io/charts"' in keda_contract
-    assert 'chart = "keda"' in keda_contract
-    assert 'version = "2.20.1"' in keda_contract
+    release = re.search(r'(?ms)^resource "helm_release" "keda"\s*\{(?P<body>.*?)^\}', keda)
+    assert release
+    coordinates = dict(
+        re.findall(
+            r'(?m)^\s*(repository|chart|version)\s*=\s*"([^"]+)"\s*$',
+            release["body"],
+        )
+    )
+    wrapper = yaml.safe_load((_FOUNDATION_CHART / "operators/keda/Chart.yaml").read_text(encoding="utf-8"))
+    assert isinstance(wrapper, dict)
+    dependencies = wrapper["dependencies"]
+    assert isinstance(dependencies, list)
+    assert len(dependencies) == 1
+    dependency = dependencies[0]
+    assert coordinates == {
+        "repository": dependency["repository"],
+        "chart": dependency["name"],
+        "version": dependency["version"],
+    }
+    assert re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", coordinates["version"])
     assert "depends_on = [azurerm_kubernetes_cluster.aks_cluster[0]]" in keda
     assert "depends_on = [helm_release.keda[0]]" in keda
 

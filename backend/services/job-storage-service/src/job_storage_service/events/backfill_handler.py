@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
+from nohiki.common.v1 import CommandHeader
 from nohiki.job.listing.v1 import BackfillCallback, BackfillRequested, BackfillResult, ListingSnapshot
 from nohiki_kafka_client import (
     MessageContext,
@@ -14,12 +14,9 @@ from nohiki_kafka_client import (
 )
 from nohiki_observability import get_logger
 
-if TYPE_CHECKING:
-    from nohiki.common.v1 import CommandHeader
-
 from job_storage_service.core.config import get_settings
 from job_storage_service.core.kafka import kafka_client
-from job_storage_service.events.publishers import build_listing_snapshot
+from job_storage_service.events.publishers import build_listing_snapshot, load_verified_retrieval_embeddings
 from job_storage_service.services.bank_service import JobStoreService
 
 logger = get_logger(__name__)
@@ -94,7 +91,14 @@ async def handle_backfill_requested(
         await _publish_empty_response(backfill_ctx)
         return
 
-    snapshots = [build_listing_snapshot(listing) for listing in listings]
+    verified_embeddings = await load_verified_retrieval_embeddings(listings)
+    snapshots = [
+        build_listing_snapshot(
+            listing,
+            retrieval_embeddings=verified_embeddings.get(str(listing.id)),
+        )
+        for listing in listings
+    ]
     await _publish_batches(snapshots, backfill_ctx, batch_size)
 
 

@@ -248,7 +248,7 @@ def mock_cache() -> MockCache:
 def queue(mock_cache: MockCache) -> DelayedTaskQueue[SamplePayload]:
     """Create a DelayedTaskQueue for testing."""
     return DelayedTaskQueue[SamplePayload](
-        cache=cast(Any, mock_cache),
+        cache=cast("Any", mock_cache),
         queue_name="test-queue",
         serializer=SamplePayload.to_json,
         deserializer=SamplePayload.from_json,
@@ -446,7 +446,7 @@ class TestDelayedTaskQueueRecoverStuck:
         """Stuck tasks are recovered after timeout."""
         # Use short timeout for testing
         queue: DelayedTaskQueue[SamplePayload] = DelayedTaskQueue[SamplePayload](
-            cache=cast(Any, mock_cache),
+            cache=cast("Any", mock_cache),
             queue_name="test-queue",
             serializer=SamplePayload.to_json,
             deserializer=SamplePayload.from_json,
@@ -516,7 +516,7 @@ class TestDelayedTaskQueueAtomicClaim:
         mock_cache.zrange = AsyncMock(return_value=[])
 
         queue: DelayedTaskQueue[SamplePayload] = DelayedTaskQueue[SamplePayload](
-            cache=cast(Any, mock_cache),
+            cache=cast("Any", mock_cache),
             queue_name="test-queue",
             serializer=SamplePayload.to_json,
             deserializer=SamplePayload.from_json,
@@ -567,7 +567,7 @@ class TestDelayedTaskQueueSerialization:
                 return cls(**json.loads(s))
 
         queue: DelayedTaskQueue[ComplexPayload] = DelayedTaskQueue[ComplexPayload](
-            cache=cast(Any, mock_cache),
+            cache=cast("Any", mock_cache),
             queue_name="complex-queue",
             serializer=ComplexPayload.to_json,
             deserializer=ComplexPayload.from_json,
@@ -618,7 +618,7 @@ class TestDelayedTaskQueueEdgeCases:
     async def test_remove_ignores_malformed_json_in_queue(self, mock_cache: MockCache) -> None:
         """Remove should skip malformed JSON members without crashing."""
         queue: DelayedTaskQueue[SamplePayload] = DelayedTaskQueue[SamplePayload](
-            cache=cast(Any, mock_cache),
+            cache=cast("Any", mock_cache),
             queue_name="test-queue",
             serializer=SamplePayload.to_json,
             deserializer=SamplePayload.from_json,
@@ -637,7 +637,7 @@ class TestDelayedTaskQueueEdgeCases:
     async def test_claim_skips_malformed_members(self, mock_cache: MockCache) -> None:
         """Claim should skip members with malformed JSON and log warning."""
         queue = DelayedTaskQueue[SamplePayload](
-            cache=cast(Any, mock_cache),
+            cache=cast("Any", mock_cache),
             queue_name="test-queue",
             serializer=SamplePayload.to_json,
             deserializer=SamplePayload.from_json,

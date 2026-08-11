@@ -17,15 +17,24 @@
         python = pkgs.python314;
         nodejs = pkgs.nodejs_26;
         corepackPackage = pkgs.corepack.override { nodejs-slim = nodejs; };
-        uvConfig = builtins.fromTOML (builtins.readFile ./toolchain/uv.toml);
+        jdk = pkgs.jdk25;
+        # Renovate manages the version but the gradle-version datasource does not publish
+        # the Nix source hash. For a bump, set hash = pkgs.lib.fakeHash, run
+        # `nix develop .#jvm --command gradle --version`, then use the reported "got" hash.
+        gradle = pkgs.gradle-packages.mkGradle {
+          version = "9.6.1";
+          hash = "sha256-nA9/ruswbLFOQnmj4ITKa1lolAiaBjjmigfJRaMsnhQ=";
+          defaultJava = jdk;
+        };
+        pyproject = builtins.fromTOML (builtins.readFile ./pyproject.toml);
         uvVersion =
           let
-            value = uvConfig.required-version;
+            value = pyproject.tool.uv.required-version;
           in
           if builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+" value != null then
             value
           else
-            throw "toolchain/uv.toml required-version must be an exact semantic version";
+            throw "pyproject.toml [tool.uv] required-version must be an exact semantic version";
         uvRelease = {
           x86_64-linux = {
             target = "x86_64-unknown-linux-gnu";
@@ -122,6 +131,7 @@
             '';
           };
 
+        # Bump procedure: update the Flux versions and every releasePlatform checksum in one reviewed change.
         fluxVersion = "2.9.2";
         fluxPackage = mkTarCli {
           pname = "flux";
@@ -163,6 +173,7 @@
           '';
         };
 
+        # Bump procedure: update package metadata, this version, revision, source hash, and vendor hash together.
         lefthookVersion = "2.1.10";
         lefthookPackage = pkgs.buildGo126Module {
           pname = "lefthook";
@@ -187,6 +198,12 @@
             mainProgram = "lefthook";
           };
         };
+        gitGuard = pkgs.runCommand "nohiki-git-guard" { } ''
+          mkdir -p "$out/bin"
+          substitute ${./scripts/dev/git-guard.sh} "$out/bin/git" \
+            --replace-fail '@git@' '${pkgs.git}/bin/git'
+          chmod 0755 "$out/bin/git"
+        '';
 
         coreTools = with pkgs; [
           just
@@ -199,6 +216,7 @@
           gitleaks # Secret detection for git hooks
           lefthookPackage # Git hook manager
           util-linux # flock for environment locks
+          rsync # Owner-controlled local secrets mirror
         ];
 
         pythonTools = with pkgs; [
@@ -212,6 +230,11 @@
           nodejs
           corepackPackage
           playwright-driver.browsers
+        ];
+
+        jvmTools = [
+          jdk
+          gradle
         ];
 
         containerTools = with pkgs; [
@@ -311,6 +334,7 @@
           pkgs.kubernetes-helm
           pkgs.podman-compose
           pkgs.gitleaks
+          pkgs.rsync
           pkgs.skopeo
         ];
         ciHygieneTools = ciTestTools ++ ciNodeTools;
@@ -330,8 +354,13 @@
 
         # Explicit library path for numpy/grpcio wheels that need libstdc++
         libPath = pkgs.lib.makeLibraryPath nativeBuildDeps;
+        gitGuardHook = ''
+          export PATH="${gitGuard}/bin:$PATH"
+        '';
 
         baseHook = ''
+          ${gitGuardHook}
+
           # Export LD_LIBRARY_PATH explicitly for subshells and uv run
           export LD_LIBRARY_PATH="${libPath}:$LD_LIBRARY_PATH"
 
@@ -383,7 +412,7 @@
 
         devShells.default = pkgs.mkShell {
           name = "nohiki";
-          packages = coreTools ++ pythonTools ++ frontendTools ++ containerTools ++ infraTools;
+          packages = coreTools ++ pythonTools ++ frontendTools ++ jvmTools ++ containerTools ++ infraTools;
           buildInputs = nativeBuildDeps;
           env = baseEnv // {
             PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
@@ -409,6 +438,8 @@
             PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
           };
           shellHook = ''
+            ${gitGuardHook}
+
             if [ -f "pnpm-lock.yaml" ]; then
               env CI=true LEFTHOOK=0 corepack pnpm install --frozen-lockfile --silent
             fi
@@ -416,10 +447,23 @@
           '';
         };
 
+        devShells.jvm = pkgs.mkShell {
+          name = "nohiki-jvm";
+          packages = coreTools ++ jvmTools;
+          shellHook = ''
+            ${gitGuardHook}
+
+            echo "JVM shell ready (JDK ${jdk.version}, Gradle ${gradle.version})"
+          '';
+        };
+
         devShells.infra = pkgs.mkShell {
           name = "nohiki-infra";
           packages = coreTools ++ containerTools ++ infraTools ++ [ python ];
-          shellHook = "echo 'Infrastructure shell ready'";
+          shellHook = ''
+            ${gitGuardHook}
+            echo "Infrastructure shell ready"
+          '';
         };
 
         # Kubernetes tooling for working against any cluster you point KUBECONFIG
@@ -429,6 +473,8 @@
           name = "nohiki-k8s";
           packages = coreTools ++ containerTools ++ infraTools ++ k8sTools ++ [ python ];
           shellHook = ''
+            ${gitGuardHook}
+
             echo "k8s shell ready (kubectl, helm, kustomize, k9s, kubectx, stern, kind, flux, flux-operator, rootless Podman)"
             if [ -n "''${KUBECONFIG:-}" ]; then
               echo "  KUBECONFIG=$KUBECONFIG"

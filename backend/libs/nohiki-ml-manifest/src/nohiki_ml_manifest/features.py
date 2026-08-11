@@ -144,14 +144,14 @@ FEATURE_DESCRIPTIONS: Final[dict[FeatureIndex, str]] = {
     FeatureIndex.SKILL_RELATIONSHIP_COUNT: "Count of skills matched via skill graph relationships",
     FeatureIndex.SKILLS_COSINE_SIM: "Cosine similarity: user skills vs job skills embeddings",
     FeatureIndex.JOB_AGE_HOURS: "Raw hours since job was posted",
-    FeatureIndex.LISTING_FEEDBACK_COUNT: "Raw count of feedback items for listing",
-    FeatureIndex.LISTING_QUALITY_SCORE: "Predicted listing quality score (0-1)",
+    FeatureIndex.LISTING_FEEDBACK_COUNT: "Reserved slot; listing feedback signal is unavailable (always 0)",
+    FeatureIndex.LISTING_QUALITY_SCORE: "Reserved slot; listing quality signal is unavailable (always NaN)",
     FeatureIndex.WORK_ARRANGEMENT_MATCH: "Binary: 1 if work arrangement matches preference",
     FeatureIndex.HAS_LOCATION_DATA: "Binary: 1 if location data available",
     FeatureIndex.HAS_EXPERIENCE_DATA: "Binary: 1 if experience requirements present",
     FeatureIndex.HAS_SALARY_DATA: "Binary: 1 if compensation data available",
     FeatureIndex.HAS_SKILL_DATA: "Binary: 1 if skill requirements present",
-    FeatureIndex.HAS_LISTING_QUALITY: "Binary: 1 if feedback data available",
+    FeatureIndex.HAS_LISTING_QUALITY: "Reserved validity slot (always 0 while listing quality is unavailable)",
     FeatureIndex.SKILL_GRAPH_MIN_DISTANCE: "Min shortest-path distance in ESCO skill graph between user and job skills",
     FeatureIndex.SKILL_GRAPH_MEAN_DISTANCE: "Mean shortest-path distance across top matched skill pairs in ESCO graph",
 }
@@ -184,14 +184,14 @@ MONOTONE_CONSTRAINTS: Final[list[int]] = [
     0,  # SKILL_RELATIONSHIP_COUNT - not monotonic (indirect matches)
     0,  # SKILLS_COSINE_SIM - model learns
     -1,  # JOB_AGE_HOURS - fresher always better
-    0,  # LISTING_FEEDBACK_COUNT - not monotonic
-    0,  # LISTING_QUALITY_SCORE - model learns
+    0,  # LISTING_FEEDBACK_COUNT - reserved, always 0
+    0,  # LISTING_QUALITY_SCORE - reserved, always NaN
     1,  # WORK_ARRANGEMENT_MATCH - match always better
     0,  # HAS_LOCATION_DATA - not monotonic
     0,  # HAS_EXPERIENCE_DATA - not monotonic
     0,  # HAS_SALARY_DATA - not monotonic
     0,  # HAS_SKILL_DATA - not monotonic
-    0,  # HAS_LISTING_QUALITY - not monotonic
+    0,  # HAS_LISTING_QUALITY - reserved, always 0
     -1,  # SKILL_GRAPH_MIN_DISTANCE - closer skills always better
     -1,  # SKILL_GRAPH_MEAN_DISTANCE - closer skills always better
 ]

@@ -55,6 +55,7 @@ async def persist_skill_enrichment(
     normalization_result: SkillNormalizationResult,
     *,
     expected_generation: int | None = None,
+    locked_profile: SearchPref | None = None,
 ) -> SearchPref | None:
     """Persist full skill normalization results to a profile.
 
@@ -68,12 +69,13 @@ async def persist_skill_enrichment(
         profile_id: Target profile ID.
         normalization_result: Full SkillNormalizationResult from skill-graph-service.
         expected_generation: Semantic generation expected by the normalization request, when set.
+        locked_profile: Profile already locked by the caller, when available.
 
     Returns:
         Refreshed profile with updated skill data.
 
     """
-    profile = (
+    profile = locked_profile or (
         await profile_service.get_profile_by_id_for_update(db, profile_id)
         if expected_generation is not None
         else await profile_service.get_profile_by_id(db, profile_id)
@@ -111,9 +113,21 @@ def load_user_skills_from_profile(profile: SearchPref) -> list[UserSkillEntry]:
     return [UserSkillEntry.from_dict(d) for d in profile.user_skills_data]
 
 
+async def _load_query_profile(
+    db: AsyncSession,
+    profile_or_id: UUID | SearchPref,
+    *,
+    lock: bool,
+) -> SearchPref:
+    if not isinstance(profile_or_id, UUID):
+        return profile_or_id
+    loader = profile_service.get_profile_by_id_for_update if lock else profile_service.get_profile_by_id
+    return await loader(db, profile_or_id)
+
+
 async def persist_query_enrichment(
     db: AsyncSession,
-    pref_id: UUID,
+    profile_or_id: UUID | SearchPref,
     result: EmbeddingResult,
     *,
     expected_generation: int | None = None,
@@ -126,19 +140,20 @@ async def persist_query_enrichment(
 
     Args:
         db: Active database session.
-        pref_id: Target profile ID.
+        profile_or_id: Target profile ID, or a profile already locked by the caller.
         result: Embedding result proto from EmbeddingCallback.success.
         expected_generation: Semantic generation expected by the embedding request, when set.
         expected_hash: Semantic text hash expected by the embedding request, when set.
+
 
     Returns:
         Refreshed profile with updated embedding data.
 
     """
-    profile = (
-        await profile_service.get_profile_by_id_for_update(db, pref_id)
-        if expected_generation is not None or expected_hash is not None
-        else await profile_service.get_profile_by_id(db, pref_id)
+    profile = await _load_query_profile(
+        db,
+        profile_or_id,
+        lock=expected_generation is not None or expected_hash is not None,
     )
     if expected_generation is not None and profile.semantic_content_generation != expected_generation:
         return None

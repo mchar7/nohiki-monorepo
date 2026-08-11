@@ -10,14 +10,14 @@ import { ThemeContext } from './theme-context.ts';
 const STORAGE_KEY = 'vite-ui-theme';
 
 function getSystemTheme(): 'light' | 'dark' {
-  if (globalThis.window === undefined) {
+  if (typeof globalThis.window === 'undefined') {
     return 'light';
   }
   return globalThis.window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
 function getStoredTheme(): Theme {
-  if (globalThis.window === undefined) {
+  if (typeof globalThis.window === 'undefined') {
     return 'system';
   }
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -84,7 +84,7 @@ export function ThemeProvider({
   attribute = 'class',
 }: ThemeProviderProps): JSX.Element {
   const [theme, setThemeState] = useState<Theme>(() => {
-    if (globalThis.window === undefined) {
+    if (typeof globalThis.window === 'undefined') {
       return defaultTheme;
     }
     return getStoredTheme();

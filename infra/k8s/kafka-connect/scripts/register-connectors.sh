@@ -52,11 +52,13 @@ parse_dsn() {
     local dsn="$1"
     local -a parts
 
-    mapfile -d '' -t parts < <(python3 - "$dsn" <<'PY'
+    mapfile -d '' -t parts < <(python3 - 3<<<"$dsn" <<'PY'
+import os
 import sys
 from urllib.parse import unquote, urlsplit
 
-parsed = urlsplit(sys.argv[1])
+with os.fdopen(3) as dsn_stream:
+    parsed = urlsplit(dsn_stream.read().rstrip("\n"))
 if parsed.scheme not in {"postgres", "postgresql", "postgresql+asyncpg"}:
     raise SystemExit("database DSN must use postgres://, postgresql://, or postgresql+asyncpg://")
 if parsed.username is None or parsed.password is None or parsed.hostname is None:
@@ -268,6 +270,127 @@ register_qdrant_sink_connector() {
     echo "Qdrant embedding sink connector registered"
 }
 
+assert_bounded_compose_reconciliation_inventory() {
+    local observed_connectors observed_slots observed_publications observed_publication_tables
+    local current_connectors="" current_slots="" current_publications="" current_publication_tables=""
+    local bounded_connectors="" bounded_slots="" bounded_publications="" bounded_publication_tables=""
+    local connector service_name schema_name db_prefix remainder resource_prefix suffix violations
+
+    if ! observed_connectors=$(curl -fsS "${CONNECT_URL}/connectors"); then
+        echo "ERROR: cannot inspect Kafka Connect inventory before reconciliation" >&2
+        return 1
+    fi
+    if ! observed_slots=$(PGPASSWORD="${DB_PASS}" psql -X -v ON_ERROR_STOP=1 \
+        -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+        -t -A -F '|' -c "SELECT slot_name, active FROM pg_replication_slots ORDER BY slot_name"); then
+        echo "ERROR: cannot inspect replication slot inventory before reconciliation" >&2
+        return 1
+    fi
+    if ! observed_publications=$(PGPASSWORD="${DB_PASS}" psql -X -v ON_ERROR_STOP=1 \
+        -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+        -t -A -c "SELECT pubname FROM pg_publication ORDER BY pubname"); then
+        echo "ERROR: cannot inspect publication inventory before reconciliation" >&2
+        return 1
+    fi
+    if ! observed_publication_tables=$(PGPASSWORD="${DB_PASS}" psql -X -v ON_ERROR_STOP=1 \
+        -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" \
+        -t -A -F '|' \
+        -c "SELECT pubname, schemaname || '.' || tablename FROM pg_publication_tables ORDER BY pubname, schemaname, tablename"); then
+        echo "ERROR: cannot inspect publication table inventory before reconciliation" >&2
+        return 1
+    fi
+
+    for connector in "${OUTBOX_CONNECTORS[@]}"; do
+        service_name="${connector%%:*}"
+        schema_name="${connector#*:}"
+        db_prefix="${service_name%-service}"
+        db_prefix="${db_prefix//-/_}"
+        current_connectors+="${service_name}-outbox"$'\n'
+        current_slots+="${db_prefix}_outbox_slot"$'\n'
+        current_publications+="${db_prefix}_outbox_pub"$'\n'
+        current_publication_tables+="${db_prefix}_outbox_pub|${schema_name}.outbox"$'\n'
+    done
+    for connector in "${WAL_CONNECTORS[@]}"; do
+        service_name="${connector%%:*}"
+        remainder="${connector#*:}"
+        schema_name="${remainder%%:*}"
+        resource_prefix="${remainder#*:}"
+        current_connectors+="${service_name}-wal"$'\n'
+        current_slots+="${resource_prefix}_wal_slot"$'\n'
+        current_publications+="${resource_prefix}_wal_pub"$'\n'
+        current_publication_tables+="${resource_prefix}_wal_pub|${schema_name}.processed_events"$'\n'
+    done
+    if [[ -f "${CONFIG_DIR}/qdrant-embedding-sink.json" ]]; then
+        current_connectors+="qdrant-embedding-sink"$'\n'
+    fi
+    for connector in "${SUPERSEDED_COMPOSE_OUTBOX_CONNECTORS[@]}"; do
+        suffix="${connector#nohiki-outbox-}"
+        bounded_connectors+="${connector}"$'\n'
+        bounded_slots+="nohiki_outbox_slot_${suffix}"$'\n'
+        bounded_publications+="nohiki_outbox_pub_${suffix}"$'\n'
+        bounded_publication_tables+="nohiki_outbox_pub_${suffix}|${suffix}_schema.outbox"$'\n'
+    done
+
+    if ! violations=$(
+        OBSERVED_CONNECTORS="${observed_connectors}" \
+        OBSERVED_SLOTS="${observed_slots}" \
+        OBSERVED_PUBLICATIONS="${observed_publications}" \
+        OBSERVED_PUBLICATION_TABLES="${observed_publication_tables}" \
+        CURRENT_CONNECTORS="${current_connectors}" \
+        CURRENT_SLOTS="${current_slots}" \
+        CURRENT_PUBLICATIONS="${current_publications}" \
+        CURRENT_PUBLICATION_TABLES="${current_publication_tables}" \
+        BOUNDED_CONNECTORS="${bounded_connectors}" \
+        BOUNDED_SLOTS="${bounded_slots}" \
+        BOUNDED_PUBLICATIONS="${bounded_publications}" \
+        BOUNDED_PUBLICATION_TABLES="${bounded_publication_tables}" \
+        python3 - <<'PY'
+import json
+import os
+
+
+def lines(name):
+    return {value for value in os.environ[name].splitlines() if value}
+
+
+slot_rows = dict(line.rsplit("|", 1) for line in lines("OBSERVED_SLOTS"))
+observed = {
+    "connector": set(json.loads(os.environ["OBSERVED_CONNECTORS"])),
+    "slot": set(slot_rows),
+    "publication": lines("OBSERVED_PUBLICATIONS"),
+    "publication table": lines("OBSERVED_PUBLICATION_TABLES"),
+}
+allowed = {
+    "connector": lines("CURRENT_CONNECTORS") | lines("BOUNDED_CONNECTORS"),
+    "slot": lines("CURRENT_SLOTS") | lines("BOUNDED_SLOTS"),
+    "publication": lines("CURRENT_PUBLICATIONS") | lines("BOUNDED_PUBLICATIONS"),
+    "publication table": lines("CURRENT_PUBLICATION_TABLES") | lines("BOUNDED_PUBLICATION_TABLES"),
+}
+violations = [
+    f"{kind} {identity}"
+    for kind, identities in observed.items()
+    for identity in sorted(identities - allowed[kind])
+]
+bounded_slots = lines("BOUNDED_SLOTS")
+violations.extend(f"active slot {name}" for name, active in sorted(slot_rows.items()) if name in bounded_slots and active == "t")
+violations.extend(
+    f"invalid slot state {name}={active}"
+    for name, active in sorted(slot_rows.items())
+    if active not in {"t", "f"}
+)
+if violations:
+    print(", ".join(violations))
+    raise SystemExit(1)
+PY
+    ); then
+        echo "ERROR: reconcile-compose-cdc preflight refused: ${violations}" >&2
+        echo "No resources were changed by this run. Investigate unsupported identities manually and stop consumers using active slots." >&2
+        echo "If an older recipe already failed, inspect connector inventory because that version may have deleted connectors before refusing." >&2
+        return 1
+    fi
+}
+
+
 usage() {
     cat >&2 <<'EOF'
 Usage: register-connectors.sh [register|reconcile-compose-cdc]
@@ -298,13 +421,17 @@ register_all() {
 }
 
 reconcile_compose_cdc() {
+    assert_bounded_compose_reconciliation_inventory
     echo "Reconciling persisted Compose CDC state (destructive)..."
+    trap 'echo "ERROR: reconciliation stopped after mutation began; state may be partially applied." >&2; echo "Inspect connector, slot, publication, and table health, correct the cause, then rerun this command. No automatic rollback occurred." >&2' ERR
     for connector_name in "${SUPERSEDED_COMPOSE_OUTBOX_CONNECTORS[@]}"; do
         delete_superseded_connector "$connector_name"
     done
     for connector_name in "${SUPERSEDED_COMPOSE_OUTBOX_CONNECTORS[@]}"; do
         cleanup_superseded_replication_resources "$connector_name"
     done
+    register_all
+    trap - ERR
 }
 
 
@@ -323,7 +450,6 @@ main() {
         reconcile-compose-cdc)
             echo "Registering connectors for ${DB_HOST}:${DB_PORT}/${DB_NAME}"
             reconcile_compose_cdc
-            register_all
             ;;
         -h|--help|help)
             usage

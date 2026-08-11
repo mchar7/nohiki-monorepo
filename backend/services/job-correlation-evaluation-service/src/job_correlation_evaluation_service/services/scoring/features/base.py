@@ -4,19 +4,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import numpy as np
-
-if TYPE_CHECKING:
-    from nohiki.job.listing.v1 import ListingSnapshot
-    from nohiki.user.pref.v1 import SearchPrefSnapshot
-    from numpy.typing import NDArray
-
-    from job_correlation_evaluation_service.services.scoring.listing_quality import (
-        ListingFeedbackAggregate,
-    )
-
+from nohiki.job.listing.v1 import ListingSnapshot
+from nohiki.user.pref.v1 import SearchPrefSnapshot
+from numpy.typing import NDArray
 
 type FactorName = Literal["skills", "location", "work_arrangement", "experience", "salary", "recency"]
 
@@ -55,14 +48,12 @@ class FeatureExtractionContext:
         job: Job listing snapshot (ECST from event)
         profile: User search preferences
         pipeline_scores: Scores from prior pipeline stages
-        feedback_aggregate: Optional aggregate feedback for the listing
 
     """
 
     job: ListingSnapshot
     profile: SearchPrefSnapshot
     pipeline_scores: PipelineScores
-    feedback_aggregate: ListingFeedbackAggregate | None = None
     factor_scores: dict[FactorName, float] = field(default_factory=dict)
 
 

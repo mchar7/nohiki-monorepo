@@ -537,12 +537,21 @@ class TestLogout:
                 if refresh
                 else None
             )
+            refresh_service.revoke_session_family = AsyncMock(
+                return_value=RevokedSession(
+                    account_id=revoked_user_id,
+                    session_family_id=revoked_family_id,
+                )
+                if access
+                else None
+            )
             get_refresh.return_value = refresh_service
             result = await logout(self.request(access=access, refresh=refresh), response, db, outbox)
 
         assert result == {"status": "logged_out"}
         assert publish.await_count == expects_publish
         assert refresh_service.revoke_session.await_count == expects_refresh
+        assert refresh_service.revoke_session_family.await_count == access
         assert db.commit.await_count == expects_commit
         assert blacklist.await_count == access
         if refresh and not access:
@@ -658,27 +667,6 @@ class TestLogout:
         ):
             await logout(self.request(access=True), Response(), db, MagicMock())
         publish.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_legacy_token_without_family_remains_jti_only(self) -> None:
-        db = create_mock_session()
-        expires_at = datetime.now(UTC) + timedelta(minutes=2)
-        claims = (uuid.uuid4(), uuid.uuid4(), expires_at, None)
-        with (
-            patch("user_auth_service.api.routers.auth._extract_access_token_claims", return_value=claims),
-            patch(
-                "user_auth_service.api.routers.auth.publish_access_token_revoked_event",
-                new_callable=AsyncMock,
-            ) as publish,
-            patch("user_auth_service.api.routers.auth._blacklist_access_token", new_callable=AsyncMock),
-            patch("user_auth_service.api.routers.auth.clear_auth_cookies"),
-        ):
-            await logout(self.request(access=True), Response(), db, MagicMock())
-
-        await_call = publish.await_args
-        assert await_call is not None
-        assert await_call.kwargs["session_family_id"] is None
-        assert await_call.kwargs["expires_at"] == expires_at
 
     @pytest.mark.asyncio
     async def test_family_revocation_horizon_covers_configured_access_lifetime(self) -> None:

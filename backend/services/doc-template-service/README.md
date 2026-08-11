@@ -104,7 +104,7 @@ template share `(namespace, name, owner_id)` but differ by `version` (a SemVer-v
 The `outbox` and `processed_events` tables support the transactional outbox and idempotency
 mechanisms respectively.
 
-See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+See [DATABASE.md](./DATABASE.md) for semantic database design and lifecycle documentation.
 
 ### Object Storage
 
@@ -185,9 +185,14 @@ the template's name, namespace, access scope, and optional JSON Schema for conte
 
 Each `DOC_TEMPLATE_RENDER_REQUESTED` event triggers this sequence:
 
-1. **Validation**: The template is rendered through the Jinja2 engine and checked for JavaScript
-   (security), invalid HTML, and JSON Schema compliance if a schema is embedded. Validation results
-   are Redis-cached by a hash of the template source + schema + data.
+1. **Content schema enforcement**: The payload is validated against the `content_schema` stored on
+   the template row named by `template_id`, which is this service's authoritative copy rather than
+   anything carried on the event. Producers do not enforce it: doc-content-service hands the schema
+   to PydanticAI's `StructuredDict`, which advertises it to the model but validates only that the
+   output is a dict with string keys. A violation is permanent, so it short-circuits to a terminal
+   FAILED `DOC_TEMPLATE_RENDER_COMPLETED` with `retryable=false` and nothing is rendered or stored.
+   Templates with no stored schema are rendered unvalidated. The JavaScript, HTML and template
+   syntax checks described under the validation API are not part of this path.
 2. **Jinja2 rendering**: The template is rendered with the deserialized data dict.
 3. **Format conversion**: For `HTML`, the rendered string is returned directly (with optional
    `html2text` plain-text alternative). For `PDF`, the HTML is sent to Gotenberg. For `IMAGE`,

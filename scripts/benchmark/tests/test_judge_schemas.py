@@ -76,7 +76,3 @@ class TestPointwiseJudgment:
     def test_average_score(self) -> None:
         judgment = _make_pointwise_judgment(score=80)
         assert judgment.average_score == pytest.approx(80.0)
-
-    def test_is_disqualified_false(self) -> None:
-        judgment = _make_pointwise_judgment()
-        assert judgment.is_disqualified is False

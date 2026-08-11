@@ -56,7 +56,6 @@ from .constants import (
     RETRY_MAX_WAIT_SECONDS,
     RETRY_MIN_WAIT_SECONDS,
     RETRY_MULTIPLIER,
-    VALIDATION_RETRY_EXHAUSTED_PREFIX,
 )
 from .settings import (
     ApiKeyRegistry,
@@ -125,7 +124,6 @@ __all__ = [
     "RETRY_MAX_WAIT_SECONDS",
     "RETRY_MIN_WAIT_SECONDS",
     "RETRY_MULTIPLIER",
-    "VALIDATION_RETRY_EXHAUSTED_PREFIX",
     "ApiKeyRegistry",
     "CacheTTL",
     "LLMCachingSettings",

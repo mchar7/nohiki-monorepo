@@ -73,7 +73,7 @@ class TestCompiledPredicateEvaluation:
     def test_schema_has_path_true_when_present(self) -> None:
         """schema_has_path('a.b') returns True when path exists with non-None value."""
         pred = compile_predicate("schema_has_path('info.name')")
-        data = cast(dict[str, object], {"info": {"name": "Alice"}})
+        data = cast("dict[str, object]", {"info": {"name": "Alice"}})
         runtime = LintRuntimeContext()
         result = pred.evaluate(data, runtime)
         assert result is True
@@ -81,7 +81,7 @@ class TestCompiledPredicateEvaluation:
     def test_schema_has_path_false_when_missing(self) -> None:
         """schema_has_path('a.b') returns False when path missing."""
         pred = compile_predicate("schema_has_path('info.name')")
-        data = cast(dict[str, object], {"info": {}})
+        data = cast("dict[str, object]", {"info": {}})
         runtime = LintRuntimeContext()
         result = pred.evaluate(data, runtime)
         assert result is False
@@ -89,7 +89,7 @@ class TestCompiledPredicateEvaluation:
     def test_schema_has_path_with_array_indices(self) -> None:
         """schema_has_path handles array indices (e.g., items[0])."""
         pred = compile_predicate("schema_has_path('items[0]')")
-        data = cast(dict[str, object], {"items": [{"id": 1}]})
+        data = cast("dict[str, object]", {"items": [{"id": 1}]})
         runtime = LintRuntimeContext()
         result = pred.evaluate(data, runtime)
         assert result is True
@@ -219,17 +219,17 @@ class TestCompiledPredicateEvaluation:
 
         # Case 1: has reference tag and path exists
         runtime1 = LintRuntimeContext(active_tags=frozenset(("reference",)))
-        data1 = cast(dict[str, object], {"experience": []})
+        data1 = cast("dict[str, object]", {"experience": []})
         assert pred.evaluate(data1, runtime1) is True
 
         # Case 2: has sibling but no reference tag
         runtime2 = LintRuntimeContext(active_tags=frozenset(), sibling_documents={"ref": {}})
-        data2 = cast(dict[str, object], {})
+        data2 = cast("dict[str, object]", {})
         assert pred.evaluate(data2, runtime2) is True
 
         # Case 3: nothing matches
         runtime3 = LintRuntimeContext(active_tags=frozenset())
-        data3 = cast(dict[str, object], {})
+        data3 = cast("dict[str, object]", {})
         assert pred.evaluate(data3, runtime3) is False
 
     def test_whitespace_handling_in_placeholders(self) -> None:

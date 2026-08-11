@@ -8,7 +8,12 @@ from nohiki_observability import get_logger
 logger = get_logger(__name__)
 
 # Semantic version regex pattern (SemVer 2.0.0)
-SEMVER_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z\-\.]+)?(\+[0-9A-Za-z\-\.]+)?$")
+SEMVER_PATTERN = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$"
+)
 
 
 class SemanticVersionError(ValueError):

@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import re
@@ -7,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+import ci_checks.checks.workflow as workflow_helpers
 import pytest
 from _documents import WorkflowJob, WorkflowStep, load_mapping, load_workflow, mapping_sequence_at
 from ci_checks.checks.deadcode import STATIC_RESULT_OUTPUT
@@ -17,12 +19,13 @@ from ci_checks.checks.workflow import (
     accounting_span,
     derive_accounting,
     enforce_wall_budget,
-    hosted_equivalent_minutes,
     render_accounting,
     render_cache_table,
     render_open_summary,
+    route_outputs,
+    runner_minute_totals,
+    select_runner,
     select_wall_budget,
-    worker_timeout_minutes,
 )
 from ci_checks.core.change_gate import (
     BroadCause,
@@ -90,6 +93,179 @@ def _wall_budgets() -> dict[str, int]:
         "warm": WARM_WALL_BUDGET_SECONDS,
         "cold": COLD_WALL_BUDGET_SECONDS,
     }
+
+
+def _runner(
+    name: str,
+    tier: str,
+    *,
+    status: str = "online",
+    busy: bool = False,
+    operating_system: str = "linux",
+    labels: list[str] | None = None,
+) -> dict[str, object]:
+    names = labels or ["self-hosted", "Linux", "X64", "nohiki", tier]
+    return {
+        "name": name,
+        "status": status,
+        "busy": busy,
+        "os": operating_system,
+        "labels": [{"name": label} for label in names],
+    }
+
+
+def _inventory(*runners: dict[str, object], pages: int = 1) -> list[dict[str, object]]:
+    size = len(runners)
+    if pages == 1:
+        return [{"total_count": size, "runners": list(runners)}]
+    split = (size + pages - 1) // pages
+    return [
+        {"total_count": size, "runners": list(runners[offset : offset + split])} for offset in range(0, size, split)
+    ]
+
+
+def test_runner_priority_prefers_idle_tier_1_then_idle_undrained_tier_2_then_online_tier_3() -> None:
+    tier_1 = _runner("nohiki-runner-02", "nohiki-t1")
+    tier_2 = _runner("nohiki-runner-06", "nohiki-t2")
+    tier_3 = _runner("nohiki-runner-01", "nohiki-t3")
+    selected = select_runner(_inventory(tier_3, tier_2, tier_1, pages=2))
+    assert (selected.runner_class, selected.selected_name) == ("nohiki-t1", "nohiki-runner-02")
+
+    selected = select_runner(
+        _inventory(
+            _runner("nohiki-runner-02", "nohiki-t1", busy=True),
+            _runner("nohiki-runner-03", "nohiki-t1", status="offline"),
+            _runner("nohiki-runner-04", "nohiki-t1", busy=True),
+            _runner("nohiki-runner-05", "nohiki-t1"),
+            tier_2,
+            tier_3,
+        )
+    )
+    assert (selected.runner_class, selected.selected_name) == ("nohiki-t1", "nohiki-runner-05")
+
+    selected = select_runner(_inventory(tier_3, tier_2, _runner("nohiki-runner-02", "nohiki-t1", status="offline")))
+    assert (selected.runner_class, selected.selected_name) == ("nohiki-t2", "nohiki-runner-06")
+
+    selected = select_runner(
+        _inventory(
+            tier_3,
+            _runner("nohiki-runner-06", "nohiki-t2", busy=True),
+            _runner("nohiki-runner-02", "nohiki-t1", busy=True),
+        )
+    )
+    assert (selected.runner_class, selected.selected_name) == ("nohiki-t3", "nohiki-runner-01")
+
+
+def test_runner_routing_handles_all_up_one_down_and_all_down() -> None:
+    fleet = (
+        ("nohiki-runner-01", "nohiki-t3"),
+        ("nohiki-runner-02", "nohiki-t1"),
+        ("nohiki-runner-03", "nohiki-t1"),
+        ("nohiki-runner-04", "nohiki-t1"),
+        ("nohiki-runner-05", "nohiki-t1"),
+        ("nohiki-runner-06", "nohiki-t2"),
+    )
+    all_up = select_runner(_inventory(*(_runner(name, tier) for name, tier in fleet)))
+    assert (all_up.runner_class, all_up.selected_name) == ("nohiki-t1", "nohiki-runner-02")
+
+    one_down = select_runner(
+        _inventory(
+            *(_runner(name, tier, status="offline" if name == "nohiki-runner-02" else "online") for name, tier in fleet)
+        )
+    )
+    assert (one_down.runner_class, one_down.selected_name) == ("nohiki-t1", "nohiki-runner-03")
+
+    all_down = select_runner(_inventory(*(_runner(name, tier, status="offline") for name, tier in fleet)))
+    assert all_down.runner_class == "hosted"
+    assert (all_down.tier_1_state, all_down.tier_2_state, all_down.tier_3_state) == (
+        "offline",
+        "offline",
+        "offline",
+    )
+
+
+def test_powered_off_tier_1_falls_through_without_waiting_and_rerun_takes_a_fresh_snapshot() -> None:
+    powered_off = select_runner(
+        _inventory(
+            _runner("nohiki-runner-02", "nohiki-t1", status="offline"),
+            _runner("nohiki-runner-01", "nohiki-t3"),
+        )
+    )
+    assert powered_off.runner_class == "nohiki-t3"
+    assert powered_off.tier_1_state == "offline"
+    fresh_attempt = select_runner(
+        _inventory(_runner("nohiki-runner-02", "nohiki-t1"), _runner("nohiki-runner-01", "nohiki-t3"))
+    )
+    assert fresh_attempt.runner_class == "nohiki-t1"
+
+
+def test_busy_tier_1_and_tier_2_fall_through_but_busy_tier_3_queues() -> None:
+    selected = select_runner(
+        _inventory(
+            _runner("nohiki-runner-02", "nohiki-t1", busy=True),
+            _runner("nohiki-runner-06", "nohiki-t2", busy=True),
+            _runner("nohiki-runner-01", "nohiki-t3", busy=True),
+        )
+    )
+    assert selected.runner_class == "nohiki-t3"
+    assert selected.runner_target == '["self-hosted","Linux","X64","nohiki","nohiki-t3"]'
+    assert (selected.tier_1_state, selected.tier_2_state, selected.tier_3_state) == (
+        "busy",
+        "busy",
+        "eligible",
+    )
+
+
+def test_tier_2_drain_skips_only_tier_2_and_absent_tiers_skip_cleanly() -> None:
+    selected = select_runner(
+        _inventory(_runner("nohiki-runner-06", "nohiki-t2"), _runner("nohiki-runner-01", "nohiki-t3")),
+        "TRUE",
+    )
+    assert selected.runner_class == "nohiki-t3"
+    assert (selected.tier_1_state, selected.tier_2_state) == ("absent", "draining")
+    assert select_runner(_inventory()).runner_class == "hosted"
+
+
+@pytest.mark.parametrize(
+    "inventory",
+    [
+        [{"total_count": 2, "runners": [_runner("nohiki-runner-01", "nohiki-t3")]}],
+        _inventory(_runner("nohiki-runner-01", "nohiki-t3"), _runner("nohiki-runner-07", "nohiki-t3")),
+        _inventory(_runner("nohiki-runner-01", "nohiki-t3"), _runner("nohiki-runner-01", "nohiki-t3")),
+        _inventory(
+            _runner(
+                "nohiki-runner-01",
+                "nohiki-t3",
+                labels=["self-hosted", "Linux", "ARM64", "nohiki", "nohiki-t3"],
+            )
+        ),
+        _inventory(_runner("nohiki-runner-01", "nohiki-t3", operating_system="Windows")),
+        [{"total_count": 1, "runners": [{"name": "nohiki-runner-01"}]}],
+    ],
+)
+def test_untrusted_inventory_forces_hosted_fallback(inventory: object) -> None:
+    selected = select_runner(inventory)
+    assert selected.runner_class == "hosted"
+    assert selected.runner_target == '"ubuntu-24.04"'
+    assert selected.tier_1_state == selected.tier_2_state == selected.tier_3_state == "untrusted"
+
+
+def test_runner_target_and_timeout_outputs_are_valid_for_every_class() -> None:
+    inventories = {
+        "nohiki-t1": _inventory(_runner("nohiki-runner-02", "nohiki-t1")),
+        "nohiki-t2": _inventory(_runner("nohiki-runner-06", "nohiki-t2")),
+        "nohiki-t3": _inventory(_runner("nohiki-runner-01", "nohiki-t3")),
+        "hosted": _inventory(),
+    }
+    expected_worker = {"nohiki-t1": "52", "nohiki-t2": "52", "nohiki-t3": "52", "hosted": "30"}
+    for runner_class, inventory in inventories.items():
+        outputs = route_outputs(select_runner(inventory))
+        assert outputs["runner_class"] == runner_class
+        assert json.loads(outputs["runner_target"])
+        assert outputs["worker_timeout_minutes"] == expected_worker[runner_class]
+        assert outputs["playwright_timeout_minutes"] == "30"
+        assert outputs["title_timeout_minutes"] == ("10" if runner_class == "hosted" else "20")
+        assert outputs["checks_timeout_minutes"] == "5"
 
 
 def _protected_main_fan_in(worker_result: str) -> subprocess.CompletedProcess[str]:
@@ -324,6 +500,7 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Check proto compatibility",
             "Run Node workspace contract tests",
             "Run Skylos cache contract tests",
+            "Test JVM module",
             "Lint Markdown",
             "Lint frontend",
             "Check i18n keys",
@@ -337,9 +514,11 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Build production frontend image",
             "Smoke production frontend container",
             "Validate OpenTelemetry collector image and configs",
+            "Run container contract tests",
         },
         "python": {
             "Typecheck backend",
+            "Check import boundaries",
             "Run selected Python tests",
         },
     }
@@ -493,12 +672,15 @@ def test_no_job_carries_an_expression_for_a_class_it_cannot_run_under() -> None:
         assert not _unreachable_class_expressions(job), job_id
 
 
-def test_ready_cache_save_runs_on_every_event_behind_a_key_guard() -> None:
+def test_ready_cache_saves_run_on_every_event_behind_profile_key_guards() -> None:
     steps = mapping_sequence_at(load_mapping(_SETUP_CI), "runs", "steps")
-    save = next(step for step in steps if step.get("name") == "Save complete CI environment")
-    condition = str(save["if"])
-    assert "github.event_name" not in condition
-    assert "steps.ready-cache.outputs.primary-key != ''" in condition
+    by_name = {step.get("name"): step for step in steps}
+    hosted = by_name["Save hosted complete CI environment"]
+    persistent = by_name["Save persistent CI virtual environment"]
+    for save in (hosted, persistent):
+        assert "github.event_name" not in str(save["if"])
+    assert "steps.hosted-ready-cache.outputs.primary-key != ''" in str(hosted["if"])
+    assert "steps.persistent-ready-cache.outputs.cache-primary-key != ''" in str(persistent["if"])
 
 
 def test_python_test_lane_uses_gate_scope_once_per_class() -> None:
@@ -516,6 +698,18 @@ def test_python_test_lane_uses_gate_scope_once_per_class() -> None:
     condition = str(run_tests["if"])
     assert "matrix.unit == 'python'" in condition
     assert "matrix.unit == 'frontend'" not in condition
+
+
+def test_container_contract_lane_runs_the_routed_marker_suite() -> None:
+    step = next(step for step in _steps(_jobs()["worker"]) if step.get("name") == "Run container contract tests")
+    command = str(step["run"])
+
+    assert "needs.changes.outputs.container_contracts == 'true'" in str(step["if"])
+    assert "ci-checks tests all --scope all" in command
+    assert "--requires-docker --ci --workers 1 --no-coverage" in command
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in command
+    assert '--summary-title "container contracts"' in command
+    assert step["env"]["CI_CHECKS_SKIP_WORKSPACE_SYNC"] == "1"
 
 
 def test_backend_typecheck_keeps_gate_trigger_parity_and_executes_once() -> None:
@@ -553,6 +747,18 @@ def test_backend_typecheck_keeps_gate_trigger_parity_and_executes_once() -> None
                     execution_count = json.loads(outputs["worker_units"]).count("python")
 
                 assert execution_count == int(triggered_before), outputs
+
+
+def test_jvm_tests_run_once_on_the_frontend_worker_with_the_pinned_shell() -> None:
+    worker = _jobs()["worker"]
+    step = next(step for step in _steps(worker) if step.get("name") == "Test JVM module")
+    condition = str(step["if"])
+
+    assert "matrix.unit == 'frontend'" in condition
+    assert "matrix.unit == 'python'" not in condition
+    assert "needs.changes.outputs.broad_unbounded == 'true'" in condition
+    assert condition.endswith("needs.changes.outputs.jvm_tests == 'true')")
+    assert step["run"] == "nix develop .#jvm --command just test-jvm"
 
 
 def test_node_workspace_tests_run_where_the_payload_carries_node_modules() -> None:
@@ -666,18 +872,35 @@ def test_skylos_cache_tests_run_only_where_the_private_analyzer_is_installed() -
     assert all(name.startswith(f"{_CI_TESTS}/") for name in marked), marked
 
 
-def test_worker_guard_bounds_a_hang_against_the_cold_budget() -> None:
-    changes = _jobs()["changes"]
-    assert changes["outputs"]["worker_timeout_minutes"] == ("${{ steps.guards.outputs.worker_timeout_minutes }}")
-    guards = next(step for step in _steps(changes) if step.get("name") == "Derive worker guard")
-    command = str(guards["run"])
-    cold = _wall_budgets()["cold"]
-    assert cold == max(_wall_budgets().values())
-    assert "workflow.py guard" in command.replace("\n", " ")
-    assert worker_timeout_minutes("standard") == worker_timeout_minutes("broad") == 52
-    with pytest.raises(ValueError, match="cannot derive a guard for commit class: invalid"):
-        worker_timeout_minutes("invalid")
-    assert _jobs()["worker"]["timeout-minutes"] == ("${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}")
+def test_workflow_helper_parses_on_hosted_bootstrap_python() -> None:
+    source = (_ROOT / "scripts" / "ci" / "src" / "ci_checks" / "checks" / "workflow.py").read_text(encoding="utf-8")
+    ast.parse(source, filename="workflow.py", feature_version=(3, 12))
+
+
+def test_router_emits_one_target_and_per_class_timeout_contract() -> None:
+    jobs = _jobs()
+    changes = jobs["changes"]
+    outputs = changes["outputs"]
+    route = next(step for step in _steps(changes) if step.get("name") == "Select runner route")
+    assert changes["runs-on"] == "ubuntu-24.04"
+    assert changes["timeout-minutes"] == 5
+    assert route["env"] == {
+        "GH_TOKEN": "${{ secrets.RUNNER_INVENTORY_TOKEN }}",
+        "TIER_2_DRAIN": "${{ vars.NOHIKI_T2_DRAIN }}",
+    }
+    assert "workflow.py route" in str(route["run"]).replace("\n", " ")
+    assert outputs["runner_target"] == "${{ steps.route.outputs.runner_target }}"
+    assert outputs["runner_class"] == "${{ steps.route.outputs.runner_class }}"
+    assert outputs["worker_timeout_minutes"] == "${{ steps.route.outputs.worker_timeout_minutes }}"
+    for job_name in ("worker", "playwright-image", "title-policy", "checks"):
+        assert "needs.changes.outputs.runner_target" in str(jobs[job_name]["runs-on"])
+    assert jobs["worker"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}"
+    assert jobs["playwright-image"]["timeout-minutes"] == (
+        "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}"
+    )
+    assert jobs["title-policy"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.title_timeout_minutes) }}"
+    assert jobs["checks"]["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}"
+    assert _wall_budgets() == {"warm": 8040, "cold": 8040}
 
 
 def test_router_emits_scoping_and_tree_attestation_contracts() -> None:
@@ -741,7 +964,12 @@ def test_title_edits_have_independent_concurrency_and_check_identities() -> None
     title_setup = next(
         step for step in _steps(jobs["title-policy"]) if step.get("name") == "Set up commit policy environment"
     )
-    assert title_setup["with"] == {"node": "true", "ready-cache": "true", "payload": "node"}
+    assert title_setup["with"] == {
+        "node": "true",
+        "ready-cache": "true",
+        "payload": "node",
+        "runner-class": "${{ needs.changes.outputs.runner_class }}",
+    }
     assert substantive["name"] == "Checks"
     # Checks is a required context on protected main, so suppressing it on an edited event would
     # leave the head without its required conclusion and let a title-only pass stand for validation.
@@ -768,12 +996,13 @@ def test_changes_job_computes_gate_from_full_history() -> None:
     assert '--summary "$GITHUB_STEP_SUMMARY"' in command
 
 
-def test_hadolint_enumerates_canonical_and_suffixed_dockerfiles() -> None:
+def test_hadolint_uses_canonical_recipe_with_summary_fallback() -> None:
     lint_steps = _steps(_jobs()["worker"])
     hadolint = next(step for step in lint_steps if step.get("name") == "Lint Dockerfiles (hadolint)")
 
     command = hadolint["run"]
     assert "just docker-lint" in command
+    assert "lint-results/hadolint.log" in command
 
 
 def test_protected_main_reuse_preserves_cache_publication_and_checks_verdict() -> None:
@@ -812,6 +1041,14 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
         # Splits the class signal: the step disjuncts consume this, the scope selectors do not.
         "broad_unbounded",
         "worker_timeout_minutes",
+        "runner_target",
+        "runner_class",
+        "tier_1_state",
+        "tier_2_state",
+        "tier_3_state",
+        "playwright_timeout_minutes",
+        "title_timeout_minutes",
+        "checks_timeout_minutes",
         "protected_main_smoke",
         "commitlint_expected",
         "full",
@@ -819,6 +1056,7 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
         # "skipped, a prior run already proved this tree".
         "title_only",
         "reused_run_id",
+        "labels",
     }
 
     change_steps = _steps(changes)
@@ -856,6 +1094,10 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
     for field in ("run_id", "event_action", "commit_class", "tested_tree_sha"):
         assert field in validate_command
     assert "checks-attestation/checks-attestation.json" in validate_command
+    assert checks["runs-on"] == "${{ fromJSON(needs.changes.outputs.runner_target || '\"ubuntu-24.04\"') }}"
+    assert checks["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}"
+    for job_name in ("worker", "playwright-image", "title-policy"):
+        assert "||" not in str(jobs[job_name]["runs-on"])
 
 
 def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
@@ -865,22 +1107,81 @@ def test_workflow_delegates_accounting_to_the_python_subcommand() -> None:
     assert "CONTAINER_SELECTED" not in report["env"]
     assert "PLAYWRIGHT_SELECTED" not in report["env"]
     assert _wall_budgets() == {"warm": 8040, "cold": 8040}
-    assert _jobs()["playwright-image"]["timeout-minutes"] == 30
-
-
-def test_guard_entrypoint_emits_the_parsed_workflow_output(tmp_path: Path) -> None:
-    step = next(step for step in _steps(_jobs()["changes"]) if step.get("name") == "Derive worker guard")
-    output = tmp_path / "guard-output"
-
-    result = _run_workflow_step(
-        step,
-        workflow_values={"COMMIT_CLASS": "broad"},
-        runner_values={"GITHUB_OUTPUT": str(output)},
+    assert _jobs()["playwright-image"]["timeout-minutes"] == (
+        "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}"
     )
 
-    assert result.returncode == 0, result.stderr
-    assert output.exists()
-    assert output.read_text(encoding="utf-8") == (f"worker_timeout_minutes={worker_timeout_minutes('broad')}\n")
+
+def test_routing_entrypoint_emits_complete_atomic_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "route-output"
+    summary = tmp_path / "summary"
+    calls: list[list[str]] = []
+
+    def inventory(args: list[str]) -> object:
+        calls.append(args)
+        return _inventory(_runner("nohiki-runner-01", "nohiki-t3"))
+
+    monkeypatch.setenv("GH_TOKEN", "redacted")
+    monkeypatch.setattr(workflow_helpers, "_gh_json", inventory)
+    workflow_helpers.route_cmd("owner/repository", output, summary)
+    emitted = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    assert emitted == route_outputs(select_runner(_inventory(_runner("nohiki-runner-01", "nohiki-t3"))))
+    assert calls == [["--paginate", "--slurp", "repos/owner/repository/actions/runners?per_page=100"]]
+    rendered = summary.read_text(encoding="utf-8")
+    assert "RUNNER_INVENTORY_TOKEN" not in rendered
+    assert "| Selected class | `nohiki-t3` |" in rendered
+
+
+def test_inventory_request_retries_once_then_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def unavailable(_args: list[str]) -> object:
+        nonlocal calls
+        calls += 1
+        msg = "untrusted response"
+        raise ValueError(msg)
+
+    output = tmp_path / "route-output"
+    monkeypatch.setenv("GH_TOKEN", "redacted")
+    monkeypatch.setattr(workflow_helpers, "_gh_json", unavailable)
+    workflow_helpers.route_cmd("owner/repository", output, tmp_path / "summary")
+    emitted = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    assert calls == 2
+    assert emitted["runner_target"] == '"ubuntu-24.04"'
+    assert emitted["runner_class"] == "hosted"
+
+
+def test_missing_inventory_secret_fails_closed_without_an_api_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    def unexpected_call(_args: list[str]) -> object:
+        pytest.fail("inventory API must not be called without its credential")
+
+    monkeypatch.setattr(workflow_helpers, "_gh_json", unexpected_call)
+    output = tmp_path / "route-output"
+    workflow_helpers.route_cmd("owner/repository", output, tmp_path / "summary")
+    emitted = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
+    assert emitted["runner_target"] == '"ubuntu-24.04"'
+    assert emitted["runner_class"] == "hosted"
+
+
+def test_router_failure_without_outputs_still_runs_hosted_fan_in() -> None:
+    jobs = _jobs()
+    fan_in = jobs["checks"]
+    assert fan_in["if"] == "always()"
+    assert fan_in["runs-on"] == "${{ fromJSON(needs.changes.outputs.runner_target || '\"ubuntu-24.04\"') }}"
+    assert fan_in["timeout-minutes"] == "${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}"
+    for job_name in ("worker", "playwright-image", "title-policy"):
+        assert "||" not in str(jobs[job_name]["runs-on"])
 
 
 def test_summary_entrypoint_writes_the_parsed_workflow_report(tmp_path: Path) -> None:
@@ -917,6 +1218,9 @@ def test_container_verdict_entrypoint_enforces_and_attests_the_parsed_step(tmp_p
         "OTEL_EXPECTED": "false",
         "OTEL_OUTCOME": "skipped",
         "SMOKE_OUTCOME": "success",
+        "CONTAINER_TESTS_EXPECTED": "true",
+        "CONTAINER_TESTS_OUTCOME": "success",
+        "CONTAINER_TESTS_EXECUTED": "true",
     }
 
     succeeded = _run_workflow_step(
@@ -928,6 +1232,13 @@ def test_container_verdict_entrypoint_enforces_and_attests_the_parsed_step(tmp_p
     assert succeeded.returncode == 0, succeeded.stderr
     assert output.exists()
     assert output.read_text(encoding="utf-8") == "executed=true\n"
+    vacuous = _run_workflow_step(
+        step,
+        workflow_values=successful_values | {"CONTAINER_TESTS_EXECUTED": "false"},
+        runner_values={"GITHUB_OUTPUT": str(tmp_path / "vacuous-container-output")},
+    )
+    assert vacuous.returncode == 1
+    assert vacuous.stderr == "container-tests succeeded without execution evidence\n"
 
     failed = _run_workflow_step(
         step,
@@ -1046,9 +1357,9 @@ def test_runtime_accounting_falls_back_to_run_start_for_an_unusable_first_job_st
     assert result.start_basis == "run_started_at fallback: first non-skipped job start unavailable or invalid"
 
 
-def test_zero_step_job_has_zero_hosted_equivalent_minutes() -> None:
+def test_zero_step_job_has_zero_runner_minutes() -> None:
     now = datetime(2026, 7, 23, 0, 2, tzinfo=UTC)
-    assert hosted_equivalent_minutes([], now) == 0
+    assert runner_minute_totals([], now) == (0, 0)
     accounting = derive_accounting(
         "2026-07-23T00:00:00Z",
         now,
@@ -1058,8 +1369,10 @@ def test_zero_step_job_has_zero_hosted_equivalent_minutes() -> None:
         deadcode_missed="",
         deadcode_hit="",
     )
-    assert accounting.hosted_equivalent_minutes == 0
-    assert accounting.hosted_equivalent_cost_usd == "0.000"
+    assert accounting.avoided_minutes == 0
+    assert accounting.avoided_cost_usd == "0.000"
+    assert accounting.reconstructed_hosted_minutes == 0
+    assert accounting.reconstructed_hosted_cost_usd == "0.000"
     assert accounting.jobs == ()
 
 
@@ -1071,7 +1384,7 @@ def test_fan_in_consumes_the_worker_cache_signals() -> None:
     assert report["env"]["WORKER_DEADCODE_CACHE_HIT"] == "${{ needs.worker.outputs.deadcode_cache_hit }}"
     assert "worker" in _jobs()["checks"]["needs"]
 
-    action_outputs = cast(dict[str, object], load_mapping(_SETUP_CI)["outputs"])
+    action_outputs = cast("dict[str, object]", load_mapping(_SETUP_CI)["outputs"])
     assert {"ready-cache-hit", "skylos-cache-hit"} <= action_outputs.keys()
     setup = next(step for step in _steps(_jobs()["worker"]) if step.get("uses") == "./.github/actions/setup-ci")
     assert setup["id"] == "setup-ci"
@@ -1170,24 +1483,28 @@ def test_accounting_render_distinguishes_running_completed_and_both_skips() -> N
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": None,
             "conclusion": None,
+            "labels": ["ubuntu-24.04"],
         },
         {
             "name": "Router",
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": "2026-07-23T00:01:01Z",
             "conclusion": "success",
+            "labels": ["ubuntu-24.04"],
         },
         {
             "name": "Scoped worker (python)",
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": "2026-07-23T00:00:00Z",
             "conclusion": "skipped",
+            "labels": ["self-hosted", "Linux", "X64", "nohiki", "nohiki-t3"],
         },
         {
             "name": "Playwright runner image",
             "started_at": "2026-07-23T00:00:00Z",
             "completed_at": "2026-07-23T00:00:00Z",
             "conclusion": "skipped",
+            "labels": ["ubuntu-24.04"],
         },
     ]
     expected = {
@@ -1207,15 +1524,32 @@ def test_accounting_render_distinguishes_running_completed_and_both_skips() -> N
         deadcode_hit="true",
     )
     rendered = render_accounting(accounting, expected, "18234567890", now)
-    assert "| Checks | 60 | 1 | running (this job) |" in rendered
-    assert "| Router | 61 | 2 | success |" in rendered
-    assert "| Scoped worker (python) | 0 | 0 | skipped: already proven by run 18234567890 |" in rendered
-    assert "| Playwright runner image | 0 | 0 | skipped: not selected |" in rendered
-    assert "| Hosted-equivalent avoided minutes | 3 |" in rendered
-    assert "| Hosted-equivalent avoided cost USD | 0.018 |" in rendered
-    assert "Self-hosted jobs are not billed" in rendered
-    assert "Reconstructed billable minutes" not in rendered
-    assert "| Estimated cost USD |" not in rendered
+    assert "| Checks | 60 | 1 | reconstructed hosted | running (this job) |" in rendered
+    assert "| Router | 61 | 2 | reconstructed hosted | success |" in rendered
+    assert "| Scoped worker (python) | 0 | 0 | avoided | skipped: already proven by run 18234567890 |" in rendered
+    assert "| Playwright runner image | 0 | 0 | reconstructed hosted | skipped: not selected |" in rendered
+    assert "| Hosted-equivalent avoided minutes | 0 |" in rendered
+    assert "| Hosted-equivalent avoided cost USD | 0.000 |" in rendered
+    assert "| Reconstructed hosted minutes | 3 |" in rendered
+    assert "| Reconstructed hosted cost USD | 0.018 |" in rendered
+    assert "billing API, not this reconstruction" in rendered
+
+
+def test_runner_minutes_never_label_actual_hosted_execution_as_avoided() -> None:
+    now = datetime(2026, 7, 23, 0, 2, tzinfo=UTC)
+    jobs = [
+        {
+            "started_at": "2026-07-23T00:00:00Z",
+            "completed_at": "2026-07-23T00:01:01Z",
+            "labels": ["self-hosted", "Linux", "X64", "nohiki", "nohiki-t1"],
+        },
+        {
+            "started_at": "2026-07-23T00:00:00Z",
+            "completed_at": "2026-07-23T00:00:59Z",
+            "labels": ["ubuntu-24.04"],
+        },
+    ]
+    assert runner_minute_totals(jobs, now) == (2, 1)
 
 
 def test_router_open_summary_text_is_unchanged() -> None:
@@ -1259,6 +1593,12 @@ def test_digest_freshness_workflow_probes_on_schedule() -> None:
     commands = "\n".join(step.get("run", "") for step in probe["steps"])
     assert "ci-checks image-freshness" in commands
     assert "gh issue" in commands
+    assert probe["runs-on"] == ["self-hosted", "linux", "x64", "nohiki"]
+    sweep_steps = [step for step in probe["steps"] if step.get("name") == "Sweep dependency deprecations"]
+    assert len(sweep_steps) == 1
+    assert sweep_steps[0]["if"] == "always()"
+    assert sweep_steps[0]["continue-on-error"] is True
+    assert "ci-checks deprecation-sweep" in sweep_steps[0]["run"]
 
 
 def test_gated_jobs_depend_on_change_outputs() -> None:
@@ -1299,11 +1639,39 @@ def test_checks_aggregator_only_allows_router_sanctioned_skips() -> None:
 
 def test_typescript_quality_runs_once_per_class_with_ci_native_commands() -> None:
     steps = {step.get("name"): step for step in _steps(_jobs()["worker"])}
-    assert steps["Lint frontend"]["run"] == "nix develop .#ci --command just fe-lint"
-    assert steps["Lint frontend architecture (Steiger)"]["run"] == "nix develop .#ci --command just fe-fsd"
+    assert "biome check --reporter=sarif" in steps["Lint frontend"]["run"]
+    assert "biome-frontend.sarif" in steps["Lint frontend"]["run"]
+    assert "just fe-fsd" in steps["Lint frontend architecture (Steiger)"]["run"]
     assert "exec tsc --noEmit" in steps["Typecheck edge worker"]["run"]
     assert "exec vitest run" in steps["Test edge worker"]["run"]
     assert str(steps["Test frontend"]["run"]).endswith("just fe-test")
+    assert steps["Test frontend"]["env"]["VITEST_MAX_WORKERS"] == (
+        "${{ needs.changes.outputs.runner_class == 'hosted' && '2' || '' }}"
+    )
+
+
+def test_lint_diagnostics_are_uploaded_and_summarized_with_least_privilege() -> None:
+    worker = _jobs()["worker"]
+    assert worker["permissions"]["security-events"] == "write"
+    steps = {step.get("name"): step for step in _steps(worker)}
+    detection = steps["Detect code scanning availability"]
+    assert detection["env"]["REPOSITORY_PUBLIC"] == (
+        "${{ github.event.repository && github.event.repository.private == false }}"
+    )
+    assert "code-scanning/alerts?per_page=1" in detection["run"]
+    assert "available=$available" in detection["run"]
+    upload = steps["Upload lint diagnostics"]
+    assert upload["uses"] == ("github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81")
+    assert "steps.code-scanning.outputs.available == 'true'" in upload["if"]
+    assert "head.repo.full_name == github.repository" in upload["if"]
+    assert upload["with"] == {
+        "sarif_file": "lint-results",
+        "category": "lint/${{ matrix.unit }}",
+        "wait-for-processing": False,
+    }
+    summary = steps["Summarize lint diagnostics"]
+    assert summary["if"] == "always() && matrix.unit == 'frontend'"
+    assert "ci-checks lint-report" in summary["run"]
 
 
 def test_setup_and_secret_scan_keep_one_definition_and_one_writer_per_payload() -> None:
@@ -1338,8 +1706,10 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_writer_per_payload() 
         assert ".venv-lint" not in lint_step["run"]
         # Broad lints the whole tree from the same definition that lints the diff on standard.
         assert lint_step["env"]["RUFF_SCOPE"] == ("${{ needs.changes.outputs.broad == 'true' && 'ALL' || 'CHANGED' }}")
-    assert "just lint" in str(steps["Lint Python"]["run"])
+    assert "--output-format=sarif" in str(steps["Lint Python"]["run"])
+    assert "ruff-lint.sarif" in str(steps["Lint Python"]["run"])
     assert "just format-check" in str(steps["Check Python formatting"]["run"])
+    assert "ruff-format.log" in str(steps["Check Python formatting"]["run"])
     assert "--exclude" not in lint_step["run"]
     # test_execution_attestations_are_not_scoped_to_one_commit_class.
 
@@ -1375,6 +1745,8 @@ def test_native_overlap_is_memory_bounded_to_measured_low_rss_pairs() -> None:
         "Run Skylos cache contract tests",
         "Test frontend",
         "Check dependencies",
+        "Check import boundaries",
+        "Check test import closure",
     }
     assert standalone.isdisjoint(set().union(*names))
     assert all("background" not in step and "cancel" not in step for step in worker["steps"])
@@ -1451,6 +1823,275 @@ def test_python_test_packages_come_from_change_gate_in_both_classes() -> None:
     assert '--packages "$TEST_PACKAGES"' in selected_tests["run"]
 
 
+def test_label_sync_is_an_advisory_job_off_the_required_router_path() -> None:
+    jobs = _jobs()
+    changes = jobs["changes"]
+    label_sync = jobs["label-sync"]
+    assert changes["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "pull-requests": "read",
+    }
+    assert changes["outputs"]["labels"] == "${{ steps.gate.outputs.labels }}"
+    assert label_sync["needs"] == ["changes"]
+    assert label_sync["runs-on"] == "ubuntu-24.04"
+    assert label_sync["timeout-minutes"] == 1
+    assert label_sync["continue-on-error"] is True
+    assert label_sync["permissions"] == {"issues": "write", "pull-requests": "write"}
+    for name, job in jobs.items():
+        if name == "label-sync":
+            continue
+        needs = job.get("needs", [])
+        dependencies = [needs] if isinstance(needs, str) else needs
+        assert "label-sync" not in dependencies
+
+    sync = next(step for step in _steps(label_sync) if step.get("name") == "Sync area labels")
+    assert sync["env"] == {
+        "GH_TOKEN": "${{ github.token }}",
+        "PR": "${{ github.event.pull_request.number }}",
+        "REPO": "${{ github.repository }}",
+        "LABELS": "${{ needs.changes.outputs.labels }}",
+    }
+    assert cast("dict[str, object]", sync)["shell"] == "bash"
+    command = str(sync["run"])
+    for operation in (
+        'gh api --paginate --slurp "repos/${REPO}/issues/${PR}/labels?per_page=100"',
+        'gh api "repos/${REPO}/labels/${encoded}"',
+        'gh api --method PATCH "repos/${REPO}/labels/${encoded}"',
+        'gh api --method POST "repos/${REPO}/labels"',
+        'gh api --method POST "repos/${REPO}/issues/${PR}/labels"',
+        'gh api --method DELETE "repos/${REPO}/issues/${PR}/labels/${encoded}"',
+    ):
+        assert operation in command
+    assert "|| true" not in command
+
+
+def test_required_checks_verdict_ignores_a_failed_advisory_job() -> None:
+    """Executes the real fan-in with a red advisory job present in the run."""
+    checks = _jobs()["checks"]
+    fan_in = next(step for step in _steps(checks) if step.get("name") == "Require every selected check")
+    assert "label-sync" not in str(fan_in)
+
+    hostile = _run_workflow_step(
+        fan_in,
+        workflow_values={
+            "BROAD": "false",
+            "CHANGES_RESULT": "success",
+            "COMMIT_CLASS": "standard",
+            "CONTAINER_EXPECTED": "false",
+            "FULL": "false",
+            "NODE_GROUP_EXPECTED": "false",
+            "PLAYWRIGHT_EXPECTED": "false",
+            "PLAYWRIGHT_RESULT": "skipped",
+            "STANDARD": "true",
+            "TITLE_POLICY_EXPECTED": "false",
+            "TITLE_POLICY_RESULT": "skipped",
+            "WORKER_COMMITLINT": "",
+            "WORKER_COMMITLINT_EXPECTED": "false",
+            "WORKER_CONTAINER_CONTRACTS": "",
+            "WORKER_NODE_GROUP": "",
+            "WORKER_RESULT": "success",
+            "WORK_EXPECTED": "true",
+        },
+        runner_values={"LABEL_SYNC_RESULT": "failure"},
+    )
+
+    assert hostile.returncode == 0, hostile.stderr
+
+
+def test_label_sync_identifies_dependabot_from_the_immutable_pr_author() -> None:
+    condition = str(_jobs()["label-sync"]["if"])
+
+    assert "github.event.pull_request.user.login != 'dependabot[bot]'" in condition
+    assert "github.actor" not in condition
+
+
+def test_label_sync_skips_title_edits_that_can_overlap_substantive_runs() -> None:
+    assert "github.event.action != 'edited'" in str(_jobs()["label-sync"]["if"])
+
+
+def test_label_sync_reconciles_definitions_and_pr_membership(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$GH_LOG"
+case "$*" in
+  "api --paginate --slurp repos/example/repo/issues/7/labels?per_page=100")
+    printf '%s\\n' '[[{"name":"area:frontend"}]]'
+    ;;
+  "api repos/example/repo/labels/ci%3Afull-run")
+    exit 1
+    ;;
+  *"repos/example/repo/issues/7/labels --input -")
+    cat > /dev/null
+    printf '{}\\n'
+    ;;
+  *)
+    printf '{}\\n'
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    log = tmp_path / "gh.log"
+    sync = next(step for step in _steps(_jobs()["label-sync"]) if step.get("name") == "Sync area labels")
+    result = _run_workflow_step(
+        sync,
+        workflow_values={
+            "GH_TOKEN": "test-token",
+            "PR": "7",
+            "REPO": "example/repo",
+            "LABELS": json.dumps(
+                [
+                    {"name": "area:backend", "color": "1D76DB", "active": "true"},
+                    {"name": "area:frontend", "color": "D4C5F9", "active": "false"},
+                    {"name": "ci:full-run", "color": "B60205", "active": "true"},
+                ],
+                separators=(",", ":"),
+            ),
+        },
+        runner_values={
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GH_LOG": str(log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert any("--method PATCH repos/example/repo/labels/area%3Abackend" in call for call in calls)
+    assert any("--method POST repos/example/repo/labels -f name=ci:full-run" in call for call in calls)
+    assert any("--method DELETE repos/example/repo/issues/7/labels/area%3Afrontend" in call for call in calls)
+    additions = [call for call in calls if "--method POST repos/example/repo/issues/7/labels --input -" in call]
+    assert len(additions) == 2
+
+
+@pytest.mark.parametrize("list_mode", ["failed", "malformed"])
+def test_label_sync_rejects_untrusted_label_lists_before_writes(tmp_path: Path, list_mode: str) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$GH_LOG"
+case "$*" in
+  "api --paginate --slurp repos/example/repo/issues/7/labels?per_page=100")
+    if [[ "$LIST_MODE" == failed ]]; then
+      exit 1
+    fi
+    printf '%s\\n' '{"name":"not-a-page-list"}'
+    ;;
+  *)
+    printf '%s\\n' "unexpected write: $*" >&2
+    exit 99
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    log = tmp_path / "gh.log"
+    label_sync = _jobs()["label-sync"]
+    sync = next(step for step in _steps(label_sync) if step.get("name") == "Sync area labels")
+    result = _run_workflow_step(
+        sync,
+        workflow_values={
+            "GH_TOKEN": "test-token",
+            "PR": "7",
+            "REPO": "example/repo",
+            "LABELS": json.dumps(
+                [{"name": "area:backend", "color": "1D76DB", "active": "true"}],
+                separators=(",", ":"),
+            ),
+        },
+        runner_values={
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GH_LOG": str(log),
+            "LIST_MODE": list_mode,
+        },
+    )
+
+    assert result.returncode != 0
+    # The command still fails closed, while Actions keeps that advisory failure out of Router.
+    assert label_sync["continue-on-error"] is True
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        "api --paginate --slurp repos/example/repo/issues/7/labels?per_page=100"
+    ]
+
+
+@pytest.mark.parametrize(("create_mode", "expected_returncode"), [("race", 0), ("failure", 1)])
+def test_label_sync_tolerates_only_verified_concurrent_label_creation(
+    tmp_path: Path,
+    create_mode: str,
+    expected_returncode: int,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$GH_LOG"
+case "$*" in
+  "api --paginate --slurp repos/example/repo/issues/7/labels?per_page=100")
+    printf '%s\\n' '[[]]'
+    ;;
+  "api repos/example/repo/labels/area%3Abackend")
+    [[ -f "$CREATED" ]]
+    ;;
+  "api --method POST repos/example/repo/labels -f name=area:backend -f color=1D76DB -f description=Gate-managed label")
+    if [[ "$CREATE_MODE" == race ]]; then
+      touch "$CREATED"
+    fi
+    printf '%s\\n' 'HTTP 422: label already exists' >&2
+    exit 1
+    ;;
+  "api --method POST repos/example/repo/issues/7/labels --input -")
+    cat > /dev/null
+    printf '{}\\n'
+    ;;
+  *)
+    printf '%s\\n' "unexpected operation: $*" >&2
+    exit 99
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    log = tmp_path / "gh.log"
+    created = tmp_path / "created"
+    sync = next(step for step in _steps(_jobs()["label-sync"]) if step.get("name") == "Sync area labels")
+    result = _run_workflow_step(
+        sync,
+        workflow_values={
+            "GH_TOKEN": "test-token",
+            "PR": "7",
+            "REPO": "example/repo",
+            "LABELS": json.dumps(
+                [{"name": "area:backend", "color": "1D76DB", "active": "true"}],
+                separators=(",", ":"),
+            ),
+        },
+        runner_values={
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GH_LOG": str(log),
+            "CREATED": str(created),
+            "CREATE_MODE": create_mode,
+        },
+    )
+
+    assert result.returncode == expected_returncode, result.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert calls.count("api repos/example/repo/labels/area%3Abackend") == 2
+    additions = [call for call in calls if "repos/example/repo/issues/7/labels --input -" in call]
+    assert len(additions) == (1 if create_mode == "race" else 0)
+
+
 def test_router_syncs_only_the_gate_package_and_runs_it_without_resyncing() -> None:
     """The router owns one dependency install, scoped to the package that computes the gate."""
     changes = _jobs()["changes"]
@@ -1513,7 +2154,7 @@ def test_push_and_pull_request_runs_each_upload_exactly_one_router_artifact() ->
 
 def test_router_publishes_the_image_selection_as_an_artifact_not_a_job_output() -> None:
     jobs = _jobs()
-    assert set(jobs) == {"changes", "worker", "playwright-image", "title-policy", "checks"}
+    assert set(jobs) == {"changes", "label-sync", "worker", "playwright-image", "title-policy", "checks"}
 
     # `image_matrix_parity` is a lane flag, not a build matrix; no other output may carry one.
     outputs = {name: value for name, value in jobs["changes"]["outputs"].items() if name not in FLAG_NAMES}

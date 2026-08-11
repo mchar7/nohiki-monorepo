@@ -423,6 +423,6 @@ def circuit_breaker[T, **P](
         func_name = func.__name__
         wrapper = _create_wrapper(func, components)
         _attach_proxy(wrapper, components, func_name)
-        return cast(CircuitBreakerWrapper[P, T], wrapper)
+        return cast("CircuitBreakerWrapper[P, T]", wrapper)
 
     return decorator

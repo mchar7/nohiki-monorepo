@@ -703,7 +703,7 @@ async def test_list_job_listings_filters_and_sorts_before_pagination(mocker: Moc
         ),
     )
 
-    query = cast(Select[tuple[object]], captured["query"])
+    query = cast("Select[tuple[object]]", captured["query"])
     compiled = str(query.compile(compile_kwargs={"literal_binds": True})).upper()
     assert result.total == 5
     assert result.page == 2

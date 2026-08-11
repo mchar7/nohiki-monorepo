@@ -172,7 +172,10 @@ export function FormField(props: Readonly<FormFieldProps>): JSX.Element {
   const errorId = useId();
 
   const hasError = Boolean(errors[name]);
-  const widget = uiHints?.widget || getDefaultWidget(type, fieldFormat, enumValues);
+  const widget =
+    uiHints?.widget !== undefined && uiHints.widget.length > 0
+      ? uiHints.widget
+      : getDefaultWidget(type, fieldFormat, enumValues);
   const ariaAttributes = buildAriaAttributes({
     fieldId,
     descriptionId,
@@ -185,7 +188,10 @@ export function FormField(props: Readonly<FormFieldProps>): JSX.Element {
   const commonProps: CommonFormProps = {
     ...register(name),
     ...ariaAttributes,
-    placeholder: uiHints?.placeholder || t('fields.placeholder', { field: label.toLowerCase() }),
+    placeholder:
+      uiHints?.placeholder !== undefined && uiHints.placeholder.length > 0
+        ? uiHints.placeholder
+        : t('fields.placeholder', { field: label.toLowerCase() }),
   };
 
   const requiredLabel = t('fields.required');

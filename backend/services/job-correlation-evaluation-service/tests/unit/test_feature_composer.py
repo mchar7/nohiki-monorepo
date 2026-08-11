@@ -515,47 +515,6 @@ class TestSeniorityFeatures:
         assert features[FeatureIndex.USER_SENIORITY_LEVEL] == pytest.approx(4.0)
 
 
-class TestListingQualityFeatures:
-    """Tests for listing quality feature extraction."""
-
-    def test_listing_quality_with_predictor(self) -> None:
-        """Listing quality should use predictor when available."""
-        from job_correlation_evaluation_service.services.scoring.listing_quality import (
-            ListingFeedbackAggregate,
-            ListingQualityPredictor,
-        )
-
-        mock_predictor = MagicMock(spec=ListingQualityPredictor)
-        mock_predictor.predict.return_value = 0.85
-
-        composer = FeatureComposer.create_default(listing_quality_predictor=mock_predictor)
-        job = _create_minimal_job()
-        profile = _create_minimal_profile()
-        scores = PipelineScores(maxsim_score=0.8, rerank_score=0.9)
-
-        mock_feedback = MagicMock(spec=ListingFeedbackAggregate)
-        mock_feedback.total_feedback = 10
-
-        features = composer.extract(job, profile, scores, feedback_aggregate=mock_feedback).raw_features
-
-        assert features[FeatureIndex.LISTING_QUALITY_SCORE] == pytest.approx(0.85)
-        assert features[FeatureIndex.LISTING_FEEDBACK_COUNT] == pytest.approx(10.0)
-        assert features[FeatureIndex.HAS_LISTING_QUALITY] == pytest.approx(1.0)
-
-    def test_listing_quality_no_predictor(self) -> None:
-        """Listing quality should be NaN when no predictor."""
-        composer = FeatureComposer.create_default(listing_quality_predictor=None)
-        job = _create_minimal_job()
-        profile = _create_minimal_profile()
-        scores = PipelineScores(maxsim_score=0.8, rerank_score=0.9)
-
-        features = composer.extract(job, profile, scores, feedback_aggregate=None).raw_features
-
-        assert math.isnan(features[FeatureIndex.LISTING_QUALITY_SCORE])
-        assert features[FeatureIndex.LISTING_FEEDBACK_COUNT] == pytest.approx(0.0)
-        assert features[FeatureIndex.HAS_LISTING_QUALITY] == pytest.approx(0.0)
-
-
 class TestFeatureComposerExceptionHandling:
     """Tests for exception handling in feature extraction."""
 
@@ -623,7 +582,6 @@ class TestLocationFeaturesWithData:
             job=job,
             profile=profile,
             pipeline_scores=PipelineScores(maxsim_score=0.8, rerank_score=0.9),
-            feedback_aggregate=None,
         )
 
         feature_group.extract(features, context)
@@ -637,6 +595,7 @@ class TestLocationFeaturesWithData:
 def _create_minimal_job() -> MagicMock:
     """Create a minimal mock job listing."""
     job = MagicMock()
+    job.title = ""
     job.location = None
     job.work_arrangement = 0
     job.experience_years_min = None
@@ -653,6 +612,7 @@ def _create_minimal_job() -> MagicMock:
 def _create_minimal_profile() -> MagicMock:
     """Create a minimal mock search preference profile."""
     profile = MagicMock()
+    profile.search_keywords = []
     profile.physical_locations = []
     profile.remote_locations = []
     profile.work_arrangements = []

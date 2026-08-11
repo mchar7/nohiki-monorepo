@@ -8,11 +8,12 @@ manifests, guard the retained qdrant, skill-graph, and Secret hooks, and check
 that the local, dev, and staging value sets render.
 """
 
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
-from _documents import Manifest, load_manifests
+from _documents import Manifest, containers_of, load_manifests, mapping_at
 from test_image_digest_gitops import _digest_values
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -78,6 +79,25 @@ def _template(values_file: str, tmp_path: Path | None = None, *extra_args: str) 
     return result.stdout
 
 
+def _platform_release(overlay: str) -> Manifest:
+    executable = "kustomize" if shutil.which("kustomize") else "kubectl"
+    command = [executable, "build"] if executable == "kustomize" else [executable, "kustomize"]
+    result = subprocess.run(
+        [*command, str(_ROOT / "infra" / "k8s" / "gitops" / "platform" / overlay)],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    releases = [
+        document
+        for document in load_manifests(result.stdout)
+        if document["kind"] == "HelmRelease" and document["metadata"]["name"] == "nohiki"
+    ]
+    assert len(releases) == 1
+    return releases[0]
+
+
 def _jobs_by_suffix(documents: list[Manifest], suffix: str) -> list[Manifest]:
     return [
         document
@@ -135,6 +155,32 @@ def test_qdrant_and_skill_bootstrap_jobs_keep_helm_hooks() -> None:
     bootstrap = _jobs_by_suffix(documents, "-bootstrap")
     assert len(bootstrap) == 1, "expected the skill-graph bootstrap hook Job when enabled"
     assert bootstrap[0]["metadata"].get("annotations", {}) == _BOOTSTRAP_HOOK
+
+
+def test_model_runtime_can_populate_an_empty_cache_in_every_environment() -> None:
+    for values_file in ("values.local.yaml", "values.dev.yaml", "values.staging.yaml"):
+        documents = load_manifests(_template(values_file))
+        deployment = next(
+            document
+            for document in documents
+            if document["kind"] == "Deployment" and document["metadata"]["name"] == "nohiki-ml-compute-service"
+        )
+        environment = {
+            item["name"]
+            for item in containers_of(deployment)[0].get("env", [])
+            if item["name"] in {"HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"}
+        }
+        assert not environment
+
+
+def test_only_local_platform_install_and_upgrade_run_hooks_before_readiness() -> None:
+    local_spec = mapping_at(_platform_release("local"), "spec")
+    assert mapping_at(local_spec, "install")["disableWait"] is True
+    assert mapping_at(local_spec, "upgrade")["disableWait"] is True
+    for overlay in ("dev", "staging", "prod"):
+        spec = mapping_at(_platform_release(overlay), "spec")
+        assert "disableWait" not in mapping_at(spec, "install")
+        assert "disableWait" not in mapping_at(spec, "upgrade")
 
 
 def test_managed_secret_hooks_survive_neutrality() -> None:

@@ -120,7 +120,12 @@ type, this service receives a different JSON schema per template version. It use
 `LLMClient.create_dynamic_schema_agent` with `DynamicAgentConfig`, which constructs a PydanticAI
 `StructuredDict` output type at runtime from the preprocessed schema dict. This allows the same
 service to generate resumes, cover letters, or any future document type without code changes. The
-schema defines the output contract entirely.
+schema defines the request: it is what gets advertised to the model. It is not enforced on receipt.
+`StructuredDict`'s pydantic core schema is `dict[str, Any]`, so the only guarantee this service
+makes about `result.output` is that it is a dict with string keys. The declared content contract is
+enforced downstream by doc-template-service, which validates the render payload against the
+template version's stored `content_schema` before rendering and fails the render if it does not
+conform.
 
 **Dynamic system prompt via `system_prompt_fn`:** The system prompt is built at request time (not
 baked into the agent at creation), because it incorporates per-request context: the full schema

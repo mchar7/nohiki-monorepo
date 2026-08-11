@@ -10,8 +10,10 @@ from nohiki.common.v1 import (
     CommutePreferences,
     EntityTimestamps,
     ExperiencePreference,
+    FeatureImportancePrefs,
     Location,
     SalaryPreference,
+    SearchPrefNotificationConfig,
     SeniorityLevel,
     UploadReference,
     WorkArrangement,
@@ -151,6 +153,8 @@ def build_profile_snapshot(
         ),
         experience_preference=_build_experience_preference(profile),
         salary_preference=_build_salary_preference(profile),
+        feature_importance=_build_feature_importance(profile),
+        notification_config=_build_notification_config(profile),
         excluded_scrape_sources=list(profile.excluded_scrape_sources or []),
         min_fit_score_disqualify=profile.min_fit_score_disqualify,
         auto_tailor_threshold=profile.auto_tailor_threshold,
@@ -168,6 +172,9 @@ def build_profile_snapshot(
         user_skills_embedding=_extract_skills_embedding(profile),
         query_embedding=_extract_query_embedding(profile),
         query_retrieval_embeddings=_extract_query_retrieval_embeddings(profile),
+        semantic_content_generation=profile.semantic_content_generation,
+        semantic_content_hash=profile.semantic_content_hash or "",
+        collection_version=profile.collection_version or "",
     )
 
 
@@ -210,6 +217,28 @@ def _build_salary_preference(profile: SearchPref) -> SalaryPreference | None:
     if not profile.salary_preference:
         return None
     return SalaryPreference.from_dict(profile.salary_preference)
+
+
+def _build_notification_config(profile: SearchPref) -> SearchPrefNotificationConfig | None:
+    """Build SearchPrefNotificationConfig from profile JSONB notification_config.
+
+    Require a real dict so MagicMock attribute stubs do not reach from_dict().
+    """
+    raw = profile.notification_config
+    if not isinstance(raw, dict):
+        return None
+    return SearchPrefNotificationConfig.from_dict(raw)
+
+
+def _build_feature_importance(profile: SearchPref) -> FeatureImportancePrefs | None:
+    """Build FeatureImportancePrefs from profile JSONB feature_importance.
+
+    Require a real dict so MagicMock attribute stubs do not reach from_dict().
+    """
+    raw = profile.feature_importance
+    if not isinstance(raw, dict):
+        return None
+    return FeatureImportancePrefs.from_dict(raw)
 
 
 def _build_timestamps(profile: SearchPref) -> EntityTimestamps:

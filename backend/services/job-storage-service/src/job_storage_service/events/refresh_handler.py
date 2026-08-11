@@ -17,7 +17,11 @@ from sqlalchemy import func, select
 from job_storage_service.core.config import get_settings
 from job_storage_service.core.kafka import kafka_client
 from job_storage_service.db.models import SCHEMA_NAME, Listing
-from job_storage_service.events.publishers import OutboxContext, publish_listing_updated_event
+from job_storage_service.events.publishers import (
+    OutboxContext,
+    load_verified_retrieval_embeddings,
+    publish_listing_updated_event,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -77,15 +81,21 @@ async def _publish_refreshed_snapshots(
 
     """
     outbox = OutboxWriter(schema=SCHEMA_NAME)
+    verified_embeddings = await load_verified_retrieval_embeddings(listings)
 
     for idx, job in enumerate(listings, start=1):
+        listing_id = str(job.id)
         ctx = OutboxContext(
             db=db,
             outbox=outbox,
-            listing_id=str(job.id),
+            listing_id=listing_id,
             correlation_id=correlation_id,
         )
-        await publish_listing_updated_event(ctx, job)
+        await publish_listing_updated_event(
+            ctx,
+            job,
+            retrieval_embeddings=verified_embeddings.get(listing_id),
+        )
 
         if idx % _BATCH_FLUSH_SIZE == 0:
             await db.flush()

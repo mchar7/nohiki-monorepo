@@ -22,10 +22,12 @@ LANE_DISPLAY_NAMES: dict[str, str] = {
     "lint_markdown": "Markdown lint",
     "lint_workflows": "Workflow lint",
     "lint_docker": "Dockerfile lint",
+    "container_contracts": "Container contract tests",
     "typecheck_backend": "Backend typecheck",
     "build_backend": "Build backend",
     "typecheck_frontend": "Frontend typecheck",
     "python_any": "Python tests",
+    "jvm_tests": "JVM tests",
     "frontend_tests": "Frontend tests",
     "frontend_smoke": "Frontend container smoke",
     "frontend_e2e": "Playwright runner smoke",
@@ -36,6 +38,16 @@ LANE_DISPLAY_NAMES: dict[str, str] = {
     "api_schema_freshness": "API schema freshness",
     "image_matrix_parity": "Image matrix parity",
     "proto_breaking": "Protobuf compatibility",
+}
+
+GATE_LABELS: dict[str, tuple[str, str]] = {
+    "python_any": ("area:backend", "1D76DB"),
+    "frontend_tests": ("area:frontend", "D4C5F9"),
+    "lint_proto": ("area:proto", "FBCA04"),
+    "lint_docker": ("area:docker", "0E8A16"),
+    "lint_workflows": ("area:workflows", "5319E7"),
+    "lint_markdown": ("area:docs", "0075CA"),
+    "full": ("ci:full-run", "B60205"),
 }
 
 # Where each lane executes in the split worker. The frontend leg carries hygiene because moving
@@ -50,10 +62,12 @@ LANE_RUNNERS: dict[str, str] = {
     "lint_markdown": "frontend",
     "lint_workflows": "frontend",
     "lint_docker": "frontend",
+    "container_contracts": "frontend",
     "typecheck_backend": "python",
     "build_backend": "frontend",
     "typecheck_frontend": "frontend",
     "python_any": "python",
+    "jvm_tests": "frontend",
     "frontend_tests": "frontend",
     "frontend_smoke": "Container contracts",
     "frontend_e2e": "Playwright runner image",

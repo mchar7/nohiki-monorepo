@@ -21,6 +21,7 @@ metadata:
 spec:
   replicas: {{ $cfg.replicas | default 2 }}
   bootstrapServers: {{ $cfg.bootstrapServers }}
+  # renovate: datasource=maven depName=org.apache.kafka:kafka_2.13
   version: {{ $glob.kafka.version | default "4.3.0" }}
   image: {{ include "nohiki.jobImage" (dict "glob" $glob "cfg" $cfg "default" "kafka-connect") }}
   config:

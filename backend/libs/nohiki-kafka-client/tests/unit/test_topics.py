@@ -65,6 +65,15 @@ class TestUserPrefCommandTopics:
         assert Topics.USER_PREF_DETACH_UPLOAD_REQUESTED == "user-pref.cmd.detach-upload.v1"
 
 
+class TestUserPrefSystemTopics:
+    """Test user-pref system topics exist and are correctly named."""
+
+    def test_pref_enrichment_failed_exists(self) -> None:
+        """USER_PREF_ENRICHMENT_FAILED topic exists."""
+        assert hasattr(Topics, "USER_PREF_ENRICHMENT_FAILED")
+        assert Topics.USER_PREF_ENRICHMENT_FAILED == "user-pref.sys.pref-enrichment-failed.v1"
+
+
 class TestUserAuthFactTopics:
     """Test user-auth fact topics exist and are correctly named."""
 
@@ -223,6 +232,7 @@ class TestTopicDomains:
             Topics.USER_PREF_DELETE_REQUESTED,
             Topics.USER_PREF_ATTACH_UPLOAD_REQUESTED,
             Topics.USER_PREF_DETACH_UPLOAD_REQUESTED,
+            Topics.USER_PREF_ENRICHMENT_FAILED,
         ]
         for topic in user_pref_topics:
             assert topic.startswith("user-pref."), f"Topic {topic} should start with user-pref."

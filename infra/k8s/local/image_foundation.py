@@ -97,7 +97,7 @@ def _write_line(message: str) -> None:
 def load_json(path: Path) -> dict[str, JsonValue]:
     """Load a JSON object from a path, failing closed on invalid input."""
     try:
-        value = cast(JsonValue, json.loads(path.read_text(encoding="utf-8")))
+        value = cast("JsonValue", json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError) as exc:
         fail(f"cannot read valid JSON from {path}: {exc}")
     if not isinstance(value, dict):
@@ -133,7 +133,7 @@ def _validate_image(index: int, value: JsonValue, names: set[str]) -> Image:
         isinstance(key, str) and isinstance(argument, str) for key, argument in build_args.items()
     ):
         fail(f"{name}.buildArgs must map strings to strings")
-    return cast(Image, value)
+    return cast("Image", value)
 
 
 def inventory() -> list[Image]:
@@ -211,7 +211,7 @@ def load_digests(path: Path) -> DigestDocument:
     if not all(isinstance(name, str) for name in entries):
         fail(f"{path}.images keys must be strings")
     required = {image["name"] for image in local_images()}
-    entry_names = cast(set[str], set(entries))
+    entry_names = cast("set[str]", set(entries))
     if entry_names != required:
         missing = sorted(required - entry_names)
         extra = sorted(entry_names - required)
@@ -225,7 +225,7 @@ def load_digests(path: Path) -> DigestDocument:
             fail(f"digest entry {name} has an invalid digest")
         if not isinstance(tag, str) or not TAG_RE.fullmatch(tag):
             fail(f"digest entry {name} tag is not content-addressed")
-    return cast(DigestDocument, candidate)
+    return cast("DigestDocument", candidate)
 
 
 def cmd_validate(_: argparse.Namespace) -> None:
@@ -453,7 +453,7 @@ def _node_image_names(value: JsonValue) -> tuple[str, set[str]]:
         record_names = record.get("names")
         if not isinstance(record_names, list) or not all(isinstance(name, str) for name in record_names):
             fail("node JSON lacks status.images provenance")
-        names.update(cast(list[str], record_names))
+        names.update(cast("list[str]", record_names))
     return node_name, names
 
 
@@ -465,7 +465,7 @@ def cmd_verify_pulls(args: argparse.Namespace) -> None:
     else:
         raw = run(["kubectl", "get", "nodes", "-o", "json"], capture=True)
         try:
-            parsed = cast(JsonValue, json.loads(raw))
+            parsed = cast("JsonValue", json.loads(raw))
         except json.JSONDecodeError:
             fail("kubectl returned invalid node JSON")
         if not isinstance(parsed, dict):

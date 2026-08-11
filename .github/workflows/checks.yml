@@ -19,7 +19,7 @@ jobs:
   changes:
     name: Router
     runs-on: ubuntu-24.04
-    timeout-minutes: 3
+    timeout-minutes: 5
     permissions:
       actions: read
       contents: read
@@ -30,7 +30,15 @@ jobs:
       broad: ${{ steps.gate.outputs.broad }}
       worker_units: ${{ steps.gate.outputs.worker_units }}
       broad_unbounded: ${{ steps.gate.outputs.broad_unbounded }}
-      worker_timeout_minutes: ${{ steps.guards.outputs.worker_timeout_minutes }}
+      runner_target: ${{ steps.route.outputs.runner_target }}
+      runner_class: ${{ steps.route.outputs.runner_class }}
+      tier_1_state: ${{ steps.route.outputs.tier_1_state }}
+      tier_2_state: ${{ steps.route.outputs.tier_2_state }}
+      tier_3_state: ${{ steps.route.outputs.tier_3_state }}
+      worker_timeout_minutes: ${{ steps.route.outputs.worker_timeout_minutes }}
+      playwright_timeout_minutes: ${{ steps.route.outputs.playwright_timeout_minutes }}
+      title_timeout_minutes: ${{ steps.route.outputs.title_timeout_minutes }}
+      checks_timeout_minutes: ${{ steps.route.outputs.checks_timeout_minutes }}
       protected_main_smoke: ${{ steps.gate.outputs.protected_main_smoke }}
       full: ${{ steps.gate.outputs.full }}
       nix: ${{ steps.gate.outputs.nix }}
@@ -41,9 +49,11 @@ jobs:
       lint_markdown: ${{ steps.gate.outputs.lint_markdown }}
       lint_workflows: ${{ steps.gate.outputs.lint_workflows }}
       lint_docker: ${{ steps.gate.outputs.lint_docker }}
+      container_contracts: ${{ steps.gate.outputs.container_contracts }}
       typecheck_backend: ${{ steps.gate.outputs.typecheck_backend }}
       typecheck_frontend: ${{ steps.gate.outputs.typecheck_frontend }}
       python_any: ${{ steps.gate.outputs.python_any }}
+      jvm_tests: ${{ steps.gate.outputs.jvm_tests }}
       frontend_tests: ${{ steps.gate.outputs.frontend_tests }}
       frontend_smoke: ${{ steps.gate.outputs.frontend_smoke }}
       frontend_e2e: ${{ steps.gate.outputs.frontend_e2e }}
@@ -60,6 +70,7 @@ jobs:
       commitlint_expected: ${{ steps.gate.outputs.commitlint_expected }}
       title_only: ${{ steps.reuse.outputs.title_only }}
       reused_run_id: ${{ steps.reuse.outputs.reused_run_id }}
+      labels: ${{ steps.gate.outputs.labels }}
 
     steps:
       - name: Start router timing
@@ -80,7 +91,7 @@ jobs:
         id: setup-uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          version-file: toolchain/uv.toml
+          version-file: pyproject.toml
           python-version: "3.14.6"
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -127,6 +138,7 @@ jobs:
           retention-days: 7
 
 
+
       # No `if:` on purpose: both outputs must be defined on every event for the fan-in renderer.
       # Fails closed, so a missing or ambiguous proof runs the full selected suite.
       - name: Look up a reusable Checks proof
@@ -145,13 +157,15 @@ jobs:
             --base-sha "$PR_BASE_SHA" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Derive worker guard
-        id: guards
+      # RUNNER_INVENTORY_TOKEN is a fine-grained PAT with repository Administration: read.
+      - name: Select runner route
+        id: route
         env:
-          COMMIT_CLASS: ${{ steps.gate.outputs.commit_class }}
+          GH_TOKEN: ${{ secrets.RUNNER_INVENTORY_TOKEN }}
+          TIER_2_DRAIN: ${{ vars.NOHIKI_T2_DRAIN }}
         run: >
           python3 scripts/ci/src/ci_checks/checks/workflow.py
-          guard "$COMMIT_CLASS" "$GITHUB_OUTPUT"
+          route "$GITHUB_REPOSITORY" "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY" "$TIER_2_DRAIN"
       - name: Write Checks attestation
         if: github.event_name == 'pull_request' && github.event.action != 'edited'
         env:
@@ -192,12 +206,68 @@ jobs:
           EVENT_ACTION: ${{ github.event.action }}
         run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary report router "$GITHUB_STEP_SUMMARY"
 
+  label-sync:
+    name: Label sync
+    needs: [changes]
+    if: needs.changes.outputs.labels != '' && github.event_name == 'pull_request' && github.event.action != 'edited' && github.event.pull_request.head.repo.fork != true && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    continue-on-error: true
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Sync area labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          LABELS: ${{ needs.changes.outputs.labels }}
+        shell: bash
+        run: |
+          current="$(
+            gh api --paginate --slurp "repos/${REPO}/issues/${PR}/labels?per_page=100" |
+              jq -ce '
+                if type == "array"
+                  and length > 0
+                  and all(.[]; type == "array")
+                  and all(.[][]; type == "object" and (.name | type == "string"))
+                then [.[][] | .name]
+                else error("invalid pull request label list")
+                end
+              '
+          )"
+          while IFS=$'\t' read -r label color active; do
+            encoded="$(jq -rn --arg value "$label" '$value | @uri')"
+            if gh api "repos/${REPO}/labels/${encoded}" > /dev/null 2>&1; then
+              gh api --method PATCH "repos/${REPO}/labels/${encoded}" \
+                -f new_name="$label" -f color="$color" -f description="Gate-managed label" > /dev/null
+            else
+              if ! create_error="$(
+                gh api --method POST "repos/${REPO}/labels" \
+                  -f name="$label" -f color="$color" -f description="Gate-managed label" 2>&1
+              )"; then
+                if ! gh api "repos/${REPO}/labels/${encoded}" > /dev/null 2>&1; then
+                  printf '%s\n' "$create_error" >&2
+                  exit 1
+                fi
+              fi
+            fi
+
+            if [[ "$active" == true ]] && ! jq -e --arg label "$label" 'index($label) != null' <<< "$current" > /dev/null; then
+              jq -n --arg label "$label" '{labels: [$label]}' |
+                gh api --method POST "repos/${REPO}/issues/${PR}/labels" --input - > /dev/null
+            elif [[ "$active" != true ]] && jq -e --arg label "$label" 'index($label) != null' <<< "$current" > /dev/null; then
+              gh api --method DELETE "repos/${REPO}/issues/${PR}/labels/${encoded}" > /dev/null
+            fi
+          done < <(jq -r '.[] | [.name, .color, .active] | @tsv' <<< "$LABELS")
+
 
   worker:
     name: Scoped worker (${{ matrix.unit }})
     needs: [changes]
     if: (needs.changes.outputs.standard == 'true' || needs.changes.outputs.broad == 'true') && needs.changes.outputs.title_only != 'true'
-    runs-on: [self-hosted, linux, x64, nohiki]
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_target) }}
     timeout-minutes: ${{ fromJSON(needs.changes.outputs.worker_timeout_minutes) }}
     strategy:
       # A failing unit must not cancel its siblings: each one is an independent verdict the
@@ -213,16 +283,17 @@ jobs:
       # every leg carries it. Fork pull requests get a read-only token regardless.
       actions: write
       contents: read
+      security-events: write
     env:
-      NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.otel_collector == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' }}
+      NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.container_contracts == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.otel_collector == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' || needs.changes.outputs.jvm_tests == 'true' }}
       NODE_SETUP_SELECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true') }}
       DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.lint_markdown == 'true' && needs.changes.outputs.affected_packages == '' }}
       SKYLOS_CACHE_DIR: ${{ github.workspace }}/.skylos
       # One selector for the deploy key, the static cache and the scan, so the three cannot drift.
       DEADCODE_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.affected_packages != '') && github.event.pull_request.head.repo.fork != true }}
-      # Mirrors the removed container job gate. The matrix selector keeps the work on the
-      # frontend leg while preserving every original router condition.
-      CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
+      # The routed marker suite is opt-in locally but mandatory on the hosted
+      # container worker whenever the gate selects its flag.
+      CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true') }}
     outputs:
       # Single-writer: the runner skips an output whose expression is the empty string
       # (actions/runner JobExtension.cs:789-805), so a unit that did not run contributes
@@ -263,6 +334,7 @@ jobs:
           # Python and frontend select different cache payloads, so each is its payload's stable
           # writer while the broad-or-push trust boundary remains unchanged.
           payload: ${{ matrix.unit == 'python' && 'python' || 'full' }}
+          runner-class: ${{ needs.changes.outputs.runner_class }}
           save-ready-cache: ${{ (matrix.unit == 'python' || matrix.unit == 'frontend') && (needs.changes.outputs.broad == 'true' || github.event_name == 'push') }}
           node: ${{ env.NODE_SETUP_SELECTED }}
           full-node-workspace: ${{ needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true' }}
@@ -313,13 +385,16 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
+          mkdir -p lint-results
           export UV_PROJECT_ENVIRONMENT=.venv
           if [[ "$RUFF_SCOPE" == ALL ]]; then
-            nix develop .#ci --command just lint
+            nix develop .#ci --command uv run --no-sync ruff check . \
+              --output-format=sarif --output-file="$GITHUB_WORKSPACE/lint-results/ruff-lint.sarif"
           else
             mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.py')
-            ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
-              ruff check --output-format=github --force-exclude "${files[@]}"
+            ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync ruff check \
+              --output-format=sarif --output-file="$GITHUB_WORKSPACE/lint-results/ruff-lint.sarif" \
+              --force-exclude "${files[@]}"
           fi
 
       - name: Check Python formatting
@@ -330,14 +405,26 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
+          mkdir -p lint-results
           export UV_PROJECT_ENVIRONMENT=.venv
+          # Ruff's formatter SARIF is preview-only in the pinned release. Keep configured
+          # formatting semantics and retain its concise failure output in the job summary.
+          set +e
           if [[ "$RUFF_SCOPE" == ALL ]]; then
-            nix develop .#ci --command just format-check
+            nix develop .#ci --command just format-check 2>&1 | tee lint-results/ruff-format.log
+            status=${PIPESTATUS[0]}
           else
             mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.py')
-            ((${#files[@]} == 0)) || nix develop .#ci --command uv run --no-sync \
-              ruff format --check --force-exclude "${files[@]}"
+            if ((${#files[@]} == 0)); then
+              status=0
+            else
+              nix develop .#ci --command uv run --no-sync ruff format --check --force-exclude \
+                "${files[@]}" 2>&1 | tee lint-results/ruff-format.log
+              status=${PIPESTATUS[0]}
+            fi
           fi
+          ((status == 0)) && rm -f lint-results/ruff-format.log
+          exit "$status"
 
       - name: Lint Markdown
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_markdown == 'true')
@@ -345,33 +432,92 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
+          mkdir -p lint-results
           mapfile -d '' -t files < <(git diff --name-only --diff-filter=ACMR -z "$BASE_SHA..$HEAD_SHA" -- '*.md')
-          ((${#files[@]} == 0)) || pnpm exec markdownlint-cli2 "${files[@]}"
+          ((${#files[@]} == 0)) && exit 0
+          # SARIF requires an extra formatter package absent from the lockfile. Do not add
+          # a dependency only for transport; retain failure-only output for the compact summary.
+          set +e
+          pnpm exec markdownlint-cli2 "${files[@]}" 2>&1 | tee lint-results/markdownlint.log
+          status=${PIPESTATUS[0]}
+          ((status == 0)) && rm lint-results/markdownlint.log
+          exit "$status"
 
       - name: Lint protos
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_proto == 'true')
-        run: nix develop .#ci --command just proto-lint
+        run: |
+          mkdir -p lint-results
+          # Buf has JSON and platform annotation formats but no SARIF emitter.
+          set +e
+          nix develop .#ci --command bash -euc 'cd proto && buf lint --error-format=github-actions' \
+            2>&1 | tee lint-results/buf.log
+          status=${PIPESTATUS[0]}
+          ((status == 0)) && rm lint-results/buf.log
+          exit "$status"
 
       - name: Lint workflows
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_workflows == 'true')
-        run: nix develop .#ci --command just workflow-lint
+        run: |
+          mkdir -p lint-results
+          set +e
+          nix develop .#ci --command actionlint -oneline -format '{{json .}}' \
+            > "$RUNNER_TEMP/actionlint.json"
+          status=$?
+          set -e
+          ((status <= 1)) || exit "$status"
+          # actionlint does not model the runner's native `parallel:` step. The converter
+          # suppresses only diagnostics whose source node is structurally that extension.
+          nix develop .#ci --command uv run --no-sync ci-checks actionlint-report \
+            --input "$RUNNER_TEMP/actionlint.json" --output lint-results/actionlint.sarif
+          set +e
+          # check-jsonschema has no SARIF emitter; its failure-only output feeds the summary.
+          nix develop .#ci --command check-jsonschema --builtin-schema vendor.github-workflows \
+            .github/workflows/*.yml 2>&1 | tee lint-results/check-jsonschema.log
+          status=${PIPESTATUS[0]}
+          ((status == 0)) && rm lint-results/check-jsonschema.log
+          exit "$status"
 
       - name: Lint frontend
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_frontend == 'true')
-        run: nix develop .#ci --command just fe-lint
+        run: |
+          mkdir -p lint-results
+          pnpm --filter nohiki-frontend exec biome check --reporter=sarif . \
+            > "$GITHUB_WORKSPACE/lint-results/biome-frontend.sarif"
 
       - parallel:
           - name: Lint frontend architecture (Steiger)
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_steiger == 'true')
-            run: nix develop .#ci --command just fe-fsd
+            run: |
+              mkdir -p lint-results
+              # Steiger supports pretty or JSON output, not SARIF.
+              set +e
+              nix develop .#ci --command just fe-fsd 2>&1 | tee lint-results/steiger.log
+              status=${PIPESTATUS[0]}
+              ((status == 0)) && rm lint-results/steiger.log
+              exit "$status"
 
           - name: Check i18n keys
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_frontend == 'true')
-            run: nix develop .#ci --command just fe-i18n
+            run: |
+              mkdir -p lint-results
+              # The repository's i18n checker is plain text, so retain only failure output.
+              set +e
+              nix develop .#ci --command just fe-i18n 2>&1 | tee lint-results/i18n.log
+              status=${PIPESTATUS[0]}
+              ((status == 0)) && rm lint-results/i18n.log
+              exit "$status"
 
       - name: Lint Dockerfiles (hadolint)
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_docker == 'true')
-        run: nix develop .#ci --command just docker-lint
+        run: |
+          mkdir -p lint-results
+          # Hadolint 2.14.0 advertises SARIF, but that formatter hangs on this repository's
+          # tracked Dockerfile set. Keep the canonical blocking check and summarize only failures.
+          set +e
+          nix develop .#ci --command just docker-lint 2>&1 | tee lint-results/hadolint.log
+          status=${PIPESTATUS[0]}
+          ((status == 0)) && rm lint-results/hadolint.log
+          exit "$status"
 
       - name: Scan changed content for secrets
         if: env.DOCS_ONLY == 'true'
@@ -440,6 +586,9 @@ jobs:
             --no-coverage --summary "$GITHUB_STEP_SUMMARY" \
             --summary-title "job-correlation integration"
 
+      - name: Test JVM module
+        if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.jvm_tests == 'true')
+        run: nix develop .#jvm --command just test-jvm
       # These assert the Playwright config by executing it, so they need the installed pnpm
       # workspace and not just a `node` binary. The `python` payload restores no node_modules,
       # so selection follows the payload: they run in the unit that carries one. The gate names
@@ -459,16 +608,21 @@ jobs:
 
       - name: Test frontend
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_tests == 'true')
-        # 50% resolves to ONE worker on the 2-vCPU runner, idling half the machine. Measured
-        # under `taskset -c 0-1`: 1 worker 294s, 2 workers 260s (2212 tests, identical result).
+        # The hosted runner has two CPUs and no sibling jobs sharing its machine. Vitest's
+        # default reserves one CPU for its main thread, but this suite is faster with two workers
+        # there. Self-hosted runners keep the memory-derived bound from vitest.config.ts.
+        env:
+          VITEST_MAX_WORKERS: ${{ needs.changes.outputs.runner_class == 'hosted' && '2' || '' }}
         # Vitest appends its own `## Vitest Test Report` block, and the edge worker appends an
         # identical one below. The label names which suite the block that follows belongs to.
         run: nix develop .#ci --command just fe-test
 
       - name: Lint edge worker
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.edge_worker == 'true')
-        run: >
-          pnpm --filter @nohiki/auth-listings-worker exec biome ci --reporter=github src/
+        run: |
+          mkdir -p lint-results
+          pnpm --filter @nohiki/auth-listings-worker exec biome ci --reporter=sarif src/ \
+            > "$GITHUB_WORKSPACE/lint-results/biome-edge-worker.sarif"
 
       - name: Typecheck edge worker
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.edge_worker == 'true')
@@ -502,6 +656,10 @@ jobs:
           PACKAGE_SCOPE: ${{ needs.changes.outputs.broad == 'true' && 'ALL' || needs.changes.outputs.affected_packages }}
         run: nix develop .#ci --command just hygiene-deps "$PACKAGE_SCOPE"
 
+      - name: Check test import closure
+        if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
+        run: nix develop .#ci --command just hygiene-test-closure
+
       - parallel:
           - name: Scan architecture
             if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
@@ -512,6 +670,10 @@ jobs:
             env:
               AFFECTED_PACKAGES: ${{ needs.changes.outputs.affected_packages }}
             run: nix develop .#ci --command just hygiene-build-backend-strict "$AFFECTED_PACKAGES"
+
+      - name: Check import boundaries
+        if: matrix.unit == 'python' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.hygiene == 'true')
+        run: nix develop .#ci --command just hygiene-imports
 
       - parallel:
           - name: Check API schema freshness
@@ -532,6 +694,9 @@ jobs:
         id: container-buildx
         if: env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: ${{ runner.environment == 'self-hosted' && 'network=host' || '' }}
+          buildkitd-config: ${{ runner.environment == 'self-hosted' && '.github/buildkitd-self-hosted.toml' || '' }}
 
       - name: Build production frontend image
         id: frontend-image
@@ -545,8 +710,9 @@ jobs:
           file: typescript/apps/frontend/Dockerfile
           load: true
           tags: nohiki-frontend-smoke:ci
-          # GHA exports spent 25 minutes on the fleet uplink; imports remain as fresh-slot insurance.
-          cache-from: type=gha,scope=frontend-smoke
+          # Hosted runners retain GHA imports. Each self-hosted host writes through to its shared registry.
+          cache-from: ${{ runner.environment == 'self-hosted' && 'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache' || 'type=gha,scope=frontend-smoke' }}
+          cache-to: ${{ runner.environment == 'self-hosted' && 'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache,mode=max,ignore-error=true' || '' }}
 
       - name: Smoke production frontend container
         id: frontend-smoke
@@ -565,6 +731,24 @@ jobs:
           nix develop .#ci --command uv run --no-sync pytest
           scripts/ci/tests/test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary
 
+      - name: Run container contract tests
+        id: container-tests
+        if: env.CONTAINER_CONTRACTS_SELECTED == 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true')
+        env:
+          CI_CHECKS_SKIP_WORKSPACE_SYNC: "1"
+          OTEL_SDK_DISABLED: "true"
+          UV_NO_SYNC: "1"
+          FRONTEND_SMOKE_SELECTED: ${{ needs.changes.outputs.frontend_smoke }}
+        run: |
+          if [[ "$FRONTEND_SMOKE_SELECTED" == true ]]; then
+            export FRONTEND_SMOKE_IMAGE=nohiki-frontend-smoke:ci
+          fi
+          nix develop .#ci --command scripts/dev/sync-ci-environment.sh container-contracts
+          nix develop .#ci --command uv run --no-sync ci-checks tests all --scope all \
+            --requires-docker --ci --workers 1 --no-coverage \
+            --summary "$GITHUB_STEP_SUMMARY" --summary-title "container contracts"
+          echo "executed=true" >> "$GITHUB_OUTPUT"
+
       - name: Attest container contract execution
         id: container-contracts
         if: always() && env.CONTAINER_CONTRACTS_SELECTED == 'true'
@@ -574,10 +758,41 @@ jobs:
           SMOKE_OUTCOME: ${{ steps.frontend-smoke.outcome }}
           OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
           FRONTEND_SMOKE_EXPECTED: ${{ needs.changes.outputs.frontend_smoke }}
+          CONTAINER_TESTS_OUTCOME: ${{ steps.container-tests.outcome }}
+          CONTAINER_TESTS_EXECUTED: ${{ steps.container-tests.outputs.executed }}
+          CONTAINER_TESTS_EXPECTED: ${{ needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true' }}
           OTEL_EXPECTED: ${{ needs.changes.outputs.otel_collector }}
         run: >
           python3 scripts/ci/src/ci_checks/checks/workflow.py
           verdict container "$GITHUB_OUTPUT"
+
+      - name: Detect code scanning availability
+        id: code-scanning
+        if: always() && matrix.unit == 'frontend' && hashFiles('lint-results/*.sarif') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_PUBLIC: ${{ github.event.repository && github.event.repository.private == false }}
+        run: |
+          available=false
+          if [[ "$REPOSITORY_PUBLIC" == true ]] ||
+            gh api "repos/$GITHUB_REPOSITORY/code-scanning/alerts?per_page=1" >/dev/null 2>&1; then
+            available=true
+          fi
+          echo "available=$available" >> "$GITHUB_OUTPUT"
+
+      - name: Upload lint diagnostics
+        if: always() && steps.code-scanning.outputs.available == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: lint-results
+          category: lint/${{ matrix.unit }}
+          wait-for-processing: false
+
+      - name: Summarize lint diagnostics
+        if: always() && matrix.unit == 'frontend'
+        run: >
+          nix develop .#ci --command uv run --no-sync ci-checks lint-report
+          --directory lint-results --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Report worker cost
         if: always()
@@ -591,12 +806,14 @@ jobs:
           IMAGE_OUTCOME: ${{ steps.frontend-image.outcome }}
           SMOKE_OUTCOME: ${{ steps.frontend-smoke.outcome }}
           OTEL_OUTCOME: ${{ steps.otel-collector.outcome }}
+          CONTAINER_TESTS_OUTCOME: ${{ steps.container-tests.outcome }}
           FLAG_NIX: ${{ needs.changes.outputs.nix }}
           FLAG_LINT_PYTHON: ${{ needs.changes.outputs.lint_python }}
           FLAG_LINT_MARKDOWN: ${{ needs.changes.outputs.lint_markdown }}
           FLAG_LINT_PROTO: ${{ needs.changes.outputs.lint_proto }}
           FLAG_LINT_WORKFLOWS: ${{ needs.changes.outputs.lint_workflows }}
           FLAG_LINT_DOCKER: ${{ needs.changes.outputs.lint_docker }}
+          FLAG_CONTAINER_CONTRACTS: ${{ needs.changes.outputs.container_contracts }}
           FLAG_LINT_FRONTEND: ${{ needs.changes.outputs.lint_frontend }}
           FLAG_LINT_STEIGER: ${{ needs.changes.outputs.lint_steiger }}
           FLAG_TYPECHECK_BACKEND: ${{ needs.changes.outputs.typecheck_backend }}
@@ -620,8 +837,8 @@ jobs:
     name: Playwright runner image
     needs: [changes]
     if: needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true')
-    runs-on: [self-hosted, linux, x64, nohiki]
-    timeout-minutes: 30
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_target) }}
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}
     permissions:
       contents: read
     steps:
@@ -638,6 +855,9 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: ${{ runner.environment == 'self-hosted' && 'network=host' || '' }}
+          buildkitd-config: ${{ runner.environment == 'self-hosted' && '.github/buildkitd-self-hosted.toml' || '' }}
 
       - name: Mark unique work start
         id: unique
@@ -654,8 +874,9 @@ jobs:
           file: typescript/apps/frontend/Dockerfile.playwright-runner
           load: true
           tags: nohiki-playwright-runner-smoke:ci
-          # GHA exports spent 25 minutes on the fleet uplink; imports remain as fresh-slot insurance.
-          cache-from: type=gha,scope=playwright-runner-smoke
+          # Hosted runners retain GHA imports. Each self-hosted host writes through to its shared registry.
+          cache-from: ${{ runner.environment == 'self-hosted' && 'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache' || 'type=gha,scope=playwright-runner-smoke' }}
+          cache-to: ${{ runner.environment == 'self-hosted' && 'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache,mode=max,ignore-error=true' || '' }}
 
       - name: Verify Playwright runner
         id: runner-verify
@@ -681,8 +902,8 @@ jobs:
     name: Title policy
     needs: [changes]
     if: needs.changes.outputs.title_only == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_target) }}
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.title_timeout_minutes) }}
     permissions:
       contents: read
     steps:
@@ -708,6 +929,7 @@ jobs:
           node: "true"
           ready-cache: "true"
           payload: node
+          runner-class: ${{ needs.changes.outputs.runner_class }}
 
       - name: Mark unique work start
         id: unique
@@ -736,8 +958,8 @@ jobs:
       - worker
       - playwright-image
       - title-policy
-    runs-on: ubuntu-24.04
-    timeout-minutes: 3
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_target || '"ubuntu-24.04"') }}
+    timeout-minutes: ${{ fromJSON(needs.changes.outputs.checks_timeout_minutes || '5') }}
     permissions:
       actions: read
       contents: read
@@ -774,7 +996,7 @@ jobs:
           # composite provisions the Node group, and is evaluated identically in both classes.
           NODE_GROUP_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true') }}
           WORKER_NODE_GROUP: ${{ needs.worker.outputs.node_group_executed }}
-          CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.otel_collector == 'true') }}
+          CONTAINER_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true') }}
           WORKER_CONTAINER_CONTRACTS: ${{ needs.worker.outputs.container_contracts_executed }}
           PLAYWRIGHT_EXPECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.frontend_e2e == 'true') }}
           CHANGES_RESULT: ${{ needs.changes.result }}

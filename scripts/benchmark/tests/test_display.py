@@ -16,7 +16,10 @@ from llm_benchmark.display.panels import (
     display_evaluation_results,
     display_multi_judge_results,
 )
-from llm_benchmark.display.progress import create_benchmark_progress, create_evaluation_progress
+from llm_benchmark.display.progress import (
+    create_benchmark_progress,
+    create_evaluation_progress,
+)
 from llm_benchmark.schemas.aggregation import (
     CategoryAggregate,
     Classification,
@@ -25,7 +28,6 @@ from llm_benchmark.schemas.aggregation import (
     ModelEvaluation,
     compute_multi_judge_summary,
 )
-from llm_benchmark.schemas.judge import Disqualification
 from llm_benchmark.schemas.metrics import BenchmarkResult as _BenchmarkResult
 from llm_benchmark.schemas.metrics import ModelResult, RunResult
 
@@ -135,6 +137,7 @@ class TestDisplayBenchmarkResults:
                             latency_ms=1000.0,
                             input_tokens=100,
                             output_tokens=50,
+                            retry_count=0,
                         ),
                     ],
                 ),
@@ -239,31 +242,6 @@ class TestDisplayEvaluationResults:
         assert "best/model" in output
         assert "PASSED" in output
 
-    def test_renders_disqualifications(self) -> None:
-        summary = EvaluationSummary(
-            model_evaluations=[
-                ModelEvaluation(
-                    model="bad/model",
-                    classification=Classification.FAIL,
-                    overall_mean=30.0,
-                    category_aggregates=[],
-                    total_disqualifications=1,
-                    disqualification_details=[
-                        Disqualification(
-                            category="data_adherence",
-                            reason="Hallucinated company name not in posting",
-                        ),
-                    ],
-                    rank=1,
-                    evaluation_count=1,
-                ),
-            ],
-            total_evaluations=1,
-            judge_model="test-judge",
-        )
-        output = _capture_console_output(display_evaluation_results, summary)
-        assert "Disqualification" in output
-
 
 class TestDisplayBenchmarkResultsPassRates:
     """Tests for pass_rate colour branches in display_benchmark_results."""
@@ -280,6 +258,7 @@ class TestDisplayBenchmarkResultsPassRates:
                 latency_ms=100.0,
                 input_tokens=50,
                 output_tokens=20,
+                retry_count=0,
             )
             for i in range(total)
         ]

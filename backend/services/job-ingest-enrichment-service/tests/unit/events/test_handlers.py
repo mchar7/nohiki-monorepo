@@ -85,7 +85,7 @@ class TestHandleListingAccepted:
     ) -> None:
         """Test that missing metadata raises ValueError."""
         message = ListingAccepted(
-            metadata=cast(EventMetadata, None),
+            metadata=cast("EventMetadata", None),
             listing=ListingReference(
                 listing_id="test-id",
                 listing_url="https://example.com/job",
@@ -120,7 +120,7 @@ class TestHandleListingAccepted:
                 source_service="test",
                 version="v1",
             ),
-            listing=cast(ListingReference, None),
+            listing=cast("ListingReference", None),
             discovered_data=DiscoveredListing(
                 listing_url="https://example.com/job",
                 source=JobBoardSource.LINKEDIN,
@@ -155,7 +155,7 @@ class TestHandleListingAccepted:
                 listing_url="https://example.com/job",
                 source=JobBoardSource.LINKEDIN,
             ),
-            discovered_data=cast(DiscoveredListing, None),
+            discovered_data=cast("DiscoveredListing", None),
         )
 
         from job_ingest_enrichment_service.events.handlers import (

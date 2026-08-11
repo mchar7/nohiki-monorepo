@@ -13,11 +13,9 @@ from job_correlation_evaluation_service.services.scoring.config import (
     CountNormalizationConfig,
     ExperienceScoringConfig,
     FreshnessScoringConfig,
-    ListingQualityScoringConfig,
     LocationScoringConfig,
     ScoringServiceSettings,
     SkillScoringConfig,
-    get_scoring_config,
     get_scoring_service_settings,
     reset_scoring_service_settings,
 )
@@ -142,25 +140,6 @@ class TestSkillScoringConfig:
         assert config.relationship_bonus_weight > 0
 
 
-class TestListingQualityScoringConfig:
-    """Tests for ListingQualityScoringConfig."""
-
-    def test_default_values(self) -> None:
-        """Test default configuration values."""
-        config = ListingQualityScoringConfig()
-
-        assert config.too_high_penalty == pytest.approx(0.4)
-        assert config.too_low_bonus == pytest.approx(0.2)
-        assert config.neutral_quality == pytest.approx(0.5)
-        assert config.min_feedback_for_signal == 5
-
-    def test_neutral_quality_is_midpoint(self) -> None:
-        """Test neutral quality is at midpoint of [0, 1]."""
-        config = ListingQualityScoringConfig()
-
-        assert config.neutral_quality == pytest.approx(0.5)
-
-
 class TestCountNormalizationConfig:
     """Tests for CountNormalizationConfig."""
 
@@ -202,7 +181,6 @@ class TestScoringServiceSettings:
         assert isinstance(settings.experience, ExperienceScoringConfig)
         assert isinstance(settings.freshness, FreshnessScoringConfig)
         assert isinstance(settings.skill, SkillScoringConfig)
-        assert isinstance(settings.listing_quality, ListingQualityScoringConfig)
         assert isinstance(settings.count_normalization, CountNormalizationConfig)
 
     def test_cross_encoder_settings(self) -> None:
@@ -244,13 +222,6 @@ class TestSingletonPattern:
 
         assert instance1 is not instance2
 
-    def test_get_scoring_config_alias_returns_same_instance(self) -> None:
-        """Test get_scoring_config is an alias for get_scoring_service_settings."""
-        instance1 = get_scoring_service_settings()
-        instance2 = get_scoring_config()
-
-        assert instance1 is instance2
-
 
 class TestEnvironmentVariableOverrides:
     """Tests for environment variable configuration overrides."""
@@ -286,13 +257,6 @@ class TestEnvironmentVariableOverrides:
             reset_scoring_service_settings()
             config = SkillScoringConfig()
             assert config.proficiency_weight == pytest.approx(0.5)
-
-    def test_listing_quality_config_env_override(self) -> None:
-        """Test listing quality config can be overridden via environment variables."""
-        with patch.dict(os.environ, {"SCORING_LISTING_QUALITY__MIN_FEEDBACK_FOR_SIGNAL": "10"}):
-            reset_scoring_service_settings()
-            config = ListingQualityScoringConfig()
-            assert config.min_feedback_for_signal == 10
 
     def test_count_normalization_config_env_override(self) -> None:
         """Test count normalization config can be overridden via environment variables."""

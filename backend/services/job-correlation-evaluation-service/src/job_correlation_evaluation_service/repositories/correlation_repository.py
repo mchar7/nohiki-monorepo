@@ -29,19 +29,6 @@ class CorrelationUpdate:
     is_dismissed: bool | None = None
     user_feedback: UserFeedback | None = None
 
-    def values(self) -> dict[str, bool | UserFeedback]:
-        """Return only fields explicitly supplied for mutation."""
-        fields: dict[str, bool | UserFeedback] = {}
-        if self.is_viewed is not None:
-            fields["is_viewed"] = self.is_viewed
-        if self.is_applied is not None:
-            fields["is_applied"] = self.is_applied
-        if self.is_dismissed is not None:
-            fields["is_dismissed"] = self.is_dismissed
-        if self.user_feedback is not None:
-            fields["user_feedback"] = self.user_feedback
-        return fields
-
 
 class CorrelationNotFoundError(Exception):
     """Raised when a correlation is not found."""
@@ -70,19 +57,11 @@ class CorrelationRepository:
     async def update(
         self,
         correlation_id: UUID,
-        changes: CorrelationUpdate | None = None,
+        changes: CorrelationUpdate,
         *,
         user_id: UUID | None = None,
-        **legacy_changes: bool | UserFeedback | None,
     ) -> Correlation:
         """Update feedback fields; the surrounding unit of work owns commit."""
-        if changes is None:
-            changes = CorrelationUpdate(
-                is_viewed=cast("bool | None", legacy_changes.get("is_viewed")),
-                is_applied=cast("bool | None", legacy_changes.get("is_applied")),
-                is_dismissed=cast("bool | None", legacy_changes.get("is_dismissed")),
-                user_feedback=cast("UserFeedback | None", legacy_changes.get("user_feedback")),
-            )
         correlation = await self.get_by_id(correlation_id, user_id)
         if correlation is None:
             raise CorrelationNotFoundError(correlation_id)
@@ -169,5 +148,5 @@ class CorrelationRepository:
             return 0
 
         stmt = update(Correlation).where(Correlation.id.in_(correlation_ids)).values(is_viewed=True)
-        result = cast(CursorResult[tuple[()]], await self._session.execute(stmt))
+        result = cast("CursorResult[tuple[()]]", await self._session.execute(stmt))
         return result.rowcount if result.rowcount is not None else 0

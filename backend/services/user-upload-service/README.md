@@ -84,7 +84,8 @@ present and returns without inserting or publishing a duplicate event.
 
 Schema `user_upload_schema` stores one row per user upload: file metadata, RustFS object key,
 content hash, and soft-delete flag. The transactional outbox table in the same schema enables
-atomic event publishing. See [DATABASE.md](./DATABASE.md) for complete schema documentation.
+atomic event publishing. See [DATABASE.md](./DATABASE.md) for semantic database design and
+lifecycle documentation.
 
 ### Object Storage
 

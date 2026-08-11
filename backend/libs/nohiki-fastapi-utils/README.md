@@ -237,10 +237,12 @@ Client identification uses this priority order:
 
 1. Verified JWT user ID (extracted by `JWKSVerifier`, if the `jwt` extra is installed and the
    verifier is initialized)
-2. `X-Account-ID` header (internal/legacy)
-3. `X-Forwarded-For` header, first IP in the list
-4. `X-Real-IP` header
-5. Direct client IP
+2. `extract_client_ip`, which walks the `X-Forwarded-For` chain from the ASGI peer inward and
+   stops at the first hop outside `NOHIKI_TRUSTED_PROXY_CIDRS`, falling back to the peer
+   address when the chain is malformed or unparseable, and to `unknown` when there is no peer
+
+No header identifies a client on its own: an unverified header cannot raise a caller's trust,
+so a forged `X-Forwarded-For` hop from an untrusted peer is ignored.
 
 Identified users are keyed as `user:<id>`; anonymous clients as `ip:<ip>`. This means
 authenticated users share a rate limit bucket regardless of IP, while unauthenticated requests
@@ -299,9 +301,8 @@ Two FastAPI dependencies extract the authenticated user from the JWT cookie:
 - **`get_current_user_claims`** -- Returns the full `JWTClaims` dataclass, giving access to
   `roles`, `permissions`, and `tenant_id`.
 
-For Kafka-only services that proxy user identity through an internal header (e.g., after the
-BFF has already verified the JWT), `get_current_user_id_from_header` reads the `X-Account-Id`
-header instead.
+The verified JWT cookie is the only identity source. There is no header-based equivalent: a
+service that needs the caller's identity verifies the cookie itself.
 
 ### Correlation IDs
 
@@ -381,8 +382,6 @@ in structured logs.
   Raises HTTP 401 on failure.
 - **`get_current_user_claims`** -- FastAPI dependency returning full `JWTClaims`. Raises HTTP
   401 on failure.
-- **`get_current_user_id_from_header`** -- FastAPI dependency reading `X-Account-Id` header.
-  Raises HTTP 401 if missing or not a valid UUID.
 
 ### Rate Limiting (`[cache]` extra required)
 

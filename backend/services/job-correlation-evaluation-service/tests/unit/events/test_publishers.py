@@ -228,7 +228,6 @@ class TestPublishCorrelationEvaluated:
         event = _published_event(db)
         assert event.fit_score == 80
         assert event.correlation_id == str(mock_result.correlation_id)
-        assert dict(event.correlation_metadata) == {}
         assert event.fit_ranking_breakdown is not None
         assert event.fit_ranking_breakdown.method_version == "deterministic-fit-v1"
         factors = event.fit_ranking_breakdown.factors

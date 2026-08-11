@@ -131,7 +131,7 @@ typecheck-job job:
 # Code hygiene
 
 # Run all strict hygiene checks
-hygiene: hygiene-deps hygiene-arch hygiene-deadcode-strict hygiene-fixtures-strict hygiene-build-backend-strict
+hygiene: hygiene-deps hygiene-arch hygiene-imports hygiene-test-closure hygiene-deadcode-strict hygiene-fixtures-strict hygiene-build-backend-strict
 
 hygiene-deps packages="ALL":
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks deptry --scope all --packages '{{ packages }}' --ci
@@ -147,6 +147,12 @@ hygiene-arch:
 
 hygiene-arch-report:
     uvx --override semgrep-overrides.txt semgrep scan --config semgrep.yml --no-git-ignore backend/
+
+# Enforce the import-linter boundary contracts declared in [tool.importlinter].
+# --no-cache keeps worktrees clean: the backend graph builds in ~0.1s, so the on-disk
+# cache buys nothing and would leave an untracked .import_linter_cache behind.
+hygiene-imports:
+    {{ env_lock }} shared venv -- uv run --no-sync lint-imports --no-cache
 
 hygiene-deadcode:
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks --group deadcode ci-checks deadcode --scope all --ci
@@ -177,8 +183,16 @@ hygiene-fixtures-libs:
 hygiene-build-backend-strict packages="ALL":
     {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks build-backend --scope all --packages '{{ packages }}' --ci --strict
 
+# Forbid module-level imports in a package's test tree that fall outside its declared
+# closure. Pytest executes a module body before it deselects it, so an out-of-closure
+# module-level import in an unselected test breaks every partial environment that merely
+# collects the directory. Scope lives in ci_checks.checks.test_closure.ENFORCED_PACKAGES;
+# pass ALL to measure the whole workspace.
+hygiene-test-closure packages="ENFORCED":
+    {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks test-closure --scope all --packages '{{ packages }}' --ci
+
 # Run every developer-reproducible CI check
-verify: lint format-check lint-md typecheck-all test-all-packages test-skylos-cache test-node-contracts hygiene fe-check fe-fsd fe-i18n edge-check proto-lint proto-breaking workflow-lint docker-lint secrets-scan nix-check api-schema-check image-matrix-check
+verify: lint format-check lint-md typecheck-all test-all-packages test-jvm test-skylos-cache test-node-contracts hygiene fe-check fe-fsd fe-i18n edge-check proto-lint proto-breaking workflow-lint docker-lint secrets-scan nix-check api-schema-check image-matrix-check
 
 # Scaffold CLI
 
@@ -207,6 +221,16 @@ test-scaffold:
 # Run package-aware unit tests across uv workspace members
 test-all-packages:
     {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package ci-checks ci-checks tests all --scope all --ci --workers 2
+
+# Build and test the JVM module with the flake-pinned toolchain.
+test-jvm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    module="{{ monorepo_root }}/jvm/nohiki-wal-router-smt"
+    pinned_version="$(gradle --version | sed -n 's/^Gradle //p')"
+    wrapper_version="$("$module/gradlew" --project-dir "$module" --no-daemon --console=plain --version | sed -n 's/^Gradle //p')"
+    test "$wrapper_version" = "$pinned_version"
+    gradle --project-dir "$module" --no-daemon --console=plain clean build
 
 # Run Skylos cache contract tests
 test-skylos-cache:
@@ -239,6 +263,10 @@ test-cov service:
     # Coverage instruments the service's src tree; --cov=src failed because
     # pytest runs from the monorepo root where no top-level src/ exists.
     {{ test_run }} {{ env_lock }} shared venv -- uv run --no-sync --package {{ service }} pytest "$dir/tests/" --tb=short --cov="$dir/src" --cov-report=term-missing
+
+# Run the hosted job-correlation integration counterpart (requires Docker).
+test-job-correlation-integration:
+    {{ env_lock }} gate pre-push -- {{ test_run }} gate -- env NOHIKI_GATE_ACTIVE=1 NOHIKI_INTEGRATION_GATE_ACTIVE=1 lefthook run pre-push --job job-correlation-integration --force
 
 # Run monorepo integration tests
 test-integration:
@@ -374,11 +402,36 @@ proto-lint:
     nix develop .#ci {{ nix_flags }} --command bash -euc 'cd proto && buf lint'
 
 # Check proto breaking changes
-proto-breaking base_ref="main":
+proto-breaking base_ref="origin/main":
     #!/usr/bin/env bash
     set -euo pipefail
     if git cat-file -e '{{ base_ref }}^{commit}' && git ls-tree --name-only '{{ base_ref }}' proto/ | grep -q .; then
-        nix develop .#ci {{ nix_flags }} --command bash -euc "cd proto && buf breaking --against '../.git#commit={{ base_ref }},subdir=proto'"
+        diagnostics="$(mktemp)"
+        trap 'rm -f "$diagnostics"' EXIT
+        status=0
+        nix develop .#ci {{ nix_flags }} --command bash -euc "cd proto && buf breaking --error-format=json --against '../.git#commit={{ base_ref }},subdir=proto'" >"$diagnostics" || status=$?
+        if ((status == 0)); then
+            exit 0
+        fi
+        # Owner-authorized removals live in proto/.breaking-allowlist.json.
+        # Match by path|type|name set membership so N entries with staggered
+        # lifetimes stay order-independent; expired entries fail closed.
+        if ((status == 100)) && nix develop .#ci {{ nix_flags }} --command jq -e -s --slurpfile allowlist proto/.breaking-allowlist.json --arg today "$(date -u +%Y-%m-%d)" '
+            ($allowlist[0]
+              | map(select(.expires >= $today)
+                    | {key: "\(.path)|\(.type)|\(.name)", value: true})
+              | from_entries) as $ok
+            | length > 0
+            and all(.[];
+                (.message | capture("\"(?<n>[^\"]+)\"").n) as $name
+                | ($ok["\(.path)|\(.type)|\($name)"] // false)
+            )
+        ' "$diagnostics" >/dev/null; then
+            echo "Accepted owner-authorized proto removal(s) from proto/.breaking-allowlist.json"
+            exit 0
+        fi
+        cat "$diagnostics" >&2
+        exit "$status"
     else
         echo "Skipping: proto/ is absent from {{ base_ref }}"
     fi
@@ -395,20 +448,19 @@ workflow-lint:
     ((status <= 1)) || exit "$status"
     ((status == 0)) || [[ -s "$diagnostics" ]] || exit "$status"
 
+    # actionlint does not understand the runner's native `parallel:` groups. Their source
+    # locations are read out of the file rather than pinned here, because pinned line numbers
+    # drift the moment anything above them is edited and then suppress nothing.
+    expected="$(grep -n '^      - parallel:$' .github/workflows/checks.yml | sed 's|^\([0-9]*\):.*|.github/workflows/checks.yml:\1:9: step must run script with "run" section or run action with "uses" section [syntax-check]|')"
+    [[ -n "$expected" ]] || { printf 'no parallel: groups found; drop this suppression\n' >&2; exit 1; }
+
     unexpected=0
     while IFS= read -r diagnostic; do
-        # actionlint does not understand the runner's four native `parallel:` groups; suppress only their exact source locations.
-        case "$diagnostic" in
-            '.github/workflows/checks.yml:285:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:363:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:505:9: step must run script with "run" section or run action with "uses" section [syntax-check]' | \
-            '.github/workflows/checks.yml:516:9: step must run script with "run" section or run action with "uses" section [syntax-check]')
-                ;;
-            *)
-                printf '%s\n' "$diagnostic" >&2
-                unexpected=1
-                ;;
-        esac
+        if printf '%s\n' "$expected" | grep -qxF -- "$diagnostic"; then
+            continue
+        fi
+        printf '%s\n' "$diagnostic" >&2
+        unexpected=1
     done <"$diagnostics"
     ((unexpected == 0)) || exit 1
 
@@ -667,6 +719,7 @@ hooks-precommit:
     {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook run pre-commit --force
 
 hooks-prepush:
+    {{ env_lock }} shared node_modules -- {{ pnpm }} exec commitlint --from origin/main --to HEAD --verbose
     {{ env_lock }} shared node_modules -- {{ pnpm }} exec lefthook run pre-push --force
 
 hooks-test-msg message:

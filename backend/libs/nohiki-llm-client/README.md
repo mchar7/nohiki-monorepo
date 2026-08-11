@@ -81,12 +81,16 @@ There are two distinct retry mechanisms, each targeting a different failure mode
 default: 3): When the model produces output that fails schema validation, PydanticAI feeds
 the `ValidationError` back to the model as an additional message and retries the LLM call.
 This is purely within PydanticAI. When all retries are exhausted, PydanticAI raises
-`UnexpectedModelBehavior` with the message `"Exceeded maximum retries"`.
+`UnexpectedModelBehavior` with the message `"Exceeded maximum output retries (N)"`, chaining the
+triggering `ValidationError`, `ToolRetryError` or `ModelRetry` onto `__cause__`.
 
 **Tenacity application-level retries** (3 attempts, exponential backoff 2s-30s): `LLMClient.run()`
 wraps the PydanticAI call in a Tenacity `AsyncRetrying` loop. It retries only on
-`LLMTransientError` (HTTP 5xx, momentary null-field responses from the provider). It does NOT
-retry on `LLMValidationError` (schema exhaustion), `LLMProviderResponseError` (permanent routing
+`LLMTransientError` (HTTP 5xx, unrecognized transient null-field responses, and any bare PydanticAI
+`ModelAPIError` that is not a `ModelHTTPError` -- notably the OpenRouter body with null `choices`
+and no error envelope, which PydanticAI classifies as a transient hiccup). Recognized permanent
+null-field response signatures map to `LLMProviderResponseError`.
+It does NOT retry on `LLMValidationError` (schema exhaustion), `LLMProviderResponseError` (permanent routing
 failure), or `LLMRateLimitError` (rate limiting). Rate-limit errors propagate up to the Kafka
 consumer, which has its own backoff strategy.
 
@@ -101,9 +105,29 @@ The exception hierarchy used by `LLMClient` to classify outcomes:
 | `LLMTransientError` | Yes (up to 3 attempts) | Exponential backoff retry |
 | `LLMRateLimitError` | No at the application layer (HTTP transport honors `Retry-After`) | Backoff retry |
 | `LLMValidationError` | No | DLQ |
+| `LLMContentFilterError` | No | DLQ |
 | `LLMProviderResponseError` | No | DLQ |
 | `LLMAuthenticationError` | No | DLQ |
 | `LLMContextTooLongError` | No | DLQ |
+| `LLMConfigurationError` | No | DLQ |
+| `LLMUsageLimitError` | No | DLQ |
+
+Classification is a single pure function, `_classify_agent_failure`, which dispatches on
+exception type and on `__cause__`. Anything it does not recognise is re-raised untouched
+rather than mislabelled as a provider failure.
+
+`UserError` is a mistake of ours rather than a model or provider fault, so it maps to
+`LLMConfigurationError` and is deliberately not folded into `LLMProviderResponseError`: a
+misconfiguration read as a provider fault sends an operator to the wrong system. `UsageLimits`
+is an optional caller-supplied parameter, so `UsageLimitExceeded` is unreachable until a caller
+supplies one; it maps to `LLMUsageLimitError`, which is a policy outcome rather than a failure
+and is kept out of the transient family so no layer re-runs a budget refusal.
+
+`FallbackExceptionGroup` is a container, so it is unwrapped and classified member-wise. One
+retryable hop makes the group retryable, because that hop may succeed on a later attempt; a
+group whose every hop failed permanently is permanent, because a retry replays the same
+permanent failure on every hop. Members carrying no provider verdict, such as
+`ResponseRejected`, are skipped, and a group of only those propagates unchanged.
 
 ### Provider Configuration and Model Chains
 
@@ -465,11 +489,17 @@ failed schema validation. Tenacity's application-level retries handle provider f
 HTTP connection was unreliable or the provider was temporarily overloaded. These are orthogonal
 failure modes with different recovery strategies.
 
-When PydanticAI exhausts its validation retries, it raises `UnexpectedModelBehavior("Exceeded
-maximum retries")`. `LLMClient._single_attempt()` discriminates this from other
-`UnexpectedModelBehavior` exceptions by prefix-matching the message, converting it to
-`LLMValidationError` (non-retryable) rather than `LLMTransientError` (retryable). This prevents
-Tenacity from masking a prompt-engineering problem as a transient failure.
+When PydanticAI exhausts its output-validation retries it raises
+`UnexpectedModelBehavior("Exceeded maximum output retries (N)")` and chains the exception that
+triggered the last retry onto `__cause__`. A `ToolRetryError` or `ModelRetry` cause identifies
+output exhaustion directly. A bare `ValidationError` cause is ambiguous with a malformed provider
+payload, so `LLMClient` also requires PydanticAI's output-budget message context for that case.
+The resulting `LLMValidationError` is non-retryable, so Tenacity cannot mask a prompt-engineering
+problem as a transient failure.
+
+`ContentFilterError` subclasses `UnexpectedModelBehavior`, so it is caught first and mapped to
+`LLMContentFilterError`. A content-policy refusal is permanent for the prompt as sent; retrying
+it only multiplies spend.
 
 ### Cost tracking fallback order
 

@@ -1062,7 +1062,7 @@ class TestJobMatcherServiceBackfillRescoring:
         listing_ids = [uuid4(), uuid4()]
         profile = MagicMock(id=str(uuid4()), user_id=str(uuid4()))
         listings = cast(
-            list[ListingSnapshot],
+            "list[ListingSnapshot]",
             [
                 MagicMock(
                     id=listing_id,
@@ -1162,7 +1162,7 @@ class TestJobMatcherServiceBackfillRescoring:
         enriched_id, existing_unenriched_id, new_unenriched_id = listing_ids
         profile = MagicMock(id=str(uuid4()), user_id=str(uuid4()))
         listings = cast(
-            list[ListingSnapshot],
+            "list[ListingSnapshot]",
             [
                 MagicMock(
                     id=enriched_id,

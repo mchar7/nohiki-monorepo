@@ -84,7 +84,7 @@ class JWKSVerifier:
         if cls._instance is None:
             msg = "JWKSVerifier not initialized. Call JWKSVerifier(config) first."
             raise RuntimeError(msg)
-        return cast(Self, cls._instance)  # ty: ignore[redundant-cast]  # removing cast causes invalid-return-type; ty bug with Self class variables
+        return cast("Self", cls._instance)  # ty: ignore[redundant-cast]  # removing cast causes invalid-return-type; ty bug with Self class variables
 
     def verify_token(self, token: str) -> JWTClaims:
         """Verify a JWT and return its claims.
@@ -192,8 +192,6 @@ def init_jwks_verifier(config: JWKSConfig) -> JWKSVerifier:
 
 def get_current_user_id_from_cookie(request: Request) -> UUID:
     """FastAPI dependency to extract and validate user ID from JWT cookie.
-
-    This replaces the old X-Account-Id header-based authentication.
 
     Usage:
         ```python

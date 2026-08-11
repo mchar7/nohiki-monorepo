@@ -23,7 +23,7 @@ class MuveraProtocol(Protocol):
 
 
 def _load_muvera_class(module: object, attr_name: str) -> type[MuveraProtocol]:
-    return cast(type[MuveraProtocol], getattr(module, attr_name))
+    return cast("type[MuveraProtocol]", getattr(module, attr_name))
 
 
 class MUVERAEncoder:

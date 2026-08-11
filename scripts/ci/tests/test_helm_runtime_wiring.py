@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import yaml
+from _documents import load_mapping, mapping_at, string_at
 from helm_test_utils import runtime_eso_args
 from test_image_digest_gitops import _digest_values
 
@@ -271,7 +272,7 @@ _LIFECYCLE_EXCLUSIONS = {
 }
 
 
-def _render(values_name: str, tmp_path: Path) -> tuple[dict, ...]:
+def _render(values_name: str, tmp_path: Path, *extra_args: str) -> tuple[dict, ...]:
     environment = values_name.removeprefix("values.").removesuffix(".yaml")
     command = [
         "helm",
@@ -295,6 +296,7 @@ def _render(values_name: str, tmp_path: Path) -> tuple[dict, ...]:
             )
         )
     command.extend(runtime_eso_args(environment))
+    command.extend(extra_args)
     result = subprocess.run(command, check=True, capture_output=True, text=True)
     return tuple(document for document in yaml.safe_load_all(result.stdout) if isinstance(document, dict))
 
@@ -477,6 +479,140 @@ def test_kafka_scalers_match_startup_reachable_topic_groups(tmp_path: Path) -> N
                 assert "idleReplicaCount" not in spec
             else:
                 assert spec["idleReplicaCount"] == 0
+
+
+def test_local_kafka_scalers_wait_for_bootstrap_service(tmp_path: Path) -> None:
+    documents = _render("values.local.yaml", tmp_path)
+    gates = [
+        document
+        for document in documents
+        if document.get("kind") == "Job"
+        and document.get("metadata", {}).get("name") == "nohiki-kafka-scaler-bootstrap-gate"
+    ]
+    assert len(gates) == 1
+
+    gate = gates[0]
+    assert gate["metadata"]["annotations"] == {
+        "helm.sh/hook": "post-install,post-upgrade",
+        "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded,hook-failed",
+        "helm.sh/hook-weight": "-10",
+    }
+    container = gate["spec"]["template"]["spec"]["containers"][0]
+    image = mapping_at(load_mapping(_CHART / "values.yaml"), "opentelemetry-operator", "testFramework", "image")
+    assert container["image"] == f"{string_at(image, 'repository')}:{string_at(image, 'tag')}"
+    assert container["env"] == [
+        {"name": "KAFKA_BOOTSTRAP_HOST", "value": "nohiki-kafka-kafka-bootstrap"},
+        {"name": "KAFKA_BOOTSTRAP_PORT", "value": "9092"},
+    ]
+    assert "nslookup" not in container["args"][0]
+    assert 'until nc -z -w 2 "${KAFKA_BOOTSTRAP_HOST}" "${KAFKA_BOOTSTRAP_PORT}"' in container["args"][0]
+
+    scalers = [document for document in documents if document.get("kind") == "ScaledObject"]
+    assert {scaler["metadata"]["name"] for scaler in scalers} == _KAFKA_SCALER_SERVICES
+    assert all(
+        scaler["metadata"]["annotations"]
+        == {
+            "helm.sh/hook": "post-install,post-upgrade",
+            "helm.sh/hook-delete-policy": "before-hook-creation,hook-failed",
+            "helm.sh/hook-weight": "0",
+        }
+        for scaler in scalers
+    )
+
+    for values_name in ("values.dev.yaml", "values.staging.yaml", "values.prod.yaml"):
+        cloud_documents = _render(values_name, tmp_path)
+        assert not any(
+            document.get("metadata", {}).get("name") == "nohiki-kafka-scaler-bootstrap-gate"
+            for document in cloud_documents
+        )
+        assert not any(
+            document.get("metadata", {}).get("name") == "nohiki-kafka-scaler-hook-cleanup"
+            for document in cloud_documents
+        )
+        assert all(
+            "helm.sh/hook" not in scaler.get("metadata", {}).get("annotations", {})
+            for scaler in cloud_documents
+            if scaler.get("kind") == "ScaledObject"
+        )
+
+
+def test_local_scaler_hook_cleanup_covers_upgrade_uninstall_and_opt_out(tmp_path: Path) -> None:
+    cleanup_name = "nohiki-kafka-scaler-hook-cleanup"
+    hook_resources = [
+        document
+        for document in _render("values.local.yaml", tmp_path)
+        if document.get("metadata", {}).get("name") == cleanup_name
+    ]
+    assert {document["kind"] for document in hook_resources} == {
+        "ServiceAccount",
+        "Role",
+        "RoleBinding",
+        "Job",
+    }
+    expected_weights = {
+        "ServiceAccount": "-30",
+        "Role": "-30",
+        "RoleBinding": "-20",
+        "Job": "-10",
+    }
+    for resource in hook_resources:
+        annotations = resource["metadata"]["annotations"]
+        assert annotations["helm.sh/hook"] == "pre-upgrade,pre-delete"
+        assert annotations["helm.sh/hook-delete-policy"] == ("before-hook-creation,hook-succeeded,hook-failed")
+        assert annotations["helm.sh/hook-weight"] == expected_weights[resource["kind"]]
+
+    role = next(resource for resource in hook_resources if resource["kind"] == "Role")
+    assert role["rules"] == [
+        {
+            "apiGroups": ["keda.sh"],
+            "resources": ["scaledobjects"],
+            "verbs": ["delete", "deletecollection", "get", "list"],
+        }
+    ]
+    cleanup_job = next(resource for resource in hook_resources if resource["kind"] == "Job")
+    assert cleanup_job["spec"]["activeDeadlineSeconds"] == 120
+    assert cleanup_job["spec"]["backoffLimit"] == 0
+    pod_spec = cleanup_job["spec"]["template"]["spec"]
+    assert pod_spec["serviceAccountName"] == cleanup_name
+    cleanup_container = pod_spec["containers"][0]
+    cleanup_command = cleanup_container["args"][0]
+    assert "kubectl delete scaledobjects.keda.sh" in cleanup_command
+    assert "app.kubernetes.io/instance=${HELM_RELEASE}" in cleanup_command
+    assert "app.kubernetes.io/part-of=nohiki" in cleanup_command
+    assert "environment=local" in cleanup_command
+    assert "--timeout=90s" in cleanup_command
+    upgraded = _render("values.local.yaml", tmp_path, "--is-upgrade")
+    assert {document["kind"] for document in upgraded if document.get("metadata", {}).get("name") == cleanup_name} == {
+        "ServiceAccount",
+        "Role",
+        "RoleBinding",
+        "Job",
+    }
+    assert all(
+        scaler["metadata"]["annotations"]["helm.sh/hook"] == "post-install,post-upgrade"
+        for scaler in upgraded
+        if scaler.get("kind") == "ScaledObject"
+    )
+
+    opted_out = _render(
+        "values.local.yaml",
+        tmp_path,
+        "--is-upgrade",
+        "--set",
+        "global.kafka.bootstrapGate.enabled=false",
+    )
+    assert not any(
+        document.get("metadata", {}).get("name") == "nohiki-kafka-scaler-bootstrap-gate" for document in opted_out
+    )
+    assert {document["kind"] for document in opted_out if document.get("metadata", {}).get("name") == cleanup_name} == {
+        "ServiceAccount",
+        "Role",
+        "RoleBinding",
+        "Job",
+    }
+    opted_out_scalers = [document for document in opted_out if document.get("kind") == "ScaledObject"]
+    assert {scaler["metadata"]["name"] for scaler in opted_out_scalers} == _KAFKA_SCALER_SERVICES
+    assert all("helm.sh/hook" not in scaler["metadata"].get("annotations", {}) for scaler in opted_out_scalers)
 
 
 def test_kafka_scaler_auth_follows_global_kafka_security(tmp_path: Path) -> None:

@@ -8,7 +8,6 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-import jsonschema
 import pytest
 import yaml
 from test_gateway_browser_policy import _render_helm
@@ -28,11 +27,32 @@ _BFF_DOCUMENTS = (
 )
 _FOUNDATION_CHART = _REPOSITORY_ROOT / "infra" / "k8s" / "helm-foundation"
 _GATEWAY_API_CRDS = _REPOSITORY_ROOT / "infra" / "k8s" / "gitops" / "gateway-api-crds" / "gateway-api-crds.yaml"
-_KGATEWAY_CRDS = _FOUNDATION_CHART / "charts" / "kgateway-crds-v2.3.6.tgz"
 _GATEWAY_API_MARKER = b"# ---8<--- BEGIN VENDORED CONTENT ---8<---\n"
-_GATEWAY_API_VERSION = "v1.3.0"
-_GATEWAY_API_EXPECTED_HEX = "3e7a27e4456ff3d68606a6a8516306aaff354d6f0950b32bb31930669b7bf8b8"
-_KGATEWAY_CRDS_SHA256 = "d6b1d8bf0e2636bca6b8fb2b4a1525806fd1b4f9e84614c8a6a16eda585a119c"
+
+
+def _foundation_dependency(name: str) -> dict[str, Any]:
+    chart = yaml.safe_load((_FOUNDATION_CHART / "Chart.yaml").read_text(encoding="utf-8"))
+    assert isinstance(chart, dict)
+    dependencies = [
+        dependency
+        for dependency in chart["dependencies"]
+        if isinstance(dependency, dict) and dependency.get("name") == name
+    ]
+    assert len(dependencies) == 1
+    return dependencies[0]
+
+
+def _gateway_api_provenance(header: bytes) -> tuple[str, str]:
+    provenance = header.decode("utf-8")
+    versions = re.findall(r"(?m)^# version:\s*(v\d+\.\d+\.\d+)\s*$", provenance)
+    digests = re.findall(r"(?m)^# sha256:\s*([0-9a-f]{64})\s*$", provenance)
+    source_versions = re.findall(
+        r"(?m)^# Source:\s+\S+/releases/download/(v\d+\.\d+\.\d+)/experimental-install\.yaml\s*$",
+        provenance,
+    )
+    assert len(versions) == len(digests) == len(source_versions) == 1
+    assert source_versions == versions
+    return versions[0], digests[0]
 
 
 def _named(documents: tuple[dict, ...], kind: str, name: str) -> dict[str, Any]:
@@ -51,32 +71,32 @@ def _crds() -> tuple[dict[str, Any], ...]:
     gateway_bundle = _GATEWAY_API_CRDS.read_bytes()
     gateway_header, marker, gateway_payload = gateway_bundle.partition(_GATEWAY_API_MARKER)
     assert marker, "vendored Gateway API bundle marker is missing"
-    assert f"version: {_GATEWAY_API_VERSION}".encode() in gateway_header
-    assert hashlib.sha256(gateway_payload).hexdigest() == _GATEWAY_API_EXPECTED_HEX
+    gateway_api_version, expected_sha256 = _gateway_api_provenance(gateway_header)
+    assert hashlib.sha256(gateway_payload).hexdigest() == expected_sha256
     gateway_api = tuple(
         document
         for document in yaml.safe_load_all(gateway_payload.decode())
         if isinstance(document, dict) and document.get("kind") == "CustomResourceDefinition"
     )
-    assert gateway_api, f"vendored Gateway API {_GATEWAY_API_VERSION} bundle contains no CRDs"
+    assert gateway_api, f"vendored Gateway API {gateway_api_version} bundle contains no CRDs"
 
-    assert _KGATEWAY_CRDS.is_file(), (
-        f"missing {_KGATEWAY_CRDS.name}; run `helm dependency build infra/k8s/helm-foundation`"
-    )
-    assert hashlib.sha256(_KGATEWAY_CRDS.read_bytes()).hexdigest() == _KGATEWAY_CRDS_SHA256
-    with tarfile.open(_KGATEWAY_CRDS, mode="r:gz") as archive:
-        chart_stream = archive.extractfile("kgateway-crds/Chart.yaml")
+    dependency = _foundation_dependency("kgateway-crds")
+    archive_path = _FOUNDATION_CHART / "charts" / f"{dependency['name']}-{dependency['version']}.tgz"
+    assert archive_path.is_file(), f"missing {archive_path.name}; run `helm dependency build infra/k8s/helm-foundation`"
+    with tarfile.open(archive_path, mode="r:gz") as archive:
+        chart_stream = archive.extractfile(f"{dependency['name']}/Chart.yaml")
         assert chart_stream is not None
         chart = yaml.safe_load(chart_stream.read())
-        assert chart == {
+        assert isinstance(chart, dict)
+        assert {key: chart[key] for key in ("apiVersion", "description", "icon", "name", "type")} == {
             "apiVersion": "v2",
-            "appVersion": "v2.3.6",
             "description": "A Helm chart for the kgateway project CRDs",
             "icon": "https://raw.githubusercontent.com/kgateway-dev/kgateway.dev/main/static/favicon.svg",
-            "name": "kgateway-crds",
+            "name": dependency["name"],
             "type": "application",
-            "version": "v2.3.6",
         }
+        assert chart["version"] == dependency["version"]
+        assert chart["appVersion"] == dependency["version"]
         member = next(
             member
             for member in archive.getmembers()
@@ -89,11 +109,13 @@ def _crds() -> tuple[dict[str, Any], ...]:
             for document in yaml.safe_load_all(stream.read().decode())
             if isinstance(document, dict) and document.get("kind") == "CustomResourceDefinition"
         )
-    assert kgateway, f"{_KGATEWAY_CRDS.name} contains no TrafficPolicy CRD"
+    assert kgateway, f"{archive_path.name} contains no TrafficPolicy CRD"
     return gateway_api + kgateway
 
 
 def _validate_against_vendored_crd(resource: dict[str, Any]) -> None:
+    import jsonschema
+
     group, version = resource["apiVersion"].split("/", maxsplit=1)
     matching_crds = [
         crd for crd in _crds() if crd["spec"]["group"] == group and crd["spec"]["names"]["kind"] == resource["kind"]

@@ -13,6 +13,9 @@ secret_helper="scripts/infra/validate_local_secret_sources.py"
 secret_source_dir="${NOHIKI_LOCAL_SECRETS_DIR:-}"
 gateway_helper="infra/k8s/local/gateway_proxy.py"
 cluster_reset_helper="infra/k8s/local/cluster_reset.py"
+cdc_adapter_module="health_check.acceptance.live_cluster_cdc"
+cdc_adapter_source="scripts/util/health_check/src/health_check/acceptance/live_cluster_cdc.py"
+cdc_acceptance_evidence="${CDC_ACCEPTANCE_EVIDENCE:-${K8S_EVIDENCE_DIR:-.artifacts/k8s-local}/live-cdc.json}"
 registry_endpoint="${K8S_LOCAL_REGISTRY_ENDPOINT:-http://127.0.0.1:30500}"
 mirror_config="${K3S_REGISTRIES_CONFIG:-/etc/rancher/k3s/registries.yaml}"
 
@@ -76,7 +79,8 @@ preflight() {
     kustomize build infra/k8s/gitops/clusters/local >/dev/null
     helm template nohiki-foundation infra/k8s/helm-foundation \
         --namespace nohiki-foundation >/dev/null
-    uv run --project scripts/util/health_check health-check inventory --target k8s --json >/dev/null
+    CDC_ACCEPTANCE_EVIDENCE="$cdc_acceptance_evidence" \
+        uv run --project scripts/util/health_check health-check inventory --target k8s --json >/dev/null
     printf 'Local Kubernetes preflight passed (read-only).\n'
 }
 
@@ -137,9 +141,8 @@ publish() {
     after="$(git rev-parse HEAD)"
     [[ "$(git diff-tree --no-commit-id --name-only -r "$after")" == "$artifact" ]] || \
         fail "publish commit changed a path outside the digest artifact"
-    git push --force-with-lease="refs/heads/$branch:$reviewed" origin \
-        "HEAD:refs/heads/$branch"
-    printf 'Published digest artifact: before=%s after=%s path=%s\n' "$reviewed" "$after" "$artifact"
+    printf 'Prepared digest artifact commit for PUSH-DELEGATE: before=%s after=%s path=%s\n' \
+        "$reviewed" "$after" "$artifact"
 }
 
 wait_ready() {
@@ -183,31 +186,36 @@ verify() {
     require_file "$image_helper"
     require_file scripts/infra/verify-k8s-jobs.py
     require_file infra/k8s/scripts/verify-migration-heads.py
+    require_file "$cdc_adapter_source"
 
     reconcile
     verify_flux_observation
 
-    local evidence_dir inventory
+    local evidence_dir evidence_file inventory
     evidence_dir="${K8S_EVIDENCE_DIR:-.artifacts/k8s-local}"
-    mkdir -p "$evidence_dir"
+    evidence_file="${CDC_ACCEPTANCE_EVIDENCE:-$evidence_dir/live-cdc.json}"
+    mkdir -p "$evidence_dir" "$(dirname "$evidence_file")"
+    export CDC_ACCEPTANCE_EVIDENCE="$evidence_file"
     inventory="$(mktemp)"
-    trap 'uv run python "$gateway_helper" stop >/dev/null 2>&1 || true; rm -f "$inventory"' EXIT INT TERM
-    uv run --package ci-checks ci-checks migration-truth \
+    trap 'uv run --no-sync python "$gateway_helper" stop >/dev/null 2>&1 || true; rm -f "${inventory:-}"' EXIT INT TERM
+    uv run --no-sync python "$gateway_helper" start
+    uv run --no-sync --project scripts/util/health_check python -m "$cdc_adapter_module" \
+        --namespace "$namespace" --evidence "$CDC_ACCEPTANCE_EVIDENCE"
+    uv run --no-sync --package ci-checks ci-checks migration-truth \
         --repo-root . --namespace "$namespace" >"$inventory"
-    uv run python infra/k8s/scripts/verify-migration-heads.py \
+    uv run --no-sync python infra/k8s/scripts/verify-migration-heads.py \
         --inventory "$inventory" --namespace "$namespace" \
         --evidence "$evidence_dir/migration-heads.json"
 
-    uv run python "$gateway_helper" start
-    uv run python scripts/infra/verify-k8s-jobs.py \
+    uv run --no-sync python scripts/infra/verify-k8s-jobs.py \
         --namespace nohiki-verification \
         --api-job nohiki-api-verification-v1 \
         --playwright-job nohiki-playwright-verification-v1 \
         --timeout-seconds 3600
-    uv run python "$image_helper" status --digests "$digest_values" --registry "$registry_endpoint"
-    uv run python "$image_helper" verify-pulls --digests "$digest_values"
+    uv run --no-sync python "$image_helper" status --digests "$digest_values" --registry "$registry_endpoint"
+    uv run --no-sync python "$image_helper" verify-pulls --digests "$digest_values"
     verify_flux_observation
-    uv run python "$gateway_helper" stop
+    uv run --no-sync python "$gateway_helper" stop
     trap - EXIT INT TERM
     rm -f "$inventory"
 }
@@ -215,7 +223,8 @@ verify() {
 diagnostics() {
     require_local_context
     require_file "$image_helper"
-    uv run --project scripts/util/health_check health-check inventory --target k8s --json
+    CDC_ACCEPTANCE_EVIDENCE="$cdc_acceptance_evidence" \
+        uv run --project scripts/util/health_check health-check inventory --target k8s --json
     flux get sources git --all-namespaces
     flux get kustomizations --all-namespaces
     flux get helmreleases --all-namespaces

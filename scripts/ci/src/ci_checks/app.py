@@ -26,6 +26,8 @@ from ci_checks.checks import fixtures as _fixtures
 from ci_checks.checks import freshness as _freshness
 from ci_checks.checks import gate as _gate
 from ci_checks.checks import migration_truth as _migration_truth
+from ci_checks.checks import reporting as _reporting
+from ci_checks.checks import test_closure as _test_closure
 from ci_checks.checks import workflow as _workflow
 from ci_checks.checks.tests import tests_app
 from ci_checks.core.display import console
@@ -47,10 +49,15 @@ app.command("gate-evidence")(_gate.gate_evidence_cmd)
 app.command("gate-reuse")(_gate.gate_reuse_cmd)
 
 # GitHub Checks workflow summary, verdict and accounting adapters.
-app.command("workflow-guard")(_workflow.guard_cmd)
+app.command("workflow-route")(_workflow.route_cmd)
 app.command("workflow-summary")(_workflow.summary_cmd)
 app.command("workflow-verdict")(_workflow.verdict_cmd)
 app.command("workflow-accounting")(_workflow.accounting_cmd)
+
+# Durable lint and scheduled deprecation diagnostic surfaces.
+app.command("lint-report")(_reporting.lint_report_cmd)
+app.command("actionlint-report")(_reporting.actionlint_report_cmd)
+app.command("deprecation-sweep")(_reporting.deprecation_sweep_cmd)
 
 
 def _filter_packages(
@@ -320,6 +327,58 @@ def build_backend_cmd(
             console.print(f"[{status}] {result.name}{_build_backend.ci_suffix(result)}")
 
     if not _build_backend.render_results(results, strict=strict):
+        raise typer.Exit(1)
+
+
+# test-closure
+
+
+@app.command("test-closure")
+def closure_cmd(
+    scope: Annotated[Scope, typer.Option("--scope", "-s", help="Package scope")] = Scope.ALL,
+    ci: Annotated[bool, typer.Option("--ci", help="CI mode (plain-text output)")] = False,
+    packages: Annotated[
+        str,
+        typer.Option(
+            "--packages",
+            help="CSV package names; 'ENFORCED' selects the enforced allowlist, 'ALL' every package with tests",
+        ),
+    ] = "ENFORCED",
+) -> None:
+    """Check test trees import only from their package's declared closure at module level."""
+    available = load_packages(scope, require_tests=True)
+    if packages.strip() == "ENFORCED":
+        enforced = _test_closure.ENFORCED_PACKAGES
+        if not enforced:
+            console.print("[red]No enforced packages configured[/red]")
+            raise typer.Exit(2)
+        workspace = {package.name: package for package in load_packages(Scope.ALL)}
+        unknown = enforced - workspace.keys()
+        testless = {name for name in enforced & workspace.keys() if not workspace[name].has_tests}
+        if unknown:
+            console.print(f"[red]Unknown enforced packages: {', '.join(sorted(unknown))}[/red]")
+        if testless:
+            console.print(f"[red]Enforced packages without tests: {', '.join(sorted(testless))}[/red]")
+        if unknown or testless:
+            raise typer.Exit(2)
+        selected = [package for package in available if package.name in enforced]
+    else:
+        known = {package.name for package in load_packages(Scope.ALL)}
+        selected = _filter_packages(available, packages, known)
+    if not selected:
+        console.print("[yellow]No workspace packages selected[/yellow]")
+        return
+
+    console.print(f"[bold]Checking {len(selected)} test trees against their declared closures...[/bold]")
+
+    results = [_test_closure.scan_package(package) for package in selected]
+
+    if ci:
+        for result in results:
+            status = "FAIL" if result.issues_found else "PASS"
+            console.print(f"[{status}] {result.name}{_test_closure.ci_suffix(result)}")
+
+    if not _test_closure.render_results(results):
         raise typer.Exit(1)
 
 

@@ -179,7 +179,11 @@ async function executePreviewCallback({
     formatValidationErrorSummary,
   );
   if (!validation.isValid) {
-    setError(validation.error || t('errors.dataValidationFailed'));
+    setError(
+      validation.error !== undefined && validation.error.length > 0
+        ? validation.error
+        : t('errors.dataValidationFailed'),
+    );
     return;
   }
   const ac = new AbortController();

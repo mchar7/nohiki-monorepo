@@ -6,16 +6,13 @@ configurations, enabling domain-agnostic notification handling.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
 from nohiki.doc.content.v1 import ContentGenerationCompleted
 from nohiki.job.correlation.v1 import CorrelationEvaluated
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 # Type alias for events that can trigger notifications
 NotificationEvent = CorrelationEvaluated | ContentGenerationCompleted

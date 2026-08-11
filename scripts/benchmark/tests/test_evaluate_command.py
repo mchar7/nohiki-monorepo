@@ -49,6 +49,8 @@ _JUDGE = "openrouter:test-judge"
 class RunResult(_RunResult):
     """Run result with synthetic fingerprints so fixtures stay terse."""
 
+    retry_count: int | None = 0
+
     treatment_fingerprint: str = "test-treatment"
     cell_fingerprint: str = "test-cell"
 

@@ -114,7 +114,7 @@ def upgrade() -> None:
             query_embedding DOUBLE PRECISION[],
             query_artifacts_data JSONB,
             collection_version VARCHAR(10),
-            is_enrichment_complete BOOLEAN NOT NULL DEFAULT false,
+            enrichment_terminal_status VARCHAR(32),
             created_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()},
             updated_at TIMESTAMPTZ NOT NULL DEFAULT {sa.func.now()}
         )
@@ -135,6 +135,52 @@ def upgrade() -> None:
     op.execute(f"CREATE INDEX ix_search_prefs_request_id ON {SCHEMA_NAME}.search_prefs (request_id)")
     op.execute(f"CREATE INDEX ix_search_prefs_active ON {SCHEMA_NAME}.search_prefs (is_active) WHERE is_active = true")
 
+    op.execute(f"""
+        CREATE TABLE {SCHEMA_NAME}.pref_enrichment_saga (
+            id UUID PRIMARY KEY DEFAULT uuidv7(),
+            status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+            expected_callbacks INTEGER NOT NULL,
+            received_callbacks INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            expires_at TIMESTAMPTZ NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            pref_id UUID NOT NULL REFERENCES {SCHEMA_NAME}.search_prefs(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL,
+            request_id UUID NOT NULL UNIQUE,
+            action VARCHAR(16) NOT NULL,
+            correlation_id VARCHAR(64) NOT NULL,
+            raw_skills JSONB NOT NULL DEFAULT '[]'::jsonb,
+            last_dispatch_ids JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+            skills_persisted BOOLEAN NOT NULL DEFAULT false,
+            embedding_persisted BOOLEAN NOT NULL DEFAULT false,
+            semantic_generation INTEGER NOT NULL,
+            semantic_hash VARCHAR(64) NOT NULL,
+            attempts_remaining INTEGER NOT NULL,
+            failed_step VARCHAR(16),
+            last_error_code VARCHAR(64),
+            last_error_message VARCHAR(512),
+            CONSTRAINT pref_enrichment_saga_status_check
+                CHECK (status IN ('PENDING','COMPLETED','FAILED','EXPIRED','CANCELLED')),
+            CONSTRAINT pref_enrichment_saga_action_check CHECK (action IN ('CREATE','UPDATE')),
+            CONSTRAINT pref_enrichment_saga_expected_callbacks_positive CHECK (expected_callbacks > 0),
+            CONSTRAINT pref_enrichment_saga_received_callbacks_nonnegative CHECK (received_callbacks >= 0),
+            CONSTRAINT pref_enrichment_saga_version_positive CHECK (version > 0),
+            CONSTRAINT pref_enrichment_saga_attempts_nonnegative CHECK (attempts_remaining >= 0)
+        )
+    """)
+    op.execute(f"CREATE INDEX ix_pref_enrichment_saga_pref_id ON {SCHEMA_NAME}.pref_enrichment_saga (pref_id)")
+    op.execute(
+        f"CREATE UNIQUE INDEX uq_pref_enrichment_saga_pending_pref "
+        f"ON {SCHEMA_NAME}.pref_enrichment_saga (pref_id) WHERE status = 'PENDING'"
+    )
+    op.execute(
+        f"CREATE INDEX ix_pref_enrichment_saga_status_pending "
+        f"ON {SCHEMA_NAME}.pref_enrichment_saga (status) WHERE status = 'PENDING'"
+    )
+    op.execute(
+        f"CREATE INDEX ix_pref_enrichment_saga_expires "
+        f"ON {SCHEMA_NAME}.pref_enrichment_saga (expires_at) WHERE status = 'PENDING'"
+    )
     # Create user_pref_settings table for user-level preference defaults
     op.execute(f"""
         CREATE TABLE {SCHEMA_NAME}.user_pref_settings (

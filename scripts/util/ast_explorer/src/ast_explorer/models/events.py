@@ -5,10 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from ast_explorer.models.nodes import SymbolNode
+from ast_explorer.models.nodes import SymbolNode
 
 
 class EventClassification(StrEnum):

@@ -70,8 +70,6 @@ ALLOWED_FILTERS: set[str] = {
     "abs",
     "round",
     "default",
-    # Output control
-    "safe",
 }
 
 
@@ -172,8 +170,6 @@ class SecureSandboxedEnvironment(SandboxedEnvironment):
 
         """
         super().__init__(autoescape=True, **kwargs)
-        # Legacy stored templates must compile; safe now escapes instead of bypassing autoescape.
-        self.filters["safe"] = self.filters["escape"]
 
         self.max_template_size = config.max_template_size
         self.max_ast_nodes = config.max_ast_nodes

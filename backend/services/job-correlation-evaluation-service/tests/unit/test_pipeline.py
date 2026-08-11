@@ -668,49 +668,66 @@ class TestScoringPipelineExtractQueryEncodingFromSnapshot:
         result = ScoringPipeline.extract_query_encoding_from_snapshot(mock_profile)
         assert result is None
 
-    def test_extracts_encoding_with_sparse(self) -> None:
-        """Test successful extraction with all retrieval embeddings including sparse."""
-        import numpy as np
+    def test_extracts_current_query_encoding(self) -> None:
+        """Complete current query artifacts are extracted for scoring."""
+        from job_correlation_evaluation_service.core.config import get_manifest
         from job_correlation_evaluation_service.services.scoring.pipeline import (
             QueryEncoding,
             ScoringPipeline,
         )
-        from nohiki.ml.v1 import EmbeddingType
+        from nohiki.ml.v1 import (
+            DenseData,
+            EmbeddingType,
+            EmbeddingVector,
+            EntityType,
+            MultiVectorData,
+            SparseData,
+        )
+        from nohiki.user.pref.v1 import SearchPrefSnapshot
 
-        mock_muvera_vec = MagicMock()
-        mock_muvera_vec.embedding_type = EmbeddingType.MUVERA
-        mock_muvera_vec.dense = MagicMock()
-        mock_muvera_vec.dense.values = [0.1] * 10
+        manifest = get_manifest()
+        collection = manifest.get_collection_config(EntityType.PROFILE)
+        dense_name = collection.qdrant.primary_dense_name
+        dense_size = collection.qdrant.vectors[dense_name].size
+        token_dim = manifest.late_interaction.token_dim
+        profile = SearchPrefSnapshot(
+            search_keywords=["Data Analyst"],
+            query_retrieval_embeddings=[
+                EmbeddingVector(
+                    embedding_type=EmbeddingType.MUVERA,
+                    dense=DenseData(values=[0.1] * dense_size),
+                    collection_version=collection.version,
+                    content_hash="a" * 64,
+                ),
+                EmbeddingVector(
+                    embedding_type=EmbeddingType.COLBERT,
+                    multi_vector=MultiVectorData(
+                        values=[0.2] * token_dim,
+                        num_tokens=1,
+                        token_dim=token_dim,
+                    ),
+                    model_id=manifest.late_interaction.model_id,
+                    collection_version=collection.version,
+                    content_hash="a" * 64,
+                ),
+                EmbeddingVector(
+                    embedding_type=EmbeddingType.SPARSE,
+                    sparse=SparseData(indices=[1, 2, 3], values=[0.5, 0.3, 0.2]),
+                    model_id=manifest.sparse.model_id,
+                    collection_version=collection.version,
+                    content_hash="a" * 64,
+                ),
+            ],
+        )
 
-        mock_colbert_vec = MagicMock()
-        mock_colbert_vec.embedding_type = EmbeddingType.COLBERT
-        mock_colbert_vec.multi_vector = MagicMock()
-        mock_colbert_vec.multi_vector.values = [0.2] * 480
-        mock_colbert_vec.multi_vector.num_tokens = 10
-        mock_colbert_vec.multi_vector.token_dim = 48
-
-        mock_sparse_vec = MagicMock()
-        mock_sparse_vec.embedding_type = EmbeddingType.SPARSE
-        mock_sparse_vec.sparse = MagicMock()
-        mock_sparse_vec.sparse.indices = [1, 2, 3]
-        mock_sparse_vec.sparse.values = [0.5, 0.3, 0.2]
-
-        mock_profile = MagicMock()
-        mock_profile.query_retrieval_embeddings = [
-            mock_muvera_vec,
-            mock_colbert_vec,
-            mock_sparse_vec,
-        ]
-
-        result = ScoringPipeline.extract_query_encoding_from_snapshot(mock_profile)
+        result = ScoringPipeline.extract_query_encoding_from_snapshot(profile)
 
         assert isinstance(result, QueryEncoding)
-        assert result.muvera_fde == [0.1] * 10
+        assert result.muvera_fde == [0.1] * dense_size
         assert result.sparse_indices == [1, 2, 3]
         assert result.sparse_values == [0.5, 0.3, 0.2]
-        assert result.text == ""
-        assert isinstance(result.colbert_tokens, np.ndarray)
-        assert result.colbert_tokens.shape == (10, 48)
+        assert result.text == "Data Analyst"
+        assert result.colbert_tokens.shape == (1, token_dim)
 
     def test_returns_none_without_sparse_vector(self) -> None:
         """A profile query is unusable unless all three retrieval artifacts are present."""

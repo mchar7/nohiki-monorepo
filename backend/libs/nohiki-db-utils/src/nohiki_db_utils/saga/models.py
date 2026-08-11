@@ -20,6 +20,7 @@ class SagaStatus(StrEnum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
 
 
 class SagaBaseMixin(UUIDPrimaryKeyMixin, StateMachineMixin):
@@ -32,7 +33,8 @@ class SagaBaseMixin(UUIDPrimaryKeyMixin, StateMachineMixin):
     State transitions:
         PENDING → COMPLETED (all callbacks received)
         PENDING → FAILED (unrecoverable error)
-        PENDING → EXPIRED (stale saga cleanup)
+        PENDING → EXPIRED (retry budget or deadline exhausted)
+        PENDING → CANCELLED (owning workflow superseded or deleted)
 
     Attributes:
         status: Current saga lifecycle state.
@@ -47,10 +49,11 @@ class SagaBaseMixin(UUIDPrimaryKeyMixin, StateMachineMixin):
     __abstract__ = True
     __status_field__: ClassVar[str] = "status"
     __transitions__: ClassVar[dict[str, frozenset[str]]] = {
-        "PENDING": frozenset({"COMPLETED", "FAILED", "EXPIRED"}),
+        "PENDING": frozenset({"COMPLETED", "FAILED", "EXPIRED", "CANCELLED"}),
         "COMPLETED": frozenset(),
         "FAILED": frozenset(),
         "EXPIRED": frozenset(),
+        "CANCELLED": frozenset(),
     }
 
     status: Mapped[SagaStatus] = mapped_column(

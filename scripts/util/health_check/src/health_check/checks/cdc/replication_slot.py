@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Final
 
-from health_check.config.kafka import cdc_connectors_for
+from health_check.config.kafka import cdc_connectors_for, compose_reconciliation_covers
 from health_check.core.base import HealthCheck
 from health_check.core.models import CheckCategory, CheckMetadata, CheckResult, CheckStatus
 from health_check.platform.models import PlatformTarget
@@ -81,8 +81,13 @@ class ReplicationSlotCheck(HealthCheck):
                 details=details,
                 remediation_hint=(
                     "For recognized superseded Compose CDC resources, run: just connect-reconcile-compose-cdc"
-                    if platform.target == PlatformTarget.COMPOSE and unexpected
-                    else "Reconcile the configured Debezium connector replication slot inventory"
+                    if platform.target == PlatformTarget.COMPOSE and compose_reconciliation_covers("slot", unexpected)
+                    else (
+                        "Unexpected slot identities are outside the bounded Compose reconciliation inventory; "
+                        "investigate and remediate them manually"
+                        if platform.target == PlatformTarget.COMPOSE and unexpected
+                        else "Reconcile the configured Debezium connector replication slot inventory"
+                    )
                 ),
             )
 

@@ -67,6 +67,7 @@ export function calculateImageDimensions(
   }
 
   if (!(width || height)) {
+    // biome-ignore lint/nursery/useNullishCoalescing: Zero and NaN intentionally select the default width; ?? would preserve them.
     width = maxWidth || DEFAULT_IMAGE_WIDTH_PX;
     height = Math.round(width / aspectRatio);
   }

@@ -32,13 +32,15 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+
+    # These dataclass annotations stay strings despite the global runtime-evaluated decorator setting.
     from pydantic_ai.models.openrouter import (
-        OpenRouterModelSettings,
+        OpenRouterModelSettings,  # noqa: TC004
         OpenRouterReasoning,
     )
-    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.profiles import ModelProfile  # noqa: TC004
     from pydantic_ai.profiles.openai import OpenAIModelProfile
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider  # noqa: TC004
 
     from nohiki_llm_client.providers.caching import CachingOpenRouterModel
     from nohiki_llm_client.providers.openrouter import RobustOpenRouterModel

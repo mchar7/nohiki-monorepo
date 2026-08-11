@@ -6,12 +6,17 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from nohiki.ml.v1 import BatchEmbeddingResultItem, EmbeddingType, EmbeddingVector, EncodingMode
+from nohiki.ml.v1 import (
+    BatchEmbeddingResultItem,
+    EmbeddingType,
+    EmbeddingVector,
+    EncodingMode,
+    EntityType,
+)
 
 if TYPE_CHECKING:
     from nohiki.ml.v1 import (
         EmbeddingCallback,
-        EntityType,
     )
     from nohiki.ml.v1 import (
         EmbeddingResult as ProtoEmbeddingResult,

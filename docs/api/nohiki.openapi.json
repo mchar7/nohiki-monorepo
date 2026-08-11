@@ -596,6 +596,103 @@
         }
       }
     },
+    "/api/v1/profiles/commands/{request_id}": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Get Profile Command Status",
+        "description": "Return an owned profile command request's current status.",
+        "operationId": "get_profile_command_status_api_v1_profiles_commands__request_id__get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandStatusDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/commands/{request_id}/events": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Stream Profile Command Events",
+        "description": "Stream durable status events for an owned profile command request.",
+        "operationId": "stream_profile_command_events_api_v1_profiles_commands__request_id__events_get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/profiles/{pref_id}": {
       "get": {
         "tags": [
@@ -2886,7 +2983,7 @@
           "auth-listings"
         ],
         "summary": "Get Auth Listings",
-        "description": "Serve weighted, diversity-filtered job listings for the auth page.\n\nArgs:\n    db: Async database session.\n    settings: Application settings.\n    country: ISO 3166-1 alpha-3 country code (3 uppercase letters).\n    _lat: Latitude (accepted for forward compatibility, unused in v1).\n    _lon: Longitude (accepted for forward compatibility, unused in v1).\n    lang: Language preference for weighting.\n\nReturns:\n    Geo-targeted, diversity-filtered job listings.",
+        "description": "Serve weighted, diversity-filtered job listings for the auth page.\n\nArgs:\n    db: Async database session.\n    settings: Application settings.\n    country: ISO 3166-1 alpha-3 country code (3 uppercase letters).\n    lang: Language preference for weighting.\n\nReturns:\n    Geo-targeted, diversity-filtered job listings.",
         "operationId": "get_auth_listings_api_v1_auth_listings__get",
         "parameters": [
           {
@@ -2897,38 +2994,6 @@
               "type": "string",
               "pattern": "^[A-Z]{3}$",
               "title": "Country"
-            }
-          },
-          {
-            "name": "lat",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Lat"
-            }
-          },
-          {
-            "name": "lon",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Lon"
             }
           },
           {
@@ -3541,6 +3606,63 @@
         ],
         "title": "CommandAcceptedResponse",
         "description": "Response indicating an async command has been accepted for processing.\n\nReturned by endpoints that publish Kafka commands rather than\nreturning results synchronously."
+      },
+      "CommandStatusDetail": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "command_type": {
+            "type": "string",
+            "title": "Command Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "command_type",
+          "status"
+        ],
+        "title": "CommandStatusDetail",
+        "description": "Command request status returned from the service layer."
       },
       "CompleteUploadRequest": {
         "properties": {
@@ -4846,12 +4968,24 @@
             "default": false
           },
           "salary_preference": {
-            "$ref": "#/components/schemas/SalaryPreferenceRequest",
-            "description": "Salary preference required for ML scoring"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SalaryPreferenceRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "experience_preference": {
-            "$ref": "#/components/schemas/ExperiencePreferenceRequest",
-            "description": "Experience preference required for ML scoring"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExperiencePreferenceRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -4859,9 +4993,7 @@
         "required": [
           "pref_name",
           "search_keywords",
-          "work_arrangements",
-          "salary_preference",
-          "experience_preference"
+          "work_arrangements"
         ],
         "title": "ProfileCreate",
         "description": "Request to create a job target profile."
@@ -5567,7 +5699,6 @@
           },
           "template_content": {
             "type": "string",
-            "maxLength": 1048576,
             "minLength": 10,
             "title": "Template Content"
           },
@@ -5782,7 +5913,6 @@
         "properties": {
           "template": {
             "type": "string",
-            "maxLength": 1048576,
             "title": "Template",
             "description": "Template HTML/Jinja2 content to validate"
           }
@@ -5821,12 +5951,11 @@
         "properties": {
           "version": {
             "type": "string",
-            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+([0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*))?$",
             "title": "Version"
           },
           "template_content": {
             "type": "string",
-            "maxLength": 1048576,
             "minLength": 10,
             "title": "Template Content"
           },

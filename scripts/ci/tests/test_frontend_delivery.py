@@ -32,18 +32,16 @@ _CHECKS_WORKFLOW = _ROOT / ".github" / "workflows" / "checks.yml"
 _IMAGE_INVENTORY = _ROOT / "infra" / "k8s" / "local" / "images.json"
 _DOCKERIGNORE = _ROOT / ".dockerignore"
 _LOCAL_PLATFORM = _ROOT / "infra" / "k8s" / "gitops" / "platform" / "local"
-_FRONTEND_ARCHIVE = _CHART / "charts" / "nohiki-frontend-0.1.0.tgz"
 _PROD_IDENTITY = Path(__file__).parent / "fixtures" / "values.prod.identity.yaml"
 _PROD_NETWORK = Path(__file__).parent / "fixtures" / "values.prod.network.yaml"
 _IMAGE_PREFIX = "ghcr.io/mchar7/nohiki-monorepo/"
 
 
 def _digest_overlay(tmp_path: Path, environment: str) -> tuple[Path, str]:
-    prefix = "localhost:5000/" if environment == "local" else _IMAGE_PREFIX
-    digests = {f"{prefix}{name}": f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)}
+    digests = {name: f"sha256:{index + 1:064x}" for index, name in enumerate(load_inventory().names)}
     overlay = tmp_path / f"values.{environment}.frontend-digests.yaml"
     overlay.write_text(yaml.safe_dump({"global": {"imageDigests": digests}}), encoding="utf-8")
-    return overlay, digests[f"{prefix}frontend"]
+    return overlay, digests["frontend"]
 
 
 def _render(values_name: str, tmp_path: Path) -> tuple[dict[str, Any], ...]:
@@ -379,6 +377,7 @@ def test_frontend_chart_is_an_enabled_source_dependency_with_canonical_image_nam
 
 def test_frontend_chart_lock_and_archive_exactly_match_source() -> None:
     metadata = yaml.safe_load((_FRONTEND_CHART / "Chart.yaml").read_text(encoding="utf-8"))
+    frontend_archive = _CHART / "charts" / f"{metadata['name']}-{metadata['version']}.tgz"
     lock = yaml.safe_load((_CHART / "Chart.lock").read_text(encoding="utf-8"))
     assert [dependency for dependency in lock["dependencies"] if dependency["name"] == metadata["name"]] == [
         {
@@ -387,14 +386,14 @@ def test_frontend_chart_lock_and_archive_exactly_match_source() -> None:
             "version": metadata["version"],
         }
     ]
-    assert _FRONTEND_ARCHIVE.name == f"{metadata['name']}-{metadata['version']}.tgz"
+    assert frontend_archive.name == f"{metadata['name']}-{metadata['version']}.tgz"
 
     source_files = {
         path.relative_to(_FRONTEND_CHART).as_posix(): path.read_bytes()
         for path in _FRONTEND_CHART.rglob("*")
         if path.is_file()
     }
-    with tarfile.open(_FRONTEND_ARCHIVE, mode="r:gz") as archive:
+    with tarfile.open(frontend_archive, mode="r:gz") as archive:
         prefix = f"{metadata['name']}/"
         archived_files = {
             member.name.removeprefix(prefix): extracted.read()
@@ -445,10 +444,9 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     jobs = workflow["jobs"]
 
     assert "container-contracts" not in jobs
-    assert jobs["playwright-image"]["timeout-minutes"] == 30
-    assert jobs["playwright-image"]["permissions"] == {"contents": "read"}
-    playwright_budget = 1226 / 60 + 574 / 60
-    assert playwright_budget == pytest.approx(jobs["playwright-image"]["timeout-minutes"])
+    assert jobs["playwright-image"]["timeout-minutes"] == (
+        "${{ fromJSON(needs.changes.outputs.playwright_timeout_minutes) }}"
+    )
 
     worker = jobs["worker"]
     frontend_steps = worker["steps"]
@@ -456,15 +454,23 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' "
         "&& needs.changes.outputs.title_only != 'true' && "
         "(needs.changes.outputs.broad_unbounded == 'true' || "
-        "needs.changes.outputs.frontend_smoke == 'true' || "
-        "needs.changes.outputs.otel_collector == 'true') }}"
+        "needs.changes.outputs.container_contracts == 'true') }}"
     )
     buildx = next(step for step in frontend_steps if step.get("name") == "Set up Docker Buildx")
     assert buildx["id"] == "container-buildx"
     assert buildx["if"] == (
         "env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"
     )
-    assert buildx["uses"] == ("docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c")
+    action, separator, ref = buildx["uses"].rpartition("@")
+    assert separator
+    assert action == "docker/setup-buildx-action"
+    assert re.fullmatch(r"[0-9a-f]{40}", ref)
+    assert buildx["with"] == {
+        "driver-opts": "${{ runner.environment == 'self-hosted' && 'network=host' || '' }}",
+        "buildkitd-config": (
+            "${{ runner.environment == 'self-hosted' && '.github/buildkitd-self-hosted.toml' || '' }}"
+        ),
+    }
     frontend_build = next(step for step in frontend_steps if step.get("name") == "Build production frontend image")
     assert frontend_build["if"] == (
         "env.CONTAINER_CONTRACTS_SELECTED == 'true' && needs.changes.outputs.frontend_smoke == 'true'"
@@ -474,7 +480,16 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "file": "typescript/apps/frontend/Dockerfile",
         "load": True,
         "tags": "nohiki-frontend-smoke:ci",
-        "cache-from": "type=gha,scope=frontend-smoke",
+        "cache-from": (
+            "${{ runner.environment == 'self-hosted' && "
+            "'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache' || "
+            "'type=gha,scope=frontend-smoke' }}"
+        ),
+        "cache-to": (
+            "${{ runner.environment == 'self-hosted' && "
+            "'type=registry,ref=cache-registry:5000/nohiki/frontend-smoke:buildcache,"
+            "mode=max,ignore-error=true' || '' }}"
+        ),
     }
     frontend_smoke = next(step for step in frontend_steps if step.get("name") == "Smoke production frontend container")
     assert frontend_smoke == {
@@ -496,8 +511,16 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     playwright_build = next(step for step in playwright_steps if step.get("name") == "Build Playwright runner image")
     assert "if" not in playwright_build
     assert playwright_build["with"]["file"] == "typescript/apps/frontend/Dockerfile.playwright-runner"
-    assert playwright_build["with"]["cache-from"] == "type=gha,scope=playwright-runner-smoke"
-    assert "cache-to" not in playwright_build["with"]
+    assert playwright_build["with"]["cache-from"] == (
+        "${{ runner.environment == 'self-hosted' && "
+        "'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache' || "
+        "'type=gha,scope=playwright-runner-smoke' }}"
+    )
+    assert playwright_build["with"]["cache-to"] == (
+        "${{ runner.environment == 'self-hosted' && "
+        "'type=registry,ref=cache-registry:5000/nohiki/playwright-runner-smoke:buildcache,"
+        "mode=max,ignore-error=true' || '' }}"
+    )
     assert "typescript/apps/frontend/node_modules/.bin/playwright" in next(
         step["run"] for step in playwright_steps if step.get("name") == "Verify Playwright runner"
     )
@@ -515,6 +538,11 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     assert collector_run.endswith(
         "test_otel_collector_manifest.py::test_otel_collector_rendered_configs_validate_with_pinned_binary\n"
     )
+    container_tests = next(step for step in frontend_steps if step.get("name") == "Run container contract tests")
+    assert "--requires-docker --ci --workers 1 --no-coverage" in container_tests["run"]
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in container_tests["run"]
+    assert '--summary-title "container contracts"' in container_tests["run"]
+    assert 'echo "executed=true" >> "$GITHUB_OUTPUT"' in container_tests["run"]
 
     attestation = next(step for step in frontend_steps if step.get("name") == "Attest container contract execution")
     assert attestation["if"] == "always() && env.CONTAINER_CONTRACTS_SELECTED == 'true'"
@@ -525,6 +553,12 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "OTEL_OUTCOME": "${{ steps.otel-collector.outcome }}",
         "FRONTEND_SMOKE_EXPECTED": "${{ needs.changes.outputs.frontend_smoke }}",
         "OTEL_EXPECTED": "${{ needs.changes.outputs.otel_collector }}",
+        "CONTAINER_TESTS_OUTCOME": "${{ steps.container-tests.outcome }}",
+        "CONTAINER_TESTS_EXPECTED": (
+            "${{ needs.changes.outputs.broad_unbounded == 'true' "
+            "|| needs.changes.outputs.container_contracts == 'true' }}"
+        ),
+        "CONTAINER_TESTS_EXECUTED": "${{ steps.container-tests.outputs.executed }}",
     }
     assert "workflow.py verdict container" in str(attestation["run"]).replace("\n", " ")
     output = tmp_path / "github-output"
@@ -535,6 +569,9 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "OTEL_OUTCOME": "skipped",
         "FRONTEND_SMOKE_EXPECTED": "true",
         "OTEL_EXPECTED": "false",
+        "CONTAINER_TESTS_OUTCOME": "success",
+        "CONTAINER_TESTS_EXPECTED": "true",
+        "CONTAINER_TESTS_EXECUTED": "true",
     }
     for name, value in outcomes.items():
         monkeypatch.setenv(name, value)
@@ -546,12 +583,17 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
         "IMAGE_OUTCOME": "frontend-image",
         "SMOKE_OUTCOME": "frontend-smoke",
         "OTEL_OUTCOME": "otel-collector",
+        "CONTAINER_TESTS_OUTCOME": "container-tests",
     }
     for variable, label in labels.items():
         monkeypatch.setenv(variable, "failure")
         with pytest.raises(ValueError, match=rf"{label} was .* but concluded failure"):
             verdict_cmd("container", output)
         monkeypatch.setenv(variable, outcomes[variable])
+    monkeypatch.setenv("CONTAINER_TESTS_EXECUTED", "false")
+    with pytest.raises(ValueError, match="container-tests succeeded without execution evidence"):
+        verdict_cmd("container", output)
+    monkeypatch.setenv("CONTAINER_TESTS_EXECUTED", "true")
     assert worker["outputs"]["container_contracts_executed"] == (
         "${{ steps.container-contracts.outputs.executed == 'true' && 'true' || '' }}"
     )
@@ -593,20 +635,24 @@ def test_local_helmrelease_requires_generated_digest_values_overlay() -> None:
         }
     ]
     patch = yaml.safe_load(kustomization["patches"][0]["patch"])
-    assert patch == [
-        {
-            "op": "add",
-            "path": "/spec/valuesFrom",
-            "value": [
-                {
-                    "kind": "ConfigMap",
-                    "name": "nohiki-image-digests",
-                    "valuesKey": "values.yaml",
-                    "optional": False,
-                }
-            ],
-        }
-    ]
+    assert patch[0] == {
+        "op": "add",
+        "path": "/spec/valuesFrom",
+        "value": [
+            {
+                "kind": "ConfigMap",
+                "name": "nohiki-image-digests",
+                "valuesKey": "values.yaml",
+                "optional": False,
+            },
+            {
+                "kind": "ConfigMap",
+                "name": "nohiki-owner-model-egress-values",
+                "valuesKey": "values.yaml",
+                "optional": False,
+            },
+        ],
+    }
 
 
 @pytest.mark.parametrize(
