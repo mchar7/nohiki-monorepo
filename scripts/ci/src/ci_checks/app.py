@@ -348,7 +348,20 @@ def closure_cmd(
     """Check test trees import only from their package's declared closure at module level."""
     available = load_packages(scope, require_tests=True)
     if packages.strip() == "ENFORCED":
-        selected = [package for package in available if package.name in _test_closure.ENFORCED_PACKAGES]
+        enforced = _test_closure.ENFORCED_PACKAGES
+        if not enforced:
+            console.print("[red]No enforced packages configured[/red]")
+            raise typer.Exit(2)
+        workspace = {package.name: package for package in load_packages(Scope.ALL)}
+        unknown = enforced - workspace.keys()
+        testless = {name for name in enforced & workspace.keys() if not workspace[name].has_tests}
+        if unknown:
+            console.print(f"[red]Unknown enforced packages: {', '.join(sorted(unknown))}[/red]")
+        if testless:
+            console.print(f"[red]Enforced packages without tests: {', '.join(sorted(testless))}[/red]")
+        if unknown or testless:
+            raise typer.Exit(2)
+        selected = [package for package in available if package.name in enforced]
     else:
         known = {package.name for package in load_packages(Scope.ALL)}
         selected = _filter_packages(available, packages, known)

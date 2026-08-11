@@ -12,6 +12,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+from ci_checks import app as ci_app_module
 from ci_checks.checks.test_closure import (
     ENFORCED_PACKAGES,
     ClosureResult,
@@ -23,6 +25,7 @@ from ci_checks.checks.test_closure import (
     scan_package,
 )
 from ci_checks.core.packages import Package, PackageType, Scope, load_packages
+from typer.testing import CliRunner
 
 
 def _fake_package(tmp_path: Path, test_source: str, *, dependencies: str = '"typer"') -> Package:
@@ -94,10 +97,22 @@ def test_transitively_available_but_undeclared_import_still_fails(tmp_path: Path
     assert [module for _, _, module in scan_package(pkg).violations] == ["jsonschema"]
 
 
-def test_imports_that_do_not_execute_at_import_time_are_ignored(tmp_path: Path) -> None:
-    """``if TYPE_CHECKING:`` bodies never run, so they impose no environment cost."""
-    source = "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    import jsonschema\n"
-    pkg = _fake_package(tmp_path, source)
+@pytest.mark.parametrize(
+    ("binding", "guard"),
+    [
+        ("from typing import TYPE_CHECKING", "TYPE_CHECKING"),
+        ("from typing import TYPE_CHECKING as TC", "TC"),
+        ("import typing", "typing.TYPE_CHECKING"),
+        ("import typing as t", "t.TYPE_CHECKING"),
+    ],
+)
+def test_imports_that_do_not_execute_at_import_time_are_ignored(
+    tmp_path: Path,
+    binding: str,
+    guard: str,
+) -> None:
+    """Known forms of typing's sentinel impose no runtime environment cost."""
+    pkg = _fake_package(tmp_path, f"{binding}\n\nif {guard}:\n    import jsonschema\n")
 
     assert scan_package(pkg).violations == []
 
@@ -111,6 +126,144 @@ def test_imports_nested_in_executed_blocks_are_caught(tmp_path: Path) -> None:
 
     class_body = "class Helper:\n    import jsonschema\n"
     assert _executed_imports(ast.parse(class_body).body) == [("jsonschema", 2)]
+
+
+def test_except_handler_import_is_caught(tmp_path: Path) -> None:
+    """An exception handler executes during module import."""
+    source = "try:\n    pass\nexcept ImportError:\n    import jsonschema\n"
+    pkg = _fake_package(tmp_path, source)
+
+    assert [module for _, _, module in scan_package(pkg).violations] == ["jsonschema"]
+
+
+def test_match_case_import_is_caught(tmp_path: Path) -> None:
+    """A selected match case executes during module import."""
+    source = "value = 1\nmatch value:\n    case _:\n        import jsonschema\n"
+    pkg = _fake_package(tmp_path, source)
+
+    assert [module for _, _, module in scan_package(pkg).violations] == ["jsonschema"]
+
+
+def test_type_checking_else_branch_import_is_caught(tmp_path: Path) -> None:
+    """Only the guarded body is skipped; the runtime else branch still executes."""
+    source = "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    pass\nelse:\n    import jsonschema\n"
+    pkg = _fake_package(tmp_path, source)
+
+    assert [module for _, _, module in scan_package(pkg).violations] == ["jsonschema"]
+
+
+def test_non_typing_type_checking_attribute_is_executable(tmp_path: Path) -> None:
+    """An arbitrary object's TYPE_CHECKING attribute is not typing's sentinel."""
+    source = "from sample_pkg import config\n\nif config.TYPE_CHECKING:\n    import jsonschema\n"
+    pkg = _fake_package(tmp_path, source)
+
+    assert [module for _, _, module in scan_package(pkg).violations] == ["jsonschema"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from typing import TYPE_CHECKING as TC\nTC = True\nif TC:\n    import jsonschema\n",
+        ("import typing\ntyping.TYPE_CHECKING = True\nif typing.TYPE_CHECKING:\n    import jsonschema\n"),
+    ],
+)
+def test_rebound_type_checking_guards_are_executable(tmp_path: Path, source: str) -> None:
+    """A typing sentinel stops suppressing branches after it is overwritten."""
+    pkg = _fake_package(tmp_path, source)
+
+    assert [module for _, _, module in scan_package(pkg).violations] == ["jsonschema"]
+
+
+def test_type_checking_alias_state_does_not_leak_across_branches(tmp_path: Path) -> None:
+    """A typing alias from one path cannot suppress an executable sibling path."""
+    source = (
+        "condition = False\n"
+        "TC = True\n"
+        "if condition:\n"
+        "    from typing import TYPE_CHECKING as TC\n"
+        "else:\n"
+        "    if TC:\n"
+        "        import jsonschema\n"
+    )
+    pkg = _fake_package(tmp_path, source)
+
+    assert [module for _, _, module in scan_package(pkg).violations] == ["jsonschema"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "from typing import TYPE_CHECKING as TC\n"
+            "try:\n"
+            "    TC = True\n"
+            "except RuntimeError:\n"
+            "    pass\n"
+            "else:\n"
+            "    if TC:\n"
+            "        import jsonschema\n"
+        ),
+        (
+            "from typing import TYPE_CHECKING as TC\n"
+            "for _ in range(2):\n"
+            "    if TC:\n"
+            "        import jsonschema\n"
+            "    TC = True\n"
+        ),
+        ("import typing\nclass C:\n    typing.TYPE_CHECKING = True\nif typing.TYPE_CHECKING:\n    import jsonschema\n"),
+        (
+            "from typing import TYPE_CHECKING as TC\n"
+            "try:\n"
+            "    TC = True\n"
+            "    raise RuntimeError\n"
+            "    from typing import TYPE_CHECKING as TC\n"
+            "finally:\n"
+            "    if TC:\n"
+            "        import jsonschema\n"
+        ),
+        (
+            "import typing\n"
+            "class Outer:\n"
+            "    class Inner:\n"
+            "        typing.TYPE_CHECKING = True\n"
+            "if typing.TYPE_CHECKING:\n"
+            "    import jsonschema\n"
+        ),
+        (
+            "from typing import TYPE_CHECKING as TC\n"
+            "try:\n"
+            '    raise ExceptionGroup("both", [ValueError(), TypeError()])\n'
+            "except* ValueError:\n"
+            "    TC = True\n"
+            "except* TypeError:\n"
+            "    if TC:\n"
+            "        import jsonschema\n"
+        ),
+        (
+            "from typing import TYPE_CHECKING as TC\n"
+            "for _ in [1]:\n"
+            "    TC = True\n"
+            "    break\n"
+            "    from typing import TYPE_CHECKING as TC\n"
+            "if TC:\n"
+            "    import jsonschema\n"
+        ),
+        (
+            "from typing import TYPE_CHECKING as TC\n"
+            "match True:\n"
+            "    case TC if False:\n"
+            "        pass\n"
+            "    case _:\n"
+            "        if TC:\n"
+            "            import jsonschema\n"
+        ),
+    ],
+)
+def test_type_checking_state_follows_executable_control_flow(tmp_path: Path, source: str) -> None:
+    """Later executable paths see sentinel mutations from earlier paths."""
+    pkg = _fake_package(tmp_path, source)
+
+    assert [module for _, _, module in scan_package(pkg).violations] == ["jsonschema"]
 
 
 def test_declared_closure_covers_extras_and_dependency_groups() -> None:
@@ -178,3 +331,45 @@ def test_render_results_reports_failure() -> None:
     failing.violations.append(("scripts/ci/tests/test_x.py", 3, "jsonschema"))
 
     assert render_results([failing]) is False
+
+
+@pytest.mark.parametrize(
+    ("enforced", "packages", "expected"),
+    [
+        (frozenset(), [], "No enforced packages configured"),
+        (frozenset({"missing"}), [], "Unknown enforced packages"),
+        (
+            frozenset({"sample-pkg"}),
+            [Package("sample-pkg", Path("/nonexistent"), PackageType.OTHER)],
+            "Enforced packages without tests",
+        ),
+    ],
+)
+def test_enforced_selection_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    enforced: frozenset[str],
+    packages: list[Package],
+    expected: str,
+) -> None:
+    """Invalid enforced package names are configuration errors, not empty success."""
+    monkeypatch.setattr(ci_app_module._test_closure, "ENFORCED_PACKAGES", enforced)
+    monkeypatch.setattr(
+        ci_app_module,
+        "load_packages",
+        lambda _scope, **kwargs: [] if kwargs.get("require_tests") else packages,
+    )
+
+    result = CliRunner().invoke(ci_app_module.app, ["test-closure"])
+
+    assert result.exit_code == 2
+    assert expected in result.output
+
+
+def test_explicit_empty_selection_remains_a_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An explicit empty CSV is a user-selected no-op, not an enforced configuration."""
+    monkeypatch.setattr(ci_app_module, "load_packages", lambda _scope, **_kwargs: [])
+
+    result = CliRunner().invoke(ci_app_module.app, ["test-closure", "--packages", ""])
+
+    assert result.exit_code == 0, result.output
+    assert "No workspace packages selected" in result.output
