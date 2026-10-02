@@ -1,32 +1,26 @@
 # Doc Content Service
 
-Generates tailored resume and cover letter content by running a PydanticAI LLM agent against a
-JSON schema provided in the triggering command event. Kafka-only, completely stateless: every
-piece of context needed for generation (job listing data, template schema, user preferences,
-example outputs, and processed document attachments) arrives in the `doc-content.cmd.generation-requested`
-event and is fetched from S3 within the handler. No database, no Redis, no Qdrant.
+Generates tailored resume and cover letter content with PydanticAI using a JSON schema supplied in a Kafka command.
+Generation has no local database; the command supplies context and S3 references for document attachments.
+The schema guides model output; doc-template-service validates the content schema before rendering.
+The service uses no Redis or Qdrant.
 
 ## Role in the System
 
-This service is the LLM execution layer in Nohiki's document generation pipeline. The bff-service
-publishes a `doc-content.cmd.generation-requested` command on behalf of a user (or the service
-triggers automatically when `job-correlation-evaluation-service` produces a high-scoring
-`job-correlation.cdc.correlation-evaluated` event). The command carries the full
-`ContentGenerationContext`: a `DocumentTemplateVersionSnapshot` (containing the target JSON schema),
-references to example uploads and user context uploads (S3 keys), the user's job preference
-snapshot, and job listing data.
+The bff-service publishes `doc-content.cmd.generation-requested` on behalf of a user.
+Automatic generation from high-scoring correlations is not implemented.
+The command carries the full `ContentGenerationContext`: a `DocumentTemplateVersionSnapshot` containing the target JSON schema,
+S3 references to example and context uploads, the user preference snapshot, and job listing data.
 
-The service fetches S3 attachments in parallel, preprocesses the schema for LLM consumption, builds
-system and user prompts, and calls the LLM via `nohiki-llm-client` (PydanticAI). The LLM produces
-structured JSON that must conform to the template schema. PydanticAI validates the output and
-retries up to `max_tool_retries` times if the model produces malformed output. On success, the
-generated JSON is published to `doc-content.fct.generation-completed`; on failure, to
-`doc-content.fct.generation-failed`. The bff-service consumes both fact topics to update its
-projection tables, which surface document generation status to the frontend.
+The service fetches S3 attachments concurrently, preprocesses the schema, builds prompts, and calls `nohiki-llm-client`.
+PydanticAI returns a string-keyed dictionary; this service does not validate that dictionary against the template schema.
+Configured validation retries apply to output-type validation, not full template-schema conformance.
+On success, the service publishes the generated JSON to `doc-content.fct.generation-completed`.
+On failure, the service publishes to `doc-content.fct.generation-failed`.
+The bff-service consumes both topics to update document generation status.
 
-Statelessness is the defining characteristic here. Because ECST events carry all required data, the
-service holds no local state and scales horizontally without coordination: every pod processes any
-request with identical results.
+Requests carry the context needed for any pod to process them.
+LLM output can vary between calls; statelessness does not imply identical generated content.
 
 ## Event-Driven Integration
 
@@ -44,14 +38,13 @@ request with identical results.
 - **`JOB_CORRELATION_EVALUATED`** (`job-correlation.cdc.correlation-evaluated.v1`,
   `CorrelationEvaluated`): Monitors job-user fit scores produced by `job-correlation-evaluation-service`.
   When `fit_score` meets or exceeds the user preference's `auto_tailor_threshold` (default: 80),
-  the handler logs that the correlation is auto-generation eligible. This is the hook point for
-triggering automated document generation on high-scoring matches without user initiation. The
-  actual command publication is the next step in this flow.
+  the handler logs that the correlation is auto-generation eligible.
+  The handler does not publish a generation command.
 
 ### Events Published
 
 - **`DOC_CONTENT_GENERATION_COMPLETED`** (`doc-content.fct.generation-completed.v1`,
-  `ContentGenerationCompleted`): Published after the LLM produces a valid schema-conformant output.
+  `ContentGenerationCompleted`): Published after the LLM returns a string-keyed dictionary.
   Carries `request_id`, `listing_id`, `template_version_id`, and `generated_content_json` (the
   LLM output serialized as a JSON string). Keyed by `request_id`. The bff-service consumes this
   to record the generated content in its projection table and notify the frontend via its
@@ -66,11 +59,8 @@ triggering automated document generation on high-scoring matches without user in
 
 ### Notable Patterns
 
-**Agent caching by schema name:** The service caches PydanticAI agents in a module-level dict keyed
-by `schema_name` (the template `version_id` UUID). Creating a `StructuredDict` agent has overhead --
-constructing the GBNF grammar from the JSON schema is non-trivial. The first request for a
-given template version pays the construction cost; subsequent requests reuse the same agent
-instance. This is safe because template versions are immutable once created.
+**Schema-name caching:** The service caches PydanticAI instances by `schema_name`, the template version UUID.
+Requests for the same immutable template version reuse the configured output type and runtime context.
 
 ## Object Storage
 
@@ -93,7 +83,7 @@ Both attachment types are fetched concurrently via `asyncio.TaskGroup`. A missin
 `LLMClient`, which wraps PydanticAI internally. The client resolves the named chain
 `"doc_tailoring"` from `LLMSettings.chains`. Release deployments configure that chain with
 `openai:gpt-5.6-sol` and `reasoning_effort="high"`; falling back to the generic provider is intended
-only for isolated development. The client wraps PydanticAI's agent execution with Tenacity exponential-backoff
+only for isolated development. The client wraps PydanticAI execution with Tenacity exponential-backoff
 retry on `LLMTransientError` (5xx responses, momentary provider failures), raises
 `LLMValidationError` non-retryably when PydanticAI's own structured-output retries are exhausted,
 and raises `LLMRateLimitError` on HTTP 429. Token usage, cost (pulled from OpenRouter response
@@ -115,23 +105,14 @@ PydanticAI, `preprocess_schema_for_llm` performs four transformations on a deep 
 
 The original schema dict is never mutated. The function returns a deep copy.
 
-**Dynamic schema agent via `StructuredDict`:** Unlike services that generate a fixed Pydantic model
-type, this service receives a different JSON schema per template version. It uses
-`LLMClient.create_dynamic_schema_agent` with `DynamicAgentConfig`, which constructs a PydanticAI
-`StructuredDict` output type at runtime from the preprocessed schema dict. This allows the same
-service to generate resumes, cover letters, or any future document type without code changes. The
-schema defines the request: it is what gets advertised to the model. It is not enforced on receipt.
-`StructuredDict`'s pydantic core schema is `dict[str, Any]`, so the only guarantee this service
-makes about `result.output` is that it is a dict with string keys. The declared content contract is
-enforced downstream by doc-template-service, which validates the render payload against the
-template version's stored `content_schema` before rendering and fails the render if it does not
-conform.
+**Dynamic schema output via `StructuredDict`:** Each template version supplies its own JSON schema.
+`LLMClient.create_dynamic_schema_agent` constructs a `StructuredDict` output type from the preprocessed schema.
+The schema describes the requested output but is not enforced on receipt.
+The output type validates only that `result.output` is a dictionary with string keys.
+Doc-template-service validates the render payload against the stored `content_schema` and rejects nonconforming content.
 
-**Dynamic system prompt via `system_prompt_fn`:** The system prompt is built at request time (not
-baked into the agent at creation), because it incorporates per-request context: the full schema
-definition, attachment content, and user preferences. `DynamicAgentConfig.system_prompt_fn` is a
-callable that receives `RunContext[DocumentContentContext]` and returns the prompt string. This
-avoids the stale-closure pitfall of capturing context in a lambda at agent creation time.
+**Dynamic system prompt via `system_prompt_fn`:** The service builds the prompt at request time from each request's context.
+The prompt includes the schema, attachments, and user preferences rather than capturing one request's context for later calls.
 
 ## Configuration
 

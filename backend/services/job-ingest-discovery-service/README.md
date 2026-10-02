@@ -2,9 +2,8 @@
 
 Scrapes raw job listings from Indeed, LinkedIn, Glassdoor, ZipRecruiter, and Google Jobs using the
 [JobSpy](https://github.com/Bunsly/JobSpy) library, triggered exclusively by Kafka command events from
-`job-ingest-schedule-service`. Deduplicates scraped results using a Redis content-hash cache before
-Kafka-only, stateless: no database, no LLM,
-no S3, no outbox.
+`job-ingest-schedule-service`. Deduplicates scraped results using a Redis content-hash cache before publishing discovery events.
+Kafka-only: no database, no LLM, no S3, no outbox.
 
 ## Role in the System
 
