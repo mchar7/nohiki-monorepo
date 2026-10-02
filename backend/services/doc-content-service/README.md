@@ -9,8 +9,8 @@ The service uses no Redis or Qdrant.
 
 The bff-service publishes `doc-content.cmd.generation-requested` on behalf of a user.
 Automatic generation from high-scoring correlations is not implemented.
-The command carries the full `ContentGenerationContext`: a `DocumentTemplateVersionSnapshot` containing the target JSON schema,
-S3 references to example and context uploads, the user preference snapshot, and job listing data.
+The command carries the full `ContentGenerationContext`: a `DocumentTemplateVersionSnapshot` containing the target JSON
+schema, S3 references to example and context uploads, the user preference snapshot, and job listing data.
 
 The service fetches S3 attachments concurrently, preprocesses the schema, builds prompts, and calls `nohiki-llm-client`.
 PydanticAI returns a string-keyed dictionary; this service does not validate that dictionary against the template schema.
@@ -112,7 +112,8 @@ The output type validates only that `result.output` is a dictionary with string 
 Doc-template-service validates the render payload against the stored `content_schema` and rejects nonconforming content.
 
 **Dynamic system prompt via `system_prompt_fn`:** The service builds the prompt at request time from each request's context.
-The prompt includes the schema, attachments, and user preferences rather than capturing one request's context for later calls.
+The prompt includes the schema, attachments, and user preferences.
+The prompt does not capture one request's context for later calls.
 
 ## Configuration
 

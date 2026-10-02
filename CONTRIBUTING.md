@@ -823,7 +823,8 @@ just test-all-e2e  # Both
 
 - **user-auth-service**: RS256 JWT with JWKS at `/.well-known/jwks.json`; HttpOnly cookies; producer-only (no Kafka consumers)
 - **skill-graph-service**: Skill normalization/deduplication; canonical skill graph + aliases; Qdrant for skill similarity
-- **job-correlation-evaluation-service**: Semantic retrieval and deterministic fit ranking; snapshot ledgers from ECST; offline LightGBM tooling
+- **job-correlation-evaluation-service**: Semantic retrieval and deterministic fit ranking; snapshot ledgers from ECST;
+  offline LightGBM tooling
 - **doc-template-service**: Gotenberg PDF generation; seeds default templates with distributed lock; S3 storage
 - **notification-service**: Template-driven; token bucket rate limiting; Resend/SendGrid; outbox + worker
 - **doc-content-service**: LLM resume/cover letter generation; consumes generation commands + correlations

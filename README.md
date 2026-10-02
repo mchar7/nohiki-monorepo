@@ -50,7 +50,7 @@ flowchart LR
 | Job      | `job-ingest-schedule-service`        | Scrape scheduling                               |
 | Job      | `job-storage-service`                | Canonical job store with deduplication          |
 | Job      | `job-query-composition-service`      | Query composition over the job corpus           |
-| Job      | `job-correlation-evaluation-service` | Semantic retrieval and deterministic fit ranking |
+| Job      | `job-correlation-evaluation-service` | Semantic retrieval, deterministic fit ranking   |
 | Doc      | `doc-template-service`               | Templates and PDF rendering via Gotenberg       |
 | Doc      | `doc-content-service`                | Resume and cover letter content generation      |
 | Doc      | `doc-process-service`                | Document parsing with Docling                   |
@@ -99,7 +99,7 @@ uv run alembic current
 | [`infra/terraform/`](infra/terraform/README.md)                   | OpenTofu configuration for Azure infrastructure                              |
 | [`tests/`](tests/README.md)                                       | Cross-service API tests and E2E journeys                                     |
 | [`scripts/`](scripts)                                             | CI check runner, ML data generation, utilities                               |
-| [`jvm/`](jvm/nohiki-wal-router-smt/README.md)                       | Kafka Connect WAL-routing SMT; `just test-jvm` runs tests and coverage gates |
+| [`jvm/`](jvm/nohiki-wal-router-smt/README.md)                     | Kafka Connect WAL-routing SMT; `just test-jvm` runs tests and coverage gates |
 
 The JVM coverage gate requires 95% line, 90% branch, and 95% instruction coverage.
 
