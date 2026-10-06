@@ -669,10 +669,13 @@ kustomize-validate env="local":
 
 kustomize-validate-all: (kustomize-validate "local") (kustomize-validate "staging") (kustomize-validate "prod")
 
+# Test the local load and resource-measurement substrate
+load-check-tests:
+    {{ env_lock }} shared venv -- uv run --no-sync pytest -q scripts/load/tests
+
 # Validate the local load and resource-measurement substrate without sending traffic.
-load-check:
+load-check: load-check-tests
     k6 inspect scripts/load/k6/scenarios/smoke.js
-    {{ env_lock }} shared venv -- uv run --no-sync pytest -q scripts/load/tests/test_resource_probe.py
 
 # Capture one complete-cluster resource point from an explicit local kind context.
 load-resource-capture output phase tier fixture_version:
