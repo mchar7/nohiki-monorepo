@@ -6,6 +6,7 @@ until somebody reads the file and assumes it runs.
 """
 
 import ast
+import fnmatch
 import json
 import os
 import subprocess
@@ -13,6 +14,7 @@ from functools import cache
 from pathlib import Path
 
 import pytest
+import yaml
 from ci_checks.core.packages import REPO_ROOT, Scope, load_packages_with_deps
 
 _ROOTS = ("tests", "scripts")
@@ -114,3 +116,20 @@ def test_standalone_trees_keep_a_recipe_lane(tree: str, recipe: str) -> None:
     """The recipe owns the tree: it must still run it, and the tree must still exist."""
     assert (REPO_ROOT / tree).is_dir(), f"{tree} is gone; drop the entry and its recipe"
     assert tree in _recipe_body(recipe), f"just {recipe} no longer runs {tree}"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "proto/example.proto",
+        "proto/nested/example.proto",
+        "scripts/proto_gen/main.py",
+        "scripts/proto_gen/tests/test_cli.py",
+    ],
+)
+def test_proto_generator_tests_reach_the_push_lane(path: str) -> None:
+    hooks = yaml.safe_load((REPO_ROOT / "lefthook.yml").read_text(encoding="utf-8"))
+    jobs = hooks["pre-push"]["jobs"]
+    generator = next((job for job in jobs if job.get("run") == "just proto-gen-test"), None)
+    assert generator is not None, "the push gate does not run the proto generator tests"
+    assert any(fnmatch.fnmatch(path, pattern) for pattern in generator["glob"]), f"the push gate skips {path}"

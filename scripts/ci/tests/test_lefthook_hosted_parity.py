@@ -245,6 +245,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
                 "scripts/ci/image_matrix.py",
             }
         ),
+        "proto-gen-tests": frozenset({"proto/*", "proto/**/*", "scripts/proto_gen/*", "scripts/proto_gen/**/*"}),
         "proto-breaking": _PROTO_CONTRACT_SURFACE
         | {
             "proto/.breaking-allowlist.json",
