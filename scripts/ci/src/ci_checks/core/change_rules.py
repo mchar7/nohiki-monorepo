@@ -80,10 +80,13 @@ class SurfaceRule:
     patterns: tuple[str, ...]
     flags: tuple[str, ...] = ()
     packages: tuple[str, ...] = ()
+    excluded_patterns: tuple[str, ...] = ()
 
     def matches(self, path: str) -> bool:
         """Return True when the posix repo-relative path matches any pattern."""
-        return any(fnmatch.fnmatch(path, pattern) for pattern in self.patterns)
+        return any(fnmatch.fnmatch(path, pattern) for pattern in self.patterns) and not any(
+            fnmatch.fnmatch(path, pattern) for pattern in self.excluded_patterns
+        )
 
 
 # These sources define the router or the runtime in which that policy executes.
@@ -165,7 +168,11 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
 # The Compose command contracts inspect tracked Markdown regardless of its directory.
 MARKDOWN_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(("*.md", "**/*.md"), flags=("lint_markdown",), packages=("ci-checks",)),
-    SurfaceRule(("infra/k8s/gitops/README.md",), packages=("gitops-contract-tests",)),
+    SurfaceRule(
+        ("infra/k8s/gitops/*.md",),
+        packages=("gitops-contract-tests",),
+        excluded_patterns=("infra/k8s/gitops/tests/*",),
+    ),
 )
 
 

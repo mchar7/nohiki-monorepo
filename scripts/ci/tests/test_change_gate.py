@@ -194,13 +194,23 @@ def test_markdown_selects_only_its_contract_consumer(path: str) -> None:
     assert outputs["container_contracts"] == "false"
 
 
-def test_markdown_preserves_the_gitops_readme_consumer_without_package_flags() -> None:
+@pytest.mark.parametrize(
+    ("path", "consumers"),
+    [
+        ("infra/k8s/gitops/README.md", {"ci-checks", "gitops-contract-tests"}),
+        ("infra/k8s/gitops/install/guide.md", {"ci-checks", "gitops-contract-tests"}),
+        ("infra/k8s/gitops/clusters/local/notes.md", {"ci-checks", "gitops-contract-tests"}),
+        ("infra/k8s/gitops/tests/fixture.md", {"ci-checks"}),
+        ("infra/k8s/gitops/tests/fixtures/guide.md", {"ci-checks"}),
+    ],
+)
+def test_markdown_preserves_gitops_consumers_without_package_flags(path: str, consumers: set[str]) -> None:
     packages = load_packages_with_deps(Scope.ALL)
-    decision = evaluate({"infra/k8s/gitops/README.md"}, packages)
+    decision = evaluate({path}, packages)
 
-    assert decision.affected == {"ci-checks", "gitops-contract-tests"}
+    assert decision.affected == consumers
     assert decision.flags == {"lint_markdown"}
-    assert selected_test_packages(decision, packages) == ("ci-checks", "gitops-contract-tests")
+    assert selected_test_packages(decision, packages) == tuple(sorted(consumers))
 
 
 @pytest.mark.parametrize(
