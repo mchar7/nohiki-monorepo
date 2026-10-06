@@ -5,6 +5,7 @@ import fnmatch
 import json
 import os
 import subprocess
+import sys
 from functools import cache
 from pathlib import Path
 
@@ -60,20 +61,31 @@ def _modules_outside_package_roots() -> tuple[str, ...]:
     return tuple(module for module in _test_modules() if not any(module.startswith(f"{root}/") for root in roots))
 
 
-@cache
-def _recipe_body(recipe: str) -> str:
+def _recipe_collected_modules(recipe: str, directory: Path) -> set[str]:
+    plugin = directory / "census_collector.py"
+    collected = directory / "collected.json"
+    plugin.write_text(
+        "import json\nimport os\nfrom pathlib import Path\n"
+        "def pytest_collection_finish(session):\n"
+        "    paths = sorted({str(item.path) for item in session.items})\n"
+        "    Path(os.environ['CENSUS_COLLECTION_FILE']).write_text(json.dumps(paths), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
     environment = {key: value for key, value in os.environ.items() if key not in {"VIRTUAL_ENV", "PROJECT_ROOT"}}
-    dumped = subprocess.run(
-        ["just", "--dump", "--dump-format", "json"],
+    environment["PYTHONPATH"] = os.pathsep.join(filter(None, (str(directory), environment.get("PYTHONPATH"))))
+    environment["PYTEST_PLUGINS"] = ",".join(filter(None, (environment.get("PYTEST_PLUGINS"), "census_collector")))
+    environment["PYTEST_ADDOPTS"] = "--collect-only -q -o addopts="
+    environment["CENSUS_COLLECTION_FILE"] = str(collected)
+    subprocess.run(
+        ["just", recipe],
         cwd=REPO_ROOT,
         env=environment,
         capture_output=True,
         text=True,
         check=True,
     )
-    recipes = json.loads(dumped.stdout)["recipes"]
-    assert recipe in recipes, f"the justfile declares no recipe {recipe!r}"
-    return json.dumps(recipes[recipe])
+    assert collected.is_file(), f"just {recipe} does not collect pytest tests"
+    return {Path(path).relative_to(REPO_ROOT).as_posix() for path in json.loads(collected.read_text(encoding="utf-8"))}
 
 
 def test_every_test_module_is_executed_by_a_lane() -> None:
@@ -103,10 +115,11 @@ def test_standalone_trees_are_exactly_the_uncovered_modules() -> None:
 
 
 @pytest.mark.parametrize(("tree", "recipe"), sorted(_STANDALONE_TREES.items()))
-def test_standalone_trees_keep_a_recipe_lane(tree: str, recipe: str) -> None:
-    """The recipe owns the tree: it must still run it, and the tree must still exist."""
+def test_standalone_trees_keep_a_recipe_lane(tree: str, recipe: str, tmp_path: Path) -> None:
     assert (REPO_ROOT / tree).is_dir(), f"{tree} is gone; drop the entry and its recipe"
-    assert tree in _recipe_body(recipe), f"just {recipe} no longer runs {tree}"
+    required = {module for module in _test_modules() if module.startswith(f"{tree}/")}
+    collected = _recipe_collected_modules(recipe, tmp_path)
+    assert required <= collected, f"just {recipe} does not collect {sorted(required - collected)}"
 
 
 @pytest.mark.parametrize(
@@ -116,6 +129,7 @@ def test_standalone_trees_keep_a_recipe_lane(tree: str, recipe: str) -> None:
         "proto/nested/example.proto",
         "scripts/proto_gen/main.py",
         "scripts/proto_gen/tests/test_cli.py",
+        "Justfile",
     ],
 )
 def test_proto_generator_tests_reach_the_push_lane(path: str) -> None:
@@ -138,3 +152,16 @@ def test_census_rejects_source_tree_orphans(relative: str, tmp_path: Path, monke
     monkeypatch.setattr(f"{__name__}._package_test_roots", lambda: ())
     with pytest.raises(AssertionError, match=relative):
         test_every_test_module_is_executed_by_a_lane()
+
+
+def test_census_rejects_invalid_recipe_with_a_test_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tree = "scripts/load/tests"
+    directory = tmp_path / tree
+    directory.mkdir(parents=True)
+    (directory / "test_example.py").write_text("def test_example():\n    assert True\n", encoding="utf-8")
+    (tmp_path / "Justfile").write_text(
+        f"broken:\n    {sys.executable} -m pytest --invalid-census-option {tree}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(f"{__name__}.REPO_ROOT", tmp_path)
+    with pytest.raises(subprocess.CalledProcessError):
+        test_standalone_trees_keep_a_recipe_lane(tree, "broken", tmp_path)

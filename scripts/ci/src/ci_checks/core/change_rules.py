@@ -426,10 +426,9 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     # the version step compares a workflow literal; neither reads lefthook.yml.
     SurfaceRule(("lefthook.yml",), packages=("ci-checks",)),
     SurfaceRule(
-        # Both steps shell out to `just`. Proto compatibility does not: the
-        # workflow runs `buf breaking` inline and Justfile:335-342 is local-only.
+        # Proto breaking runs inline, but the generator tests run through the Justfile.
         ("Justfile",),
-        flags=("jvm_tests", "image_matrix_parity", "api_schema_freshness"),
+        flags=("jvm_tests", "image_matrix_parity", "api_schema_freshness", "lint_proto"),
         packages=("ci-checks",),
     ),
     SurfaceRule(

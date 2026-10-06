@@ -378,7 +378,7 @@ def test_justfile_selects_owned_checks() -> None:
         EventContext(event="pull_request", base_sha="base", head_sha="head"),
     )
 
-    assert {"api_schema_freshness", "image_matrix_parity"} <= decision.flags
+    assert {"api_schema_freshness", "image_matrix_parity", "lint_proto"} <= decision.flags
     # The workflow runs buf breaking inline; the Justfile recipe is local-only.
     assert "proto_breaking" not in decision.flags
 

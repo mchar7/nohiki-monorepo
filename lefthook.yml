@@ -493,6 +493,7 @@ pre-push:
         - "proto/**/*"
         - "scripts/proto_gen/*"
         - "scripts/proto_gen/**/*"
+        - "Justfile"
       run: just proto-gen-test
 
     # Phase 5: Proto Breaking Changes
