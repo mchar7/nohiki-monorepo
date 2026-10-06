@@ -228,12 +228,12 @@
           gitleaks # Secret detection for git hooks
           lefthookPackage # Git hook manager
           util-linux # flock for environment locks
+          uvPackage
           rsync # Owner-controlled local secrets mirror
         ];
 
         pythonTools = with pkgs; [
           python
-          uvPackage
           buf
           grpcurl
         ];
@@ -302,6 +302,7 @@
         ciNodeTools = [
           nodejs
           pnpmPackage
+          uvPackage
           pkgs.git
         ];
         ciPolicyTools = ciPythonTools ++ [
