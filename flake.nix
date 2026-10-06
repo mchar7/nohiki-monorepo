@@ -14,7 +14,12 @@
           config.allowUnfree = true;
         };
 
-        python = pkgs.python314;
+        python = pkgs.python314.withPackages (
+          ps: builtins.map pkgs.python314Packages.toPythonModule [
+            pkgs.check-jsonschema
+            pkgs.podman-compose
+          ]
+        );
         nodejs = pkgs.nodejs_26;
         corepackPackage = pkgs.corepack.override { nodejs-slim = nodejs; };
         jdk = pkgs.jdk25;
@@ -238,7 +243,6 @@
         ];
 
         containerTools = with pkgs; [
-          podman-compose
           dive
           skopeo
         ];
@@ -317,7 +321,6 @@
           pkgs.jq
           pkgs.yq-go
           pkgs.actionlint
-          pkgs.check-jsonschema
           pkgs.hadolint
           pkgs.buf
           lefthookPackage
@@ -332,7 +335,6 @@
           pkgs.kubectl
           pkgs.kustomize
           pkgs.kubernetes-helm
-          pkgs.podman-compose
           pkgs.gitleaks
           pkgs.rsync
           pkgs.skopeo
@@ -393,7 +395,7 @@
           fi
 
           echo "Nohiki Dev Environment"
-          echo "  Python ${python.version} | Node $(node --version) | pnpm $(corepack pnpm --version) | uv $(uv --version | cut -d' ' -f2)"
+          echo "  Python $(python --version | cut -d' ' -f2) | Node $(node --version) | pnpm $(corepack pnpm --version) | uv $(uv --version | cut -d' ' -f2)"
           echo "  Run 'just' for available commands"
         '';
 

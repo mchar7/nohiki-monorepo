@@ -3774,7 +3774,10 @@ def test_just_dry_run_routes_compose_recipes_through_preflight(recipe: str) -> N
 def test_nix_shells_declare_the_pinned_python_and_validator_runtime() -> None:
     flake = _FLAKE.read_text(encoding="utf-8")
 
-    assert "python = pkgs.python314;" in flake
+    # The interpreter bundles the validators. Listing their packages separately makes the Python
+    # setup hook export PYTHONPATH, which outranks the packages `uvx` installs for its own tools.
+    assert "python = pkgs.python314.withPackages" in flake
+    python_env = flake.split("python = pkgs.python314.withPackages", 1)[1].split(");", 1)[0]
     for shell in ("infra", "k8s"):
         block = flake.split(f"devShells.{shell} = pkgs.mkShell", 1)[1].split("};", 1)[0]
         assert "++ [ python ]" in block
@@ -3783,7 +3786,7 @@ def test_nix_shells_declare_the_pinned_python_and_validator_runtime() -> None:
     # nothing about the declaration and fails wherever the suite runs outside that shell.
     policy_tools = flake.split("ciPolicyTools = ciPythonTools ++ [", 1)[1].split("];", 1)[0]
     test_tools = flake.split("ciTestTools = ciPolicyTools ++ [", 1)[1].split("];", 1)[0]
-    declared = set(re.findall(r"pkgs\.([\w-]+)", policy_tools + test_tools))
+    declared = set(re.findall(r"pkgs\.([\w-]+)", policy_tools + test_tools + python_env))
     validators = (
         "actionlint",
         "check-jsonschema",
