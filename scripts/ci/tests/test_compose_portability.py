@@ -60,6 +60,7 @@ _ROOT_README = _REPO / "README.md"
 _COMPOSE_README = _REPO / "infra" / "compose" / "README.md"
 _RUSTFS_INIT = _REPO / "infra" / "compose" / "scripts" / "rustfs-init.sh"
 _KAFKA_INIT = _REPO / "infra" / "compose" / "scripts" / "kafka-init.sh"
+_VALIDATOR_MODULES = "pythonValidatorModules = builtins.map pkgs.python314Packages.toPythonModule ["
 _REGISTER = _REPO / "infra" / "k8s" / "kafka-connect" / "scripts" / "register-connectors.sh"
 _ENTRYPOINT = _REPO / "infra" / "k8s" / "kafka-connect" / "scripts" / "entrypoint.sh"
 
@@ -3777,10 +3778,10 @@ def test_nix_shells_declare_the_pinned_python_and_validator_runtime() -> None:
     # The interpreter bundles the validators. Listing their packages separately makes the Python
     # setup hook export PYTHONPATH, which outranks the packages `uvx` installs for its own tools.
     assert "python = pkgs.python314.withPackages" in flake
-    python_env = flake.split("python = pkgs.python314.withPackages", 1)[1].split(");", 1)[0]
+    python_env = flake.split(_VALIDATOR_MODULES, 1)[1].split("];", 1)[0]
     for shell in ("infra", "k8s"):
         block = flake.split(f"devShells.{shell} = pkgs.mkShell", 1)[1].split("};", 1)[0]
-        assert "++ [ python ]" in block
+        assert "[ python pythonInfra ]" in block
     # The CI contract tests shell out to these validators, so the flake must declare them for
     # the shell that runs the suite. A PATH probe reports the ambient shell instead, which says
     # nothing about the declaration and fails wherever the suite runs outside that shell.
