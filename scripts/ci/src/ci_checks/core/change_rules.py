@@ -441,6 +441,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(
         (
             ".dockerignore",
+            ".envrc",
             ".github/dependabot.yml",
             ".github/renovate.json5",
             ".gitignore",
@@ -459,7 +460,6 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         (
             ".gitattributes",
             ".editorconfig",
-            ".envrc",
             "LICENSE",
             "LICENSE.*",
             ".github/CODEOWNERS",
