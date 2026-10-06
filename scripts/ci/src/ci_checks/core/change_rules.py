@@ -162,6 +162,12 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
     ),
 )
 
+# The Compose command contracts inspect tracked Markdown regardless of its directory.
+MARKDOWN_RULES: tuple[SurfaceRule, ...] = (
+    SurfaceRule(("*.md", "**/*.md"), flags=("lint_markdown",), packages=("ci-checks",)),
+    SurfaceRule(("infra/k8s/gitops/README.md",), packages=("gitops-contract-tests",)),
+)
+
 
 SURFACE_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(
@@ -173,7 +179,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         packages=("ci-checks",),
     ),
     SurfaceRule(
-        ("*.md", "**/*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore"),
+        (".markdownlint-cli2.jsonc", ".markdownlintignore"),
         flags=("lint_markdown",),
     ),
     SurfaceRule(

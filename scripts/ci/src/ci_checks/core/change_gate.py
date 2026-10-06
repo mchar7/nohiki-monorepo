@@ -15,6 +15,7 @@ from ci_checks.core.change_rules import (
     BROAD_PYTHON_FLAGS,
     BROAD_RULES,
     FLAG_NAMES,
+    MARKDOWN_RULES,
     SURFACE_RULES,
 )
 from ci_checks.core.display import LANE_DISPLAY_NAMES, LANE_RUNNERS, markdown_details, markdown_table
@@ -232,8 +233,15 @@ def evaluate(
     rel_paths = _package_rel_paths(packages)
     container_test_inputs = _container_test_inputs(packages, rel_paths)
     seeds: set[str] = set()
+    markdown_consumers: set[str] = set()
 
     for path in sorted(changed):
+        if path.endswith(".md"):
+            for rule in MARKDOWN_RULES:
+                if rule.matches(path):
+                    decision.flags.update(rule.flags)
+                    markdown_consumers.update(rule.packages)
+            continue
         matched = False
         for rule in BROAD_RULES:
             if rule.matches(path):
@@ -269,6 +277,7 @@ def evaluate(
 
     decision.affected = expand_to_dependents(seeds, build_reverse_dependency_index(packages))
     _derive_package_flags(decision)
+    decision.affected.update(markdown_consumers & packages.keys())
     if context is not None:
         _apply_event_context(decision, context)
     if decision.full:

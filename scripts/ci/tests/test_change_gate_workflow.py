@@ -1776,6 +1776,89 @@ def test_deadcode_runs_once_with_split_static_cache_save() -> None:
     assert save["with"]["key"] == ("${{ steps.setup-ci.outputs.skylos-cache-primary-key }}")
 
 
+def _selector_holds(
+    expression: str,
+    outputs: Mapping[str, str],
+    *,
+    unit: str,
+    fork: bool,
+) -> bool:
+    """Evaluate a parenthesised ``&&``/``||`` selector against router outputs and event facts."""
+    tokens = [
+        token
+        for token in re.split(r"(\|\||&&|\(|\))", expression.removeprefix("${{").removesuffix("}}"))
+        if token.strip()
+    ]
+    position = 0
+
+    def atom_holds(atom: str) -> bool:
+        atom = atom.strip()
+        if atom == "matrix.unit == 'frontend'":
+            return unit == "frontend"
+        if atom == "github.event.pull_request.head.repo.fork != true":
+            return not fork
+        match = re.fullmatch(r"needs\.changes\.outputs\.(\w+) (==|!=) '([^']*)'", atom)
+        assert match, atom
+        name, operator, expected = match.groups()
+        return (outputs[name] == expected) == (operator == "==")
+
+    def parse_factor() -> bool:
+        nonlocal position
+        if tokens[position] == "(":
+            position += 1
+            value = parse_expression()
+            assert tokens[position] == ")"
+            position += 1
+            return value
+        atom = tokens[position]
+        position += 1
+        return atom_holds(atom)
+
+    def parse_term() -> bool:
+        nonlocal position
+        value = parse_factor()
+        while position < len(tokens) and tokens[position] == "&&":
+            position += 1
+            value = parse_factor() and value
+        return value
+
+    def parse_expression() -> bool:
+        nonlocal position
+        value = parse_term()
+        while position < len(tokens) and tokens[position] == "||":
+            position += 1
+            value = parse_term() or value
+        return value
+
+    result = parse_expression()
+    assert position == len(tokens), tokens[position:]
+    return result
+
+
+@pytest.mark.parametrize(
+    ("changed", "selected"),
+    [
+        ({"README.md"}, "false"),
+        ({"backend/services/user-auth-service/README.md"}, "false"),
+        ({"infra/k8s/observability/README.md"}, "false"),
+        ({"jvm/nohiki-wal-router-smt/README.md"}, "false"),
+        ({"scripts/ci/src/ci_checks/core/change_gate.py"}, "true"),
+        ({"backend/services/user-auth-service/src/user_auth_service/main.py"}, "true"),
+    ],
+)
+def test_deadcode_selector_follows_the_router_for_markdown_and_code(
+    changed: set[str],
+    selected: str,
+) -> None:
+    """Dead code runs only where the router selected packages that hold Python."""
+    packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate(changed, packages)
+    outputs = render_outputs(decision, selected_test_packages(decision, packages), "pull_request")
+    expression = str(_jobs()["worker"]["env"]["DEADCODE_SELECTED"])
+
+    assert str(_selector_holds(expression, outputs, unit="frontend", fork=False)).lower() == selected
+
+
 def test_cache_summaries_use_observed_action_outputs() -> None:
     jobs = _jobs()
     setup_owners = {

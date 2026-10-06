@@ -290,7 +290,7 @@ jobs:
       DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.lint_markdown == 'true' && needs.changes.outputs.affected_packages == '' }}
       SKYLOS_CACHE_DIR: ${{ github.workspace }}/.skylos
       # One selector for the deploy key, the static cache and the scan, so the three cannot drift.
-      DEADCODE_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.affected_packages != '') && github.event.pull_request.head.repo.fork != true }}
+      DEADCODE_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || (needs.changes.outputs.hygiene == 'true' && needs.changes.outputs.affected_packages != '')) && github.event.pull_request.head.repo.fork != true }}
       # The routed marker suite is opt-in locally but mandatory on the hosted
       # container worker whenever the gate selects its flag.
       CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true') }}

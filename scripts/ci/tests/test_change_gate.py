@@ -169,6 +169,55 @@ def test_commit_class_boundaries(path: str, expected: CommitClass) -> None:
 @pytest.mark.parametrize(
     "path",
     [
+        "backend/services/user-auth-service/README.md",
+        "backend/services/job-correlation-evaluation-service/docs/training-playbook.md",
+        "backend/libs/nohiki-geo-utils/README.md",
+        "libs/new-library/README.md",
+        "infra/compose/traefik/README.md",
+        "infra/k8s/observability/README.md",
+        "jvm/nohiki-wal-router-smt/README.md",
+    ],
+)
+def test_markdown_selects_only_its_contract_consumer(path: str) -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate({path}, packages)
+    outputs = render_outputs(decision, selected_test_packages(decision, packages), "pull_request")
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert not decision.unmatched
+    assert decision.affected == {"ci-checks"}
+    assert decision.flags == {"lint_markdown"}
+    assert outputs["test_packages"] == "ci-checks"
+    assert outputs["hygiene"] == "false"
+    assert outputs["typecheck_backend"] == "false"
+    assert outputs["jvm_tests"] == "false"
+    assert outputs["container_contracts"] == "false"
+
+
+def test_markdown_preserves_the_gitops_readme_consumer_without_package_flags() -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate({"infra/k8s/gitops/README.md"}, packages)
+
+    assert decision.affected == {"ci-checks", "gitops-contract-tests"}
+    assert decision.flags == {"lint_markdown"}
+    assert selected_test_packages(decision, packages) == ("ci-checks", "gitops-contract-tests")
+
+
+def test_mixed_markdown_and_code_preserves_the_code_dependency_closure() -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+    code = {"backend/libs/nohiki-geo-utils/src/nohiki_geo_utils/geo.py"}
+    code_decision = evaluate(code, packages)
+    decision = evaluate(code | {"infra/k8s/observability/README.md"}, packages)
+
+    assert decision.commit_class is code_decision.commit_class
+    assert decision.affected == code_decision.affected | {"ci-checks"}
+    assert decision.flags == code_decision.flags | {"lint_markdown"}
+    assert {"python_any", "hygiene", "typecheck_backend", "lint_python"} <= decision.flags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
         "scripts/ci/src/ci_checks/core/change_gate.py",
         "scripts/ci/src/ci_checks/core/change_rules.py",
         "scripts/ci/src/ci_checks/checks/gate.py",
