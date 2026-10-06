@@ -397,8 +397,12 @@ api-schema-check:
     {{ env_lock }} shared node_modules -- sh -c 'test -x "$1" || { echo "error: openapi-typescript is not installed; run pnpm install" >&2; exit 1; }; "$1" "$2" -o "$3"' _ typescript/apps/frontend/node_modules/.bin/openapi-typescript "$tmpdir/nohiki.openapi.json" "$tmpdir/schema.d.ts"
     diff -u typescript/apps/frontend/src/api/schema.d.ts "$tmpdir/schema.d.ts"
 
+# Test the proto generator that writes the domain models
+proto-gen-test:
+    {{ env_lock }} shared venv -- uv run --no-sync pytest -q scripts/proto_gen/tests
+
 # Lint proto files
-proto-lint:
+proto-lint: proto-gen-test
     nix develop .#ci {{ nix_flags }} --command bash -euc 'cd proto && buf lint'
 
 # Check proto breaking changes

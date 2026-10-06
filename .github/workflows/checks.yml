@@ -454,7 +454,10 @@ jobs:
             2>&1 | tee lint-results/buf.log
           status=${PIPESTATUS[0]}
           ((status == 0)) && rm lint-results/buf.log
-          exit "$status"
+          # The generator that consumes proto/ has no workspace package, so this
+          # lane is the only hosted executor for its unit tests.
+          ((status == 0)) || exit "$status"
+          nix develop .#ci --command just proto-gen-test
 
       - name: Lint workflows
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_workflows == 'true')
