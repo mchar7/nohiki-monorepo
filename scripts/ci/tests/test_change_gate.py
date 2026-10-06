@@ -203,6 +203,37 @@ def test_markdown_preserves_the_gitops_readme_consumer_without_package_flags() -
     assert selected_test_packages(decision, packages) == ("ci-checks", "gitops-contract-tests")
 
 
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        ({"README.md", "docs/guide.md"}, "true"),
+        ({"backend/services/svc-b/README.md"}, "true"),
+        ({"docs/guide.md", "infra/k8s/observability/README.md"}, "true"),
+        ({"docs/guide.md", "scripts/dev/env-lock.sh"}, "false"),
+        ({"README.md", "backend/libs/lib-a/src/lib_a.py"}, "false"),
+        ({"docs/guide.md", ".markdownlintignore"}, "false"),
+        ({".markdownlintignore"}, "false"),
+        (set(), "false"),
+    ],
+)
+def test_docs_only_reports_the_paths_alone(changed: set[str], expected: str) -> None:
+    """docs_only stays a property of the diff, never of the checks that diff selects."""
+    decision = evaluate(changed, _synthetic_packages())
+    outputs = render_outputs(decision, selected_test_packages(decision, _synthetic_packages()), "pull_request")
+
+    assert outputs["docs_only"] == expected
+    if expected == "true":
+        assert outputs["lint_markdown"] == "true"
+
+
+def test_docs_only_survives_the_markdown_consumer_selection() -> None:
+    """The consumer set no longer decides the narrow secret scan."""
+    decision = evaluate({"backend/services/user-auth-service/README.md"}, load_packages_with_deps(Scope.ALL))
+
+    assert decision.affected == {"ci-checks"}
+    assert render_outputs(decision, ("ci-checks",), "pull_request")["docs_only"] == "true"
+
+
 def test_mixed_markdown_and_code_preserves_the_code_dependency_closure() -> None:
     packages = load_packages_with_deps(Scope.ALL)
     code = {"backend/libs/nohiki-geo-utils/src/nohiki_geo_utils/geo.py"}
@@ -2380,6 +2411,8 @@ def test_broad_unbounded_is_the_only_output_the_cause_can_move() -> None:
         "broad",
         "broad_unbounded",
         "protected_main_smoke",
+        # Not a lane: the narrow secret scan reads it, no lane does.
+        "docs_only",
         "full",
         "affected_packages",
         "test_packages",

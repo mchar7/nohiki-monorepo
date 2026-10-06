@@ -111,6 +111,7 @@ class GateDecision:
     affected: set[str] = field(default_factory=set)
     unmatched: list[str] = field(default_factory=list)
     protected_main_smoke: bool = False
+    docs_only: bool = False
 
     @property
     def commit_class(self) -> CommitClass:
@@ -230,6 +231,9 @@ def evaluate(
         The gate decision. Policy sources and unmapped paths select ``broad``.
     """
     decision = GateDecision()
+    # A Markdown-only diff takes the narrow secret scan, so this is a property of the paths
+    # alone: what the consumer checks are is a separate question, answered by the rules below.
+    decision.docs_only = bool(changed) and all(path.endswith(".md") for path in changed)
     rel_paths = _package_rel_paths(packages)
     container_test_inputs = _container_test_inputs(packages, rel_paths)
     seeds: set[str] = set()
@@ -356,6 +360,7 @@ def render_outputs(
         # step that a bounded trigger cannot reach may stay skipped on the bounded half.
         "broad_unbounded": str(decision.broad_unbounded).lower(),
         "protected_main_smoke": str(decision.protected_main_smoke).lower(),
+        "docs_only": str(decision.docs_only).lower(),
         # Gate labels consume the full spelling as the broad-class signal.
         "full": str(decision.full).lower(),
         "affected_packages": ",".join(sorted(decision.affected)),

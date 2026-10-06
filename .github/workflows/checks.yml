@@ -40,6 +40,7 @@ jobs:
       title_timeout_minutes: ${{ steps.route.outputs.title_timeout_minutes }}
       checks_timeout_minutes: ${{ steps.route.outputs.checks_timeout_minutes }}
       protected_main_smoke: ${{ steps.gate.outputs.protected_main_smoke }}
+      docs_only: ${{ steps.gate.outputs.docs_only }}
       full: ${{ steps.gate.outputs.full }}
       nix: ${{ steps.gate.outputs.nix }}
       lint_python: ${{ steps.gate.outputs.lint_python }}
@@ -287,7 +288,7 @@ jobs:
     env:
       NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.container_contracts == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.otel_collector == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' || needs.changes.outputs.jvm_tests == 'true' }}
       NODE_SETUP_SELECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true') }}
-      DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.lint_markdown == 'true' && needs.changes.outputs.affected_packages == '' }}
+      DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.docs_only == 'true' }}
       SKYLOS_CACHE_DIR: ${{ github.workspace }}/.skylos
       # One selector for the deploy key, the static cache and the scan, so the three cannot drift.
       DEADCODE_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || (needs.changes.outputs.hygiene == 'true' && needs.changes.outputs.affected_packages != '')) && github.event.pull_request.head.repo.fork != true }}

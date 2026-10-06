@@ -1050,6 +1050,8 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
         "title_timeout_minutes",
         "checks_timeout_minutes",
         "protected_main_smoke",
+        # Selects the diff-scoped secret scan; it is a property of the paths, not a lane.
+        "docs_only",
         "commitlint_expected",
         "full",
         # Informational only: they let the fan-in tell "skipped, not selected" apart from
@@ -1681,10 +1683,10 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_writer_per_payload() 
     assert "commitlint_expected" not in str(job_env["NIX_SETUP_SELECTED"])
     assert "lint_markdown" in str(job_env["NODE_SETUP_SELECTED"])
     assert "protected_main_smoke != 'true'" in str(job_env["NODE_SETUP_SELECTED"])
+    # The narrow secret scan is chosen by the router's own "every changed path is Markdown"
+    # output, so it never depends on which consumer checks that diff selects.
     assert job_env["DOCS_ONLY"] == (
-        "${{ needs.changes.outputs.standard == 'true' "
-        "&& needs.changes.outputs.lint_markdown == 'true' "
-        "&& needs.changes.outputs.affected_packages == '' }}"
+        "${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.docs_only == 'true' }}"
     )
 
     steps = {step.get("name"): step for step in _steps(standard)}
