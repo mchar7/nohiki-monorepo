@@ -294,24 +294,6 @@
           stdenv.cc.cc.lib
         ];
 
-        mkCiPrepare = commands: pkgs.writeShellScriptBin "ci-prepare" ''
-          set -eu
-          ${commands}
-        '';
-        ciPythonPrepare = mkCiPrepare ''
-          exec scripts/dev/sync-ci-environment.sh
-        '';
-        ciNodePrepare = mkCiPrepare ''
-          exec scripts/dev/sync-ci-node-environment.sh
-        '';
-        ciPolicyPrepare = mkCiPrepare ''
-          exec scripts/dev/sync-ci-policy-environment.sh
-        '';
-        ciHygienePrepare = mkCiPrepare ''
-          scripts/dev/sync-ci-environment.sh
-          exec scripts/dev/sync-ci-node-environment.sh
-        '';
-
         ciPythonTools = [
           python
           uvPackage
@@ -494,7 +476,7 @@
 
         devShells.ci = pkgs.mkShell {
           name = "nohiki-ci";
-          packages = ciTools ++ [ ciHygienePrepare ];
+          packages = ciTools;
           buildInputs = nativeBuildDeps;
           env = baseEnv // {
             COREPACK_ENABLE_NETWORK = "0";
@@ -504,7 +486,7 @@
 
         devShells.ci-python = pkgs.mkShell {
           name = "nohiki-ci-python";
-          packages = ciTestTools ++ [ ciPythonPrepare ];
+          packages = ciTestTools;
           buildInputs = nativeBuildDeps;
           env = baseEnv // {
             UV_PYTHON_DOWNLOADS = "never";
@@ -513,7 +495,7 @@
 
         devShells.ci-node = pkgs.mkShell {
           name = "nohiki-ci-node";
-          packages = ciNodeTools ++ [ ciNodePrepare ];
+          packages = ciNodeTools;
           env = {
             COREPACK_ENABLE_NETWORK = "0";
           };
@@ -521,7 +503,7 @@
 
         devShells.ci-policy = pkgs.mkShell {
           name = "nohiki-ci-policy";
-          packages = ciPolicyTools ++ [ ciPolicyPrepare ];
+          packages = ciPolicyTools;
           env = {
             PYTHONDONTWRITEBYTECODE = "1";
             PYTHONUNBUFFERED = "1";
@@ -533,7 +515,7 @@
 
         devShells.ci-hygiene = pkgs.mkShell {
           name = "nohiki-ci-hygiene";
-          packages = ciHygieneTools ++ [ ciHygienePrepare ];
+          packages = ciHygieneTools;
           buildInputs = nativeBuildDeps;
           env = baseEnv // {
             COREPACK_ENABLE_NETWORK = "0";
