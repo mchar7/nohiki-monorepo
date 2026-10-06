@@ -1,9 +1,4 @@
-"""Every test module under tests/ and scripts/ must be executed by a lane.
-
-The router selects workspace packages, so a test module outside every package test
-root is executed by nothing. It cannot fail, and whatever it pins drifts silently
-until somebody reads the file and assumes it runs.
-"""
+"""Every Python test module must have a package test root or a recipe lane."""
 
 import ast
 import fnmatch
@@ -17,12 +12,8 @@ import pytest
 import yaml
 from ci_checks.core.packages import REPO_ROOT, Scope, load_packages_with_deps
 
-_ROOTS = ("tests", "scripts")
+_ROOTS = ("tests", "scripts", "backend", "infra")
 
-# A standalone project holds no workspace package, so no package test root can
-# collect its tests. The recipe is its lane, and this table is also the claim that
-# the recipe still runs the tree, which test_standalone_trees_keep_a_recipe_lane
-# proves against the justfile the environment actually executes.
 _STANDALONE_TREES: dict[str, str] = {
     "scripts/load/tests": "load-check-tests",
     "scripts/proto_gen/tests": "proto-gen-test",
@@ -133,3 +124,17 @@ def test_proto_generator_tests_reach_the_push_lane(path: str) -> None:
     generator = next((job for job in jobs if job.get("run") == "just proto-gen-test"), None)
     assert generator is not None, "the push gate does not run the proto generator tests"
     assert any(fnmatch.fnmatch(path, pattern) for pattern in generator["glob"]), f"the push gate skips {path}"
+
+
+@pytest.mark.parametrize(
+    "relative",
+    ["backend/libs/nohiki-geo-utils/src/nohiki_geo_utils/test_orphan_probe.py", "infra/unowned/test_orphan_probe.py"],
+)
+def test_census_rejects_source_tree_orphans(relative: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = tmp_path / relative
+    module.parent.mkdir(parents=True)
+    module.write_text("def test_orphan_probe():\n    assert False\n", encoding="utf-8")
+    monkeypatch.setattr(f"{__name__}.REPO_ROOT", tmp_path)
+    monkeypatch.setattr(f"{__name__}._package_test_roots", lambda: ())
+    with pytest.raises(AssertionError, match=relative):
+        test_every_test_module_is_executed_by_a_lane()
