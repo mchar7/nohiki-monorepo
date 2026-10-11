@@ -268,6 +268,9 @@ def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
         ).stdout.strip()
         assert runtime_user == "999:999"
         assert read_only.lower() == "true"
+    except subprocess.CalledProcessError as error:
+        message = f"{error}\nstdout:\n{error.stdout}\nstderr:\n{error.stderr}"
+        raise AssertionError(message) from error
     finally:
         subprocess.run(
             [runtime, "rm", "--force", frontend, upstream],
