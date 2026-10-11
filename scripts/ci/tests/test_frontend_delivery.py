@@ -269,7 +269,13 @@ def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
         assert runtime_user == "999:999"
         assert read_only.lower() == "true"
     except subprocess.CalledProcessError as error:
-        message = f"{error}\nstdout:\n{error.stdout}\nstderr:\n{error.stderr}"
+        probes = (
+            [runtime, "ps", "--all", "--format", "{{.Names}} {{.Status}} {{.Ports}}"],
+            ["ss", "-ltnp"],
+            ["cat", "/proc/sys/net/ipv4/ip_local_port_range"],
+        )
+        state = "".join(subprocess.run(p, check=False, capture_output=True, text=True).stdout for p in probes)
+        message = f"{error}\nstdout:\n{error.stdout}\nstderr:\n{error.stderr}\nhost state:\n{state}"
         raise AssertionError(message) from error
     finally:
         subprocess.run(
