@@ -4,24 +4,9 @@ kgateway is the Gateway API implementation for Nohiki, providing ingress routing
 
 ## Why kgateway?
 
-kgateway was selected based on benchmarking against alternatives:
-
-| Implementation | Route Propagation | Route Changes | Route Scale | Architecture |
-| ---------------- | ------------------- | --------------- | ------------- | -------------- |
-| **kgateway** | ✅ 20x faster | ✅ Zero errors | 🥇 Best (25-50x less memory) | ✅ Spec compliant |
-| Istio | ✅ Good | ✅ Zero errors | ⚠️ 44x more resources | ✅ Spec compliant |
-| Envoy Gateway | ❌ HTTP errors | ❌ 503s during changes | ⚠️ 108x more resources, memory leak | ⚠️ Namespace violations |
-| Traefik | ⚠️ Very slow | N/A | ❌ Cannot handle scale | 🚨 **UNSAFE** (shared gateway) |
-
-Source: [Gateway API Benchmarks](https://github.com/howardjohn/gateway-api-bench)
-
-## Key Features
-
-- **Full Gateway API Conformance**: Implements the standard Kubernetes Gateway API
-- **High Performance**: 25-50x less memory, 20x faster route propagation
-- **Zero Downtime**: No errors during route changes
-- **AI/LLM Support**: MCP protocol support for ML services
-- **TrafficPolicy CRDs**: Rate limiting, transformations, security headers
+Nohiki uses kgateway to configure ingress through Kubernetes Gateway API resources and TrafficPolicy CRDs.
+The [Gateway API benchmarks](https://github.com/howardjohn/gateway-api-bench) informed the choice.
+Benchmark results depend on the tested versions, topology, and workload; they are not deployment guarantees.
 
 ## Installation
 
@@ -46,8 +31,6 @@ just k8s-reconcile-local   # build + push images, then Flux reconciles the stack
 # or, on a cluster with images already pushed:
 just gitops-full
 ```
-
-The supported pinned pair is kgateway `v2.3.5` with Gateway API `v1.5.1`.
 
 ## Helm Integration
 

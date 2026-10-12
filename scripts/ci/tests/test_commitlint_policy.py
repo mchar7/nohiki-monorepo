@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -109,9 +111,15 @@ def _lint_range(subject: str) -> subprocess.CompletedProcess[str]:
 
 @pytest.mark.requires_node_modules
 def test_local_edit_and_hosted_range_paths_agree_on_one_corpus(tmp_path: Path) -> None:
-    for index, (subject, expected) in enumerate(_COMMIT_MESSAGE_CORPUS):
-        local = _lint_edit(subject, tmp_path / f"message-{index}")
-        hosted = _lint_range(subject)
+    def evaluate(index: int) -> tuple[str, bool, subprocess.CompletedProcess[str], subprocess.CompletedProcess[str]]:
+        subject, expected = _COMMIT_MESSAGE_CORPUS[index]
+        return subject, expected, _lint_edit(subject, tmp_path / f"message-{index}"), _lint_range(subject)
+
+    workers = min(len(_COMMIT_MESSAGE_CORPUS), os.process_cpu_count() or 1)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        outcomes = list(executor.map(evaluate, range(len(_COMMIT_MESSAGE_CORPUS))))
+
+    for subject, expected, local, hosted in outcomes:
         evidence = f"\nlocal:\n{local.stdout}{local.stderr}\nhosted:\n{hosted.stdout}{hosted.stderr}"
 
         assert (local.returncode == 0) is expected, subject + evidence

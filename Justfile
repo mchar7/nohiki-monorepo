@@ -397,8 +397,12 @@ api-schema-check:
     {{ env_lock }} shared node_modules -- sh -c 'test -x "$1" || { echo "error: openapi-typescript is not installed; run pnpm install" >&2; exit 1; }; "$1" "$2" -o "$3"' _ typescript/apps/frontend/node_modules/.bin/openapi-typescript "$tmpdir/nohiki.openapi.json" "$tmpdir/schema.d.ts"
     diff -u typescript/apps/frontend/src/api/schema.d.ts "$tmpdir/schema.d.ts"
 
+# Test the proto generator that writes the domain models
+proto-gen-test:
+    {{ env_lock }} shared venv -- uv run --no-sync pytest -q scripts/proto_gen/tests
+
 # Lint proto files
-proto-lint:
+proto-lint: proto-gen-test
     nix develop .#ci {{ nix_flags }} --command bash -euc 'cd proto && buf lint'
 
 # Check proto breaking changes
@@ -665,10 +669,13 @@ kustomize-validate env="local":
 
 kustomize-validate-all: (kustomize-validate "local") (kustomize-validate "staging") (kustomize-validate "prod")
 
+# Test the local load and resource-measurement substrate
+load-check-tests:
+    {{ env_lock }} shared venv -- uv run --no-sync pytest -q scripts/load/tests
+
 # Validate the local load and resource-measurement substrate without sending traffic.
-load-check:
+load-check: load-check-tests
     k6 inspect scripts/load/k6/scenarios/smoke.js
-    {{ env_lock }} shared venv -- uv run --no-sync pytest -q scripts/load/tests/test_resource_probe.py
 
 # Capture one complete-cluster resource point from an explicit local kind context.
 load-resource-capture output phase tier fixture_version:

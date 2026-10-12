@@ -312,7 +312,7 @@ _CONTAINER_EXECUTORS = {
 # selected by the decision, and never emits a third hygiene runner.
 _STANDARD_EXECUTORS = dict.fromkeys(FLAG_NAMES, "worker") | _CONTAINER_EXECUTORS
 _BROAD_EXECUTORS = _STANDARD_EXECUTORS
-_WORKER_UNITS = ["python", "frontend"]
+_WORKER_UNITS = ["python", "frontend", "container", "jvm", "deadcode"]
 _NON_EXECUTOR_JOB_IDS = {
     "changes",
     "checks",
@@ -491,7 +491,6 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Lint workflows",
             "Lint Dockerfiles (hadolint)",
             "Scan repository for secrets",
-            "Check selected dead code",
             "Check dependencies",
             "Scan architecture",
             "Check build backends",
@@ -499,8 +498,6 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Check image matrix parity",
             "Check proto compatibility",
             "Run Node workspace contract tests",
-            "Run Skylos cache contract tests",
-            "Test JVM module",
             "Lint Markdown",
             "Lint frontend",
             "Check i18n keys",
@@ -511,11 +508,15 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Test edge worker",
             "Validate PR commit messages",
             "Validate PR title (merge commit subject)",
+        },
+        "container": {
             "Build production frontend image",
             "Smoke production frontend container",
             "Validate OpenTelemetry collector image and configs",
             "Run container contract tests",
         },
+        "jvm": {"Test JVM module"},
+        "deadcode": {"Check selected dead code", "Run Skylos cache contract tests"},
         "python": {
             "Typecheck backend",
             "Check import boundaries",
@@ -620,7 +621,7 @@ def test_execution_attestations_are_not_scoped_to_one_commit_class() -> None:
     )
 
     container_selector = str(_jobs()["worker"]["env"]["CONTAINER_CONTRACTS_SELECTED"])
-    assert "matrix.unit == 'frontend'" in container_selector
+    assert "matrix.unit == 'container'" in container_selector
     assert referenced_flags(str(env["CONTAINER_EXPECTED"])) == referenced_flags(container_selector)
 
 
@@ -749,12 +750,12 @@ def test_backend_typecheck_keeps_gate_trigger_parity_and_executes_once() -> None
                 assert execution_count == int(triggered_before), outputs
 
 
-def test_jvm_tests_run_once_on_the_frontend_worker_with_the_pinned_shell() -> None:
+def test_jvm_tests_run_once_on_the_jvm_worker_with_the_pinned_shell() -> None:
     worker = _jobs()["worker"]
     step = next(step for step in _steps(worker) if step.get("name") == "Test JVM module")
     condition = str(step["if"])
 
-    assert "matrix.unit == 'frontend'" in condition
+    assert "matrix.unit == 'jvm'" in condition
     assert "matrix.unit == 'python'" not in condition
     assert "needs.changes.outputs.broad_unbounded == 'true'" in condition
     assert condition.endswith("needs.changes.outputs.jvm_tests == 'true')")
@@ -1050,6 +1051,8 @@ def test_required_checks_uses_summary_and_sole_attestation_artifact() -> None:
         "title_timeout_minutes",
         "checks_timeout_minutes",
         "protected_main_smoke",
+        # Selects the diff-scoped secret scan; it is a property of the paths, not a lane.
+        "docs_only",
         "commitlint_expected",
         "full",
         # Informational only: they let the fan-in tell "skipped, not selected" apart from
@@ -1669,6 +1672,14 @@ def test_lint_diagnostics_are_uploaded_and_summarized_with_least_privilege() -> 
         "category": "lint/${{ matrix.unit }}",
         "wait-for-processing": False,
     }
+    edge_upload = steps["Upload edge worker lint diagnostics"]
+    assert edge_upload["uses"] == upload["uses"]
+    assert edge_upload["with"] == {
+        "sarif_file": "lint-results-edge-worker",
+        "category": "lint/edge-worker",
+        "wait-for-processing": False,
+    }
+    assert "lint-results-edge-worker/biome.sarif" in steps["Lint edge worker"]["run"]
     summary = steps["Summarize lint diagnostics"]
     assert summary["if"] == "always() && matrix.unit == 'frontend'"
     assert "ci-checks lint-report" in summary["run"]
@@ -1681,10 +1692,10 @@ def test_setup_and_secret_scan_keep_one_definition_and_one_writer_per_payload() 
     assert "commitlint_expected" not in str(job_env["NIX_SETUP_SELECTED"])
     assert "lint_markdown" in str(job_env["NODE_SETUP_SELECTED"])
     assert "protected_main_smoke != 'true'" in str(job_env["NODE_SETUP_SELECTED"])
+    # The narrow secret scan is chosen by the router's own "every changed path is Markdown"
+    # output, so it never depends on which consumer checks that diff selects.
     assert job_env["DOCS_ONLY"] == (
-        "${{ needs.changes.outputs.standard == 'true' "
-        "&& needs.changes.outputs.lint_markdown == 'true' "
-        "&& needs.changes.outputs.affected_packages == '' }}"
+        "${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.docs_only == 'true' }}"
     )
 
     steps = {step.get("name"): step for step in _steps(standard)}
@@ -1774,6 +1785,90 @@ def test_deadcode_runs_once_with_split_static_cache_save() -> None:
     )
     assert save["with"]["path"] == "${{ github.workspace }}/.skylos"
     assert save["with"]["key"] == ("${{ steps.setup-ci.outputs.skylos-cache-primary-key }}")
+
+
+def _selector_holds(
+    expression: str,
+    outputs: Mapping[str, str],
+    *,
+    unit: str,
+    fork: bool,
+) -> bool:
+    """Evaluate a parenthesised ``&&``/``||`` selector against router outputs and event facts."""
+    tokens = [
+        token
+        for token in re.split(r"(\|\||&&|\(|\))", expression.removeprefix("${{").removesuffix("}}"))
+        if token.strip()
+    ]
+    position = 0
+
+    def atom_holds(atom: str) -> bool:
+        atom = atom.strip()
+        if atom.startswith("matrix.unit == '"):
+            return atom == f"matrix.unit == '{unit}'"
+        if atom == "github.event.pull_request.head.repo.fork != true":
+            return not fork
+        match = re.fullmatch(r"needs\.changes\.outputs\.(\w+) (==|!=) '([^']*)'", atom)
+        assert match, atom
+        name, operator, expected = match.groups()
+        return (outputs[name] == expected) == (operator == "==")
+
+    def parse_factor() -> bool:
+        nonlocal position
+        if tokens[position] == "(":
+            position += 1
+            value = parse_expression()
+            assert tokens[position] == ")"
+            position += 1
+            return value
+        atom = tokens[position]
+        position += 1
+        return atom_holds(atom)
+
+    def parse_term() -> bool:
+        nonlocal position
+        value = parse_factor()
+        while position < len(tokens) and tokens[position] == "&&":
+            position += 1
+            value = parse_factor() and value
+        return value
+
+    def parse_expression() -> bool:
+        nonlocal position
+        value = parse_term()
+        while position < len(tokens) and tokens[position] == "||":
+            position += 1
+            value = parse_term() or value
+        return value
+
+    result = parse_expression()
+    assert position == len(tokens), tokens[position:]
+    return result
+
+
+@pytest.mark.parametrize(
+    ("changed", "selected"),
+    [
+        ({"README.md"}, "false"),
+        ({"backend/services/user-auth-service/README.md"}, "false"),
+        ({"infra/k8s/observability/README.md"}, "false"),
+        ({"jvm/nohiki-wal-router-smt/README.md"}, "false"),
+        ({"scripts/ci/src/ci_checks/core/change_gate.py"}, "true"),
+        ({"backend/services/user-auth-service/src/user_auth_service/main.py"}, "true"),
+    ],
+)
+def test_deadcode_selector_follows_the_router_for_markdown_and_code(
+    changed: set[str],
+    selected: str,
+) -> None:
+    """Dead code runs only where the router selected packages that hold Python."""
+    packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate(changed, packages)
+    outputs = render_outputs(decision, selected_test_packages(decision, packages), "pull_request")
+    expression = str(_jobs()["worker"]["env"]["DEADCODE_SELECTED"])
+
+    assert str(_selector_holds(expression, outputs, unit="deadcode", fork=False)).lower() == selected
+    assert ("deadcode" in json.loads(outputs["worker_units"])) == (selected == "true")
 
 
 def test_cache_summaries_use_observed_action_outputs() -> None:
