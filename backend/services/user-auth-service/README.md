@@ -103,8 +103,8 @@ correct key from the JWKS when multiple keys are present during rotation. The JW
 supports including previous keys alongside the current one, so in-flight tokens signed with the
 old key remain valid during a rotation window.
 
-Access tokens expire after 10 minutes. The short lifetime limits the blast radius of a stolen
-token: a compromised access token becomes useless before most attackers can exploit it.
+Access tokens expire after 10 minutes. The token lifetime limits exposure if a token is stolen.
+A stolen token can still authorize requests before expiration.
 
 ### HttpOnly Cookies with `__Host-` Prefix
 

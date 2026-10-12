@@ -80,10 +80,13 @@ class SurfaceRule:
     patterns: tuple[str, ...]
     flags: tuple[str, ...] = ()
     packages: tuple[str, ...] = ()
+    excluded_patterns: tuple[str, ...] = ()
 
     def matches(self, path: str) -> bool:
         """Return True when the posix repo-relative path matches any pattern."""
-        return any(fnmatch.fnmatch(path, pattern) for pattern in self.patterns)
+        return any(fnmatch.fnmatch(path, pattern) for pattern in self.patterns) and not any(
+            fnmatch.fnmatch(path, pattern) for pattern in self.excluded_patterns
+        )
 
 
 # These sources define the router or the runtime in which that policy executes.
@@ -162,6 +165,16 @@ BROAD_RULES: tuple[SurfaceRule, ...] = (
     ),
 )
 
+# The Compose command contracts inspect tracked Markdown regardless of its directory.
+MARKDOWN_RULES: tuple[SurfaceRule, ...] = (
+    SurfaceRule(("*.md", "**/*.md"), flags=("lint_markdown",), packages=("ci-checks",)),
+    SurfaceRule(
+        ("infra/k8s/gitops/*.md",),
+        packages=("gitops-contract-tests",),
+        excluded_patterns=("infra/k8s/gitops/tests/*",),
+    ),
+)
+
 
 SURFACE_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(
@@ -173,7 +186,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         packages=("ci-checks",),
     ),
     SurfaceRule(
-        ("*.md", "**/*.md", ".markdownlint-cli2.jsonc", ".markdownlintignore"),
+        (".markdownlint-cli2.jsonc", ".markdownlintignore"),
         flags=("lint_markdown",),
     ),
     SurfaceRule(
@@ -413,10 +426,9 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     # the version step compares a workflow literal; neither reads lefthook.yml.
     SurfaceRule(("lefthook.yml",), packages=("ci-checks",)),
     SurfaceRule(
-        # Both steps shell out to `just`. Proto compatibility does not: the
-        # workflow runs `buf breaking` inline and Justfile:335-342 is local-only.
+        # Proto breaking runs inline, but the generator tests run through the Justfile.
         ("Justfile",),
-        flags=("jvm_tests", "image_matrix_parity", "api_schema_freshness"),
+        flags=("jvm_tests", "image_matrix_parity", "api_schema_freshness", "lint_proto"),
         packages=("ci-checks",),
     ),
     SurfaceRule(
@@ -435,6 +447,7 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
     SurfaceRule(
         (
             ".dockerignore",
+            ".envrc",
             ".github/dependabot.yml",
             ".github/renovate.json5",
             ".gitignore",
@@ -453,7 +466,6 @@ SURFACE_RULES: tuple[SurfaceRule, ...] = (
         (
             ".gitattributes",
             ".editorconfig",
-            ".envrc",
             "LICENSE",
             "LICENSE.*",
             ".github/CODEOWNERS",

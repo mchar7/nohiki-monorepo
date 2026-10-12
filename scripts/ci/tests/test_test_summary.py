@@ -1077,3 +1077,12 @@ async def test_sync_failure_prevents_pytest_spawn_and_reports_output(
     assert "Failed to synchronize workspace packages" in output
     assert "resolver stdout" in output
     assert "frozen lock is stale" in output
+
+
+def test_marker_scan_follows_a_rewritten_test_file(tmp_path: Path) -> None:
+    module = tmp_path / "test_rewritten.py"
+    module.write_text("import pytest\n\n\n@pytest.mark.requires_docker\ndef test_a() -> None: ...\n")
+    assert pytest_file_has_marker(module, "requires_docker")
+
+    module.write_text("import pytest\n\n\ndef test_a() -> None: ...\n")
+    assert not pytest_file_has_marker(module, "requires_docker")

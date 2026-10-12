@@ -1,13 +1,12 @@
 # Job Correlation Evaluation Service
 
-Evaluates job-user fit by running a deterministic scoring pipeline against every job-profile
-pair in the system. The pipeline combines MUVERA ANN retrieval, ColBERT MaxSim
-late-interaction reranking, optional LLM reranking, and evidence-backed human fit factors to
-produce a 0-100 fit ranking index. Kafka-only, stateful with PostgreSQL, Qdrant, and Redis.
+Evaluates job-user fit using MUVERA ANN retrieval, ColBERT MaxSim late-interaction reranking, and deterministic fit factors.
+The resulting 0-100 fit ranking index combines semantic relevance with evidence-backed human fit factors.
+Stage 3 LLM reranking is disabled. Kafka-only, stateful with PostgreSQL, Qdrant, and Redis.
 
 ## Role in the System
 
-This service sits at the centre of the job recommendation pipeline. Every time a new job listing
+This service sits at the center of the job recommendation pipeline. Every time a new job listing
 appears (via `job-listing.cdc.listing-created.v1`) or a user updates their preferences (via
 `user-pref.cdc.pref-created.v1` or `user-pref.cdc.pref-updated.v1`), this service scores the
 new entity against every counterpart it holds in its local projection ledger and writes one
@@ -73,8 +72,8 @@ endpoint (`/api/v1/correlations`), which presents ranked matches to the user.
 
 - **`job-correlation.cmd.training-export-requested.v1`** (`TrainingExportRequested`): Exports
   all correlations with feedback signals as `TrainingSample` protobuf objects and publishes
-  them to the caller's `callback_topic`. Used by the `train_l2r_model.py` operational script
-  to collect training data for the next model iteration. Consumer group:
+  them to the caller's `callback_topic`. Used by the offline `train_l2r_model.py` script
+  to collect training data. Consumer group:
   `job-correlation-eval-export`.
 
 - **`feedback.cmd.score-feedback-requested.v1`** (`ScoreFeedbackRequested`): Records asymmetric
@@ -174,16 +173,12 @@ Redis serves two purposes in this service:
 - **Skill relationship cache**: Skill graph relationships fetched from `skill-graph-service`
   (via its published events, not direct calls) are cached for 1 hour
   (`skill_relationships_ttl: 3600s`) and shared across pods for the skill feature group.
-- **Circuit breaker state**: The LLM reranker (Stage 3) uses a circuit breaker whose open/closed
-  state is stored in Redis, with a 30-second recovery window
-  (`PIPELINE_CIRCUIT_RECOVERY_SECONDS`). This prevents cascading failures if the reranker is
-  unavailable; Stage 3 is bypassed and Stage 4 runs with `rerank_score = 0.0`.
 
 ## Key Design Patterns
 
-### 4-Stage Scoring Pipeline
+### Semantic Retrieval and Deterministic Fit Ranking
 
-The core of this service is a four-stage pipeline executed for every job-profile pair:
+The runtime pipeline combines native retrieval and reranking with deterministic final ranking:
 
 #### Stage 1+2: Native MUVERA + ColBERT MaxSim via Qdrant
 
@@ -199,12 +194,10 @@ For real-time scoring of new listings (where the listing's ColBERT tokens come f
 payload rather than Qdrant), the MaxSim is computed locally using the same normalisation
 parameters.
 
-#### Stage 3: LLM Reranker (optional)
+#### Stage 3: Disabled LLM Reranker
 
-An optional LLM reranker endpoint (`PIPELINE_RERANKER_ENDPOINT_URL`) re-scores the top 50
-candidates from Stage 2 using text-based relevance. Disabled by default
-(`PIPELINE_STAGE3_ENABLED=false`). When the circuit breaker is open (5 consecutive failures),
-Stage 3 is bypassed entirely and `rerank_score = 0.0` is passed to Stage 4.
+The runtime pipeline rejects `PIPELINE_STAGE3_ENABLED=true`.
+The LLM reranker is not part of the supported deterministic scoring path.
 
 #### Stage 4: Deterministic Fit Ranking
 
@@ -227,7 +220,7 @@ query encodings. There is no lookup step.
 
 ### Disqualification Before Scoring
 
-Before running the 4-stage pipeline, `MLScoringService._check_disqualification()` scans the
+Before running the scoring pipeline, `MLScoringService._check_disqualification()` scans the
 job's text (title + description + company name + skills) for any keywords in the profile's
 `disallowed_keywords` list. A single compiled regex pattern (cached by `@lru_cache`) performs
 the scan in O(n) rather than O(k×n) per-keyword loops. Disqualified listings receive score 0
@@ -239,13 +232,11 @@ Each result carries a typed, human-readable breakdown anchored by role relevance
 available fit factors. It reports compatibility, resolved user importance, and signed
 contribution points without exposing technical feature keys or probability claims.
 
-## ML Operational Scripts
+## Offline ML Scripts
 
-Four scripts in `scripts/` are manual operational tools for the model training lifecycle. They
-are run by operators and are not invoked by the service at runtime.
+Three scripts in `scripts/` train, evaluate, and manage offline model artifacts.
+The service does not load those artifacts or invoke those scripts at runtime.
 
-- **`generate_training_data.py`**: Generates synthetic labelled training samples for
-  bootstrapping before real feedback is available.
 - **`train_l2r_model.py`**: Trains a new LightGBM LambdaMART model from exported feedback
   data. Pipeline: export → prepare → train (with early stopping) → calibrate → evaluate
   (NDCG@10) → save versioned files.
@@ -296,9 +287,7 @@ Schema Registry. Qdrant must be running on `localhost:6333`. The Qdrant collecti
 normalization parameters are loaded from the manifest file: ensure
 `JOB_CORRELATION_EVAL_MANIFEST_PATH` points to a valid `manifest.json`.
 
-The L2R model files must exist at the configured paths before starting the service. Use
-`scripts/generate_training_data.py` and `scripts/train_l2r_model.py` to create an initial
-model for development.
+The deterministic scorer requires no L2R model artifacts or calibration files.
 
 ### Testing
 

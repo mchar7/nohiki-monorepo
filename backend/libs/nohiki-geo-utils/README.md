@@ -5,7 +5,7 @@ calculates geodesic distances between `Location` proto objects. Three services d
 it: `job-ingest-enrichment-service` geocodes job locations during LLM extraction,
 `user-pref-service` geocodes user-declared preferred locations, and
 `job-correlation-evaluation-service` uses the distance utilities to produce location
-features for the LightGBM L2R scoring pipeline.
+features for deterministic fit ranking.
 
 ## Quick Start
 
