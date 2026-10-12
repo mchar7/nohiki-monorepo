@@ -147,11 +147,9 @@ in `vectors`, and that any vector named as `colbert_name` declares `multivector_
 > feature-schema constants consumed by the correlation service and offline training tooling.
 
 `FeatureIndex`, `FEATURE_NAMES`, `FEATURE_DESCRIPTIONS`, `MONOTONE_CONSTRAINTS`, and
-`CRITICAL_FEATURES` define the canonical 32-feature vector layout for the LightGBM L2R model.
-These constants live in the manifest library so that both `job-correlation-evaluation-service`
-(which builds feature vectors) and any MLOps tooling (which trains the model) reference the same
-schema. The `FEATURE_COUNT` constant is the single authoritative value used by the service to
-validate that a loaded model file has the expected feature count.
+`CRITICAL_FEATURES` define the shared 32-feature vector layout.
+The correlation service builds these vectors for deterministic fit ranking; offline LightGBM tooling uses the same layout.
+`FEATURE_COUNT` defines the vector size, not a runtime model-loading requirement.
 
 `MONOTONE_CONSTRAINTS` encodes domain knowledge directly into training: `DISTANCE_KM` is
 constrained to `-1` (closer is always better), `SKILL_MATCH_COUNT` to `+1` (more matches always

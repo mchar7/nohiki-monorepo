@@ -61,6 +61,6 @@ def test_substring_pairs_survive_bounded_distinct_sampling(tmp_path: Path) -> No
     )
 
     actual_pairs = {(pair.skill_a, pair.skill_b) for pair in dataset.distinct_similar}
-    assert actual_pairs == {("Bio", "Biochemistry"), ("Cloud", "Cloud computing")}  # noqa: S101
+    assert actual_pairs == {("Bio", "Biochemistry"), ("Cloud", "Cloud computing")}
 
-    assert all(pair.pair_type.value == "distinct_similar" for pair in dataset.distinct_similar)  # noqa: S101
+    assert all(pair.pair_type.value == "distinct_similar" for pair in dataset.distinct_similar)
