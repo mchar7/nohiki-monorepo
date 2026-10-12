@@ -106,7 +106,7 @@
     "@types/react-dom": "19.2.4",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "6.0.5",
-    "@vitest/coverage-v8": "4.1.10",
+    "@vitest/coverage-v8": "4.1.11",
     "fake-indexeddb": "6.2.5",
     "generate-license-file": "4.2.1",
     "happy-dom": "20.11.1",
@@ -118,7 +118,7 @@
     "tailwindcss": "4.3.3",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "vite": "8.2.0",
-    "vitest": "4.1.10",
+    "vitest": "4.1.11",
     "vitest-axe": "0.1.0"
   }
 }
