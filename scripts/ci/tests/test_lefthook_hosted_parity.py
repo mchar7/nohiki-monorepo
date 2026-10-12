@@ -245,6 +245,9 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
                 "scripts/ci/image_matrix.py",
             }
         ),
+        "proto-gen-tests": frozenset(
+            {"proto/*", "proto/**/*", "scripts/proto_gen/*", "scripts/proto_gen/**/*", "Justfile"}
+        ),
         "proto-breaking": _PROTO_CONTRACT_SURFACE
         | {
             "proto/.breaking-allowlist.json",
@@ -263,7 +266,7 @@ _EXPECTED_SURFACES: dict[str, dict[str, frozenset[str]]] = {
 _HOSTED_LANE_MIRRORS: dict[str, tuple[tuple[str, ...], ...]] = {
     "lint_python": (("python-check-format",),),
     "lint_frontend": (("frontend-lint",), ("i18n-check",)),
-    "lint_proto": (("proto-lint",),),
+    "lint_proto": (("proto-lint",), ("proto-gen-tests",)),
     "lint_markdown": (("markdown-lint",),),
     "lint_workflows": (("actions-lint",),),
     "lint_docker": (("docker-lint",),),
@@ -302,6 +305,7 @@ _HOSTED_SELF_REFERENCE = frozenset(
 # entry states why, and both grounding tests below delete it once it stops
 # describing an unclaimed hosted surface.
 _NOT_EXERCISED_LOCALLY: dict[tuple[str, str], str] = {
+    ("proto-lint", "Justfile"): "the push generator job tests the recipe; the staged buf lint job reads only proto/",
     (
         "python-check-format",
         ".python-version",

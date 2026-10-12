@@ -15,6 +15,7 @@ from ci_checks.core.change_rules import (
     BROAD_PYTHON_FLAGS,
     BROAD_RULES,
     FLAG_NAMES,
+    MARKDOWN_RULES,
     SURFACE_RULES,
 )
 from ci_checks.core.display import LANE_DISPLAY_NAMES, LANE_RUNNERS, markdown_details, markdown_table
@@ -110,6 +111,7 @@ class GateDecision:
     affected: set[str] = field(default_factory=set)
     unmatched: list[str] = field(default_factory=list)
     protected_main_smoke: bool = False
+    docs_only: bool = False
 
     @property
     def commit_class(self) -> CommitClass:
@@ -229,11 +231,21 @@ def evaluate(
         The gate decision. Policy sources and unmapped paths select ``broad``.
     """
     decision = GateDecision()
+    # A Markdown-only diff takes the narrow secret scan, so this is a property of the paths
+    # alone: what the consumer checks are is a separate question, answered by the rules below.
+    decision.docs_only = bool(changed) and all(path.endswith(".md") for path in changed)
     rel_paths = _package_rel_paths(packages)
     container_test_inputs = _container_test_inputs(packages, rel_paths)
     seeds: set[str] = set()
+    markdown_consumers: set[str] = set()
 
     for path in sorted(changed):
+        if path.endswith(".md"):
+            for rule in MARKDOWN_RULES:
+                if rule.matches(path):
+                    decision.flags.update(rule.flags)
+                    markdown_consumers.update(rule.packages)
+            continue
         matched = False
         for rule in BROAD_RULES:
             if rule.matches(path):
@@ -269,6 +281,7 @@ def evaluate(
 
     decision.affected = expand_to_dependents(seeds, build_reverse_dependency_index(packages))
     _derive_package_flags(decision)
+    decision.affected.update(markdown_consumers & packages.keys())
     if context is not None:
         _apply_event_context(decision, context)
     if decision.full:
@@ -321,7 +334,7 @@ def _worker_units(decision: GateDecision, outputs: dict[str, str]) -> tuple[str,
     }
     # Every substantive worker run scans either the changed content or the repository.
     selected.add("frontend")
-    if decision.commit_class is CommitClass.BROAD or decision.affected:
+    if decision.commit_class is CommitClass.BROAD or (outputs["hygiene"] == "true" and decision.affected):
         selected.add("deadcode")
     return tuple(unit for unit in _WORKER_UNIT_ORDER if unit in selected)
 
@@ -349,6 +362,7 @@ def render_outputs(
         # step that a bounded trigger cannot reach may stay skipped on the bounded half.
         "broad_unbounded": str(decision.broad_unbounded).lower(),
         "protected_main_smoke": str(decision.protected_main_smoke).lower(),
+        "docs_only": str(decision.docs_only).lower(),
         # Gate labels consume the full spelling as the broad-class signal.
         "full": str(decision.full).lower(),
         "affected_packages": ",".join(sorted(decision.affected)),

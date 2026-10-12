@@ -169,6 +169,96 @@ def test_commit_class_boundaries(path: str, expected: CommitClass) -> None:
 @pytest.mark.parametrize(
     "path",
     [
+        "backend/services/user-auth-service/README.md",
+        "backend/services/job-correlation-evaluation-service/docs/training-playbook.md",
+        "backend/libs/nohiki-geo-utils/README.md",
+        "libs/new-library/README.md",
+        "infra/compose/traefik/README.md",
+        "infra/k8s/observability/README.md",
+        "jvm/nohiki-wal-router-smt/README.md",
+    ],
+)
+def test_markdown_selects_only_its_contract_consumer(path: str) -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate({path}, packages)
+    outputs = render_outputs(decision, selected_test_packages(decision, packages), "pull_request")
+
+    assert decision.commit_class is CommitClass.STANDARD
+    assert not decision.unmatched
+    assert decision.affected == {"ci-checks"}
+    assert decision.flags == {"lint_markdown"}
+    assert outputs["test_packages"] == "ci-checks"
+    assert outputs["hygiene"] == "false"
+    assert outputs["typecheck_backend"] == "false"
+    assert outputs["jvm_tests"] == "false"
+    assert outputs["container_contracts"] == "false"
+
+
+@pytest.mark.parametrize(
+    ("path", "consumers"),
+    [
+        ("infra/k8s/gitops/README.md", {"ci-checks", "gitops-contract-tests"}),
+        ("infra/k8s/gitops/install/guide.md", {"ci-checks", "gitops-contract-tests"}),
+        ("infra/k8s/gitops/clusters/local/notes.md", {"ci-checks", "gitops-contract-tests"}),
+        ("infra/k8s/gitops/tests/fixture.md", {"ci-checks"}),
+        ("infra/k8s/gitops/tests/fixtures/guide.md", {"ci-checks"}),
+    ],
+)
+def test_markdown_preserves_gitops_consumers_without_package_flags(path: str, consumers: set[str]) -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+    decision = evaluate({path}, packages)
+
+    assert decision.affected == consumers
+    assert decision.flags == {"lint_markdown"}
+    assert selected_test_packages(decision, packages) == tuple(sorted(consumers))
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        ({"README.md", "docs/guide.md"}, "true"),
+        ({"backend/services/svc-b/README.md"}, "true"),
+        ({"docs/guide.md", "infra/k8s/observability/README.md"}, "true"),
+        ({"docs/guide.md", "scripts/dev/env-lock.sh"}, "false"),
+        ({"README.md", "backend/libs/lib-a/src/lib_a.py"}, "false"),
+        ({"docs/guide.md", ".markdownlintignore"}, "false"),
+        ({".markdownlintignore"}, "false"),
+        (set(), "false"),
+    ],
+)
+def test_docs_only_reports_the_paths_alone(changed: set[str], expected: str) -> None:
+    """docs_only stays a property of the diff, never of the checks that diff selects."""
+    decision = evaluate(changed, _synthetic_packages())
+    outputs = render_outputs(decision, selected_test_packages(decision, _synthetic_packages()), "pull_request")
+
+    assert outputs["docs_only"] == expected
+    if expected == "true":
+        assert outputs["lint_markdown"] == "true"
+
+
+def test_docs_only_survives_the_markdown_consumer_selection() -> None:
+    """The consumer set no longer decides the narrow secret scan."""
+    decision = evaluate({"backend/services/user-auth-service/README.md"}, load_packages_with_deps(Scope.ALL))
+
+    assert decision.affected == {"ci-checks"}
+    assert render_outputs(decision, ("ci-checks",), "pull_request")["docs_only"] == "true"
+
+
+def test_mixed_markdown_and_code_preserves_the_code_dependency_closure() -> None:
+    packages = load_packages_with_deps(Scope.ALL)
+    code = {"backend/libs/nohiki-geo-utils/src/nohiki_geo_utils/geo.py"}
+    code_decision = evaluate(code, packages)
+    decision = evaluate(code | {"infra/k8s/observability/README.md"}, packages)
+
+    assert decision.commit_class is code_decision.commit_class
+    assert decision.affected == code_decision.affected | {"ci-checks"}
+    assert decision.flags == code_decision.flags | {"lint_markdown"}
+    assert {"python_any", "hygiene", "typecheck_backend", "lint_python"} <= decision.flags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
         "scripts/ci/src/ci_checks/core/change_gate.py",
         "scripts/ci/src/ci_checks/core/change_rules.py",
         "scripts/ci/src/ci_checks/checks/gate.py",
@@ -288,7 +378,7 @@ def test_justfile_selects_owned_checks() -> None:
         EventContext(event="pull_request", base_sha="base", head_sha="head"),
     )
 
-    assert {"api_schema_freshness", "image_matrix_parity"} <= decision.flags
+    assert {"api_schema_freshness", "image_matrix_parity", "lint_proto"} <= decision.flags
     # The workflow runs buf breaking inline; the Justfile recipe is local-only.
     assert "proto_breaking" not in decision.flags
 
@@ -964,7 +1054,7 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
     assert scoped["protected_main_smoke"] == "false"
     assert scoped["lint_python"] == "true"
     assert scoped["nix"] == "false"
-    assert json.loads(scoped["worker_units"]) == ["python", "frontend", "deadcode"]
+    assert json.loads(scoped["worker_units"]) == ["python", "frontend"]
     assert (
         set(scoped.values())
         - {
@@ -973,7 +1063,7 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
             "standard",
             "lib-a,svc-b",
             "lib-a",
-            '["python","frontend","deadcode"]',
+            '["python","frontend"]',
         }
         == set()
     )
@@ -2331,6 +2421,8 @@ def test_broad_unbounded_is_the_only_output_the_cause_can_move() -> None:
         "broad",
         "broad_unbounded",
         "protected_main_smoke",
+        # Not a lane: the narrow secret scan reads it, no lane does.
+        "docs_only",
         "full",
         "affected_packages",
         "test_packages",
