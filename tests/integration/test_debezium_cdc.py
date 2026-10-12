@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -47,6 +48,8 @@ pytestmark = [
 
 
 # Test configuration
+logger = logging.getLogger(__name__)
+
 TEST_TOPIC_PREFIX = "test.cdc"
 OUTBOX_CONNECTOR_SUFFIX = "-outbox"
 DEBEZIUM_CONNECT_IMAGE = (
@@ -414,7 +417,8 @@ async def _wait_for_connect_api(
 ) -> bool:
     """Wait up to one wall-clock budget for the Kafka Connect REST API."""
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_seconds
+    started = loop.time()
+    deadline = started + timeout_seconds
     while (remaining := deadline - loop.time()) > 0:
         try:
             ready = await asyncio.wait_for(
@@ -428,6 +432,7 @@ async def _wait_for_connect_api(
         except TimeoutError:
             return False
         if ready:
+            logger.info("kafka connect REST ready in %.1fs", loop.time() - started)
             return True
         remaining = deadline - loop.time()
         if remaining > 0:
