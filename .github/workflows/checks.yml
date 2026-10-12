@@ -290,10 +290,10 @@ jobs:
       DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.lint_markdown == 'true' && needs.changes.outputs.affected_packages == '' }}
       SKYLOS_CACHE_DIR: ${{ github.workspace }}/.skylos
       # One selector for the deploy key, the static cache and the scan, so the three cannot drift.
-      DEADCODE_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.affected_packages != '') && github.event.pull_request.head.repo.fork != true }}
+      DEADCODE_SELECTED: ${{ matrix.unit == 'deadcode' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.affected_packages != '') && github.event.pull_request.head.repo.fork != true }}
       # The routed marker suite is opt-in locally but mandatory on the hosted
       # container worker whenever the gate selects its flag.
-      CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true') }}
+      CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'container' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true') }}
     outputs:
       # Single-writer: the runner skips an output whose expression is the empty string
       # (actions/runner JobExtension.cs:789-805), so a unit that did not run contributes
@@ -587,7 +587,7 @@ jobs:
             --summary-title "job-correlation integration"
 
       - name: Test JVM module
-        if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.jvm_tests == 'true')
+        if: matrix.unit == 'jvm' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.jvm_tests == 'true')
         run: nix develop .#jvm --command just test-jvm
       # These assert the Playwright config by executing it, so they need the installed pnpm
       # workspace and not just a `node` binary. The `python` payload restores no node_modules,
@@ -843,6 +843,8 @@ jobs:
           FLAG_COMMITLINT_EXPECTED: ${{ needs.changes.outputs.commitlint_expected }}
           FLAG_FRONTEND_SMOKE: ${{ needs.changes.outputs.frontend_smoke }}
           FLAG_OTEL_COLLECTOR: ${{ needs.changes.outputs.otel_collector }}
+          FLAG_JVM_TESTS: ${{ needs.changes.outputs.jvm_tests }}
+          FLAG_DEADCODE: ${{ env.DEADCODE_SELECTED }}
         run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary report worker "$GITHUB_STEP_SUMMARY"
 
 

@@ -964,7 +964,7 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
     assert scoped["protected_main_smoke"] == "false"
     assert scoped["lint_python"] == "true"
     assert scoped["nix"] == "false"
-    assert json.loads(scoped["worker_units"]) == ["python", "frontend"]
+    assert json.loads(scoped["worker_units"]) == ["python", "frontend", "deadcode"]
     assert (
         set(scoped.values())
         - {
@@ -973,7 +973,7 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
             "standard",
             "lib-a,svc-b",
             "lib-a",
-            '["python","frontend"]',
+            '["python","frontend","deadcode"]',
         }
         == set()
     )
@@ -988,7 +988,7 @@ def test_render_outputs_serializes_flags_packages_and_event_contract() -> None:
     assert broad["standard"] == "false"
     assert broad["broad"] == broad["full"] == "true"
     assert all(broad[name] == "false" for name in FLAG_NAMES)
-    assert json.loads(broad["worker_units"]) == ["python", "frontend"]
+    assert json.loads(broad["worker_units"]) == ["python", "frontend", "container", "jvm", "deadcode"]
 
 
 def test_pnpm_manifest_breach_emits_both_payload_legs() -> None:
@@ -1005,7 +1005,7 @@ def test_pnpm_manifest_breach_emits_both_payload_legs() -> None:
     outputs = render_outputs(decision, selected_test_packages(decision, packages), "pull_request")
 
     assert decision.commit_class is CommitClass.STANDARD
-    assert json.loads(outputs["worker_units"]) == ["python", "frontend"]
+    assert json.loads(outputs["worker_units"]) == ["python", "frontend", "container", "deadcode"]
 
 
 def test_protected_main_smoke_emits_only_the_cache_writing_payload_leg() -> None:

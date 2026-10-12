@@ -456,7 +456,7 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     worker = jobs["worker"]
     frontend_steps = worker["steps"]
     assert worker["env"]["CONTAINER_CONTRACTS_SELECTED"] == (
-        "${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' "
+        "${{ matrix.unit == 'container' && needs.changes.outputs.protected_main_smoke != 'true' "
         "&& needs.changes.outputs.title_only != 'true' && "
         "(needs.changes.outputs.broad_unbounded == 'true' || "
         "needs.changes.outputs.container_contracts == 'true') }}"

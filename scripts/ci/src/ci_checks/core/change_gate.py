@@ -304,7 +304,7 @@ def selected_test_packages(decision: GateDecision, packages: dict[str, Package])
     return tuple(sorted(name for name in selected if name in packages and packages[name].has_tests))
 
 
-_WORKER_UNIT_ORDER = ("python", "frontend")
+_WORKER_UNIT_ORDER = ("python", "frontend", "container", "jvm", "deadcode")
 
 
 def _worker_units(decision: GateDecision, outputs: dict[str, str]) -> tuple[str, ...]:
@@ -321,6 +321,8 @@ def _worker_units(decision: GateDecision, outputs: dict[str, str]) -> tuple[str,
     }
     # Every substantive worker run scans either the changed content or the repository.
     selected.add("frontend")
+    if decision.commit_class is CommitClass.BROAD or decision.affected:
+        selected.add("deadcode")
     return tuple(unit for unit in _WORKER_UNIT_ORDER if unit in selected)
 
 
