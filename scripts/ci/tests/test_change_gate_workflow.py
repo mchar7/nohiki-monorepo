@@ -312,7 +312,7 @@ _CONTAINER_EXECUTORS = {
 # selected by the decision, and never emits a third hygiene runner.
 _STANDARD_EXECUTORS = dict.fromkeys(FLAG_NAMES, "worker") | _CONTAINER_EXECUTORS
 _BROAD_EXECUTORS = _STANDARD_EXECUTORS
-_WORKER_UNITS = ["python", "frontend"]
+_WORKER_UNITS = ["python", "frontend", "container", "jvm", "deadcode"]
 _NON_EXECUTOR_JOB_IDS = {
     "changes",
     "checks",
@@ -491,7 +491,6 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Lint workflows",
             "Lint Dockerfiles (hadolint)",
             "Scan repository for secrets",
-            "Check selected dead code",
             "Check dependencies",
             "Scan architecture",
             "Check build backends",
@@ -499,8 +498,6 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Check image matrix parity",
             "Check proto compatibility",
             "Run Node workspace contract tests",
-            "Run Skylos cache contract tests",
-            "Test JVM module",
             "Lint Markdown",
             "Lint frontend",
             "Check i18n keys",
@@ -511,11 +508,15 @@ def test_one_job_definition_owns_each_lane_across_both_classes() -> None:
             "Test edge worker",
             "Validate PR commit messages",
             "Validate PR title (merge commit subject)",
+        },
+        "container": {
             "Build production frontend image",
             "Smoke production frontend container",
             "Validate OpenTelemetry collector image and configs",
             "Run container contract tests",
         },
+        "jvm": {"Test JVM module"},
+        "deadcode": {"Check selected dead code", "Run Skylos cache contract tests"},
         "python": {
             "Typecheck backend",
             "Check import boundaries",
@@ -620,7 +621,7 @@ def test_execution_attestations_are_not_scoped_to_one_commit_class() -> None:
     )
 
     container_selector = str(_jobs()["worker"]["env"]["CONTAINER_CONTRACTS_SELECTED"])
-    assert "matrix.unit == 'frontend'" in container_selector
+    assert "matrix.unit == 'container'" in container_selector
     assert referenced_flags(str(env["CONTAINER_EXPECTED"])) == referenced_flags(container_selector)
 
 
@@ -749,12 +750,12 @@ def test_backend_typecheck_keeps_gate_trigger_parity_and_executes_once() -> None
                 assert execution_count == int(triggered_before), outputs
 
 
-def test_jvm_tests_run_once_on_the_frontend_worker_with_the_pinned_shell() -> None:
+def test_jvm_tests_run_once_on_the_jvm_worker_with_the_pinned_shell() -> None:
     worker = _jobs()["worker"]
     step = next(step for step in _steps(worker) if step.get("name") == "Test JVM module")
     condition = str(step["if"])
 
-    assert "matrix.unit == 'frontend'" in condition
+    assert "matrix.unit == 'jvm'" in condition
     assert "matrix.unit == 'python'" not in condition
     assert "needs.changes.outputs.broad_unbounded == 'true'" in condition
     assert condition.endswith("needs.changes.outputs.jvm_tests == 'true')")
@@ -1803,8 +1804,8 @@ def _selector_holds(
 
     def atom_holds(atom: str) -> bool:
         atom = atom.strip()
-        if atom == "matrix.unit == 'frontend'":
-            return unit == "frontend"
+        if atom.startswith("matrix.unit == '"):
+            return atom == f"matrix.unit == '{unit}'"
         if atom == "github.event.pull_request.head.repo.fork != true":
             return not fork
         match = re.fullmatch(r"needs\.changes\.outputs\.(\w+) (==|!=) '([^']*)'", atom)
@@ -1866,7 +1867,8 @@ def test_deadcode_selector_follows_the_router_for_markdown_and_code(
     outputs = render_outputs(decision, selected_test_packages(decision, packages), "pull_request")
     expression = str(_jobs()["worker"]["env"]["DEADCODE_SELECTED"])
 
-    assert str(_selector_holds(expression, outputs, unit="frontend", fork=False)).lower() == selected
+    assert str(_selector_holds(expression, outputs, unit="deadcode", fork=False)).lower() == selected
+    assert ("deadcode" in json.loads(outputs["worker_units"])) == (selected == "true")
 
 
 def test_cache_summaries_use_observed_action_outputs() -> None:
