@@ -297,12 +297,11 @@ just ast-query <kind>                 # Query symbols by kind
 
 The configured hooks are:
 
-- **Commit message:** Conventional Commit validation (`commitlint`) and the internal-reference check.
+- **Commit message:** Conventional Commit validation (`commitlint`).
 - **Pre-commit:** Python Ruff lint and format, frontend Biome lint and format, protobuf lint, Markdown lint,
   frontend i18n validation, staged-secret scanning, GitHub Actions lint, and Dockerfile lint. Lefthook skips this
   hook during merges and rebases.
 - **Pre-push:**
-  - Internal-reference range validation
   - Python lint
   - Python format
   - Python typecheck
@@ -320,6 +319,8 @@ The configured hooks are:
   - API schema freshness
   - Image matrix parity
   - Protobuf breaking-change detection
+
+#### Pre-push selection
 
 The installed pre-push wrapper invokes the pinned Lefthook binary with `--force`, but that flag does **not** make
 every job above run. The wrapper's Lefthook pass runs exactly one job, an envelope that acquires the gate lock and
@@ -366,11 +367,15 @@ deadline, then re-reports every `NOHIKI_GATE_LOCK_NOTICE_INTERVAL` (60s). Waitin
 rather than busy and fails with exit 75. The queue also fails, with exit 70, rather than proceeding unserialised if
 its lock directory is removed underneath it.
 
-A holder that dies mid-gate releases its slot immediately, including under `SIGKILL`. The body runs with the lock
-descriptor closed (`9>&-`), so the kernel drops the `flock` with the holder's shell and no orphaned descendant can
-inherit it; the only residue is a stale holder metadata file, which the next arrival reclaims by PID liveness. There
-is no stale lock to clear by hand. The deliberate trade is the reverse case: killing a holder frees its slot while
-its orphaned body may still be running, so the machine can briefly carry one gate more than the bound.
+A holder that dies mid-gate releases its slot immediately, including under `SIGKILL`.
+The gate body runs with the lock descriptor closed (`9>&-`).
+The kernel releases the `flock` when the holder's shell dies.
+No orphaned descendant can inherit the lock.
+A stale holder metadata file remains.
+The next arrival reclaims that file by checking PID liveness.
+No stale lock requires manual removal.
+The trade-off is that an orphaned gate body can still run after its holder dies and frees the slot.
+The machine can briefly run 1 gate more than the configured bound.
 
 Hooks remain client-side. `git push --no-verify` bypasses the pre-push hook completely, before the wrapper can run;
 no client-side wrapper can prevent that. Use it only as a deliberate exception, knowing that it skips all local
@@ -386,7 +391,7 @@ timeout and reporting described under **Git hooks (Lefthook)** are all implement
 `scripts/dev/env-lock.sh`.
 
 GitHub Actions uses `.github/workflows/checks.yml` for lint, commitlint, and pre-push parity; its `changes` job
-change-gates every lane through `ci-checks gate` (dependency-graph package scoping, fail-closed on unmapped files)
+change-gates each check through `ci-checks gate` (dependency-graph package scoping, fail-closed on unmapped files)
 and records the verdict in the run's step summary. Container builds and pushes live in
 `.github/workflows/build-push.yml`; `.github/workflows/digest-freshness.yml` probes pinned base-image digests weekly;
 there is no `test.yml` workflow.
@@ -422,40 +427,10 @@ def get(id: str) -> Item | None: ...
 def run[T: BaseModel](output_type: type[T]) -> T: ...
 ```
 
-### Modern Python Patterns (mandatory)
+### Concurrency
 
-```python
-# match-case instead of if-elif chains
-match status:
-    case Status.ACTIVE: handle_active()
-    case _: handle_unknown()
-
-# Walrus operator to reduce nesting
-if user := await get_user(uid):
-    return user
-
-# TaskGroup for 2+ concurrent tasks (NOT asyncio.gather)
-async with asyncio.TaskGroup() as tg:
-    t1 = tg.create_task(fetch_a())
-    t2 = tg.create_task(fetch_b())
-# Single task: just await directly, never TaskGroup for one task (SonarQube S7513)
-
-# Dict merge operators (not {**a, **b} or .update())
-config = defaults | overrides
-params |= extra
-```
-
-### Frozen Dataclasses
-
-When mutating `@dataclass(frozen=True)` in tests, use `setattr()`:
-
-```python
-# ✅ CORRECT
-setattr(record, "field_name", new_value)
-
-# ❌ WRONG (raises FrozenInstanceError)
-record.field_name = new_value
-```
+Use `asyncio.TaskGroup` for concurrent tasks so failures cancel related work.
+Await a single task directly.
 
 ### Imports
 
@@ -465,15 +440,13 @@ from nohiki.job.listing.v1 import ListingCreated, ListingSnapshot
 from nohiki.common.v1 import EventMetadata
 from nohiki_domain_utils import BetterprotoEnumAdapter, parse_enum_string
 
-# ❌ FORBIDDEN
-from nohiki_grpc_stubs import listing_pb2      # No gRPC stubs
-from google.protobuf import timestamp_pb2       # Use datetime directly
+# Domain events use betterproto2 types, not gRPC stubs or google.protobuf types.
 ```
 
 ### Docstrings
 
-All public functions/classes must have Google-style docstrings with Args/Returns/Raises sections.
-Type hints go in the signature, not duplicated in docstrings. Private helpers are optional.
+Document public API behavior, constraints, and errors that the signature does not express.
+Keep type hints in the signature.
 
 ### Build Backend
 
@@ -850,7 +823,8 @@ just test-all-e2e  # Both
 
 - **user-auth-service**: RS256 JWT with JWKS at `/.well-known/jwks.json`; HttpOnly cookies; producer-only (no Kafka consumers)
 - **skill-graph-service**: Skill normalization/deduplication; canonical skill graph + aliases; Qdrant for skill similarity
-- **job-correlation-evaluation-service**: ML scoring pipeline; snapshot ledgers from ECST; L2R features + FeatureComposer
+- **job-correlation-evaluation-service**: Semantic retrieval and deterministic fit ranking; snapshot ledgers from ECST;
+  offline LightGBM tooling
 - **doc-template-service**: Gotenberg PDF generation; seeds default templates with distributed lock; S3 storage
 - **notification-service**: Template-driven; token bucket rate limiting; Resend/SendGrid; outbox + worker
 - **doc-content-service**: LLM resume/cover letter generation; consumes generation commands + correlations
@@ -864,19 +838,12 @@ just test-all-e2e  # Both
 5. Commit (hooks auto-run ruff, Biome, markdownlint, buf lint, gitleaks, actionlint, and hadolint)
 6. Push (hooks auto-run ty, pytest, hygiene, strict deadcode, backend build checks, and proto breaking)
 
-## Important Notes
+## Data and generated-code contracts
 
-- **No `type: ignore`**: fix the actual type issue
-- **No `Any`**: use specific types, generics, or protocols
-- **No `{**a, **b}` dict merge**: use `a | b`
-- **No `asyncio.gather` for 2+ tasks**: use `asyncio.TaskGroup`
-- **No TaskGroup for a single task**: just `await` directly (SonarQube S7513)
-- **No raw `pytest` or `python`**: always `uv run pytest` / `uv run python`
-- **No `uv pip install`**: edit `pyproject.toml` + `uv sync`
-- **No build backends other than `uv_build`**: canonical `[build-system]` stanza enforced by `just hygiene-build-backend-strict`
-- **No secrets committed**: use `infra/shared/secrets/` (gitignored)
-- **Never commit ignored local scratch state**
-- **No `_pb2` imports**: use `from nohiki.domain.v1 import ...` (betterproto2)
+Store secrets in `infra/shared/secrets/` (gitignored).
+Do not commit ignored local scratch files.
+Import domain events from `nohiki.domain.v1` using betterproto2, not `_pb2` modules.
+
 - **Qdrant lifecycle-owner direct writes**: application-data mutations use `nohiki-qdrant-client`
   in the entity lifecycle owner only (jobs → `job-storage-service`, profiles → `user-pref-service`,
   skills/occupations → `skill-graph-service`). Collection/index/alias bootstrap remains infra/admin.
@@ -888,9 +855,9 @@ For detailed domain-specific information beyond this guide:
 
 - **Kafka topics**: Full topic registry in `backend/libs/nohiki-kafka-client/src/nohiki_kafka_client/topics.py`
 - **Observability**: OTel, structured logging, Prometheus metrics, Grafana dashboards (`backend/libs/nohiki-observability/`)
-- **ML pipeline**: 4-stage scoring (MUVERA ANN → ColBERT MaxSim → LLM Rerank → L2R), LightGBM LambdaMART (`backend/services/job-correlation-evaluation-service/`)
+- **Scoring pipeline**: MUVERA ANN → ColBERT MaxSim → deterministic fit ranking; LightGBM scripts are offline tooling (`backend/services/job-correlation-evaluation-service/`)
 - **ML encoders**: ColBERT, MUVERA, sparse encoders (`backend/libs/nohiki-ml-core/`)
 - **Embedding manifests**: Semantic representation IDs (`backend/libs/nohiki-ml-manifest/`)
-- **LLM client**: PydanticAI agent, retry, cost tracking, caching, eval framework (`backend/libs/nohiki-llm-client/`)
+- **LLM client**: PydanticAI, retry, cost tracking, caching, eval framework (`backend/libs/nohiki-llm-client/`)
 - **FastAPI conventions**: Health probes, JWT, CSRF, rate limiting, canonical service init (`backend/libs/nohiki-fastapi-utils/`)
 - **Container images**: `nohiki-{service-name}:latest` naming; `just build <service>` / `just build-all`

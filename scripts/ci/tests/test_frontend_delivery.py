@@ -217,8 +217,10 @@ def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
                 "--read-only",
                 "--env",
                 f"BFF_UPSTREAM=http://{upstream}:8081",
+                # A host-IP-scoped ephemeral port can lose to a sibling container bound on 0.0.0.0, so the
+                # daemon picks the port on all interfaces and the test reads it back below.
                 "--publish",
-                "127.0.0.1::8080" if _daemon_host() is None else "8080",
+                "8080",
                 image,
             ],
             check=True,
@@ -268,6 +270,9 @@ def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
         ).stdout.strip()
         assert runtime_user == "999:999"
         assert read_only.lower() == "true"
+    except subprocess.CalledProcessError as error:
+        message = f"{error}\nstdout:\n{error.stdout}\nstderr:\n{error.stderr}"
+        raise AssertionError(message) from error
     finally:
         subprocess.run(
             [runtime, "rm", "--force", frontend, upstream],
@@ -451,7 +456,7 @@ def test_checks_workflow_consolidates_container_contracts_without_playwright(
     worker = jobs["worker"]
     frontend_steps = worker["steps"]
     assert worker["env"]["CONTAINER_CONTRACTS_SELECTED"] == (
-        "${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' "
+        "${{ matrix.unit == 'container' && needs.changes.outputs.protected_main_smoke != 'true' "
         "&& needs.changes.outputs.title_only != 'true' && "
         "(needs.changes.outputs.broad_unbounded == 'true' || "
         "needs.changes.outputs.container_contracts == 'true') }}"

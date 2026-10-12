@@ -40,6 +40,7 @@ jobs:
       title_timeout_minutes: ${{ steps.route.outputs.title_timeout_minutes }}
       checks_timeout_minutes: ${{ steps.route.outputs.checks_timeout_minutes }}
       protected_main_smoke: ${{ steps.gate.outputs.protected_main_smoke }}
+      docs_only: ${{ steps.gate.outputs.docs_only }}
       full: ${{ steps.gate.outputs.full }}
       nix: ${{ steps.gate.outputs.nix }}
       lint_python: ${{ steps.gate.outputs.lint_python }}
@@ -287,13 +288,13 @@ jobs:
     env:
       NIX_SETUP_SELECTED: ${{ needs.changes.outputs.broad == 'true' || needs.changes.outputs.protected_main_smoke == 'true' || needs.changes.outputs.nix == 'true' || needs.changes.outputs.lint_python == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.lint_proto == 'true' || needs.changes.outputs.lint_workflows == 'true' || needs.changes.outputs.lint_docker == 'true' || needs.changes.outputs.container_contracts == 'true' || needs.changes.outputs.typecheck_backend == 'true' || needs.changes.outputs.build_backend == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.python_any == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.frontend_smoke == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.otel_collector == 'true' || needs.changes.outputs.hygiene == 'true' || needs.changes.outputs.api_schema_freshness == 'true' || needs.changes.outputs.image_matrix_parity == 'true' || needs.changes.outputs.proto_breaking == 'true' || needs.changes.outputs.jvm_tests == 'true' }}
       NODE_SETUP_SELECTED: ${{ needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.commitlint_expected == 'true' || needs.changes.outputs.lint_markdown == 'true' || needs.changes.outputs.lint_frontend == 'true' || needs.changes.outputs.lint_steiger == 'true' || needs.changes.outputs.typecheck_frontend == 'true' || needs.changes.outputs.frontend_tests == 'true' || needs.changes.outputs.node_workspace_contracts == 'true' || needs.changes.outputs.edge_worker == 'true' || needs.changes.outputs.api_schema_freshness == 'true') }}
-      DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.lint_markdown == 'true' && needs.changes.outputs.affected_packages == '' }}
+      DOCS_ONLY: ${{ needs.changes.outputs.standard == 'true' && needs.changes.outputs.docs_only == 'true' }}
       SKYLOS_CACHE_DIR: ${{ github.workspace }}/.skylos
       # One selector for the deploy key, the static cache and the scan, so the three cannot drift.
-      DEADCODE_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || needs.changes.outputs.affected_packages != '') && github.event.pull_request.head.repo.fork != true }}
+      DEADCODE_SELECTED: ${{ matrix.unit == 'deadcode' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad == 'true' || (needs.changes.outputs.hygiene == 'true' && needs.changes.outputs.affected_packages != '')) && github.event.pull_request.head.repo.fork != true }}
       # The routed marker suite is opt-in locally but mandatory on the hosted
       # container worker whenever the gate selects its flag.
-      CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true') }}
+      CONTAINER_CONTRACTS_SELECTED: ${{ matrix.unit == 'container' && needs.changes.outputs.protected_main_smoke != 'true' && needs.changes.outputs.title_only != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.container_contracts == 'true') }}
     outputs:
       # Single-writer: the runner skips an output whose expression is the empty string
       # (actions/runner JobExtension.cs:789-805), so a unit that did not run contributes
@@ -453,7 +454,10 @@ jobs:
             2>&1 | tee lint-results/buf.log
           status=${PIPESTATUS[0]}
           ((status == 0)) && rm lint-results/buf.log
-          exit "$status"
+          # The generator that consumes proto/ has no workspace package, so this
+          # lane is the only hosted executor for its unit tests.
+          ((status == 0)) || exit "$status"
+          nix develop .#ci --command just proto-gen-test
 
       - name: Lint workflows
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.lint_workflows == 'true')
@@ -587,7 +591,7 @@ jobs:
             --summary-title "job-correlation integration"
 
       - name: Test JVM module
-        if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.jvm_tests == 'true')
+        if: matrix.unit == 'jvm' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.jvm_tests == 'true')
         run: nix develop .#jvm --command just test-jvm
       # These assert the Playwright config by executing it, so they need the installed pnpm
       # workspace and not just a `node` binary. The `python` payload restores no node_modules,
@@ -620,9 +624,9 @@ jobs:
       - name: Lint edge worker
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.edge_worker == 'true')
         run: |
-          mkdir -p lint-results
+          mkdir -p lint-results-edge-worker
           pnpm --filter @nohiki/auth-listings-worker exec biome ci --reporter=sarif src/ \
-            > "$GITHUB_WORKSPACE/lint-results/biome-edge-worker.sarif"
+            > "$GITHUB_WORKSPACE/lint-results-edge-worker/biome.sarif"
 
       - name: Typecheck edge worker
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.edge_worker == 'true')
@@ -768,7 +772,7 @@ jobs:
 
       - name: Detect code scanning availability
         id: code-scanning
-        if: always() && matrix.unit == 'frontend' && hashFiles('lint-results/*.sarif') != ''
+        if: always() && matrix.unit == 'frontend' && hashFiles('lint-results/*.sarif', 'lint-results-edge-worker/*.sarif') != ''
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY_PUBLIC: ${{ github.event.repository && github.event.repository.private == false }}
@@ -781,18 +785,31 @@ jobs:
           echo "available=$available" >> "$GITHUB_OUTPUT"
 
       - name: Upload lint diagnostics
-        if: always() && steps.code-scanning.outputs.available == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: always() && steps.code-scanning.outputs.available == 'true' && hashFiles('lint-results/*.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           sarif_file: lint-results
           category: lint/${{ matrix.unit }}
           wait-for-processing: false
 
+      # Two biome runs in one category are rejected, so the edge worker uploads on its own.
+      - name: Upload edge worker lint diagnostics
+        if: always() && steps.code-scanning.outputs.available == 'true' && hashFiles('lint-results-edge-worker/*.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: lint-results-edge-worker
+          category: lint/edge-worker
+          wait-for-processing: false
+
       - name: Summarize lint diagnostics
         if: always() && matrix.unit == 'frontend'
-        run: >
-          nix develop .#ci --command uv run --no-sync ci-checks lint-report
-          --directory lint-results --summary "$GITHUB_STEP_SUMMARY"
+        run: |
+          nix develop .#ci --command uv run --no-sync ci-checks lint-report \
+            --directory lint-results --summary "$GITHUB_STEP_SUMMARY"
+          if [[ -d lint-results-edge-worker ]]; then
+            nix develop .#ci --command uv run --no-sync ci-checks lint-report \
+              --directory lint-results-edge-worker --summary "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Report worker cost
         if: always()
@@ -830,6 +847,8 @@ jobs:
           FLAG_COMMITLINT_EXPECTED: ${{ needs.changes.outputs.commitlint_expected }}
           FLAG_FRONTEND_SMOKE: ${{ needs.changes.outputs.frontend_smoke }}
           FLAG_OTEL_COLLECTOR: ${{ needs.changes.outputs.otel_collector }}
+          FLAG_JVM_TESTS: ${{ needs.changes.outputs.jvm_tests }}
+          FLAG_DEADCODE: ${{ env.DEADCODE_SELECTED }}
         run: python3 scripts/ci/src/ci_checks/checks/workflow.py summary report worker "$GITHUB_STEP_SUMMARY"
 
 

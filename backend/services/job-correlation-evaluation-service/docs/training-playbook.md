@@ -1,13 +1,13 @@
-# L2R Model Training Playbook
+# Offline L2R Model Training Playbook
 
-This document provides operational guidance for training, evaluating, and deploying
-Learning-to-Rank (L2R) models for the job correlation evaluation service.
+These LightGBM scripts train and evaluate model artifacts offline.
+The running scoring pipeline uses semantic retrieval and deterministic fit ranking, not these models.
+Stage 3 LLM reranking is disabled.
+`deploy_model.py` updates local artifact metadata and optionally copies files; it does not activate a runtime scoring model.
 
 ## Overview
 
-The L2R model is a LightGBM LambdaMART ranker that produces final correlation scores
-from a 32-feature input vector. The model is trained on user feedback data collected
-through the feedback service.
+The offline ranker trains LightGBM LambdaMART from a 32-feature vector and exported user feedback.
 
 ### Model Components
 
@@ -36,13 +36,13 @@ through the feedback service.
 
 ## Scripts
 
-All scripts are located in `backend/job-correlation-evaluation-service/scripts/`:
+All scripts are located in `backend/services/job-correlation-evaluation-service/scripts/`:
 
 | Script | Purpose |
 | -------- | --------- |
 | `train_l2r_model.py` | Train new model from feedback data |
 | `evaluate_model.py` | Evaluate model performance |
-| `deploy_model.py` | Deploy model version to production |
+| `deploy_model.py` | Manage offline model versions and copy artifacts |
 
 ## Training Workflow
 
@@ -51,19 +51,16 @@ All scripts are located in `backend/job-correlation-evaluation-service/scripts/`
 Before training, verify sufficient feedback data exists:
 
 ```bash
-cd backend/job-correlation-evaluation-service
+cd backend/services/job-correlation-evaluation-service
 
-# Check feedback statistics via API
-curl http://localhost:8000/api/v1/feedback/stats
-
-# Or export training data to verify
-uv run python scripts/train_l2r_model.py --min-samples 100 --dry-run
+# Read the available training options.
+uv run python scripts/train_l2r_model.py --help
 ```
 
 ### Step 2: Train New Model
 
 ```bash
-cd backend/job-correlation-evaluation-service
+cd backend/services/job-correlation-evaluation-service
 
 # Standard training (minimum 1000 samples)
 uv run python scripts/train_l2r_model.py \
@@ -85,7 +82,7 @@ uv run python scripts/train_l2r_model.py \
 
 ### Step 3: Evaluate Model
 
-Compare the new model against the production model:
+Compare a candidate against an existing offline model:
 
 ```bash
 # Export test data (hold out from training)
@@ -103,52 +100,41 @@ uv run python scripts/evaluate_model.py \
   --test-data test_data.json
 ```
 
-### Step 4: Deploy Model
+### Step 4: Set the Offline Artifact Version
 
-Once satisfied with the new model's performance:
+Use the script's subcommands to update artifact metadata without changing the running scoring pipeline:
 
 ```bash
 # List available versions
-uv run python scripts/deploy_model.py --list
+uv run python scripts/deploy_model.py list
 
 # Deploy new version (dry run first)
-uv run python scripts/deploy_model.py \
-  --version v20251221_120000 \
+uv run python scripts/deploy_model.py deploy \
+  v20251221_120000 \
   --dry-run
 
 # Deploy for real
-uv run python scripts/deploy_model.py \
-  --version v20251221_120000
+uv run python scripts/deploy_model.py deploy \
+  v20251221_120000
 
 # Copy to deployment directory
-uv run python scripts/deploy_model.py \
-  --version v20251221_120000 \
+uv run python scripts/deploy_model.py deploy \
+  v20251221_120000 \
   --deploy-dir /app/models
 ```
 
-### Step 5: Verify Deployment
+### Step 5: Verify Offline Artifacts
 
 ```bash
-# Verify files exist and load correctly
-uv run python scripts/deploy_model.py --verify
-
-# Trigger rolling restart of services
-kubectl rollout restart deployment job-correlation-evaluation-service
+uv run python scripts/deploy_model.py verify
 ```
 
-## Rollback Procedure
+## Offline Version Rollback
 
-If the new model performs poorly in production:
+Restore the previous artifact version in local metadata:
 
 ```bash
-# Rollback to previous version
-uv run python scripts/deploy_model.py --rollback
-
-# Or deploy a specific version
-uv run python scripts/deploy_model.py --version v20251220_100000
-
-# Restart services
-kubectl rollout restart deployment job-correlation-evaluation-service
+uv run python scripts/deploy_model.py rollback
 ```
 
 ## Evaluation Metrics
@@ -170,9 +156,9 @@ kubectl rollout restart deployment job-correlation-evaluation-service
 
 ### Quality Gates
 
-Before deploying a new model, verify:
+Before selecting an offline model, verify:
 
-1. **NDCG@10 >= current production model** (no regression)
+1. **NDCG@10 >= the baseline offline model** (no regression)
 2. **At least 1000 training samples** used
 3. **Feature importance is reasonable** (no single feature > 50%)
 4. **Model loads without errors**
@@ -244,12 +230,8 @@ Recommended training cadence:
 
 ## Monitoring
 
-After deploying a new model, monitor:
-
-1. **Correlation score distribution** - Should not shift dramatically
-2. **User feedback rates** - Applied/saved rates should improve
-3. **API latency** - Scoring time should remain stable
-4. **Error rates** - No increase in scoring failures
+For offline comparisons, inspect score distributions, ranking metrics, and feature importance.
+These artifacts do not change runtime scoring behavior.
 
 ## Troubleshooting
 
@@ -299,13 +281,10 @@ Model file not found: models/l2r_lightgbm_v20251221.txt
 
 ## File Locations
 
-| Environment | Model Path | Config |
-| ------------- | ------------ | -------- |
-| Development | `./models/` | `SCORING_L2R_MODEL_PATH` |
-| Docker | `/app/models/` | ENV in Dockerfile |
-| Kubernetes | ConfigMap mount | Helm values |
+Scripts default to `./models/` relative to the service directory.
+Use each script's `--help` output to set an explicit artifact directory.
+No runtime model mount or model-path setting activates these artifacts.
 
-## Contact
+## Support
 
-For issues with the training pipeline, contact the ML team or file an issue
-in the repository.
+File training-tool issues in the [repository issue tracker](https://github.com/mchar7/nohiki-monorepo/issues).
