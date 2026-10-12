@@ -11,7 +11,9 @@ import ast
 import tomllib
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import cache
 from pathlib import Path
+from typing import NamedTuple
 
 
 def _find_workspace_root(start: Path) -> Path:
@@ -119,10 +121,18 @@ def _pytest_test_roots(path: Path, config: dict[str, object]) -> tuple[Path, ...
     return (path / "tests",)
 
 
-def pytest_file_has_marker(path: Path, marker: str) -> bool:
-    """Return whether a Python test module contains ``pytest.mark.<marker>``."""
+class _FileVersion(NamedTuple):
+    """Identity of one file revision; a rewrite changes it, so a memo keyed on it never goes stale."""
+
+    path: Path
+    mtime_ns: int
+    size: int
+
+
+@cache
+def _module_has_marker(version: _FileVersion, marker: str) -> bool:
     try:
-        module = ast.parse(path.read_bytes(), filename=str(path))
+        module = ast.parse(version.path.read_bytes(), filename=str(version.path))
     except OSError, SyntaxError:
         return False
     return any(
@@ -134,6 +144,18 @@ def pytest_file_has_marker(path: Path, marker: str) -> bool:
         and node.value.value.id == "pytest"
         for node in ast.walk(module)
     )
+
+
+def pytest_file_has_marker(path: Path, marker: str) -> bool:
+    """Return whether a Python test module contains ``pytest.mark.<marker>``.
+
+    One process parses each file revision once: every package load scans all test modules.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    return _module_has_marker(_FileVersion(path.resolve(), stat.st_mtime_ns, stat.st_size), marker)
 
 
 def requires_docker_test_paths(path: Path, config: dict[str, object]) -> frozenset[str]:
