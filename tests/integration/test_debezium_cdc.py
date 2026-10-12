@@ -54,7 +54,7 @@ DEBEZIUM_CONNECT_IMAGE = (
 )
 CONNECTOR_CLASS = "io.debezium.connector.postgresql.PostgresConnector"
 # Connect scans every plugin directory before it serves REST; all 40 bundled connectors outlast the readiness budget.
-CONNECTOR_PLUGIN_DIR = "/kafka/connect/debezium-connector-postgresql"
+CONNECTOR_PLUGIN_DIR = "/kafka/connect/debezium-connector-postgres"
 CONNECT_API_READY_TIMEOUT_SECONDS = 15.0
 CONNECTOR_READY_TIMEOUT_SECONDS = 15.0
 PROBE_TIMEOUT_SECONDS = 1.0
