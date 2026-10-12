@@ -82,7 +82,7 @@ _WORKER_COMMANDS = (
     ("lint_proto", "frontend", "buf lint"),
     ("lint_workflows", "frontend", "actionlint; check-jsonschema"),
     ("lint_docker", "frontend", "hadolint (tracked Dockerfiles)"),
-    ("container_contracts", "frontend", "ci-checks tests all --scope all --requires-docker"),
+    ("container_contracts", "container", "ci-checks tests all --scope all --requires-docker"),
     ("lint_frontend", "frontend", "Biome; i18n:check"),
     ("lint_steiger", "frontend", "Steiger FSD architecture"),
     ("typecheck_backend", "python", "ty check native source surface"),
@@ -97,8 +97,10 @@ _WORKER_COMMANDS = (
     ("image_matrix_parity", "frontend", "just image-matrix-check"),
     ("proto_breaking", "frontend", "buf breaking"),
     ("commitlint_expected", "frontend", "commitlint PR range; commitlint PR title"),
-    ("frontend_smoke", "frontend", "Buildx production frontend image; hardened-runtime container smoke"),
-    ("otel_collector", "frontend", "OpenTelemetry collector image and rendered config validation"),
+    ("frontend_smoke", "container", "Buildx production frontend image; hardened-runtime container smoke"),
+    ("otel_collector", "container", "OpenTelemetry collector image and rendered config validation"),
+    ("jvm_tests", "jvm", "just test-jvm"),
+    ("deadcode", "deadcode", "just hygiene-deadcode-strict"),
 )
 
 
@@ -407,6 +409,9 @@ def render_open_summary(job: str, values: dict[str, str]) -> str:
         scopes = {
             "python": "the Python leg: the affected-package test closure.",
             "frontend": "the frontend leg: Node, hygiene and policy checks.",
+            "container": "the container leg: frontend image build, smoke and the routed container suite.",
+            "jvm": "the JVM leg: the Gradle module tests.",
+            "deadcode": "the dead-code leg: the Skylos scan of the affected closure.",
         }
         if unit not in scopes:
             msg = f"unknown worker unit: {unit}"

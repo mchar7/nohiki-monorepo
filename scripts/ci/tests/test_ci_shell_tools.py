@@ -133,6 +133,9 @@ def test_python_tests_use_the_named_python_payload_leg() -> None:
     assert json.loads(render_outputs(GateDecision(full=True), (), "push")["worker_units"]) == [
         "python",
         "frontend",
+        "container",
+        "jvm",
+        "deadcode",
     ]
     assert json.loads(render_outputs(GateDecision(), (), "pull_request")["worker_units"]) == ["frontend"]
     steps = {step["name"]: step for step in _steps(job) if "name" in step}
