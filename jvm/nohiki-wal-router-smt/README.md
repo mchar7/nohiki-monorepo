@@ -10,9 +10,6 @@ captures the WAL message; this SMT rewrites the Connect record so the topic,
 key, value, and headers match the canonical Nohiki event shape expected by
 downstream consumers.
 
-The `jvm` umbrella matches the repository's lowercase ecosystem umbrellas (`backend` and `typescript`)
-while naming the bytecode platform rather than one JVM source language.
-
 ## Contract
 
 ### Input: WAL message envelope (emitted by services)
@@ -72,20 +69,13 @@ sh infra/compose/scripts/preflight.sh build nohiki-cp-kafka-connect
 
 ## Dependencies
 
-All versions pinned to current stable releases:
+Dependency versions live in [`build.gradle.kts`](build.gradle.kts), not a separate documentation table.
+The module compiles with the pinned JDK and targets Java 21 bytecode for the Debezium runtime.
+Kafka Connect and SLF4J APIs are compile-only dependencies supplied by that runtime.
+Jackson is shaded and relocated to avoid runtime dependency conflicts.
 
-| Component | Version | Purpose |
-| ----------- | --------- | --------- |
-| Gradle | 9.6.1 | build tool |
-| JDK (build) | 25 (Alpine toolchain) | latest LTS for compiler/tooling |
-| JDK (bytecode target) | 21 (`--release 21`) | binary compat with Debezium runtime |
-| Shadow plugin | 9.4.1 | fat JAR with dependency relocation |
-| JaCoCo | 0.8.14 | coverage enforcement (≥ 95% line, ≥ 90% branch) |
-| Kafka Connect API | 4.1.0 (`compileOnly`) | matches Debezium 3.6 runtime |
-| jackson-jr-objects | 2.19.0 (shaded, ~106 KB) | prefix envelope JSON parsing |
-| JUnit BOM | 6.0.3 | test framework |
-| AssertJ core | 3.27.3 | test assertions |
-| SLF4J API | 2.0.17 (`compileOnly`) | logging facade provided by runtime |
+`just test-jvm` runs the module tests and JaCoCo verification.
+The coverage gate requires at least 95% line, 90% branch, and 95% instruction coverage.
 
 ## Connector configuration
 
