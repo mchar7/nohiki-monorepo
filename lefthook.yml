@@ -486,6 +486,16 @@ pre-push:
         - "scripts/ci/image_matrix.py"
       run: just image-matrix-check
 
+    - name: proto-gen-tests
+      skip: *unless_gate_active
+      glob:
+        - "proto/*"
+        - "proto/**/*"
+        - "scripts/proto_gen/*"
+        - "scripts/proto_gen/**/*"
+        - "Justfile"
+      run: just proto-gen-test
+
     # Phase 5: Proto Breaking Changes
     - name: proto-breaking
       skip: *unless_gate_active

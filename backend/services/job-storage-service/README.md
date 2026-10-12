@@ -1,6 +1,6 @@
 # Job Storage Service
 
-The canonical store for all job listings in Nohiki. This service sits at the centre of the job
+The canonical store for all job listings in Nohiki. This service sits at the center of the job
 domain: it receives scraped listings from the ingest pipeline, deduplicates them across sources and
 re-scrapes, persists the enriched record with pre-computed embeddings, and publishes CDC events that
 drive both the user-facing job feed (via BFF projections) and the ML scoring pipeline (via
@@ -41,7 +41,7 @@ from the last N days and streams them back in batches via the callback topic.
 - **`JOB_INGEST_ENRICHMENT_COMPLETED`** (`job-ingest.fct.enrichment-completed.v1`, `EnrichmentCompleted`):
   Carries the LLM-enriched `StoredListing` proto: structured skills, seniority, work arrangement,
   compensation, location, and pre-computed dense embeddings (skills and title vectors). The handler
-  runs cross-source deduplication using `dedup_hash` (SHA-256 of normalised title + company +
+  runs cross-source deduplication using `dedup_hash` (SHA-256 of normalized title + company +
   posted date), then either inserts or updates the canonical listing row, stores a version snapshot,
   and publishes `job-listing.cdc.listing-created.v1` (and `listing-updated.v1` on updates) via the
   outbox. Consumer group: same as above; idempotent via `UNIQUE` constraint on `dedup_hash`.
@@ -84,9 +84,9 @@ from the last N days and streams them back in batches via the callback topic.
 
 **Transactional outbox**: CDC and fact events (`listing-accepted`, `listing-created`,
 `listing-updated`, `listing-deleted`) are written to the `outbox` table in the
-same database transaction as the domain row change. Debezium's PostgreSQL connector reads the WAL
-and publishes to Kafka. This guarantees exactly-once delivery even if the service crashes after
-committing.
+same database transaction as the domain row change. The domain write and event capture commit atomically.
+Debezium reads the PostgreSQL WAL and delivers events to Kafka at least once; duplicate delivery is possible.
+Consumers must deduplicate events by event ID and make effects idempotent.
 
 **Two-phase deduplication**: Deduplication runs at two distinct stages. At discovery time, the
 service deduplicates by `listing_url` (same-source re-scrape detection) and by `raw_content_hash`
@@ -97,7 +97,7 @@ row). A cross-source match takes precedence over a URL match.
 **Backfill callback pattern**: The backfill handler streams results in configurable batches
 (default 50 per message, up to 500 listings total, looking back up to 30 days) to avoid producing
 Kafka messages that exceed size limits. `preserve_partition_order=False` lets multiple concurrent
-backfill requests proceed in parallel rather than serialising behind a single partition.
+backfill requests proceed in parallel rather than serializing behind a single partition.
 
 **Version history**: Before overwriting an enriched listing, the service snapshots the current row
 into `listing_versions` as a JSONB blob. This gives an immutable audit trail of how a listing's

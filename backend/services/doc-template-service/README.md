@@ -84,10 +84,11 @@ SYSTEM-scoped entries.
 ### Notable Patterns
 
 **Transactional outbox**: All four published event types go through the `outbox` table in `doc_template_schema`.
-Each handler writes the domain change and the outbox row in the same database transaction. Debezium
-captures the outbox row from the PostgreSQL WAL and routes it to the correct Kafka topic via the
-Outbox Event Router SMT. This guarantees exactly-once delivery even if the service crashes after
-the DB commit but before a hypothetical direct Kafka publish.
+Each handler writes the domain change and the outbox row in the same database transaction.
+The domain write and event capture commit atomically.
+Debezium captures the row from the PostgreSQL WAL and routes it through the Outbox Event Router SMT.
+CDC delivery is at least once; duplicate delivery is possible.
+Consumers must deduplicate events by event ID and make effects idempotent.
 
 **Render path: failure is a valid outcome**: The render handler publishes `DOC_TEMPLATE_RENDER_COMPLETED`
 with `FAILED` status for both `GenerationError` (template/schema/validation failures) and unexpected

@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 ENVRC = REPO_ROOT / ".envrc"
 FLAKE = REPO_ROOT / "flake.nix"
 README = REPO_ROOT / "README.md"

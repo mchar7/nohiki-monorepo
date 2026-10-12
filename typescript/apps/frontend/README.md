@@ -2,9 +2,10 @@
 
 React single-page app for the Nohiki web UI.
 
-The app talks to the backend through `/api`. In development, Vite proxies that path to the BFF
-(`VITE_API_PROXY_TARGET`, default `http://localhost:8000`). In deployed environments, Traefik
-and nginx route the same path to the backend services.
+The app talks to the backend through `/api`.
+In development, Vite proxies that path using `VITE_API_PROXY_TARGET`, defaulting to `http://localhost:8000`.
+Compose uses Traefik for BFF and auth routes; the frontend runs separately with Vite.
+Kubernetes uses kgateway for public routes. The frontend container serves static files with Caddy.
 
 ## Where things live
 
@@ -91,5 +92,5 @@ See `e2e/README.md` for page objects and journey helpers.
 pnpm build
 ```
 
-The build runs `pnpm type-check` and then `vite build`. The Docker image serves the built app
-with nginx.
+The build runs `pnpm type-check` and then `vite build`.
+The Docker image serves the built app with Caddy.
