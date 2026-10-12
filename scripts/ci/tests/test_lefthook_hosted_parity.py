@@ -1374,6 +1374,7 @@ _HOSTED_INVENTORY: dict[tuple[str, str], _HostedStep] = {
         "probes SARIF artifact transport availability, runs no tree check"
     ),
     ("worker", "Upload lint diagnostics"): _ARTIFACT,
+    ("worker", "Upload edge worker lint diagnostics"): _ARTIFACT,
     ("worker", "Summarize lint diagnostics"): _SUMMARY,
     ("worker", "Report worker cost"): _TIMING,
     # playwright-image: builds and smoke-tests the e2e runner image.

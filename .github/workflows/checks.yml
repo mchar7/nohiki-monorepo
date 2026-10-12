@@ -620,9 +620,9 @@ jobs:
       - name: Lint edge worker
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.edge_worker == 'true')
         run: |
-          mkdir -p lint-results
+          mkdir -p lint-results-edge-worker
           pnpm --filter @nohiki/auth-listings-worker exec biome ci --reporter=sarif src/ \
-            > "$GITHUB_WORKSPACE/lint-results/biome-edge-worker.sarif"
+            > "$GITHUB_WORKSPACE/lint-results-edge-worker/biome.sarif"
 
       - name: Typecheck edge worker
         if: matrix.unit == 'frontend' && needs.changes.outputs.protected_main_smoke != 'true' && (needs.changes.outputs.broad_unbounded == 'true' || needs.changes.outputs.edge_worker == 'true')
@@ -768,7 +768,7 @@ jobs:
 
       - name: Detect code scanning availability
         id: code-scanning
-        if: always() && matrix.unit == 'frontend' && hashFiles('lint-results/*.sarif') != ''
+        if: always() && matrix.unit == 'frontend' && hashFiles('lint-results/*.sarif', 'lint-results-edge-worker/*.sarif') != ''
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY_PUBLIC: ${{ github.event.repository && github.event.repository.private == false }}
@@ -781,18 +781,31 @@ jobs:
           echo "available=$available" >> "$GITHUB_OUTPUT"
 
       - name: Upload lint diagnostics
-        if: always() && steps.code-scanning.outputs.available == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: always() && steps.code-scanning.outputs.available == 'true' && hashFiles('lint-results/*.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           sarif_file: lint-results
           category: lint/${{ matrix.unit }}
           wait-for-processing: false
 
+      # Two biome runs in one category are rejected, so the edge worker uploads on its own.
+      - name: Upload edge worker lint diagnostics
+        if: always() && steps.code-scanning.outputs.available == 'true' && hashFiles('lint-results-edge-worker/*.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: lint-results-edge-worker
+          category: lint/edge-worker
+          wait-for-processing: false
+
       - name: Summarize lint diagnostics
         if: always() && matrix.unit == 'frontend'
-        run: >
-          nix develop .#ci --command uv run --no-sync ci-checks lint-report
-          --directory lint-results --summary "$GITHUB_STEP_SUMMARY"
+        run: |
+          nix develop .#ci --command uv run --no-sync ci-checks lint-report \
+            --directory lint-results --summary "$GITHUB_STEP_SUMMARY"
+          if [[ -d lint-results-edge-worker ]]; then
+            nix develop .#ci --command uv run --no-sync ci-checks lint-report \
+              --directory lint-results-edge-worker --summary "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Report worker cost
         if: always()
