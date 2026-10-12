@@ -1671,6 +1671,14 @@ def test_lint_diagnostics_are_uploaded_and_summarized_with_least_privilege() -> 
         "category": "lint/${{ matrix.unit }}",
         "wait-for-processing": False,
     }
+    edge_upload = steps["Upload edge worker lint diagnostics"]
+    assert edge_upload["uses"] == upload["uses"]
+    assert edge_upload["with"] == {
+        "sarif_file": "lint-results-edge-worker",
+        "category": "lint/edge-worker",
+        "wait-for-processing": False,
+    }
+    assert "lint-results-edge-worker/biome.sarif" in steps["Lint edge worker"]["run"]
     summary = steps["Summarize lint diagnostics"]
     assert summary["if"] == "always() && matrix.unit == 'frontend'"
     assert "ci-checks lint-report" in summary["run"]
