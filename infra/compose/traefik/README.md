@@ -41,7 +41,6 @@ These files are automatically reloaded when changed (no restart required):
 - **950**: High-priority API routes (auth, specific user endpoints)
 - **900**: Standard API routes
 - **800**: Lower-priority API routes
-- **100**: Frontend catch-all (lowest priority)
 
 ### Service Routing
 
@@ -59,11 +58,10 @@ These files are automatically reloaded when changed (no restart required):
 
 **Note:** All other services are Kafka-only and not exposed via Traefik.
 
-#### Frontend
+#### Frontend development
 
-- **Base URL**: `http://nohiki-frontend:3000`
-- **Routes**: `/*` (catch-all)
-- **Auth**: Public access
+The frontend is not a Compose service. Run `pnpm --filter nohiki-frontend dev` on port `5173`.
+Vite proxies `/api` to Traefik; Traefik has no frontend catch-all route.
 
 ## Note on Service Architecture
 
@@ -75,15 +73,6 @@ Most backend services are Kafka-only (no HTTP endpoints). Only `bff-service` and
 Health checks are configured at the service level in the load balancer
 configuration rather than as separate routes. This provides better service
 discovery and health monitoring.
-
-## Benefits of This Configuration
-
-1. **Separation of Concerns**: Static vs dynamic configuration
-2. **Hot Reloading**: Route changes don't require container restarts
-3. **Maintainability**: Centralized routing logic in dedicated files
-4. **Version Control**: Better tracking of routing changes
-5. **Documentation**: Clear structure and comments
-6. **Debugging**: Easier to understand and troubleshoot routing issues
 
 ## Making Changes
 

@@ -6,9 +6,9 @@
 
 **Discover, organize, track, tailor, and evaluate job opportunities in one workspace.**
 
-Use Nohiki to gather postings, extract structured details with an LLM, compare them with your target profile through
-learning-to-rank scoring, and prepare tailored resume and cover-letter PDFs. You review the evidence and every document,
-choose which roles to pursue, and submit each application yourself.
+Use Nohiki to gather postings, extract structured details with an LLM, and compare them with your target profile.
+Semantic retrieval and deterministic fit ranking support tailored resume and cover-letter PDF preparation.
+You review the evidence and every document, choose which roles to pursue, and submit each application yourself.
 
 The architectural bet: backend services exchange domain work **only through Kafka**. HTTP business APIs exist at two
 edges (the BFF and auth service, both behind Traefik). Other services use HTTP only for internal health and metrics, so
@@ -50,7 +50,7 @@ flowchart LR
 | Job      | `job-ingest-schedule-service`        | Scrape scheduling                               |
 | Job      | `job-storage-service`                | Canonical job store with deduplication          |
 | Job      | `job-query-composition-service`      | Query composition over the job corpus           |
-| Job      | `job-correlation-evaluation-service` | ML scoring, matching, learning-to-rank          |
+| Job      | `job-correlation-evaluation-service` | Semantic retrieval, deterministic fit ranking   |
 | Doc      | `doc-template-service`               | Templates and PDF rendering via Gotenberg       |
 | Doc      | `doc-content-service`                | Resume and cover letter content generation      |
 | Doc      | `doc-process-service`                | Document parsing with Docling                   |
@@ -99,7 +99,9 @@ uv run alembic current
 | [`infra/terraform/`](infra/terraform/README.md)                   | OpenTofu configuration for Azure infrastructure                              |
 | [`tests/`](tests/README.md)                                       | Cross-service API tests and E2E journeys                                     |
 | [`scripts/`](scripts)                                             | CI check runner, ML data generation, utilities                               |
-| [`models/`](models)                                               | Tracked model artifacts for the ranking pipeline                             |
+| [`jvm/`](jvm/nohiki-wal-router-smt/README.md)                     | Kafka Connect WAL-routing SMT; `just test-jvm` runs tests and coverage gates |
+
+The JVM coverage gate requires 95% line, 90% branch, and 95% instruction coverage.
 
 ## Development
 
@@ -151,12 +153,11 @@ port map is in [`infra/compose/`](infra/compose/README.md).
 
 [`lefthook`](lefthook.yml) defines the local gate contract:
 
-- Commit-message hooks run commitlint and the internal-reference check.
+- Commit-message hooks run commitlint.
 - Pre-commit runs Python Ruff lint and format, frontend Biome lint and format, protobuf and Markdown lint, frontend i18n
   validation, staged-secret scanning, GitHub Actions lint, and Dockerfile lint. Lefthook skips pre-commit during merges
   and rebases.
 - Pre-push runs:
-  - Internal-reference range validation
   - Python lint, format, typecheck, and affected tests
   - Skylos cache tests
   - Node workspace contract tests
@@ -171,10 +172,12 @@ port map is in [`infra/compose/`](infra/compose/README.md).
   - Image matrix parity
   - Protobuf breaking-change detection
 
-The installed wrapper forces every pre-push job to run and prevents Lefthook environment variables from disabling a
-normal push. It cannot protect a hook that Git does not invoke: `git push --no-verify` bypasses pre-push completely.
-Measured full pre-push runs took about 180 seconds warm and 420 seconds cold, with strict dead-code analysis taking
-about 270 seconds of the cold run.
+The installed wrapper forces the pre-push envelope to run; inner jobs still obey their configured globs.
+See [CONTRIBUTING.md](CONTRIBUTING.md#git-hooks-lefthook) for selection rules.
+The wrapper prevents Lefthook environment variables from disabling a normal push.
+It cannot protect a hook that Git does not invoke: `git push --no-verify` bypasses pre-push completely.
+Measured full pre-push runs took about 180 seconds warm and 420 seconds cold.
+Strict dead-code analysis took about 270 seconds of the cold run.
 
 [CI](.github/workflows/checks.yml) distributes the corresponding gates across independent hosted runners. Contract tests
 keep the local and hosted surfaces aligned. CI also adds commit-message validation, a full-history secrets scan, and

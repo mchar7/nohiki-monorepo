@@ -377,15 +377,15 @@ dependencies = [
 
 ## Retrieval Pipeline Context
 
-The encoding layer for Nohiki's 4-stage retrieval pipeline:
+The encoding layer for Nohiki's semantic retrieval and deterministic fit-ranking pipeline:
 
 | Stage | Method | Encoder | Purpose |
 | ------- | -------- | --------- | --------- |
 | 1 -- ANN | Qdrant HNSW | `MLEncodingPipeline.encode_document/query` → MUVERA FDE | Fast approximate candidate retrieval (thousands of candidates → hundreds) |
 | 1 -- Hybrid | Qdrant sparse | `SparseEncoder` | Keyword-sensitive recall alongside MUVERA |
 | 2 -- Rerank | MaxSim | ColBERT tokens stored in Qdrant multivector | Precise late-interaction scoring of Stage 1 candidates |
-| 3 -- LLM Rerank | job-correlation service | -- | Top candidates re-scored by LLM |
-| 4 -- L2R | LightGBM LambdaMART | -- | Final ranking using composite feature vector |
+| 3 -- Disabled | -- | -- | The runtime pipeline rejects LLM reranking |
+| 4 -- Fit ranking | Deterministic scorer | -- | Final ranking from semantic relevance and available fit factors |
 
 `ml-compute-service` runs Stages 1 and 2 encoding. It receives `InternalComputeRequest` Kafka
 commands from `ml-gateway-service`, calls `MLEncodingPipeline`, and publishes the resulting
