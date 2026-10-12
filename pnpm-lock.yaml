@@ -8,7 +8,7 @@ overrides:
   '@opentelemetry/core': '>=2.8.0'
   brace-expansion: 5.0.9
   fast-uri: 3.1.5
-  js-yaml@>=4.0.0 <5.0.0: 4.3.1
+  js-yaml@>=4.0.0 <5.0.0: 4.3.2
   postcss: 8.5.25
   tar: 7.5.22
   rollup: '>=4.59.0'
@@ -309,7 +309,7 @@ importers:
     dependencies:
       '@hono/otel':
         specifier: ^1.1.2
-        version: 1.1.2(hono@4.12.34)
+        version: 1.1.2(hono@4.13.5)
       '@microlabs/otel-cf-workers':
         specifier: 1.0.0-rc.52
         version: 1.0.0-rc.52(@opentelemetry/api@1.9.1)
@@ -318,7 +318,7 @@ importers:
         version: 1.9.1
       hono:
         specifier: ^4.12.29
-        version: 4.12.34
+        version: 4.13.5
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.6
@@ -3574,8 +3574,8 @@ packages:
   headers-polyfill@4.0.3:
     resolution: {integrity: sha512-IScLbePpkvO846sIwOtOTDjutRMWdXdJmXdMvk6gCBHxFO8d+QKOQedyZSxFTTFYRSmlgSTDtXqqq4pcenBXLQ==}
 
-  hono@4.12.34:
-    resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
+  hono@4.13.5:
+    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@9.0.3:
@@ -3778,8 +3778,8 @@ packages:
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
-  js-yaml@4.3.1:
-    resolution: {integrity: sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==}
+  js-yaml@4.3.2:
+    resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
     hasBin: true
 
   js-yaml@5.2.2:
@@ -5948,11 +5948,11 @@ snapshots:
 
   '@gar/promise-retry@1.0.3': {}
 
-  '@hono/otel@1.1.2(hono@4.12.34)':
+  '@hono/otel@1.1.2(hono@4.13.5)':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/semantic-conventions': 1.43.0
-      hono: 4.12.34
+      hono: 4.13.5
 
   '@hookform/resolvers@5.5.7(@standard-schema/spec@1.1.0)(ajv@8.20.0)(react-hook-form@7.84.0(react@19.2.8))(zod@4.4.3)':
     dependencies:
@@ -7175,7 +7175,7 @@ snapshots:
       colorette: 1.4.0
       https-proxy-agent: 7.0.6(supports-color@10.2.2)
       js-levenshtein: 1.1.6
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
       minimatch: 5.1.9
       pluralize: 8.0.0
       yaml-ast-parser: 0.0.43
@@ -7987,7 +7987,7 @@ snapshots:
     dependencies:
       env-paths: 2.2.1
       import-fresh: 3.3.1
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
       parse-json: 5.2.0
     optionalDependencies:
       typescript: '@typescript/typescript6@6.0.2'
@@ -7996,7 +7996,7 @@ snapshots:
     dependencies:
       env-paths: 2.2.1
       import-fresh: 3.3.1
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
       parse-json: 5.2.0
     optionalDependencies:
       typescript: 7.0.2
@@ -8317,7 +8317,7 @@ snapshots:
   headers-polyfill@4.0.3:
     optional: true
 
-  hono@4.12.34: {}
+  hono@4.13.5: {}
 
   hosted-git-info@9.0.3:
     dependencies:
@@ -8470,7 +8470,7 @@ snapshots:
 
   js-tokens@4.0.0: {}
 
-  js-yaml@4.3.1:
+  js-yaml@4.3.2:
     dependencies:
       argparse: 2.0.1
 
