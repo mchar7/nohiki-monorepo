@@ -52,6 +52,9 @@ OUTBOX_CONNECTOR_SUFFIX = "-outbox"
 DEBEZIUM_CONNECT_IMAGE = (
     "quay.io/debezium/connect:3.6.0.Final@sha256:698f0559e667a242f962221079e75917b2b7a3ad4de62661e977628da0e33b45"
 )
+CONNECTOR_CLASS = "io.debezium.connector.postgresql.PostgresConnector"
+# Connect scans every plugin directory before it serves REST; all 40 bundled connectors outlast the readiness budget.
+CONNECTOR_PLUGIN_DIR = "/kafka/connect/debezium-connector-postgresql"
 CONNECT_API_READY_TIMEOUT_SECONDS = 15.0
 CONNECTOR_READY_TIMEOUT_SECONDS = 15.0
 PROBE_TIMEOUT_SECONDS = 1.0
@@ -385,15 +388,16 @@ async def _poll_for_message(
 
 
 def _connect_api_is_ready(connect_url: str, *, timeout_seconds: float = PROBE_TIMEOUT_SECONDS) -> bool:
-    """Probe Kafka Connect without leaking HTTP response resources."""
+    """Report whether Kafka Connect serves REST and has loaded the connector under test."""
     try:
-        with urlopen(connect_url, timeout=timeout_seconds):  # noqa: S310
-            return True
+        with urlopen(f"{connect_url}/connector-plugins", timeout=timeout_seconds) as response:  # noqa: S310
+            plugins = json.load(response)
     except HTTPError as exc:
         exc.close()
         return False
-    except OSError, URLError:
+    except OSError, URLError, ValueError:
         return False
+    return any(plugin.get("class") == CONNECTOR_CLASS for plugin in plugins)
 
 
 async def _wait_for_connect_api(
@@ -431,7 +435,7 @@ def _register_test_connector(connect_url: str, postgres_container: str) -> str:
     connector = {
         "name": connector_name,
         "config": {
-            "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+            "connector.class": CONNECTOR_CLASS,
             "tasks.max": "1",
             "database.hostname": "postgres",
             "database.port": "5432",
@@ -591,6 +595,7 @@ async def debezium_cdc_environment(
         KEY_CONVERTER="org.apache.kafka.connect.storage.StringConverter",
         VALUE_CONVERTER="org.apache.kafka.connect.storage.StringConverter",
         REST_ADVERTISED_HOST_NAME="127.0.0.1",
+        CONNECT_PLUGIN_PATH=CONNECTOR_PLUGIN_DIR,
     )
     try:
         await asyncio.to_thread(container.start)
