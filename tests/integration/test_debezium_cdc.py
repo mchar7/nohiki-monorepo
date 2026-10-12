@@ -54,7 +54,14 @@ DEBEZIUM_CONNECT_IMAGE = (
 )
 CONNECTOR_CLASS = "io.debezium.connector.postgresql.PostgresConnector"
 # Connect scans every plugin directory before it serves REST; all 40 bundled connectors outlast the readiness budget.
-CONNECTOR_PLUGIN_DIR = "/kafka/connect/debezium-connector-postgres"
+# The entrypoint reads plugin.path as a parent of connector directories, so expose only the Postgres one.
+CONNECT_ENTRYPOINT = [
+    "/bin/bash",
+    "-c",
+    "mkdir /tmp/plugins && ln -s /kafka/connect/debezium-connector-postgres /tmp/plugins/"
+    ' && CONNECT_PLUGIN_PATH=/tmp/plugins exec /docker-entrypoint.sh "$@"',
+    "connect",
+]
 CONNECT_API_READY_TIMEOUT_SECONDS = 15.0
 CONNECTOR_READY_TIMEOUT_SECONDS = 15.0
 PROBE_TIMEOUT_SECONDS = 1.0
@@ -595,8 +602,8 @@ async def debezium_cdc_environment(
         KEY_CONVERTER="org.apache.kafka.connect.storage.StringConverter",
         VALUE_CONVERTER="org.apache.kafka.connect.storage.StringConverter",
         REST_ADVERTISED_HOST_NAME="127.0.0.1",
-        CONNECT_PLUGIN_PATH=CONNECTOR_PLUGIN_DIR,
     )
+    container.with_kwargs(entrypoint=CONNECT_ENTRYPOINT)
     try:
         await asyncio.to_thread(container.start)
         connect_url = f"http://{container.get_container_host_ip()}:{container.get_exposed_port(8083)}"
