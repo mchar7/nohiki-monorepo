@@ -125,25 +125,6 @@ def _daemon_host() -> str | None:
     return None
 
 
-def _frontend_origin(runtime: str, container: str, network: str) -> str:
-    """Return the URL that reaches the frontend container.
-
-    A local daemon is reached on the container's bridge address, so the test claims no host port:
-    host ports are shared with every other container the same daemon starts concurrently.
-    """
-    remote = _daemon_host()
-    if remote is None:
-        template = f'{{{{(index .NetworkSettings.Networks "{network}").IPAddress}}}}'
-        address = subprocess.run(
-            [runtime, "inspect", "--format", template, container], check=True, capture_output=True, text=True
-        ).stdout.strip()
-        return f"http://{address}:8080"
-    port_output = subprocess.run(
-        [runtime, "port", container, "8080/tcp"], check=True, capture_output=True, text=True
-    ).stdout.strip()
-    return f"http://{remote}:{port_output.splitlines()[0].rsplit(':', maxsplit=1)[1]}"
-
-
 def _wait_for_http(runtime: str, container: str, url: str) -> tuple[int, bytes, str]:
     parsed = urllib.parse.urlsplit(url)
     assert parsed.hostname is not None
@@ -236,14 +217,24 @@ def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
                 "--read-only",
                 "--env",
                 f"BFF_UPSTREAM=http://{upstream}:8081",
-                *([] if _daemon_host() is None else ["--publish", "8080"]),
+                # A host-IP-scoped ephemeral port can lose to a sibling container bound on 0.0.0.0, so the
+                # daemon picks the port on all interfaces and the test reads it back below.
+                "--publish",
+                "8080",
                 image,
             ],
             check=True,
             capture_output=True,
             text=True,
         )
-        origin = _frontend_origin(runtime, frontend, network)
+        port_output = subprocess.run(
+            [runtime, "port", frontend, "8080/tcp"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        port = port_output.splitlines()[0].rsplit(":", maxsplit=1)[1]
+        origin = f"http://{_daemon_host() or '127.0.0.1'}:{port}"
         assert _wait_for_http(runtime, frontend, f"{origin}/healthz") == (
             200,
             b"",
