@@ -14,7 +14,19 @@
           config.allowUnfree = true;
         };
 
-        python = pkgs.python314;
+        # The CI shell and the hooks execute these validators. Bundling them into one
+        # interpreter keeps the nix Python setup hook from exporting a store PYTHONPATH that
+        # would outrank the packages `uv` and `uvx` install for their own tools.
+        pythonValidatorModules = builtins.map pkgs.python314Packages.toPythonModule [
+          pkgs.check-jsonschema
+          pkgs.podman-compose
+        ];
+        python = pkgs.python314.withPackages (_: pythonValidatorModules);
+        # azure-cli is a Python application. Listed as its own shell package it propagates the
+        # plain interpreter and its setup hook, which exports that store PYTHONPATH again.
+        pythonInfra = pkgs.python314.withPackages (
+          _: pythonValidatorModules ++ [ (pkgs.python314Packages.toPythonModule pkgs.azure-cli) ]
+        );
         nodejs = pkgs.nodejs_26;
         corepackPackage = pkgs.corepack.override { nodejs-slim = nodejs; };
         jdk = pkgs.jdk25;
@@ -216,12 +228,12 @@
           gitleaks # Secret detection for git hooks
           lefthookPackage # Git hook manager
           util-linux # flock for environment locks
+          uvPackage
           rsync # Owner-controlled local secrets mirror
         ];
 
         pythonTools = with pkgs; [
           python
-          uvPackage
           buf
           grpcurl
         ];
@@ -238,7 +250,6 @@
         ];
 
         containerTools = with pkgs; [
-          podman-compose
           dive
           skopeo
         ];
@@ -250,7 +261,6 @@
           k9s
           opentofu
           tflint
-          azure-cli
           kustomize
         ];
 
@@ -284,24 +294,6 @@
           stdenv.cc.cc.lib
         ];
 
-        mkCiPrepare = commands: pkgs.writeShellScriptBin "ci-prepare" ''
-          set -eu
-          ${commands}
-        '';
-        ciPythonPrepare = mkCiPrepare ''
-          exec scripts/dev/sync-ci-environment.sh
-        '';
-        ciNodePrepare = mkCiPrepare ''
-          exec scripts/dev/sync-ci-node-environment.sh
-        '';
-        ciPolicyPrepare = mkCiPrepare ''
-          exec scripts/dev/sync-ci-policy-environment.sh
-        '';
-        ciHygienePrepare = mkCiPrepare ''
-          scripts/dev/sync-ci-environment.sh
-          exec scripts/dev/sync-ci-node-environment.sh
-        '';
-
         ciPythonTools = [
           python
           uvPackage
@@ -310,6 +302,7 @@
         ciNodeTools = [
           nodejs
           pnpmPackage
+          uvPackage
           pkgs.git
         ];
         ciPolicyTools = ciPythonTools ++ [
@@ -317,7 +310,6 @@
           pkgs.jq
           pkgs.yq-go
           pkgs.actionlint
-          pkgs.check-jsonschema
           pkgs.hadolint
           pkgs.buf
           lefthookPackage
@@ -332,7 +324,6 @@
           pkgs.kubectl
           pkgs.kustomize
           pkgs.kubernetes-helm
-          pkgs.podman-compose
           pkgs.gitleaks
           pkgs.rsync
           pkgs.skopeo
@@ -393,7 +384,7 @@
           fi
 
           echo "Nohiki Dev Environment"
-          echo "  Python ${python.version} | Node $(node --version) | pnpm $(corepack pnpm --version) | uv $(uv --version | cut -d' ' -f2)"
+          echo "  Python $(python --version | cut -d' ' -f2) | Node $(node --version) | pnpm $(corepack pnpm --version) | uv $(uv --version | cut -d' ' -f2)"
           echo "  Run 'just' for available commands"
         '';
 
@@ -412,7 +403,7 @@
 
         devShells.default = pkgs.mkShell {
           name = "nohiki";
-          packages = coreTools ++ pythonTools ++ frontendTools ++ jvmTools ++ containerTools ++ infraTools;
+          packages = coreTools ++ pythonTools ++ frontendTools ++ jvmTools ++ containerTools ++ infraTools ++ [ pythonInfra ];
           buildInputs = nativeBuildDeps;
           env = baseEnv // {
             PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
@@ -459,7 +450,7 @@
 
         devShells.infra = pkgs.mkShell {
           name = "nohiki-infra";
-          packages = coreTools ++ containerTools ++ infraTools ++ [ python ];
+          packages = coreTools ++ containerTools ++ infraTools ++ [ python pythonInfra ];
           shellHook = ''
             ${gitGuardHook}
             echo "Infrastructure shell ready"
@@ -471,7 +462,7 @@
         # tools only and never touches system state.
         devShells.k8s = pkgs.mkShell {
           name = "nohiki-k8s";
-          packages = coreTools ++ containerTools ++ infraTools ++ k8sTools ++ [ python ];
+          packages = coreTools ++ containerTools ++ infraTools ++ k8sTools ++ [ python pythonInfra ];
           shellHook = ''
             ${gitGuardHook}
 
@@ -486,7 +477,7 @@
 
         devShells.ci = pkgs.mkShell {
           name = "nohiki-ci";
-          packages = ciTools ++ [ ciHygienePrepare ];
+          packages = ciTools;
           buildInputs = nativeBuildDeps;
           env = baseEnv // {
             COREPACK_ENABLE_NETWORK = "0";
@@ -496,7 +487,7 @@
 
         devShells.ci-python = pkgs.mkShell {
           name = "nohiki-ci-python";
-          packages = ciTestTools ++ [ ciPythonPrepare ];
+          packages = ciTestTools;
           buildInputs = nativeBuildDeps;
           env = baseEnv // {
             UV_PYTHON_DOWNLOADS = "never";
@@ -505,7 +496,7 @@
 
         devShells.ci-node = pkgs.mkShell {
           name = "nohiki-ci-node";
-          packages = ciNodeTools ++ [ ciNodePrepare ];
+          packages = ciNodeTools;
           env = {
             COREPACK_ENABLE_NETWORK = "0";
           };
@@ -513,7 +504,7 @@
 
         devShells.ci-policy = pkgs.mkShell {
           name = "nohiki-ci-policy";
-          packages = ciPolicyTools ++ [ ciPolicyPrepare ];
+          packages = ciPolicyTools;
           env = {
             PYTHONDONTWRITEBYTECODE = "1";
             PYTHONUNBUFFERED = "1";
@@ -525,7 +516,7 @@
 
         devShells.ci-hygiene = pkgs.mkShell {
           name = "nohiki-ci-hygiene";
-          packages = ciHygieneTools ++ [ ciHygienePrepare ];
+          packages = ciHygieneTools;
           buildInputs = nativeBuildDeps;
           env = baseEnv // {
             COREPACK_ENABLE_NETWORK = "0";
