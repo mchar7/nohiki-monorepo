@@ -217,8 +217,10 @@ def test_frontend_container_build_and_hardened_runtime_smoke() -> None:
                 "--read-only",
                 "--env",
                 f"BFF_UPSTREAM=http://{upstream}:8081",
+                # A host-IP-scoped ephemeral port can lose to a sibling container bound on 0.0.0.0, so the
+                # daemon picks the port on all interfaces and the test reads it back below.
                 "--publish",
-                "127.0.0.1::8080" if _daemon_host() is None else "8080",
+                "8080",
                 image,
             ],
             check=True,
