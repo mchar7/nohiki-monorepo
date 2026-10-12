@@ -309,7 +309,7 @@ importers:
     dependencies:
       '@hono/otel':
         specifier: ^1.1.2
-        version: 1.1.2(hono@4.12.34)
+        version: 1.1.2(hono@4.13.5)
       '@microlabs/otel-cf-workers':
         specifier: 1.0.0-rc.52
         version: 1.0.0-rc.52(@opentelemetry/api@1.9.1)
@@ -318,7 +318,7 @@ importers:
         version: 1.9.1
       hono:
         specifier: ^4.12.29
-        version: 4.12.34
+        version: 4.13.5
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.6
@@ -3574,8 +3574,8 @@ packages:
   headers-polyfill@4.0.3:
     resolution: {integrity: sha512-IScLbePpkvO846sIwOtOTDjutRMWdXdJmXdMvk6gCBHxFO8d+QKOQedyZSxFTTFYRSmlgSTDtXqqq4pcenBXLQ==}
 
-  hono@4.12.34:
-    resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
+  hono@4.13.5:
+    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
     engines: {node: '>=16.9.0'}
 
   hosted-git-info@9.0.3:
@@ -5948,11 +5948,11 @@ snapshots:
 
   '@gar/promise-retry@1.0.3': {}
 
-  '@hono/otel@1.1.2(hono@4.12.34)':
+  '@hono/otel@1.1.2(hono@4.13.5)':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/semantic-conventions': 1.43.0
-      hono: 4.12.34
+      hono: 4.13.5
 
   '@hookform/resolvers@5.5.7(@standard-schema/spec@1.1.0)(ajv@8.20.0)(react-hook-form@7.84.0(react@19.2.8))(zod@4.4.3)':
     dependencies:
@@ -8317,7 +8317,7 @@ snapshots:
   headers-polyfill@4.0.3:
     optional: true
 
-  hono@4.12.34: {}
+  hono@4.13.5: {}
 
   hosted-git-info@9.0.3:
     dependencies:
